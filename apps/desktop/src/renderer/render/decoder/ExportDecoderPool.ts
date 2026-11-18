@@ -13,6 +13,7 @@ import type { EncodedPacket } from "mediabunny";
 import type { DecoderPool, ExportDecodeSession, FrameStore, SourceHandleInit } from "./session";
 import { NativeExportSourceHandle } from "../worker/nativeExportSource";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
+import type { SourceColor } from "./ffprobeColorSpace";
 import { DecodeClock } from "./decodeClock";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
@@ -363,10 +364,10 @@ export class ExportSourceHandle implements ExportDecodeSession {
   readonly bufferStats = { capacityFrames: EXPORT_FRAME_WINDOW, peakFrames: 0, waits: 0, waitMs: 0 };
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
-  /// Source color tags (ffprobe-mapped), for original AND proxy decode
-  /// targets (a proxy preserves the source's colorimetry). Threaded into
+  /// The media's resolved colour, for original AND proxy decode targets (a
+  /// proxy preserves the source's colorimetry). Threaded into
   /// `withDefaultColorSpace`; the target's own colr tag outranks per-field.
-  private readonly sourceColor: VideoColorSpaceInit | undefined;
+  private readonly sourceColor: SourceColor;
   private readonly knownStartPtsUs: number | null;
   private clock = DecodeClock.fromOrigin(0);
   /// Copy >8-bit decoder output to CPU planes (TenBitFrame) instead of
@@ -490,12 +491,8 @@ export class ExportSourceHandle implements ExportDecodeSession {
     const first = await opened.packetSink.getFirstPacket();
     if (this._disposed) return;
     this.clock = DecodeClock.fromFirstPacket(first, this.knownStartPtsUs ?? 0);
-    // Untagged sources get a resolution-keyed default matrix so Chromium/Electron's
-    // decode matches the rest of the toolchain (see colorSpaceDefault).
-    // `sourceColor` carries the source's ffprobe tags as the middle-priority
-    // layer (below the decode target's own mediabunny colr tag, above the
-    // resolution default) — for original AND proxy decodes alike (a proxy
-    // preserves the source's colorimetry).
+    // The decode target's own colr tag per field, else the media's resolved
+    // colour — the same colour preview and the native export lane use.
     this.config = withDefaultColorSpace(config, this.sourceColor);
     if (!this.releaseResources) {
       // Admitted dispatch window plus unchanged codec-private surfaces.

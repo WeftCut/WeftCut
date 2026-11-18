@@ -6,6 +6,7 @@ import { Compositor } from "./Compositor";
 import type { DecoderPool } from "./decoder/session";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
 import { summaryFixture } from "../testing/summaryFixture";
+import { resolveSourceColor } from "./decoder/ffprobeColorSpace";
 
 // Who may composite: export's frame driver alone, preview's async arrivals too.
 // Why a stray export repaint matters: `Compositor.scheduleRepaint`.
@@ -72,7 +73,7 @@ describe("Compositor repaint ownership", () => {
       mode,
       pool: { dispose: vi.fn() } as unknown as DecoderPool,
       originalAssetUrl: () => "/still.png",
-      sourceColor: () => undefined,
+      sourceColor: () => resolveSourceColor({ height: 1080 }),
       mediaById: () => undefined,
     });
     compositor.setProject(summary);

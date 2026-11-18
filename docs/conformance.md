@@ -45,7 +45,7 @@ OS because the drawtext font and the bundled ffmpeg differ per platform.
 | `export-range-audio.spec.ts` | range export trims audio at the requested source time; AAC/Opus and muted settings; software video encoder alignment |
 | `export_eos_tail.spec.ts` | a final GOP spanning several chunks with audio 1 s past video: completes, plans the audio-extended frame count, tail stays aligned |
 | `export_overlap_same_source.spec.ts` | two copies of one media: same-phase copies share one decode pipeline (no extra dispatch); a 2 s-offset copy keeps its own source frames |
-| `color-conformance.spec.ts` | 709/601 × limited/full patches stay faithful; all four DirectExport the original (`yuvj420p` is browser-friendly) |
+| `color-conformance.spec.ts` | 709/601 × limited/full patches stay faithful; all four DirectExport the original (`yuvj420p` is browser-friendly); the untagged SD/HD charts export faithfully through both decode engines, the patches the preview colour gates sample |
 | `export_codecs.spec.ts` | AV1/HEVC/10-bit HEVC/ProRes/DNxHR codec shape and container; 10-bit distinct steps above the 8-bit ceiling |
 
 The conform format range itself is pinned by the Rust unit test
@@ -54,18 +54,24 @@ self-description is pinned by `proxy_carries_source_color_tags_and_colr_atom`.
 
 ## Decode color tags
 
-`io/probe.rs` extracts ffprobe color tags into `MediaSummary`; the renderer
-maps them with `ffprobeColorToWebCodecs`. `withDefaultColorSpace`
-(`render/decoder/colorSpaceDefault.ts`) fills each field with this priority:
+`io/probe.rs` extracts ffprobe color tags into `MediaSummary`.
+`resolveSourceColor` (`render/decoder/ffprobeColorSpace.ts`) turns them into
+the one complete colour every decode lane uses, per field:
 
-1. the decode target's container `colr` tag as mediabunny reports it
-   (mediabunny never parses the SPS VUI);
-2. the ffprobe source tag;
-3. a resolution default: height ≥ 720 → BT.709, else SMPTE 170M; limited range.
+1. the mapped ffprobe tag;
+2. when absent: SMPTE 170M if the ORIGINAL's probed height is below 720,
+   BT.709 otherwise; limited range.
 
-Every decode pool applies the merged `VideoColorSpaceInit`; `VideoClipSprite`
-then converts through the 2D-canvas snapshot
-([`render.md`](render.md#frame-upload-the-snapshot-rule)).
+The native lanes (software, copy-back hardware, d3d11va, native export decode)
+use it as is. The WebCodecs pools pass it through `withDefaultColorSpace`
+(`render/decoder/colorSpaceDefault.ts`), where a field the decode target's
+container `colr` tag carries (as mediabunny reports it; mediabunny never parses
+the SPS VUI) wins over it. `VideoClipSprite` then converts through the
+2D-canvas snapshot ([`render.md`](render.md#frame-upload-the-snapshot-rule)).
+
+ffmpeg/swscale read an unspecified matrix as BT.601 at every size, so the
+analyzer never infers a source's colour: every gate passes `--in-matrix` and
+`--in-range`, including for the untagged charts.
 
 ## Running
 

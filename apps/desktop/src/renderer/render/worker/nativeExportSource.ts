@@ -14,6 +14,7 @@
 import type { ExportColorDiag } from "../decoder/ExportDecoderPool";
 import { ExportFrameStore } from "../decoder/ExportDecoderPool";
 import { nv12FrameFromBytes, type NativeNv12Frame } from "../decoder/nv12Frame";
+import type { SourceColor } from "../decoder/ffprobeColorSpace";
 import type { ExportDecodeSession, SourceHandleInit } from "../decoder/session";
 import { tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 import type { ExportTransportFormat } from "../exportDecodeRouting";
@@ -25,25 +26,6 @@ import type { NativeDecodeFrameMsg } from "./protocol";
 /// sufficient (one handle = one session for its lifetime).
 let seq = 0;
 
-/// Build the `VideoColorSpaceInit` stamped on every frame from the source's
-/// already-mapped `sourceColor` (WebCodecs enums, derived at export start via
-/// `ffprobeColorToWebCodecs`), falling back to bt709/limited — the same posture
-/// as the preview native path (`SwTransport.colorSpaceFor`).
-///
-/// LANDMINE: must NOT read the per-frame `colorMatrix`/`colorTransfer`/… tags.
-/// Those are raw FFmpeg `.name()` strings (e.g. `bt2020nc`, `smpte2084`,
-/// `arib-std-b67`), not valid WebCodecs enum members (`bt2020-ncl`, `pq`,
-/// `hlg`) — they would fork the app's single color model, and the ingest
-/// shaders' `coefForMatrix` matches WebCodecs enum members only.
-function colorSpaceFromSource(sourceColor: VideoColorSpaceInit | undefined): VideoColorSpaceInit {
-  return {
-    primaries: sourceColor?.primaries ?? "bt709",
-    transfer: sourceColor?.transfer ?? "bt709",
-    matrix: sourceColor?.matrix ?? "bt709",
-    fullRange: sourceColor?.fullRange ?? false,
-  };
-}
-
 export class NativeExportSourceHandle implements ExportDecodeSession {
   readonly mediaId: string;
   readonly ring: ExportFrameStore;
@@ -52,9 +34,15 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   private readonly sourcePath: string;
   private readonly outFormat: ExportTransportFormat;
   private readonly creditWindow: number;
-  /// ColorSpace stamped on every pushed frame — fixed per handle
-  /// (one handle = one source), see `colorSpaceFromSource`.
-  private readonly frameColorSpace: VideoColorSpaceInit;
+  /// The colour stamped on every pushed frame: the source's resolved colour,
+  /// fixed per handle (one handle = one source).
+  ///
+  /// LANDMINE: never the per-frame `colorMatrix`/`colorTransfer`/… tags. Those
+  /// are raw FFmpeg `.name()` strings (e.g. `bt2020nc`, `smpte2084`,
+  /// `arib-std-b67`), not WebCodecs enum members (`bt2020-ncl`, `pq`, `hlg`):
+  /// they would fork the app's single colour model, and the ingest shaders'
+  /// `coefForMatrix` matches WebCodecs enum members only.
+  private readonly frameColorSpace: SourceColor;
   /// `aUs` of the previous `decodeRange`; `aUs < lastRangeAUs` is a backward
   /// clip-reuse jump — the only case that must reset the ring's EOS clamp.
   private lastRangeAUs = Number.NEGATIVE_INFINITY;
@@ -83,7 +71,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.sourcePath = ne.sourcePath;
     this.outFormat = ne.outFormat;
     this.creditWindow = ne.creditWindow;
-    this.frameColorSpace = colorSpaceFromSource(init.sourceColor);
+    this.frameColorSpace = init.sourceColor;
     // Unique, realm-safe, stable for this handle's lifetime.
     this.sessionId = `nd-${seq++}-${init.mediaId}-${init.handleKey ?? init.mediaId}`;
     this.ring = new ExportFrameStore(() => this.reconcileCredits());

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Compositor } from "./Compositor";
 import type { DecoderPool } from "./decoder/session";
 import type { MotifReaderStats } from "./motifs/MotifFrameReader";
+import { resolveSourceColor } from "./decoder/ffprobeColorSpace";
 
 const { current, create } = vi.hoisted(() => ({ current: vi.fn(), create: vi.fn() }));
 vi.mock("./motifs/MotifFrameReader", async (importOriginal) => ({
@@ -32,7 +33,7 @@ describe("Compositor perf snapshot: motifReader", () => {
     compositor = new Compositor({
       app: { stage: new Container() } as unknown as Application,
       width: 1920, height: 1080, mode: "export",
-      originalAssetUrl: () => null, sourceColor: () => undefined, mediaById: () => undefined,
+      originalAssetUrl: () => null, sourceColor: () => resolveSourceColor({ height: 1080 }), mediaById: () => undefined,
       pool: { dispose: vi.fn() } as unknown as DecoderPool,
     });
   });

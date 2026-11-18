@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Compositor } from "../Compositor";
 import type { DecoderPool } from "../decoder/session";
 import { installCjkLineBreaking } from "./lineBreak";
+import { resolveSourceColor } from "../decoder/ffprobeColorSpace";
 
 // Measured, not string-matched: the only thing that proves the two realms agree
 // is that the same text and style resolve to the same lines under each realm's
@@ -115,7 +116,7 @@ describe("CJK line breaking", () => {
       height: 360,
       mode: "preview",
       originalAssetUrl: () => null,
-      sourceColor: () => undefined,
+      sourceColor: () => resolveSourceColor({ height: 1080 }),
       mediaById: () => undefined,
       pool: { dispose: vi.fn() } as unknown as DecoderPool,
     });

@@ -17,6 +17,7 @@
 import type { EncodedPacketSink } from "mediabunny";
 import { logEmit } from "../../ipc";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
+import type { SourceColor } from "./ffprobeColorSpace";
 import { DecodeClock } from "./decodeClock";
 import { FrameRing } from "./FrameRing";
 import { handleDecodeError } from "./decoderFallback";
@@ -39,11 +40,11 @@ const CAPACITY_RETRY_MS = 1_000;
 export class SourceMedia {
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
-  /// Source color tags (ffprobe-mapped), for original AND proxy decodes (a
-  /// proxy preserves the source's colorimetry). Threaded into
-  /// `withDefaultColorSpace` so 601/full-range sources preview with their
-  /// real matrix/range from either URL. Undefined ⇒ untagged source.
-  private readonly sourceColor: VideoColorSpaceInit | undefined;
+  /// The media's resolved colour, for original AND proxy decodes (a proxy
+  /// preserves the source's colorimetry). Threaded into
+  /// `withDefaultColorSpace` so 601/full-range/untagged sources preview with
+  /// the colour every other lane uses, from either URL.
+  private readonly sourceColor: SourceColor;
   private readonly knownStartPtsUs: number | null;
   private opened: OpenedMedia | null = null;
   private config: VideoDecoderConfig | null = null;
@@ -83,7 +84,7 @@ export class SourceMedia {
   constructor(
     mediaId: string,
     proxyAssetUrl: string,
-    sourceColor?: VideoColorSpaceInit | undefined,
+    sourceColor: SourceColor,
     sourceStartPtsUs?: number | null,
   ) {
     this.mediaId = mediaId;
@@ -115,12 +116,9 @@ export class SourceMedia {
       // normalized timestamps go negative, and lookbehind evicts every frame.
       const firstPacket = await opened.packetSink.getFirstPacket();
       this.clock = DecodeClock.fromFirstPacket(firstPacket, this.knownStartPtsUs ?? 0);
-      // Untagged sources get a resolution-keyed default matrix so preview decode
-      // matches the rest of the toolchain (see colorSpaceDefault) — and stays
-      // consistent with the export pool, which applies the same default.
-      // `sourceColor` carries the source's ffprobe tags as the middle-priority
-      // layer (below the decode target's own mediabunny colr tag, above the
-      // resolution default) for original AND proxy decodes alike.
+      // The decode target's own colr tag per field, else the media's
+      // resolved colour — the same colour the export pool and the native
+      // lanes decode this media with.
       this.config = withDefaultColorSpace(config, this.sourceColor);
       // eslint-disable-next-line no-console
       console.log(
@@ -701,7 +699,7 @@ export class SourceDecoderPool {
         // Conditional spreads, not direct assignment — exactOptionalPropertyTypes
         // rejects an explicit `undefined` for `FfmpegSourceInit`'s optional
         // fields (same idiom `FfmpegSource.ts` itself uses).
-        ...(init.sourceColor !== undefined ? { sourceColor: init.sourceColor } : {}),
+        sourceColor: init.sourceColor,
         ...(init.codec !== undefined ? { codec: init.codec } : {}),
         ...(init.pixFmt !== undefined ? { pixFmt: init.pixFmt } : {}),
         ...(init.width !== undefined ? { width: init.width } : {}),
@@ -798,7 +796,7 @@ export class SourceDecoderPool {
   private acquireMedia(
     mediaId: string,
     proxyAssetUrl: string,
-    sourceColor?: VideoColorSpaceInit | undefined,
+    sourceColor: SourceColor,
     sourceStartPtsUs?: number | null,
   ): SourceMedia {
     let entry = this.medias.get(mediaId);

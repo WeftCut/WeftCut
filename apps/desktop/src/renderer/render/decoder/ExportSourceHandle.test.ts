@@ -9,8 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SourceHandleInit } from "./session";
 import { ExportDecoderPool, ExportSourceHandle } from "./ExportDecoderPool";
 import { openMediaInput } from "./mediaInput";
+import { resolveSourceColor } from "./ffprobeColorSpace";
 
 vi.mock("./mediaInput", () => ({ openMediaInput: vi.fn() }));
+
+const HD = resolveSourceColor({ height: 1080 });
 
 interface FakePacket {
   timestamp: number; // seconds — mediabunny's EncodedPacket unit
@@ -106,6 +109,7 @@ function makeHandle(extra?: Partial<SourceHandleInit>): ExportSourceHandle {
     layerId: "layer-1",
     mediaId: "media-1",
     proxyAssetUrl: "weftcut-media://localhost/test.mp4",
+    sourceColor: HD,
     ...extra,
   };
   return new ExportSourceHandle(init);
@@ -267,7 +271,7 @@ describe("ExportSourceHandle EOS tail", () => {
       for (let i = 0; i < 4; i++) {
         const key = `phase-${i % 2}`;
         pool.retainOnly(new Set([key]));
-        const handle = pool.acquire({ layerId: `clip-${i}`, mediaId: 'media-1', handleKey: key, proxyAssetUrl: 'weftcut-media://localhost/test.mp4' });
+        const handle = pool.acquire({ layerId: `clip-${i}`, mediaId: 'media-1', handleKey: key, proxyAssetUrl: 'weftcut-media://localhost/test.mp4', sourceColor: HD });
         await expect(handle.decodeRange(0, 1)).resolves.toBeUndefined();
         expect(pool.handles.size).toBe(1);
       }

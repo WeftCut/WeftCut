@@ -1,9 +1,10 @@
 // Neutral decode-contract module: the surface the Compositor composites
 // through (DecodeSession) plus the two role interfaces. Owns no
-// implementation — both imports below are `import type` (erased), so the
+// implementation — every import below is `import type` (erased), so the
 // session <-> ExportDecoderPool reference (ExportDecodeSession.ring) is not
 // a runtime cycle.
 import type { DecodedFrame } from "./decodedFrame";
+import type { SourceColor } from "./ffprobeColorSpace";
 import type { HandoffTimingSummary } from "./transports/handoffTimings";
 import type { ExportColorDiag, ExportFrameStore } from "./ExportDecoderPool";
 
@@ -27,16 +28,14 @@ export interface SourceHandleInit {
   /// `weftcut-media://` URL of the decode target the WebCodecs path opens —
   /// preview's resolved target, or the export master proxy in export mode.
   proxyAssetUrl: string;
-  /// Source color tags mapped from ffprobe (matrix/range/primaries/transfer),
-  /// applied to ANY decode target for this media — the original trivially,
-  /// and proxies too (a proxy preserves the source's colorimetry; the proxy
-  /// recipe asserts the tags outright). Threaded into
-  /// `withDefaultColorSpace` as the middle-priority layer (below the decode
-  /// target's own mediabunny colr tag, above the resolution default).
-  /// Undefined ⇒ untagged source ⇒ resolution default applies. The preview
-  /// pool carries it onto the shared `SourceMedia` (per-mediaId) so the once-
-  /// per-source config build at `SourceMedia.ensureReady` tags the decode.
-  sourceColor?: VideoColorSpaceInit | undefined;
+  /// The media's resolved colour (`resolveSourceColor`), applied to ANY decode
+  /// target for this media: the original trivially, and proxies too (a proxy
+  /// preserves the source's colorimetry; the proxy recipe asserts the tags
+  /// outright). The WebCodecs pools layer the decode target's own colr tag
+  /// over it (`withDefaultColorSpace`); the native lanes use it as is. The
+  /// preview pool carries it onto the shared `SourceMedia` (per-mediaId) so the
+  /// once-per-source config build at `SourceMedia.ensureReady` tags the decode.
+  sourceColor: SourceColor;
   /// Export-only: copy >8-bit decoder output to CPU planes (TenBitFrame)
   /// instead of holding VideoFrames. Implies the 10-bit export lane.
   tenBitLane?: boolean;

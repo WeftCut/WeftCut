@@ -8,6 +8,7 @@
 import type { NativeNv12Frame } from "../nv12Frame";
 import type { TenBitFrame } from "../tenBitFrame";
 import type { HandoffTimingSummary } from "./handoffTimings";
+import type { SourceColor } from "../ffprobeColorSpace";
 
 /// What a transport can push into the preview `FrameRing`.
 export type TransportFrame = ImageBitmap | NativeNv12Frame | TenBitFrame;
@@ -15,9 +16,9 @@ export type TransportFrame = ImageBitmap | NativeNv12Frame | TenBitFrame;
 export interface DecodeTransportOpen {
   streamId: string;
   path: string;
-  /// Source ffprobe color tags; each transport derives its own wire shape
-  /// (GPU: PreviewGpuColorSpace, SW: VideoColorSpaceInit), defaulting bt709/limited.
-  sourceColor?: VideoColorSpaceInit;
+  /// The source's resolved colour (`resolveSourceColor`). The GPU transport
+  /// maps it to its wire shape; the SW transport stamps it on every frame.
+  sourceColor: SourceColor;
   /// Native GPU pool size (GPU transport only; SW ignores). Default 3.
   poolSize?: number;
   /// Renderer-probed coded dimensions. The GPU transport sends them to main's

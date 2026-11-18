@@ -9,6 +9,7 @@ import { installPreviewPresentation } from '../render/installPreviewPresentation
 import { webgpuDeviceOf } from '../render/webgpuDevice';
 import { setSlotFenceBackend, sharedSlotFenceQueue } from '../render/decoder/transports/slotFenceQueue';
 import { resetFfmpegCapabilitySession } from '../render/decoder/ffmpegCapability';
+import { resolveSourceColor } from '../render/decoder/ffprobeColorSpace';
 import { liveFrameRingCount } from '../render/decoder/frameRingBudget';
 import { useAppSettingsStore } from '../settings/appSettingsStore';
 import { initEval } from '../eval';
@@ -68,7 +69,8 @@ async function run(): Promise<void> {
       const compositor = new Compositor({ app, width: protocol.width, height: protocol.height, mode: 'preview',
         resolveSource: () => ({ engine: 'ffmpeg', source: 'original', status: 'ok', target: fixture.path,
           key: `ffmpeg:original:${fixture.path}` }),
-        originalAssetUrl: () => null, sourceColor: () => ({ primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false }),
+        originalAssetUrl: () => null,
+        sourceColor: id => { const m = scene.media.find(m => m.id === id); return m ? resolveSourceColor(m) : undefined; },
         mediaById: id => scene.media.find(m => m.id === id) });
       const graph = new AudioGraph();
       const audio = new PreviewAudioEngine(graph, () => null);

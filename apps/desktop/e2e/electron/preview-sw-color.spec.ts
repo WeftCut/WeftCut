@@ -21,10 +21,16 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForH
 // defect into tens of 8-bit steps. Never treat a natural-content SSIM floor
 // as evidence of matrix correctness (ADR 0032).
 //
-// Two legs:
+// Legs:
 //   A. bt709-tagged chart — renders WITHOUT the 601 tint.
 //   B. smpte170m-tagged chart — still selects BT.601 (no over-correction:
 //      a fix that hard-codes 709 would pass leg A and fail this one).
+//   C. untagged H.264 charts, SD and HD — the lane reads the absent tag the
+//      way every other lane does (`resolveSourceColor`): BT.601 below 720
+//      lines, BT.709 from 720 up. preview-hw-color, preview-lite-color and
+//      color-conformance hold the other lanes to the same patches.
+//   D. full-range H.264 charts (709full/601full, the ones preview-hw-color
+//      reads) — the lane keeps full-range levels end to end.
 // Same run requirements as preview-sw-conformance.spec.ts: a
 // VITE_WEFTCUT_E2E=1 build and the built native-decode component.
 
@@ -33,8 +39,11 @@ const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../
 const CHART_709 = path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_prores.mov')
 const CHART_601 = path.resolve(MEDIA_DIR, 'test_1080p_color_601ltd_prores.mov')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
+const MANIFEST_SD = path.resolve(MEDIA_DIR, 'color_manifest_720x480.json')
 
-const CANVAS = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
+type Canvas = { width: number; height: number; fpsNum: number; fpsDen: number }
+const CANVAS: Canvas = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
+const CANVAS_SD: Canvas = { width: 720, height: 480, fpsNum: 30, fpsDen: 1 }
 const SEEK_US = 500_000 // mid-chart; the chart is static, any decoded frame shows it
 
 // Component presence (same level-0 probe as export-prores-fidelity.spec.ts):
@@ -67,17 +76,29 @@ interface PatchOffender {
   maxErr: number
 }
 
-async function runChartLeg(label: string, fixture: string): Promise<void> {
+/// Where a leg's chart lives and how it is laid out. `nativeSwRoute`: the
+/// chart is WebCodecs-blind (ProRes), so import routes it `native-sw`; an
+/// H.264 chart reaches the software lane through the engine and lane pins alone.
+interface ChartLeg {
+  fixture: string
+  manifest: string
+  canvas: Canvas
+  nativeSwRoute: boolean
+}
+
+async function runChartLeg(label: string, leg: ChartLeg): Promise<void> {
+  const { fixture, canvas } = leg
   test.skip(!existsSync(fixture), `${label} chart fixture not found at ${fixture} (npm run fixtures)`)
-  test.skip(!existsSync(MANIFEST), `color manifest not found at ${MANIFEST} (npm run fixtures)`)
+  test.skip(!existsSync(leg.manifest), `color manifest not found at ${leg.manifest} (npm run fixtures)`)
   test.setTimeout(240_000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-color-proj-')
-  const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as {
+  const manifest = JSON.parse(readFileSync(leg.manifest, 'utf8')) as {
     width: number
     height: number
     patches: ManifestPatch[]
   }
-  expect(manifest.width).toBe(CANVAS.width) // 1:1 chart→composition mapping
+  expect(manifest.width).toBe(canvas.width) // 1:1 chart→composition mapping
+  expect(manifest.height).toBe(canvas.height)
 
   // Pin the resolver to the software lane: ProRes is videotoolbox-eligible, so
   // on a ProRes-engine Mac this spec's clip would otherwise ride the HW lane
@@ -93,7 +114,7 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
     await newProject(page, {
       parentFolder: PROJECT_PARENT,
       name: `${label}-${Date.now()}`,
-      canvas: CANVAS,
+      canvas,
     })
 
     // Pin the ffmpeg engine BEFORE placing the layer (engine resolution reads
@@ -107,12 +128,14 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
     const { mediaId, layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: fixture })
     expect(kind).toBe('Video')
 
-    await waitForHook(page, 'mediaDecodeRouteKind')
-    await page.waitForFunction(
-      (id) => (window as unknown as { __weftcutTest: { mediaDecodeRouteKind(m: string): string | null } }).__weftcutTest.mediaDecodeRouteKind(id) === 'native-sw',
-      mediaId,
-      { timeout: 90_000, polling: 500 },
-    )
+    if (leg.nativeSwRoute) {
+      await waitForHook(page, 'mediaDecodeRouteKind')
+      await page.waitForFunction(
+        (id) => (window as unknown as { __weftcutTest: { mediaDecodeRouteKind(m: string): string | null } }).__weftcutTest.mediaDecodeRouteKind(id) === 'native-sw',
+        mediaId,
+        { timeout: 90_000, polling: 500 },
+      )
+    }
     await page.waitForFunction(
       () => {
         try {
@@ -188,11 +211,29 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
 test.describe('preview native-SW saturated-chart color gate (Electron)', () => {
   test.skip(!COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native SW sessions`)
 
+  const prores = (fixture: string): ChartLeg => ({ fixture, manifest: MANIFEST, canvas: CANVAS, nativeSwRoute: true })
+  const h264 = (name: string, manifest: string, canvas: Canvas): ChartLeg =>
+    ({ fixture: path.resolve(MEDIA_DIR, name), manifest, canvas, nativeSwRoute: false })
+
   test('bt709-tagged ProRes chart previews without the BT.601 tint', async () => {
-    await runChartLeg('psc-709', CHART_709)
+    await runChartLeg('psc-709', prores(CHART_709))
   })
 
   test('smpte170m-tagged ProRes chart still selects BT.601 (no over-correction)', async () => {
-    await runChartLeg('psc-601', CHART_601)
+    await runChartLeg('psc-601', prores(CHART_601))
   })
+
+  test('untagged SD H.264 chart previews as BT.601 on the software lane', async () => {
+    await runChartLeg('psc-untagged-sd', h264('test_480p_color_601ltd_untagged.mp4', MANIFEST_SD, CANVAS_SD))
+  })
+
+  test('untagged HD H.264 chart previews as BT.709 on the software lane', async () => {
+    await runChartLeg('psc-untagged-hd', h264('test_1080p_color_709ltd_untagged.mp4', MANIFEST, CANVAS))
+  })
+
+  for (const enc of ['709full', '601full'] as const) {
+    test(`${enc} H.264 chart keeps full-range levels on the software lane`, async () => {
+      await runChartLeg(`psc-${enc}`, h264(`test_1080p_color_${enc}.mp4`, MANIFEST, CANVAS))
+    })
+  }
 })

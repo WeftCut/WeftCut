@@ -5,6 +5,7 @@ import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import type { DecoderPool } from "./decoder/session";
 import { summaryFixture } from "../testing/summaryFixture";
+import { resolveSourceColor } from "./decoder/ffprobeColorSpace";
 
 // GlProgram construction probes fragment precision through a DOMAdapter test
 // canvas; node has no document, so hand the adapter a context-less canvas
@@ -128,7 +129,7 @@ describe("Compositor transition divert", () => {
       height: 1080,
       mode: "export",
       originalAssetUrl: () => null,
-      sourceColor: () => undefined,
+      sourceColor: () => resolveSourceColor({ height: 1080 }),
       mediaById: () => undefined,
       pool: { dispose: vi.fn() } as unknown as DecoderPool,
     });

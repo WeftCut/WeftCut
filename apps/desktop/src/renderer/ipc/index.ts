@@ -288,9 +288,9 @@ export interface MediaSummary {
   /// Source pixel format ("yuv420p"/"yuv420p10le"/…), null for audio/image.
   pix_fmt: string | null;
   /// ffprobe color tags (color_space/range/primaries/transfer) surfaced from the
-  /// source bitstream + container. Used to decode the ORIGINAL with its real
-  /// matrix/range on DirectExport (see `ffprobeColorToWebCodecs`). Optional:
-  /// older summaries / test fixtures omit them; the resolution default fills in.
+  /// source bitstream + container. Every decode lane reads them through
+  /// `resolveSourceColor`, which fills an absent one. Optional: older
+  /// summaries / test fixtures omit them.
   color_matrix?: string | null;
   color_range?: string | null;
   color_primaries?: string | null;

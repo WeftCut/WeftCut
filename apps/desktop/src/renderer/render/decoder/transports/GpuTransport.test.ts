@@ -6,12 +6,15 @@
 // `ports` (a real transfer list does not populate them) — hence the fakes.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GpuTransport } from "./GpuTransport";
+import { resolveSourceColor } from "../ffprobeColorSpace";
 import { hydratePerformanceSettings } from "../../../../shared/performance-settings";
 import {
   setSlotFenceBackend,
   sharedSlotFenceQueue,
   type SlotFenceBackend,
 } from "./slotFenceQueue";
+
+const HD = resolveSourceColor({ height: 1080 });
 
 interface FakePort {
   onmessage: ((ev: { data: unknown }) => void) | null;
@@ -113,15 +116,15 @@ describe("GpuTransport", () => {
     const { api } = installFakePreviewGpu();
     const first = new GpuTransport();
     hydratePerformanceSettings({ preview_gpu_pool_slots: 6 });
-    await first.open({ streamId: "six", path: "C:/x.mp4" });
+    await first.open({ streamId: "six", path: "C:/x.mp4", sourceColor: HD });
     expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({ poolSize: 6 }));
     hydratePerformanceSettings({ preview_gpu_pool_slots: 2 });
     expect(api.open).toHaveBeenCalledTimes(1);
     const next = new GpuTransport();
-    await next.open({ streamId: "two", path: "C:/x.mp4" });
+    await next.open({ streamId: "two", path: "C:/x.mp4", sourceColor: HD });
     expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({ poolSize: 2 }));
     const explicit = new GpuTransport();
-    await explicit.open({ streamId: "override", path: "C:/x.mp4", poolSize: 4 });
+    await explicit.open({ streamId: "override", path: "C:/x.mp4", poolSize: 4, sourceColor: HD });
     expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({ poolSize: 4 }));
     await Promise.all([first.dispose(), next.dispose(), explicit.dispose()]);
   });
@@ -136,7 +139,7 @@ describe("GpuTransport", () => {
       await closeGate;
     });
     const t = new GpuTransport();
-    await t.open({ streamId: "await-close", path: "C:/x.mp4" });
+    await t.open({ streamId: "await-close", path: "C:/x.mp4", sourceColor: HD });
 
     let disposed = false;
     const disposing = Promise.resolve(t.dispose()).then(() => {
@@ -166,7 +169,7 @@ describe("GpuTransport", () => {
     });
 
     const t = new GpuTransport();
-    const opening = t.open({ streamId: "disposed-opening", path: "C:/x.mp4" });
+    const opening = t.open({ streamId: "disposed-opening", path: "C:/x.mp4", sourceColor: HD });
     await vi.waitFor(() => expect(api.open).toHaveBeenCalledOnce());
 
     let disposed = false;
@@ -197,7 +200,7 @@ describe("GpuTransport", () => {
     try {
       const { api } = installFakePreviewGpu();
       const t = new GpuTransport();
-      await t.open({ streamId: "nudge-reject", path: "C:/x.mp4" });
+      await t.open({ streamId: "nudge-reject", path: "C:/x.mp4", sourceColor: HD });
 
       api.requestFrameAt.mockRejectedValueOnce(new Error("unknown stream"));
       t.requestFrameAt(1000);
@@ -222,7 +225,7 @@ describe("GpuTransport", () => {
   it("does not spend an IPC round trip on every paused tick, but re-arms after a ring flush", async () => {
     const { api } = installFakePreviewGpu();
     const t = new GpuTransport();
-    await t.open({streamId: "paused", path: "clip.mp4"});
+    await t.open({ streamId: "paused", path: "clip.mp4", sourceColor: HD });
     for (let i = 0; i < 60; i++) {
       t.requestFrameAt(0);
       await Promise.resolve();
@@ -241,6 +244,7 @@ describe("GpuTransport", () => {
     await t.open({
       streamId: "budget-size",
       path: "C:/x.mp4",
+      sourceColor: HD,
       codedWidth: 3840,
       codedHeight: 2160,
     });
@@ -260,12 +264,35 @@ describe("GpuTransport", () => {
     t.dispose();
   });
 
+  it("hands main the colour it was given, not a default of its own", async () => {
+    // An untagged SD source resolves to SMPTE 170M; the native shader must
+    // be opened with it.
+    const { api } = installFakePreviewGpu();
+    const sd = new GpuTransport();
+    await sd.open({ streamId: "sd", path: "C:/sd.mp4", sourceColor: resolveSourceColor({ height: 480 }) });
+    expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
+      colorSpace: { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m", range: "limited" },
+    }));
+    await sd.dispose();
+
+    const full = new GpuTransport();
+    await full.open({
+      streamId: "full",
+      path: "C:/full.mp4",
+      sourceColor: resolveSourceColor({ height: 1080, color_matrix: "smpte170m", color_range: "pc" }),
+    });
+    expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
+      colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "smpte170m", range: "full" },
+    }));
+    await full.dispose();
+  });
+
   it("requests its port BY streamId and delivers only its own frames", async () => {
     const { api, getPort } = installFakePreviewGpu();
     const t = new GpuTransport();
     const frames: number[] = [];
     t.onFrame((_b, ptsUs) => frames.push(ptsUs));
-    await t.open({ streamId: "s1", path: "C:/x.mp4" });
+    await t.open({ streamId: "s1", path: "C:/x.mp4", sourceColor: HD });
     // The port is per-stream: the request must name the stream it's for, or the
     // preload can't route that stream's frames to this channel.
     expect(api.requestPort).toHaveBeenCalledWith("s1");
@@ -299,7 +326,7 @@ describe("GpuTransport", () => {
     const t = new GpuTransport();
     const frames: number[] = [];
     t.onFrame((_b, ptsUs) => frames.push(ptsUs));
-    await t.open({ streamId: "s1", path: "C:/x.mp4" });
+    await t.open({ streamId: "s1", path: "C:/x.mp4", sourceColor: HD });
     const mine = getPort()!;
 
     // A second session opens and its handoff broadcasts to us too.
@@ -325,7 +352,7 @@ describe("GpuTransport", () => {
     const device = installFakeSlotFenceDevice();
     const t = new GpuTransport();
     t.onFrame(() => {});
-    await t.open({ streamId: "rf1", path: "C:/x.mp4" });
+    await t.open({ streamId: "rf1", path: "C:/x.mp4", sourceColor: HD });
     const port = getPort()!;
 
     port.onmessage!({ data: delegatedFrame("rf1", 2, 10, makeFakeBitmap(1)) });
@@ -350,7 +377,7 @@ describe("GpuTransport", () => {
     const device = installFakeSlotFenceDevice();
     const t = new GpuTransport();
     // Deliberately NO onFrame: nothing consumes, nothing paints.
-    await t.open({ streamId: "rf2", path: "C:/x.mp4" });
+    await t.open({ streamId: "rf2", path: "C:/x.mp4", sourceColor: HD });
     const port = getPort()!;
 
     port.onmessage!({ data: delegatedFrame("rf2", 1, 10, makeFakeBitmap(1)) });
@@ -372,7 +399,7 @@ describe("GpuTransport", () => {
     const device = installFakeSlotFenceDevice();
     const t = new GpuTransport();
     t.onFrame(() => {});
-    await t.open({ streamId: "rf3", path: "C:/x.mp4" });
+    await t.open({ streamId: "rf3", path: "C:/x.mp4", sourceColor: HD });
     const port = getPort()!;
 
     for (let slot = 0; slot < 3; slot++) {
@@ -396,7 +423,7 @@ describe("GpuTransport", () => {
     const errors: string[] = [];
     t.onFrame(() => {});
     t.onError((reason) => errors.push(reason));
-    await t.open({ streamId: "rf-ack-failed", path: "C:/x.mp4" });
+    await t.open({ streamId: "rf-ack-failed", path: "C:/x.mp4", sourceColor: HD });
     const port = getPort()!;
     port.postMessage = vi.fn(() => {
       throw new Error("port closed");
@@ -422,7 +449,7 @@ describe("GpuTransport", () => {
     const device = installFakeSlotFenceDevice();
     const t = new GpuTransport();
     t.onFrame(() => {});
-    await t.open({ streamId: "rf4", path: "C:/x.mp4" });
+    await t.open({ streamId: "rf4", path: "C:/x.mp4", sourceColor: HD });
     const port = getPort()!;
     port.onmessage!({ data: delegatedFrame("rf4", 0, 10, makeFakeBitmap(1)) });
 
@@ -442,7 +469,7 @@ describe("GpuTransport", () => {
     const device = installFakeSlotFenceDevice();
     const t = new GpuTransport();
     t.onFrame(() => {});
-    await t.open({ streamId: "rf5", path: "C:/x.mp4" });
+    await t.open({ streamId: "rf5", path: "C:/x.mp4", sourceColor: HD });
     const port = getPort()!;
     port.onmessage!({ data: delegatedFrame("rf5", 0, 10, makeFakeBitmap(1)) });
     expect(t.handoffTimings()!.barrierModeObserved).toBe("rendererFence");
@@ -458,7 +485,7 @@ describe("GpuTransport", () => {
     const t = new GpuTransport();
     const delivered = vi.fn(); const error = vi.fn();
     t.onFrame(delivered); t.onError(error);
-    await t.open({ streamId: "rf6", path: "C:/x.mp4" });
+    await t.open({ streamId: "rf6", path: "C:/x.mp4", sourceColor: HD });
     const port = getPort()!;
     port.onmessage!({ data: delegatedFrame("rf6", 0, 10, makeFakeBitmap(1)) });
 
@@ -476,7 +503,7 @@ describe("GpuTransport", () => {
     installFakeSlotFenceDevice();
     const t = new GpuTransport();
     t.onFrame(() => {});
-    await t.open({ streamId: "rf7", path: "C:/x.mp4" });
+    await t.open({ streamId: "rf7", path: "C:/x.mp4", sourceColor: HD });
     const port = getPort()!;
     port.onmessage!({
       data: {

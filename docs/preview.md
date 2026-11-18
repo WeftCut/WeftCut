@@ -189,7 +189,9 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   I420P10) bytes go over classic IPC
   ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
   The compositor's own ingest pass converts them to RGB using the source's
-  color tags, never through `createImageBitmap`, which always applies BT.601
+  resolved colour (`resolveSourceColor`, the one rule every lane shares; see
+  [`conformance.md`](conformance.md#decode-color-tags)), never through
+  `createImageBitmap`, which always applies BT.601
   ([ADR 0032](adr/0032-cpu-plane-yuv-converts-in-owned-shaders.md)). The gate
   is `preview-sw-color.spec.ts`.
 - **Software requests continue; they do not re-seek.** The native session

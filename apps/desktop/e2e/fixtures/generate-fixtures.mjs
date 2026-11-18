@@ -52,6 +52,13 @@ export const MATRIX = [
   { color: "601ltd" },
   { color: "709full" },
   { color: "601full" },
+  // the chart with NO colour tag in stream or container, one each side of the
+  // absent-tag rule's 720-line split (720x480 BT.601, 1080p BT.709, both
+  // limited) — every preview lane and both export decode engines must agree on
+  // it (preview-sw-color, preview-hw-color, preview-lite-color,
+  // color-conformance)
+  { colorUntagged: "sd" },
+  { colorUntagged: "hd" },
   // the 709ltd chart as color-tagged 10-bit ProRes 422 HQ — the export
   // decode-engine ProRes fidelity gate (export-prores-fidelity.spec.ts)
   { colorProres: true },

@@ -7,6 +7,7 @@
 // (`SourceDecoderPool.ts`), which acquires it whenever the resolved engine is ffmpeg.
 import type { PreviewDecodeSession, PreviewDecodeDevice } from "./session";
 import type { FfmpegLane } from "./decodeEngine";
+import type { SourceColor } from "./ffprobeColorSpace";
 import { FrameRing } from "./FrameRing";
 import type { DecodeTransport } from "./transports/DecodeTransport";
 import type { HandoffTimingSummary } from "./transports/handoffTimings";
@@ -46,7 +47,7 @@ export interface FfmpegSourceInit {
   mediaId: string;
   hardwareEvidenceIdentity?: { layerId: string; mediaId: string };
   sourcePath: string;
-  sourceColor?: VideoColorSpaceInit;
+  sourceColor: SourceColor;
   codec?: string | null;
   pixFmt?: string | null;
   /// Media dimensions — threaded into `pickInitialLane`'s classKey so the
@@ -353,13 +354,12 @@ export class FfmpegSource implements PreviewDecodeSession {
     const streamId = `ffmpeg:${lane}:${this.layerId}:${nextStreamSeq++}`;
     let failure: { error: unknown } | null = null;
     try {
-      // Conditional spread, not `sourceColor: this.init.sourceColor` —
-      // exactOptionalPropertyTypes rejects an explicit `undefined` for the
-      // optional `sourceColor?`/`poolSize?` fields on `DecodeTransportOpen`.
+      // Conditional spreads — exactOptionalPropertyTypes rejects an explicit
+      // `undefined` for the optional fields on `DecodeTransportOpen`.
       await transport.open({
         streamId,
         path: this.init.sourcePath,
-        ...(this.init.sourceColor !== undefined ? { sourceColor: this.init.sourceColor } : {}),
+        sourceColor: this.init.sourceColor,
         ...(this.init.poolSize !== undefined ? { poolSize: this.init.poolSize } : {}),
         ...(this.init.width != null ? { codedWidth: this.init.width } : {}),
         ...(this.init.height != null ? { codedHeight: this.init.height } : {}),

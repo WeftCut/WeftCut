@@ -21,6 +21,9 @@ import {
   HW_BUDGET_RESERVATION_MISMATCH,
 } from "../../../shared/ipc";
 import type { DecodeTransport } from "./transports/DecodeTransport";
+import { resolveSourceColor } from "./ffprobeColorSpace";
+
+const HD = resolveSourceColor({ height: 1080 });
 
 /// `errorDuringOpen`: the transport also calls `onError` before its open settles
 /// (a GPU port error racing the open). A failed open must still be handled once.
@@ -54,7 +57,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
   it("refills from ring coverage rather than issuing an IPC request for every display tick", async () => {
     const gpu = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "refill", mediaId: "m", sourcePath: "clip.mp4", componentAvailable: true, forceLane: "hardware" },
+      { layerId: "refill", mediaId: "m", sourcePath: "clip.mp4", sourceColor: HD, componentAvailable: true, forceLane: "hardware" },
       { makeGpu: () => gpu.t },
     );
     let frontier = -1;
@@ -79,7 +82,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     let release!: () => void;
     gpu.t.open = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
     const src = new FfmpegSource(
-      { layerId: "cold", mediaId: "m", sourcePath: "clip.mp4", componentAvailable: true, forceLane: "hardware" },
+      { layerId: "cold", mediaId: "m", sourcePath: "clip.mp4", sourceColor: HD, componentAvailable: true, forceLane: "hardware" },
       { makeGpu: () => gpu.t },
     );
     try {
@@ -95,7 +98,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     const sw = fakeTransport();
     const onFatal = vi.fn();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     src.onFatalError(onFatal);
@@ -134,7 +137,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     const sw = fakeTransport();
     const onFatal = vi.fn();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     src.onFatalError(onFatal);
@@ -151,7 +154,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     await src.ensureReady();
@@ -171,7 +174,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     await src.ensureReady();
@@ -191,7 +194,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     await src.ensureReady();
@@ -216,7 +219,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
       {
         layerId: "L",
         mediaId: "m",
-        sourcePath: "C:/x.mp4",
+        sourcePath: "C:/x.mp4", sourceColor: HD,
         codec: "h264",
         pixFmt: "yuv420p",
         width: 3840,
@@ -245,7 +248,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
       {
         layerId: "upcoming",
         mediaId: "m",
-        sourcePath: "C:/x.mp4",
+        sourcePath: "C:/x.mp4", sourceColor: HD,
         codec: "h264",
         pixFmt: "yuv420p",
         componentAvailable: true,
@@ -281,7 +284,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
       {
         layerId: "upcoming",
         mediaId: "m",
-        sourcePath: "C:/x.mp4",
+        sourcePath: "C:/x.mp4", sourceColor: HD,
         codec: "h264",
         pixFmt: "yuv420p",
         componentAvailable: true,
@@ -318,7 +321,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
       {
         layerId: "upcoming",
         mediaId: "m",
-        sourcePath: "C:/x.mp4",
+        sourcePath: "C:/x.mp4", sourceColor: HD,
         codec: "h264",
         pixFmt: "yuv420p",
         componentAvailable: true,
@@ -352,7 +355,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
     const sw = fakeTransport();
     const onFatal = vi.fn();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     src.onFatalError(onFatal);
@@ -374,7 +377,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
     const sw = fakeTransport({ openRejects: "sw-open-failed" });
     const onFatal = vi.fn();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     src.onFatalError(onFatal);
@@ -392,7 +395,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
       {
         layerId: "L",
         mediaId: "m",
-        sourcePath: "C:/x.mp4",
+        sourcePath: "C:/x.mp4", sourceColor: HD,
         codec: "h264",
         pixFmt: "yuv420p",
         componentAvailable: true,
@@ -414,7 +417,7 @@ describe("FfmpegSource — hardware transport routing by HW lane", () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       {
         makeGpu: () => gpu.t,
         makeSw: () => sw.t,
@@ -433,7 +436,7 @@ describe("FfmpegSource — hardware transport routing by HW lane", () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       {
         makeGpu: () => gpu.t,
         makeSw: () => sw.t,
@@ -451,7 +454,7 @@ describe("FfmpegSource — hardware transport routing by HW lane", () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       {
         makeGpu: () => gpu.t,
         makeSw: () => sw.t,
@@ -470,7 +473,7 @@ describe("FfmpegSource — hardware transport routing by HW lane", () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       {
         makeGpu: () => gpu.t,
         makeSw: () => sw.t,
@@ -490,7 +493,7 @@ describe("FfmpegSource — hardware transport routing by HW lane", () => {
 // guard for "software behavior unchanged").
 describe("FfmpegSource — I420P10 profile for a 10-bit source on the videotoolbox lane", () => {
   const proresInit = {
-    layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mov",
+    layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mov", sourceColor: HD,
     codec: "prores", pixFmt: "yuv422p10le", componentAvailable: true,
   };
 
@@ -533,7 +536,7 @@ describe("FfmpegSource — I420P10 profile for a 10-bit source on the videotoolb
   it("keeps an 8-bit source on the videotoolbox lane NV12 (no outFormat key)", async () => {
     const makeSw = vi.fn(() => fakeTransport().t);
     const src = new FfmpegSource(
-      { ...proresInit, sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p" },
+      { ...proresInit, sourcePath: "/tmp/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p" },
       {
         makeSw,
         pickLane: async () => ({ lane: "hardware" as const, hwLane: "videotoolbox", device: null }),
@@ -597,7 +600,7 @@ describe("FfmpegSource — HW open failure: capacity vs capability", () => {
       {
         layerId: "L",
         mediaId: "m-cap",
-        sourcePath: "C:/x.mp4",
+        sourcePath: "C:/x.mp4", sourceColor: HD,
         codec: "h264",
         pixFmt: "yuv420p",
         componentAvailable: true,
@@ -637,7 +640,7 @@ describe("FfmpegSource — HW open failure: capacity vs capability", () => {
       const transport = fakeTransport({ openRejects: RESOURCE_CAPACITY_EXCEEDED });
       const time = vi.spyOn(performance, 'now').mockReturnValue(0);
       const fatal = vi.fn();
-      const src = new FfmpegSource({ layerId: 'pressure', mediaId: 'm-cap', sourcePath: 'fixture', componentAvailable: true }, {
+      const src = new FfmpegSource({ layerId: 'pressure', mediaId: 'm-cap', sourcePath: 'fixture', sourceColor: HD, componentAvailable: true }, {
         makeGpu: () => transport.t, makeSw: () => transport.t,
         pickLane: async () => lane === 'software' ? { lane: 'software', hwLane: null, device: null }
           : { lane: 'hardware', hwLane: lane, device: null },
@@ -706,7 +709,7 @@ describe("FfmpegSource — live playback-resolution change", () => {
   const swSource = () => {
     const opened: ReturnType<typeof fakeTransport>[] = [];
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mov", codec: "prores", pixFmt: "yuv422p10le", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mov", sourceColor: HD, codec: "prores", pixFmt: "yuv422p10le", componentAvailable: true },
       {
         makeGpu: () => fakeTransport().t,
         makeSw: () => { const t = fakeTransport(); opened.push(t); return t.t; },
@@ -755,7 +758,7 @@ describe("FfmpegSource — live playback-resolution change", () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       {
         makeGpu: () => gpu.t,
         makeSw: () => sw.t,
@@ -778,7 +781,7 @@ describe("FfmpegSource — live playback-resolution change", () => {
     const gpu = fakeTransport();
     const opened: ReturnType<typeof fakeTransport>[] = [];
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m-carry", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m-carry", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       {
         makeGpu: () => gpu.t,
         makeSw: () => { const t = fakeTransport(); opened.push(t); return t.t; },
@@ -814,7 +817,7 @@ describe("FfmpegSource — lane transitions leave a trail", () => {
     sw: ReturnType<typeof fakeTransport>,
   ) =>
     new FfmpegSource(
-      { layerId, mediaId, sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId, mediaId, sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
     );
 
@@ -882,7 +885,7 @@ describe("FfmpegSource — lane transitions leave a trail", () => {
     // `setPlaybackScaleDiv` reuses the fallback's dispose-and-`openLane`
     // mechanism, so the trail — not the call site — is what keeps it quiet.
     const src = new FfmpegSource(
-      { layerId: "L-scale", mediaId: "m-scale", sourcePath: "C:/x.mov", codec: "prores", pixFmt: "yuv422p10le", componentAvailable: true },
+      { layerId: "L-scale", mediaId: "m-scale", sourcePath: "C:/x.mov", sourceColor: HD, codec: "prores", pixFmt: "yuv422p10le", componentAvailable: true },
       {
         makeGpu: () => fakeTransport().t,
         makeSw: () => fakeTransport().t,
@@ -903,7 +906,7 @@ describe("FfmpegSource — lane transitions leave a trail", () => {
 describe("FfmpegSource — backward seek", () => {
   const makeSrc = (t: ReturnType<typeof fakeTransport>) =>
     new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => t.t, makeSw: () => t.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
     );
 
@@ -1010,7 +1013,7 @@ describe("FfmpegSource — dispose racing the recovery path", () => {
     vi.mocked(gpu.t.dispose).mockImplementation(() => disposeGate);
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
     );
     const ready = src.ensureReady();
@@ -1029,7 +1032,7 @@ describe("FfmpegSource — dispose racing the recovery path", () => {
     const sw = fakeTransport({ openRejects: "sw-open-boom" });
     const onFatal = vi.fn();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => sw.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "software" as const, hwLane: null, device: null }) },
     );
     src.onFatalError(onFatal);
@@ -1049,7 +1052,7 @@ describe("FfmpegSource — dispose racing the recovery path", () => {
     vi.mocked(gpu.t.dispose).mockImplementation(() => disposeGate);
     const sw = fakeTransport();
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
       { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
     );
     const ready = src.ensureReady();
@@ -1075,7 +1078,7 @@ describe("FfmpegSource — one transport switch at a time", () => {
   };
   const tick = () => new Promise((r) => setTimeout(r, 0));
   const init = (mediaId: string) =>
-    ({ layerId: "L", mediaId, sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true });
+    ({ layerId: "L", mediaId, sourcePath: "/tmp/x.mp4", sourceColor: HD, codec: "h264", pixFmt: "yuv420p", componentAvailable: true });
   const copyBack = async () => ({ lane: "hardware" as const, hwLane: "vaapi", device: "/dev/dri/renderD128" });
   const software = async () => ({ lane: "software" as const, hwLane: null, device: null });
   /// Whether the next open of `mediaId` would still probe hardware (an

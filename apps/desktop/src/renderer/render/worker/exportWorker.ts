@@ -452,16 +452,18 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           // blind-spot source may have NO proxy at all (it skips the pre-export
           // full-proxy wait); the native handle never reads proxyAssetUrl.
           if (!url && !nativeExport) return;
+          // The media's resolved colour, for original AND proxy decodes (a
+          // proxy preserves the source colorimetry; its own colr tag outranks
+          // this per-field in withDefaultColorSpace).
+          const sourceColor = req.project.mediaColor[g.mediaId];
+          if (!sourceColor) throw new Error(`Internal: no colour for media ${g.mediaId} in the export snapshot.`);
           const handle = exportPool.acquire({
             layerId: g.clips[0]!.layerId,
             mediaId: g.mediaId,
             handleKey: g.key,
             exportFrameWindow: req.frameWindows?.[g.mediaId],
             proxyAssetUrl: url ?? "",
-            // The source's real color tags, for original AND proxy decodes (a
-            // proxy preserves the source colorimetry; its own colr tag outranks
-            // this per-field in withDefaultColorSpace).
-            sourceColor: req.project.mediaColor[g.mediaId],
+            sourceColor,
             sourceStartPtsUs: req.project.mediaStartPtsUs[g.mediaId] ?? null,
             ...(tenBitSource ? { tenBitLane: true, preferSoftware: true } : {}),
             // The WebCodecs export lane composites each decoded VideoFrame via a

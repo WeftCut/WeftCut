@@ -10,6 +10,7 @@ vi.mock("./transports/GpuTransport", () => ({ GpuTransport: class {} }));
 vi.mock("../../ipc", () => ({ logEmit: vi.fn(async () => {}) }));
 
 import { SourceHandle, SourceMedia } from "./SourceDecoderPool";
+import { resolveSourceColor } from "./ffprobeColorSpace";
 
 interface FakePacket {
   timestamp: number; // seconds — mediabunny's EncodedPacket unit
@@ -89,7 +90,10 @@ class FakeVideoDecoder {
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 function makeHandle(): SourceHandle {
-  return new SourceHandle("layer-1", new SourceMedia("media-1", "weftcut-media://localhost/test.mp4"));
+  return new SourceHandle(
+    "layer-1",
+    new SourceMedia("media-1", "weftcut-media://localhost/test.mp4", resolveSourceColor({ height: 1080 })),
+  );
 }
 
 function warnings(): string[] {

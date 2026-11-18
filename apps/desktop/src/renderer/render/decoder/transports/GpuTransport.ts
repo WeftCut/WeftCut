@@ -18,6 +18,7 @@ import type {
   PreviewGpuSlotAck,
 } from "../../../../shared/ipc";
 import type { DecodeTransport, DecodeTransportOpen } from "./DecodeTransport";
+import type { SourceColor } from "../ffprobeColorSpace";
 import {
   HandoffTimings,
   type FenceHandoffStats,
@@ -85,15 +86,13 @@ interface PortErrorMsg {
 }
 type PortMsg = PortFrameMsg | PortEofMsg | PortErrorMsg;
 
-/// Fill a `PreviewGpuColorSpace` from the source's decode-time color tags,
-/// defaulting to BT.709/limited — the same HD default the WebCodecs path's
-/// `withDefaultColorSpace` lands on — when the source carries no tags.
-export function deriveColorSpace(sourceColor?: VideoColorSpaceInit): PreviewGpuColorSpace {
+/// The source's resolved colour in the shape `previewGpu.open` carries.
+export function deriveColorSpace(sourceColor: SourceColor): PreviewGpuColorSpace {
   return {
-    primaries: sourceColor?.primaries ?? "bt709",
-    transfer: sourceColor?.transfer ?? "bt709",
-    matrix: sourceColor?.matrix ?? "bt709",
-    range: sourceColor?.fullRange ? "full" : "limited",
+    primaries: sourceColor.primaries,
+    transfer: sourceColor.transfer,
+    matrix: sourceColor.matrix,
+    range: sourceColor.fullRange ? "full" : "limited",
   };
 }
 
