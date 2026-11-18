@@ -177,12 +177,24 @@ content end, and switching it off calls `fit_composition_to_layers`.
 
 ## MediaItem
 
-`path_rel` (workspace-relative, e.g. `Media/clip.mp4`) is authoritative. On load
-`reconcileMediaPaths` (`state/persistence.ts`) recomputes `path_abs =
-join(workspace, path_rel)`, so a moved workspace keeps its references. Items with
-`path_rel === null` (import copy pending, or synthesized `Cache/` media) keep
-their stored `path_abs`. A missing file shows as unavailable; the project still
-loads.
+`path_rel` is a project path (ADR 0175): `/`-separated and relative, every
+segment a name Windows, macOS and Linux accept (`src/shared/projectPath.ts`,
+Rust `state/project_path.rs`), e.g. `Media/sub/clip.mp4`. It is authoritative.
+`project.json` holds no absolute path for a file inside the folder: the disk
+form (`state/projectFile.ts`) keeps `path_abs` only for external media
+(`path_rel === null`, an import copy still pending) and drops the derivative
+paths and the route's readiness slots. On load `mediaAtFolder` sets `path_abs =
+toNative(folder, path_rel)` (`state/projectPathNative.ts`, the only conversion
+to an OS path), so a moved or copied folder keeps its references on any OS, and
+asks Rust which derivatives the cache already holds for each hash
+(`hydrate_derivatives`) before the project is shown. A missing file shows as
+unavailable; the project still loads. A `path_rel` that is not a project path
+refuses the open, naming the item.
+
+Import names are portable: Rust picks each name with `portable_file_name`
+(reserved characters to `_`, device names suffixed, at most 255 bytes) and adds
+`-2`, `-3` when a name is taken in any letter case. Relink walks all of `Media/`
+and heals a renamed file back to its recorded path.
 
 What the disk holds for each item is read by `state/poolFiles.ts`: the source's
 state (present, missing or changed; ADR 0153) and whether each derivative slot
@@ -673,14 +685,16 @@ The workspace folder **is** the project; originals are copied in on import.
 ├── project.json        canonical state; autosaved, replaced atomically (see Saving)
 ├── project.pre-v{n}.json  pre-upgrade bytes (see Versioning)
 ├── view.json           UI view state for this project
-├── Media/              imported originals (workspace owns the bytes)
+├── Media/              imported originals (workspace owns the bytes), any
+│                       subfolders; Voiceover/ holds synthesized speech
 ├── Motifs/<id>/        the Motifs the project renders, named in project.json's
 │                       motifs table; edited in place (see motifs.md)
 ├── Cache/              derivatives, regenerable: proxies, thumbnails, filmstrip,
 │                       waveforms, audio (48 kHz conform), frames, raster (Motif
 │                       frames <hash>/<frame>.wfrm, see motifs.md#frame-cache),
 │                       transcribe-audio, descriptions, shots,
-│                       shot-stats, voiceover, inline-subs (reserved)
+│                       shot-stats, voiceover (TTS request cache; the pooled
+│                       copy is in Media/Voiceover/), inline-subs (reserved)
 ├── Backups/            project.json copy every 50 commits or 5 min; newest 20 kept;
 │                       motifs/: every Motif revision the table records, for undo
 └── Renders/            default export destination
@@ -731,7 +745,12 @@ full, no permission, file in use, folder missing, read-only drive, else the
 error code), the last successful save and the project folder, with Retry now,
 Save As… and Open folder ([status-log.md § Bar](status-log.md#bar)).
 Save As works out of a failing folder: it writes the whole project to the new
-one, so the old folder's failed flush does not stop it. The log gets one `Warn`
+one, so the old folder's failed flush does not stop it. It copies the project's
+content first (`state/projectContent.ts`: `Media/`, `TASTE.md`, `export.json`,
+`view.json`; Motifs through their own copy), cloning each file where the
+filesystem can, else hard-linking on one volume, else copying, and keeping
+modification times; `Cache/`, `Backups/` and logs stay behind, so the copy
+rebuilds its proxies. `project.json` is written last. The log gets one `Warn`
 row when the state turns and one `Info` row when a write succeeds again.
 
 Quitting runs the final save before anything shuts down. If it fails with edits
@@ -893,6 +912,17 @@ without its step cannot be repaired later.
   `revision: null`, shown as missing; the open is never refused for a Motif. A
   folder already holding a package is kept, so a repeated upgrade changes
   nothing. The v3 → v4 step reads Motif sizes from `Motifs/` first.
+- **v6 → v7**: files are named by project paths (ADR 0175). Each `path_rel`
+  becomes `/`-separated NFC; a segment another OS refuses is cleaned (reserved
+  characters to `_`, trailing dot or space dropped, a device name suffixed,
+  255 bytes at most) and paths that then collide case-folded take `-2`, `-3`;
+  a path that is absolute or climbs out with `..` becomes external media. The
+  step drops `path_abs` where `path_rel` is set, the derivative paths and the
+  route's slots. It plans file moves the open performs: a full proxy under its
+  legacy `<hash>.mp4` name is renamed to its recipe name, and a TTS voiceover
+  pooled from `Cache/voiceover/` is copied to `Media/Voiceover/` and hashed on
+  open (a failed copy is listed as missing media). A renamed file is found by
+  content on open. The step never refuses a project.
 
 ## Time mapping (schema 3)
 
