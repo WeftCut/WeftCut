@@ -1,0 +1,69 @@
+{
+  "cases": [
+    {
+      "width": 720,
+      "height": 480,
+      "hd": false
+    },
+    {
+      "width": 720,
+      "height": 576,
+      "hd": false
+    },
+    {
+      "width": 1024,
+      "height": 576,
+      "hd": false
+    },
+    {
+      "width": 1279,
+      "height": 576,
+      "hd": false
+    },
+    {
+      "width": 960,
+      "height": 540,
+      "hd": false
+    },
+    {
+      "width": 1024,
+      "height": 577,
+      "hd": true
+    },
+    {
+      "width": 1024,
+      "height": 600,
+      "hd": true
+    },
+    {
+      "width": 1280,
+      "height": 544,
+      "hd": true
+    },
+    {
+      "width": 1280,
+      "height": 576,
+      "hd": true
+    },
+    {
+      "width": 1280,
+      "height": 720,
+      "hd": true
+    },
+    {
+      "width": 1920,
+      "height": 800,
+      "hd": true
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "hd": true
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "hd": true
+    }
+  ]
+}

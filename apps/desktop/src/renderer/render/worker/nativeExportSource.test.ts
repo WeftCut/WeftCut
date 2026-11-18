@@ -61,8 +61,8 @@ const H = 2;
 const DUR = 33_333;
 const WINDOW = 6;
 
-const HD = resolveSourceColor({ height: 1080 });
-const BT470BG_FULL = resolveSourceColor({ height: 1080, color_matrix: "bt470bg", color_range: "pc" });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
+const BT470BG_FULL = resolveSourceColor({ width: 1920, height: 1080, color_matrix: "bt470bg", color_range: "pc" });
 
 function makeHandle(
   sourceColor: SourceColor = HD,
@@ -305,7 +305,7 @@ describe("NativeExportSourceHandle", () => {
   });
 
   it("stamps the colour it was given on an untagged SD source, not a default of its own", async () => {
-    const { handle, port } = makeHandle(resolveSourceColor({ height: 480 }));
+    const { handle, port } = makeHandle(resolveSourceColor({ width: 720, height: 480 }));
     await handle.ensureReady();
     port.deliver(frameMsg(0));
     const nv = handle.ring.frameAt(0) as NativeNv12Frame;

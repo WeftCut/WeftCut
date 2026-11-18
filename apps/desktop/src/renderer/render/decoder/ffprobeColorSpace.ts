@@ -21,14 +21,26 @@ export interface SourceColor {
 }
 
 /// What the rule reads off a `MediaSummary`: the ffprobe tags and the
-/// ORIGINAL's probed height.
+/// ORIGINAL's probed size.
 export interface SourceColorProbe extends FfprobeColor {
+  width: number | null;
   height: number | null;
 }
 
-/// Originals shorter than this read an absent tag as SMPTE 170M (BT.601),
-/// the rest as BT.709.
-const HD_MIN_HEIGHT = 720;
+/// An original that declares no colour is HD (BT.709) when it is at least this
+/// wide or taller than `SD_MAX_HEIGHT`, and SD (SMPTE 170M) otherwise. Width
+/// counts so that a cropped HD picture (1280x544, 1920x800) stays HD.
+const HD_MIN_WIDTH = 1280;
+const SD_MAX_HEIGHT = 576;
+
+/// Whether an original of this size that declares no colour reads as HD. An
+/// unknown size reads as HD. `VideoStreamMeta::undeclared_is_hd` in the native
+/// crate is the same rule for the ffmpeg jobs; both are held to
+/// `undeclaredColourGolden.fixture.json`.
+export function undeclaredIsHd(width: number | null, height: number | null): boolean {
+  if (width === null || height === null) return true;
+  return width >= HD_MIN_WIDTH || height > SD_MAX_HEIGHT;
+}
 
 // SDR-only mapping: TS's lib.dom WebCodecs unions carry no HDR/wide-gamut enum
 // values, and such sources are 10-bit and take WeftCut's proxy path anyway.
@@ -52,18 +64,18 @@ const TRANSFER: Record<string, VideoTransferCharacteristics> = {
 };
 
 /// The colour every lane decodes `media` with. Per field: the mapped ffprobe
-/// tag when there is one; otherwise SMPTE 170M below 720 lines and BT.709 at
-/// or above, and limited range.
+/// tag when there is one; otherwise BT.709 for an HD original and SMPTE 170M
+/// for an SD one (`undeclaredIsHd`), and limited range.
 ///
-/// Keyed on the ORIGINAL's probed height, never a decode target's or a
+/// Keyed on the ORIGINAL's probed size, never a decode target's or a
 /// frame's: a proxy or a downscaled preview frame of the same source must
-/// resolve the same colour. An unknown height reads as HD.
+/// resolve the same colour.
 ///
 /// The SD/HD split is a convention, not what every tool does: ffmpeg/swscale
 /// read an unspecified matrix as BT.601 at every size, so the colour gates
 /// hand the analyzer the intended matrix explicitly (docs/conformance.md).
 export function resolveSourceColor(media: SourceColorProbe): SourceColor {
-  const absent = media.height !== null && media.height < HD_MIN_HEIGHT ? "smpte170m" : "bt709";
+  const absent = undeclaredIsHd(media.width, media.height) ? "bt709" : "smpte170m";
   const matrix = mapped(MATRIX, media.color_matrix);
   return {
     primaries: mapped(PRIMARIES, media.color_primaries) ?? absent,

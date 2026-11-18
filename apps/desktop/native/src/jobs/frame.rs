@@ -72,7 +72,10 @@ pub async fn extract(cache: &CacheLayout, media: &MediaItem, t_us: TimeUs) -> Re
             "-frames:v",
             "1",
             "-vf",
-            &format!("scale={FRAME_WIDTH}:-2"),
+            &super::jpeg::scale_filter(
+                &format!("scale={FRAME_WIDTH}:-2"),
+                media.metadata.video.as_ref(),
+            ),
             "-q:v",
             "3",
             "-update",

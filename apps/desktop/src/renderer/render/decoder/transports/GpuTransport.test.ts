@@ -15,7 +15,7 @@ import { setSlotFenceBackend, sharedSlotFenceQueue, type SlotFenceBackend } from
 const session = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../../ipc/decodeSession", () => ({ openDecodeSession: session.open }));
 
-const HD = resolveSourceColor({ height: 1080 });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 /// The transport's end of its session port; `deliver` stands in for the preload.
 class FakePort {
@@ -303,7 +303,7 @@ describe("GpuTransport", () => {
     // be opened with it.
     const { api } = installApi();
     const sd = new GpuTransport();
-    await sd.open({ streamId: "sd", path: "C:/sd.mp4", sourceColor: resolveSourceColor({ height: 480 }) });
+    await sd.open({ streamId: "sd", path: "C:/sd.mp4", sourceColor: resolveSourceColor({ width: 720, height: 480 }) });
     expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
       colorSpace: { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m", range: "limited" },
     }));
@@ -313,7 +313,7 @@ describe("GpuTransport", () => {
     await full.open({
       streamId: "full",
       path: "C:/full.mp4",
-      sourceColor: resolveSourceColor({ height: 1080, color_matrix: "smpte170m", color_range: "pc" }),
+      sourceColor: resolveSourceColor({ width: 1920, height: 1080, color_matrix: "smpte170m", color_range: "pc" }),
     });
     expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
       colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "smpte170m", range: "full" },

@@ -23,6 +23,7 @@ pub mod filmstrip;
 mod frame;
 pub mod hwaccel;
 pub mod import;
+mod jpeg;
 pub mod proxy;
 pub mod proxy_decision;
 pub mod quick_proxy;

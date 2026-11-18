@@ -14,7 +14,7 @@ import { resolveSourceColor } from "../ffprobeColorSpace";
 const session = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../../ipc/decodeSession", () => ({ openDecodeSession: session.open }));
 
-const HD = resolveSourceColor({ height: 1080 });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 /// The transport's end of its session port; `deliver` stands in for main.
 class FakePort {
@@ -251,7 +251,7 @@ describe("SwTransport", () => {
   it("stamps the open-time sourceColor on every frame, whatever it is", async () => {
     // An untagged SD source's colour: the lane must carry it, not a default
     // of its own.
-    const sd = resolveSourceColor({ height: 480 });
+    const sd = resolveSourceColor({ width: 720, height: 480 });
     const { port } = installApi();
     const t = new SwTransport();
     const frames: NativeNv12Frame[] = [];
@@ -266,7 +266,7 @@ describe("SwTransport", () => {
     const tFull = new SwTransport();
     const fullFrames: NativeNv12Frame[] = [];
     tFull.onFrame((f) => fullFrames.push(f as NativeNv12Frame));
-    const full = resolveSourceColor({ height: 1080, color_matrix: "bt709", color_range: "pc" });
+    const full = resolveSourceColor({ width: 1920, height: 1080, color_matrix: "bt709", color_range: "pc" });
     await tFull.open({ streamId: "s2", path: "C:/y.mp4", sourceColor: full });
     second.port.deliver(frame(1));
     expect(fullFrames[0]!.colorSpace).toEqual(full);

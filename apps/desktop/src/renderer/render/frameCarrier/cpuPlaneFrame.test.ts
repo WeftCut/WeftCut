@@ -5,7 +5,7 @@ import { isNativeNv12Frame } from "../decoder/nv12Frame";
 import { isTenBitFrame } from "../decoder/tenBitFrame";
 import { cpuPlaneFrame } from "./cpuPlaneFrame";
 
-const HD = resolveSourceColor({ height: 1080 });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 const msg = (over: Partial<DecodeWireFrame>): DecodeWireFrame => ({
   kind: "bytes",

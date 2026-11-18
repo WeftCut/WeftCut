@@ -59,8 +59,14 @@ self-description is pinned by `proxy_carries_source_color_tags_and_colr_atom`.
 the one complete colour every decode lane uses, per field:
 
 1. the mapped ffprobe tag;
-2. when absent: SMPTE 170M if the ORIGINAL's probed height is below 720,
-   BT.709 otherwise; limited range.
+2. when absent: BT.709 if the ORIGINAL is at least 1280 wide or taller than
+   576 lines, SMPTE 170M otherwise (`undeclaredIsHd`; width counts so that a
+   cropped HD picture such as 1280x544 stays HD); limited range.
+
+The ffmpeg jobs that convert colour themselves (the JPEG derivatives, below)
+use the same size rule from the native crate
+(`VideoStreamMeta::undeclared_is_hd`); one list of cases,
+`undeclaredColourGolden.fixture.json`, holds both.
 
 The native lanes (software, copy-back hardware, d3d11va, native export decode)
 use it as is. The WebCodecs pools pass it through `withDefaultColorSpace`
@@ -75,11 +81,26 @@ Two lanes need help to show that colour:
   BT.709 when it declares nothing, whatever the config says (observed on macOS
   VideoToolbox). A source whose matrix the rule supplied, and is not BT.709,
   therefore decodes prefer-software on the WebCodecs pools
-  (`decodesInSoftwareForColour`); by the rule it is below 720 lines.
+  (`decodesInSoftwareForColour`); by the rule it is an SD picture.
 - The native software pack converts format and size, never levels
   (`levels_neutral_sws` in `preview_sw/decoder.rs`): swscale would otherwise
   squeeze a full-range `yuvj420p` frame into limited range under a full-range
   label.
+
+## JPEG derivatives
+
+Thumbnails, filmstrip tiles and the MCP `media://…/frame` image are JPEGs. A
+JPEG carries no colour description and every viewer decodes it as BT.601 full
+range, so the extracting ffmpeg call converts each frame to that matrix
+(`jobs/jpeg.rs`): from the frame's own tag when the source declares one, from
+the size rule above when it declares none. Pinned by the Rust test
+`bt709_red_is_red_in_the_jpeg_whether_the_source_declares_its_matrix_or_not`.
+
+Filmstrip tiles carry a recipe number in their cache directory (`orig-2`,
+`quick-2`, `full-2`) and the cache sweep deletes other directories, so a strip
+never mixes tiles from before and after a recipe change. Thumbnails and cached
+MCP frames have no recipe number: ones made before the conversion keep their
+old colour until they are made again.
 
 ffmpeg/swscale read an unspecified matrix as BT.601 at every size, so the
 analyzer never infers a source's colour: every gate passes `--in-matrix` and

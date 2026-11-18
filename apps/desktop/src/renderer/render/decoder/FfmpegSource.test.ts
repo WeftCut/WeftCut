@@ -23,7 +23,7 @@ import {
 import type { DecodeTransport } from "./transports/DecodeTransport";
 import { resolveSourceColor } from "./ffprobeColorSpace";
 
-const HD = resolveSourceColor({ height: 1080 });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 /// `errorDuringOpen`: the transport also calls `onError` before its open settles
 /// (a GPU port error racing the open). A failed open must still be handled once.

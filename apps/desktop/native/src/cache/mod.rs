@@ -54,15 +54,19 @@ pub enum FilmstripSrc {
 
 impl FilmstripSrc {
     /// The exhaustive set of valid tag dir names under `filmstrip/{hash}/`.
-    /// The disk-LRU sweep treats anything else there as pre-provenance
-    /// layout and deletes it.
-    pub const DIR_NAMES: [&'static str; 3] = ["orig", "quick", "full"];
+    /// The disk-LRU sweep treats anything else there as an older layout and
+    /// deletes it.
+    ///
+    /// The `-2` is the tile recipe: bump it whenever the tile's ffmpeg args
+    /// change what a tile looks like, so a strip never mixes tiles of two
+    /// recipes. 2 = converted to the JPEG matrix (`jobs/jpeg.rs`).
+    pub const DIR_NAMES: [&'static str; 3] = ["orig-2", "quick-2", "full-2"];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            FilmstripSrc::Orig => "orig",
-            FilmstripSrc::Quick => "quick",
-            FilmstripSrc::Full => "full",
+            FilmstripSrc::Orig => "orig-2",
+            FilmstripSrc::Quick => "quick-2",
+            FilmstripSrc::Full => "full-2",
         }
     }
 }
@@ -892,7 +896,7 @@ mod tests {
             tmp.path()
                 .join("filmstrip")
                 .join("abc")
-                .join("quick")
+                .join("quick-2")
                 .join("3")
                 .join("000007.jpg"),
         );

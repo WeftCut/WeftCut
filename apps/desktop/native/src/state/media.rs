@@ -101,6 +101,37 @@ pub struct VideoStreamMeta {
     pub color_transfer: Option<String>,
 }
 
+impl VideoStreamMeta {
+    /// Whether a picture of this size that declares no colour reads as HD
+    /// (BT.709) or SD (SMPTE 170M). An unknown size reads as HD. The renderer's
+    /// `undeclaredIsHd` is the same rule for the decode lanes; both are held to
+    /// `undeclaredColourGolden.fixture.json`.
+    pub fn undeclared_is_hd(width: u32, height: u32) -> bool {
+        width == 0 || height == 0 || width >= 1280 || height > 576
+    }
+
+    /// The YCbCr matrix an ffmpeg conversion must be told for this source and
+    /// its proxies, or `None` when ffmpeg reads the right one off the frame: the
+    /// stream declares it, or the picture is RGB and has none.
+    pub fn undeclared_matrix(&self) -> Option<&'static str> {
+        if self.color_matrix.is_some() || self.is_rgb() {
+            return None;
+        }
+        Some(if Self::undeclared_is_hd(self.width, self.height) {
+            "bt709"
+        } else {
+            "smpte170m"
+        })
+    }
+
+    /// ffmpeg's RGB pixel formats, packed (`rgb24`, `bgra`, `x2rgb10le`),
+    /// planar (`gbrp`) and palettised.
+    fn is_rgb(&self) -> bool {
+        let f = self.pix_fmt.as_str();
+        f.contains("rgb") || f.contains("bgr") || f.starts_with("gbr") || f == "pal8"
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioStreamMeta {
     pub sample_rate: u32,
