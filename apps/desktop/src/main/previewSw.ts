@@ -9,6 +9,7 @@
 import type { BrowserWindow } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
 import { reserveDecoderResources } from './resources'
+import { documentOwner } from './frameCarrier/documentOwner'
 
 const sessions = new Map<string, { win: BrowserWindow; cleanup: () => void; release: () => void }>()
 
@@ -59,19 +60,9 @@ export function openPreviewSw(
   }, lane, device, scaleDiv, cadenceDiv, outFormat)
   try { backend.previewSwEnableFlow(streamId) }
   catch (error) { backend.previewSwClose(streamId); throw error }
-  const stop = () => closePreviewSw(backend, streamId)
-  win.webContents.once('destroyed', stop)
-  win.webContents.once('render-process-gone', stop)
-  // Reload releases the old renderer's receipts and decoder session too.
-  win.webContents.on('did-start-navigation', navigation)
-  function navigation(details: { isMainFrame: boolean; isSameDocument: boolean }) {
-    if (details.isMainFrame && !details.isSameDocument) stop()
-  }
-  sessions.set(streamId, { win, release, cleanup: () => {
-    win.webContents.removeListener('destroyed', stop)
-    win.webContents.removeListener('render-process-gone', stop)
-    win.webContents.removeListener('did-start-navigation', navigation)
-  } })
+  // A reload releases the old renderer's receipts and decoder session too.
+  const cleanup = documentOwner(win.webContents).onGone(() => closePreviewSw(backend, streamId))
+  sessions.set(streamId, { win, release, cleanup })
   return { width: info.width, height: info.height }
   } catch (error) { release(); throw error }
 }

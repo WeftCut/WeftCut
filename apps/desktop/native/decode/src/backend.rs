@@ -926,8 +926,8 @@ impl NativeDecode {
     }
 
     /// Tear down a session: wakes a parked producer, abandons the range in
-    /// progress and returns within a bounded grace. No message reaches the
-    /// session's callback after this returns.
+    /// progress and returns within a bounded grace. The session emits nothing
+    /// after this returns; messages it had already queued for JS still arrive.
     #[napi]
     pub fn export_decode_close(&self, session_id: String) -> napi::Result<()> {
         self.export_decode

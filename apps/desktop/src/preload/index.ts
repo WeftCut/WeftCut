@@ -26,8 +26,6 @@ import type {
   PreviewGpuSlotAck,
   PreviewGpuTimingReport,
   PreviewSwFrameMsg,
-  ExportSwMsg,
-  ExportSwOpenReply,
   SystemStats,
   WinCreateOpts,
   WinAction,
@@ -39,11 +37,18 @@ import type {
 } from '../shared/data-root'
 import type { MenuProjection } from '../shared/menu'
 import type { UpdateDownloadResult, UpdateRestartResult, UpdateResume, UpdateStatus } from '../shared/updates'
+import type { ExportDecodeOpenInfo } from '../shared/frameCarrier/wire'
 
 type Listener = (payload: unknown) => void
 
 const previewSwFrames = createPreviewSwFrames()
 ipcRenderer.on('previewSw:frame', (_e, frame: PreviewSwFrameMsg) => previewSwFrames.dispatch(frame))
+// An export decode session's port. A port cannot cross contextBridge, so it
+// reaches the page as a window message tagged with its session id
+// (`openExportDecode` in the renderer).
+ipcRenderer.on('exportDecode:port', (event, data: { sessionId: string }) => {
+  window.postMessage({ weftcutExportDecodePort: data.sessionId }, '*', event.ports)
+})
 
 // The contextBridge surface — the COMPLETE set of things the (untrusted)
 // renderer can ask the main process to do. Grouped, named methods rather than a
@@ -313,30 +318,11 @@ const api: WeftcutApi = {
     },
   },
 
-  // Native SOFTWARE export-decode relay — the EXPORT-side mirror of previewSw.
-  // Implements `WeftcutApi.exportSw`; the single-ordered-channel contract that
-  // keeps control from overtaking frames lives on `ExportSwMsg` in
-  // shared/ipc.ts.
-  exportSw: {
-    open(args: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; creditWindow: number }): Promise<ExportSwOpenReply> {
-      return ipcRenderer.invoke('exportSw:open', args) as Promise<ExportSwOpenReply>
-    },
-    decodeRange(args: { sessionId: string; aUs: number; bUs: number }): void {
-      ipcRenderer.send('exportSw:decodeRange', args)
-    },
-    returnCredit(args: { sessionId: string; credits: number }): void {
-      ipcRenderer.send('exportSw:returnCredit', args)
-    },
-    close(args: { sessionId: string }): void {
-      ipcRenderer.send('exportSw:close', args)
-    },
-    closeAll(): void {
-      ipcRenderer.send('exportSw:closeAll')
-    },
-    onMsg(cb: (m: ExportSwMsg) => void): () => void {
-      const h = (_e: unknown, m: ExportSwMsg) => cb(m)
-      ipcRenderer.on('exportSw:msg', h)
-      return () => { ipcRenderer.removeListener('exportSw:msg', h) }
+  // Native software export-decode. The session's port follows on its own
+  // (`exportDecode:port` above).
+  exportDecode: {
+    open(args: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number; finalizationToken?: string | undefined }): Promise<ExportDecodeOpenInfo> {
+      return ipcRenderer.invoke('exportDecode:open', args) as Promise<ExportDecodeOpenInfo>
     },
   },
 

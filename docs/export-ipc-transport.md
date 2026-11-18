@@ -42,26 +42,33 @@ The renderer main thread never touches a frame.
 
 ## Decode-in
 
-Main → renderer → Worker, feeding natively decoded frames to the export
-compositor (routing: [ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md);
+Main → Worker over one port per session, feeding natively decoded frames to
+the export compositor (routing: [ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md);
 consumption: [`render.md`](render.md) § Export decode pipelines):
 
-1. `NativeExportSourceHandle` sends `nd:*` commands (open / decodeRange /
-   returnCredit / close); the renderer forwards them to `window.api.exportSw`,
-   which drives the `export_sw` session (`src/main/exportSw.ts`).
-2. The session decodes GOP-aligned exact coverage of each range and emits
-   everything in-band as `ExportSwMsg` (`frame`, `rangeEnd`, `ended`, `error`)
-   on the single `exportSw:msg` channel; the renderer re-posts frames to the
-   Worker as transferred `ArrayBuffer`s. `rangeEnd` carries the completed
-   `[aUs, bUs]` and, once every earlier frame has arrived, proves presentation
-   finality for pending `waitForPts` targets.
-3. **Delivery order is the contract.** An `ended`/`rangeEnd` overtaking its
-   tail frames corrupts the export tail; never split control and frames onto
-   separate channels.
-4. Backpressure is a credit window: the Rust producer parks at `creditWindow`
-   frames in flight, and the handle returns one credit per frame that leaves
-   the ring (consumed, evicted or freed). Credits bypass the session's command
-   channel so they land mid-range.
+1. `NativeExportSourceHandle` posts `nd:open`; the page calls
+   `exportDecode:open`, and main (`src/main/exportDecode.ts`) reserves the
+   decoder's memory, opens the `export_sw` session and sends the session's
+   port to the page as a message tagged with its session id. The page
+   transfers the port to the Worker in `nd:openResult`
+   (`renderer/ipc/exportDecode.ts`). Nothing else about the session passes
+   the page's main thread.
+2. The session's messages are the addon's generated `DecodeMsg` (`bytes`,
+   `mark`, `end`, `error`), posted on the port as delivered
+   (`main/frameCarrier/decodeSessionHost.ts`); a frame's bytes cross as the
+   one main → Worker copy. `mark` carries the completed `[aUs, bUs]` and,
+   since every earlier frame has arrived, proves presentation finality for
+   pending `waitForPts` targets.
+3. **Delivery order is the contract.** An `end`/`mark` overtaking its tail
+   frames corrupts the export tail; never split control and frames onto
+   separate ports or channels.
+4. Backpressure is a lease window: the producer parks at `window` frames in
+   flight, and the handle posts `release` with a frame's lease the moment
+   that frame leaves the ring (consumed, evicted or freed). Main hands a
+   release to the session directly, so it lands mid-range.
+5. Closing the port closes the session. The handle closes it on dispose and
+   on a terminal error; terminating the Worker closes it too. Main also
+   closes a session when its document goes (reload, crash, destroy).
 
 ## Why IPC
 

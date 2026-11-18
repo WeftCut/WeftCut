@@ -30,9 +30,9 @@ export function hwExportDecodeAllowed(os: RendererOS): boolean {
   return os === "windows" || os === "mac";
 }
 
-/// CPU transport format for native-decoded frames crossing the relay. Follows
-/// the export's COMPOSITE bit depth (one export composites at one depth), not
-/// any per-source depth.
+/// CPU transport format for native-decoded frames crossing the session port.
+/// Follows the export's COMPOSITE bit depth (one export composites at one
+/// depth), not any per-source depth.
 export type ExportTransportFormat = "NV12" | "I420P10";
 
 export type ExportMediaRoute =

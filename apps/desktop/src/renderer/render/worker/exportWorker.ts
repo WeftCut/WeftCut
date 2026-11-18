@@ -436,7 +436,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           // Native export-decode routing: when this media is in the
           // `nativeDecode` table AND its original path resolved, mark the acquire
           // so the pool builds a `NativeExportSourceHandle` (decode the ORIGINAL
-          // via the napi session over the frame relay). Membership only — the
+          // in a native session over its own port). Membership only — the
           // resolver on the main thread owns the policy.
           const routeNative = req.nativeDecode?.mediaIds.includes(g.mediaId) === true;
           const nativeOriginalPath = routeNative ? req.project.originalFilePaths[g.mediaId] : undefined;
@@ -445,7 +445,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
             ? {
                 sourcePath: nativeOriginalPath,
                 outFormat: req.nativeDecode.outFormat,
-                creditWindow: req.nativeDecode.creditWindow ?? 6,
+                window: req.nativeDecode.window ?? 6,
               }
             : undefined;
           // Only the WebCodecs path needs an asset URL. A native-routed

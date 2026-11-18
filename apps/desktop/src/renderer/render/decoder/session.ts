@@ -74,17 +74,17 @@ export interface SourceHandleInit {
   /// Bench-only lane pin, forwarded to `FfmpegSource`.
   forceLane?: import("./decodeEngine").FfmpegLane;
   /// Export-only: route this handle through the native `NativeExportSourceHandle`
-  /// (decode the ORIGINAL via the main-process napi `NativeDecode` session over
-  /// the frame relay) instead of WebCodecs on the proxy. When present the export
-  /// pool builds a `NativeExportSourceHandle`; the WebCodecs path never reads it.
+  /// (decode the ORIGINAL in a main-process native session over its own port)
+  /// instead of WebCodecs on the proxy. When present the export pool builds a
+  /// `NativeExportSourceHandle`; the WebCodecs path never reads it.
   /// `sourcePath` is the absolute ORIGINAL file path (the napi opens a filesystem
   /// path, not a `weftcut-media://` asset URL); `outFormat` is the CPU transport
-  /// format from the routing table (exportDecodeRouting.ts); `creditWindow`
-  /// sizes the in-flight flow-control window.
+  /// format from the routing table (exportDecodeRouting.ts); `window` bounds
+  /// the frames the session has in flight.
   nativeExport?: {
     sourcePath: string;
     outFormat: import("../exportDecodeRouting").ExportTransportFormat;
-    creditWindow: number;
+    window: number;
   };
 }
 
