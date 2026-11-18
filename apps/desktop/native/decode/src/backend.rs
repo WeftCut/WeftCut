@@ -5,6 +5,7 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
+use crate::carrier::{DecodeMsg, Sink};
 use crate::events::{EventSink, TsfnEventSink};
 use crate::recover::LockExt;
 
@@ -166,13 +167,14 @@ fn sw_frame_to_napi(stream_id: &str, f: crate::preview_sw::decoder::SwFrame) -> 
 
 // ── export-decode wire structs ───────────────────────────────────────────────
 
-/// Reply of `export_sw_open`: the decoded stream's dimensions, source color
+/// Reply of `export_decode_open`: the decoded stream's dimensions, source color
 /// tags, and source-normalized start PTS (the offset applied to every frame's
-/// `pts_us`). `start_pts_us` crosses as `f64` (napi has no ergonomic `i64`),
-/// matching the `pts_us`/`target_us` convention. Color tags are canonical FFmpeg
-/// string names or `null` where unspecified.
+/// `pts_us`). The color tags are the session's; its frames carry none.
+/// `start_pts_us` crosses as `f64` (napi has no ergonomic `i64`), matching the
+/// `pts_us`/`target_us` convention. Color tags are canonical FFmpeg string
+/// names or `null` where unspecified.
 #[napi(object)]
-pub struct ExportSwOpenInfoJs {
+pub struct ExportDecodeOpenInfo {
     pub width: u32,
     pub height: u32,
     pub color_matrix: Option<String>,
@@ -180,61 +182,6 @@ pub struct ExportSwOpenInfoJs {
     pub color_primaries: Option<String>,
     pub color_transfer: Option<String>,
     pub start_pts_us: f64,
-}
-
-/// One export-decoded frame delivered to JS. Same wire shape as `PreviewSwFrame`,
-/// but `format` follows the session's requested output and delivery is the
-/// exactly-once range contract + credit window rather than best-effort
-/// preview. Crosses the boundary wrapped in an [`ExportSwMsg`] with
-/// `kind == "frame"`; `session_id` is kept here too so the frame stays
-/// self-identifying downstream of the wrapper.
-#[napi(object)]
-pub struct ExportSwFrame {
-    pub session_id: String,
-    pub pts_us: f64,
-    pub dur_us: f64,
-    pub width: u32,
-    pub height: u32,
-    pub format: String,
-    pub color_matrix: Option<String>,
-    pub color_range: Option<String>,
-    pub color_primaries: Option<String>,
-    pub color_transfer: Option<String>,
-    pub data: Buffer,
-}
-
-/// Export twin of `sw_frame_to_napi` (same zero-copy / one-marshal contract).
-fn export_frame_to_napi(session_id: &str, f: crate::preview_sw::decoder::SwFrame) -> ExportSwFrame {
-    ExportSwFrame {
-        session_id: session_id.to_string(),
-        pts_us: f.pts_us as f64,
-        dur_us: f.dur_us as f64,
-        width: f.width,
-        height: f.height,
-        format: f.format.wire_name().into(),
-        color_matrix: f.color.matrix,
-        color_range: f.color.range,
-        color_primaries: f.color.primaries,
-        color_transfer: f.color.transfer,
-        data: Buffer::from(f.data),
-    }
-}
-
-/// One in-band message on the per-session export channel — frames AND control
-/// signals ride this single tagged shape. Rationale on the sink closure in
-/// `NativeDecode::new`; TS mirror = `ExportSwMsg` in `shared/ipc.ts`.
-#[napi(object)]
-pub struct ExportSwMsg {
-    pub session_id: String,
-    /// "frame" | "rangeEnd" | "ended" | "error"
-    pub kind: String,
-    /// Present iff kind == "frame".
-    pub frame: Option<ExportSwFrame>,
-    /// Present iff kind == "error".
-    pub message: Option<String>,
-    /// Present iff kind == "rangeEnd": the exact completed source-time range.
-    pub a_us: Option<f64>,
-    pub b_us: Option<f64>,
 }
 
 /// The component's ffmpeg linkage identity — the SW capability-cache envKey.
@@ -315,8 +262,7 @@ pub struct NativeDecode {
     preview_gpu: crate::preview_gpu::PreviewGpuRegistry,
     preview_sw: crate::preview_sw::PreviewSwRegistry,
     preview_sw_sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<PreviewSwFrame>>>>,
-    export_sw: crate::export_sw::ExportSwRegistry,
-    export_sw_sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<ExportSwMsg>>>>,
+    export_decode: crate::export_sw::ExportSessions,
 }
 
 #[napi]
@@ -419,78 +365,12 @@ impl NativeDecode {
             (registry, sinks)
         };
 
-        // Export software decode: same single-global-sink pattern as preview,
-        // but EVERY poke — frames AND the RangeEnd/Ended/Error control signals —
-        // crosses as an `ExportSwMsg` on the matching session's per-session
-        // `ThreadsafeFunction`. One napi queue per session means JS observes
-        // pokes in exact producer order; a second channel (e.g. the shared
-        // `events` envelope) would let an `Ended` overtake the tail frames
-        // emitted before it. NonBlocking on the default UNBOUNDED tsfn queue is
-        // load-bearing: a bounded queue would silently drop pokes — including
-        // control signals — under backpressure. Pokes for an unregistered
-        // session drop silently (mirrors the preview-sw routing).
-        let (export_sw, export_sw_sinks) = {
-            let registry = crate::export_sw::ExportSwRegistry::new();
-            let sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<ExportSwMsg>>>> =
-                Default::default();
-            let sinks_for_cb = sinks.clone();
-            registry.set_sink(Box::new(move |poke| {
-                use crate::export_sw::ExportPoke;
-                let msg = match poke {
-                    ExportPoke::Frame { session_id, frame } => ExportSwMsg {
-                        frame: Some(export_frame_to_napi(&session_id, frame)),
-                        session_id,
-                        kind: "frame".into(),
-                        message: None,
-                        a_us: None,
-                        b_us: None,
-                    },
-                    ExportPoke::RangeEnd {
-                        session_id,
-                        a_us,
-                        b_us,
-                    } => ExportSwMsg {
-                        session_id,
-                        kind: "rangeEnd".into(),
-                        frame: None,
-                        message: None,
-                        a_us: Some(a_us as f64),
-                        b_us: Some(b_us as f64),
-                    },
-                    ExportPoke::Ended { session_id } => ExportSwMsg {
-                        session_id,
-                        kind: "ended".into(),
-                        frame: None,
-                        message: None,
-                        a_us: None,
-                        b_us: None,
-                    },
-                    ExportPoke::Error {
-                        session_id,
-                        message,
-                    } => ExportSwMsg {
-                        session_id,
-                        kind: "error".into(),
-                        frame: None,
-                        message: Some(message),
-                        a_us: None,
-                        b_us: None,
-                    },
-                };
-                if let Some(tsfn) = sinks_for_cb.lock_recover().get(&msg.session_id) {
-                    let _ = tsfn.call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
-                }
-            }));
-            (registry, sinks)
-        };
-
         NativeDecode {
             #[cfg(windows)]
             preview_gpu,
             preview_sw,
             preview_sw_sinks,
-            export_sw,
-            export_sw_sinks,
+            export_decode: crate::export_sw::ExportSessions::new(),
         }
     }
 }
@@ -974,90 +854,84 @@ impl NativeDecode {
 
 /// Native export software-decode command surface (cross-platform; the
 /// export-decode overlay, ADR 0030 and ADR 0033). Backed by
-/// `NativeDecode::export_sw`; everything — decoded frames and the control
-/// signals — reaches JS in-band as [`ExportSwMsg`] on the per-session
-/// `ThreadsafeFunction` registered in `export_sw_open`. The driving contract
-/// (open → decodeRange → returnCredit → close) is what the export Worker's
-/// `ExportDecodeSession` handle sits behind.
+/// `NativeDecode::export_decode`; decoded frames and the control signals
+/// reach JS in-band as [`DecodeMsg`] on the callback the session was opened
+/// with. The driving contract (open → range → release → close) is what the
+/// export Worker's `ExportDecodeSession` handle sits behind.
 #[napi]
 impl NativeDecode {
-    /// Open `path` for export decode into `out_format` (`"NV12"` or
-    /// `"I420P10"`), throttled through a `credit_window`-frame flow-control
-    /// window. Registers the
-    /// per-session message callback BEFORE opening so no early message is
-    /// dropped; fails loudly (removing the callback) if the format can't be
+    /// Open `path` for export decode into `out_format`, with at most `window`
+    /// frames (leases) in flight. `on_msg` belongs to the session: every
+    /// message goes to it, and it is dropped when the session closes or the
+    /// open fails. Fails loudly if the id is already open, the format can't be
     /// emitted or the decoder can't open. Returns dimensions, source color tags,
     /// and start PTS.
     #[napi]
-    pub fn export_sw_open(
+    pub fn export_decode_open(
         &self,
         session_id: String,
         path: String,
-        out_format: String,
-        credit_window: u32,
-        on_msg: ThreadsafeFunction<ExportSwMsg>,
-    ) -> napi::Result<ExportSwOpenInfoJs> {
-        self.export_sw_sinks
-            .lock_recover()
-            .insert(session_id.clone(), on_msg);
-        match self
-            .export_sw
-            .open(&session_id, &path, &out_format, credit_window)
-        {
-            Ok(info) => Ok(ExportSwOpenInfoJs {
-                width: info.width,
-                height: info.height,
-                color_matrix: info.color.matrix,
-                color_range: info.color.range,
-                color_primaries: info.color.primaries,
-                color_transfer: info.color.transfer,
-                start_pts_us: info.start_pts_us as f64,
-            }),
-            Err(e) => {
-                // Open failed — drop the callback we optimistically registered so
-                // a failed session never leaves a dangling sink entry.
-                self.export_sw_sinks.lock_recover().remove(&session_id);
-                Err(napi::Error::from_reason(e))
-            }
-        }
+        #[napi(ts_arg_type = "'NV12' | 'I420P10'")] out_format: String,
+        window: u32,
+        on_msg: ThreadsafeFunction<DecodeMsg>,
+    ) -> napi::Result<ExportDecodeOpenInfo> {
+        // One napi queue per session is what keeps JS observing messages in
+        // producer order. NonBlocking on the default UNBOUNDED tsfn queue is
+        // load-bearing: a bounded queue would silently drop messages — control
+        // signals included — under backpressure.
+        let sink: Sink = Box::new(move |msg| {
+            let _ = on_msg.call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
+        });
+        let info = self
+            .export_decode
+            .open(&session_id, &path, &out_format, window, sink)
+            .map_err(napi::Error::from_reason)?;
+        Ok(ExportDecodeOpenInfo {
+            width: info.width,
+            height: info.height,
+            color_matrix: info.color.matrix,
+            color_range: info.color.range,
+            color_primaries: info.color.primaries,
+            color_transfer: info.color.transfer,
+            start_pts_us: info.start_pts_us as f64,
+        })
     }
 
     /// Decode the presentation range `[a_us, b_us]` (source-normalized µs, b
-    /// inclusive). Fire-and-forget: frame messages arrive on the registered
-    /// callback, followed in-band by a `rangeEnd` (or `ended` then `rangeEnd` at
-    /// stream end) once the range is satisfied. `a_us`/`b_us` cross as `f64` (no
+    /// inclusive). Fire-and-forget: `bytes` messages arrive on the session's
+    /// callback, followed in-band by a `mark` (or `end` then `mark` at stream
+    /// end) once the range is satisfied. `a_us`/`b_us` cross as `f64` (no
     /// ergonomic napi `i64`).
     #[napi]
-    pub fn export_sw_decode_range(
+    pub fn export_decode_range(
         &self,
         session_id: String,
         a_us: f64,
         b_us: f64,
     ) -> napi::Result<()> {
-        self.export_sw
+        self.export_decode
             .decode_range(&session_id, a_us as i64, b_us as i64)
             .map_err(napi::Error::from_reason)
     }
 
-    /// Return `credits` consumed frames to the session, resuming a producer parked
-    /// on an exhausted credit window. Safe to call while a range is in flight.
+    /// Hand back the lease of a frame that has left the consumer, resuming a
+    /// producer parked on a full window. Safe while a range is in flight; a
+    /// lease not in flight (already returned, or never granted) is ignored.
     #[napi]
-    pub fn export_sw_return_credit(&self, session_id: String, credits: u32) -> napi::Result<()> {
-        self.export_sw
-            .return_credit(&session_id, credits)
+    pub fn export_decode_release(&self, session_id: String, lease: u32) -> napi::Result<()> {
+        self.export_decode
+            .release(&session_id, lease)
+            .map(|_| ())
             .map_err(napi::Error::from_reason)
     }
 
-    /// Tear down a session: close+join the decode thread FIRST (unblocking any
-    /// producer parked on the credit window), THEN drop the per-session callback,
-    /// so no frame can arrive after its callback is removed.
+    /// Tear down a session: wakes a parked producer, abandons the range in
+    /// progress and returns within a bounded grace. No message reaches the
+    /// session's callback after this returns.
     #[napi]
-    pub fn export_sw_close(&self, session_id: String) -> napi::Result<()> {
-        let r = self
-            .export_sw
+    pub fn export_decode_close(&self, session_id: String) -> napi::Result<()> {
+        self.export_decode
             .close(&session_id)
-            .map_err(napi::Error::from_reason);
-        self.export_sw_sinks.lock_recover().remove(&session_id);
-        r
+            .map_err(napi::Error::from_reason)
     }
 }

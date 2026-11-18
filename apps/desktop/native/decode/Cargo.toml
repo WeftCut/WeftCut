@@ -54,9 +54,9 @@ libc = "0.2"
 # asset lands) as well as Windows.
 #
 # NOTE: unlike @weftcut/core this enables ONLY `napi/noop`, NOT
-# `napi-derive/noop`. decode holds `ThreadsafeFunction<ExportSwMsg>` /
+# `napi-derive/noop`. decode holds `ThreadsafeFunction<DecodeMsg>` /
 # `ThreadsafeFunction<String>` in non-test code; `napi-derive/noop` would delete
-# the derived `ToNapiValue` impl for the `#[napi(object)]` `ExportSwMsg` that the
+# the derived `ToNapiValue` impl for the `#[napi]` `DecodeMsg` that the
 # ThreadsafeFunction bound requires, breaking compilation. Keeping napi-derive
 # active preserves those impls while napi/noop still fixes the linker symbols.
 # See docs/notes/napi-rs-multiplatform-testing.md.
