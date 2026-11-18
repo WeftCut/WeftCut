@@ -70,6 +70,7 @@ import type { TranscriptPayload } from '../../shared/captionTiming'
 import type { PositionAnimation } from '../../shared/position'
 
 import { currentEditTrace, measureEditStage } from '../../shared/editTrace'
+import type { PathPlatform } from './projectPathNative'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -864,8 +865,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    replacement: the workspace is another one, and nothing the save wrote
   //    is owed again (autosave). Internal: in no router or MCP list,
   //    dispatched by the Save As path alone. ──
-  function rebaseMedia(projectDir: string, derivatives: Record<Uuid, MediaDerivativesPatch>): void {
-    history.mapMediaPoolEverywhere((pool) => applyRebaseMedia(pool, projectDir, derivatives))
+  function rebaseMedia(projectDir: string, derivatives: Record<Uuid, MediaDerivativesPatch>, platform?: PathPlatform): void {
+    history.mapMediaPoolEverywhere((pool) => applyRebaseMedia(pool, projectDir, derivatives, platform))
     broadcastUnrecorded('Moved media to the saved project', current(), { kind: 'Coarse' }, undefined, 'replaced')
   }
   // ── remove_media — HYBRID. MediaNotFound → MediaInUse
@@ -1622,7 +1623,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'set_media_derivatives': setMediaDerivatives(a.media as Uuid, a.patch as MediaDerivativesPatch); return { ok: true, value: null }
         case 'set_media_workspace_paths': setMediaWorkspacePaths(a.media as Uuid, a.paths as WorkspacePaths); return { ok: true, value: null }
         case 'set_media_hash': setMediaHash(a.media as Uuid, a.file_hash_blake3 as string); return { ok: true, value: null }
-        case 'rebase_media': rebaseMedia(a.project_dir as string, a.derivatives as Record<Uuid, MediaDerivativesPatch>); return { ok: true, value: null }
+        case 'rebase_media': rebaseMedia(a.project_dir as string, a.derivatives as Record<Uuid, MediaDerivativesPatch>, a.platform as PathPlatform | undefined); return { ok: true, value: null }
         case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }

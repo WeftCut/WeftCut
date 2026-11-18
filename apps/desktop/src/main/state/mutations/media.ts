@@ -7,6 +7,7 @@ import { defaultTransform } from './add'
 import { pruneEmptiedTrack, requireLayer } from './helpers'
 import { eachLayer } from '../model'
 import { mediaAtFolder } from '../projectFile'
+import type { PathPlatform } from '../projectPathNative'
 
 /** The canonical VideoClip layer shape. blend_mode
  *  default = Normal, transform default per defaultTransform. */
@@ -111,8 +112,8 @@ export function applySetMediaWorkspacePaths(pool: Record<string, MediaItem>, id:
  *  each item inside the folder at its path there, an external one where it
  *  was, and the derivatives `derivatives` holds for it as the only ready
  *  ones: a derivative of the old folder's cache is not this folder's. */
-export function applyRebaseMedia(pool: Record<string, MediaItem>, projectDir: string, derivatives: Record<string, MediaDerivativesPatch>): Record<string, MediaItem> {
-  return foldDerivatives(mediaAtFolder(pool, projectDir, process.platform), derivatives)
+export function applyRebaseMedia(pool: Record<string, MediaItem>, projectDir: string, derivatives: Record<string, MediaDerivativesPatch>, platform: PathPlatform = process.platform): Record<string, MediaItem> {
+  return foldDerivatives(mediaAtFolder(pool, projectDir, platform), derivatives)
 }
 
 /** `pool` with each patch of `derivatives` folded in as `set_media_derivatives`

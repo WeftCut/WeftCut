@@ -54,6 +54,7 @@ import { AuditStore } from '../lint/audits'
 import { playheadView } from '../mcp/playheadView'
 import type { WorkspaceStore } from '../workspace'
 import { ExportJobError } from '../exportJobs'
+import type { PathPlatform } from './projectPathNative'
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -83,6 +84,9 @@ export interface TsActorHostDeps {
   /** Directory-scan/stat/rename shell for the open-time media relink self-heal
    *  (relink.ts). Optional → openProject skips healing when omitted (tests). */
   relinkFs?: RelinkFs
+  /** Whose path rules place the media in a project folder: the host's by
+   *  default; tests standing in for another OS name it. */
+  platform?: PathPlatform
   /** node:fs/promises — Save As copies the project content through it, and an
    *  upgrade's planned file moves run through it. Optional → neither happens
    *  (tests). */
@@ -473,7 +477,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (schema upgrade)', err) }
   }
   const relink = deps.relinkFs
-    ? { fs: deps.relinkFs, hashFile: (p: string) => deps.compute.hashMediaSource(p) }
+    ? { fs: deps.relinkFs, hashFile: (p: string) => deps.compute.hashMediaSource(p), platform: deps.platform }
     : undefined
   // Without a store the upgrade sizes Motifs from the built-ins and copies none.
   // Its copies are heard where the open project's revisions are (Motif trust).
@@ -491,7 +495,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       try { actor.replaceState(next) } finally { swapping = false }
     },
   }
-  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, copyMotifs: copyProjectMotifs, contentFs: deps.contentFs }
+  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, copyMotifs: copyProjectMotifs, contentFs: deps.contentFs, platform: deps.platform }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and

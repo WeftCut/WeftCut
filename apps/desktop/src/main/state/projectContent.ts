@@ -40,24 +40,31 @@ export interface ProjectContentFs {
   realpath(p: string): Promise<string>
 }
 
+/** The path rules of `platform`: the host's in production, another OS's in
+ *  tests that stand in for it. One library for every path a copy builds, so a
+ *  folder named the Windows way is never split the POSIX way. */
+type PathLib = typeof path.posix
+const pathLib = (platform: PathPlatform): PathLib => (platform === 'win32' ? path.win32 : path.posix)
+
 function errorCode(error: unknown): string | undefined {
   return (error as { code?: unknown } | null)?.code as string | undefined
 }
 
 /** `dir` as the file system resolves it, links and case included; `dir`
  *  itself while it does not exist. */
-async function realDir(fs: ProjectContentFs, dir: string): Promise<string> {
-  try { return await fs.realpath(dir) } catch { return path.resolve(dir) }
+async function realDir(fs: ProjectContentFs, dir: string, l: PathLib): Promise<string> {
+  try { return await fs.realpath(dir) } catch { return l.resolve(dir) }
 }
 
 /** Whether `a` and `b` name one folder, however spelled. */
-export async function sameFolder(fs: ProjectContentFs, a: string, b: string): Promise<boolean> {
-  return (await realDir(fs, a)) === (await realDir(fs, b))
+export async function sameFolder(fs: ProjectContentFs, a: string, b: string, platform: PathPlatform = process.platform): Promise<boolean> {
+  const l = pathLib(platform)
+  return (await realDir(fs, a, l)) === (await realDir(fs, b, l))
 }
 
-function isInside(child: string, parent: string): boolean {
-  const rel = path.relative(parent, child)
-  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))
+function isInside(child: string, parent: string, l: PathLib): boolean {
+  const rel = l.relative(parent, child)
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${l.sep}`) && !l.isAbsolute(rel))
 }
 
 async function lstatOrNull(fs: ProjectContentFs, p: string) {
@@ -76,8 +83,8 @@ async function lstatOrNull(fs: ProjectContentFs, p: string) {
  *  folder's file. Any failure to clone or link means the volume makes none
  *  here (FAT and exFAT report a link refusal under several codes), so the
  *  next way is tried. */
-async function placeFile(fs: ProjectContentFs, src: string, dst: string, times: { atimeMs: number; mtimeMs: number }, link: boolean): Promise<void> {
-  const temp = path.join(path.dirname(dst), `.${path.basename(dst)}.${randomUUID()}.tmp`)
+async function placeFile(fs: ProjectContentFs, src: string, dst: string, times: { atimeMs: number; mtimeMs: number }, link: boolean, l: PathLib): Promise<void> {
+  const temp = l.join(l.dirname(dst), `.${l.basename(dst)}.${randomUUID()}.tmp`)
   try {
     let cloned = false
     try { await fs.copyFile(src, temp, constants.COPYFILE_FICLONE_FORCE); cloned = true } catch {
@@ -109,16 +116,16 @@ function isScratchName(name: string): boolean {
 
 /** Copies `src` to `dst`: a folder whole, a file, nothing for a symbolic link
  *  or a missing path. `link` allows hard links (media only). */
-async function copyEntry(fs: ProjectContentFs, src: string, dst: string, link: boolean): Promise<void> {
+async function copyEntry(fs: ProjectContentFs, src: string, dst: string, link: boolean, l: PathLib): Promise<void> {
   const st = await lstatOrNull(fs, src)
   if (!st || st.isSymbolicLink()) return
   if (st.isDirectory()) {
     await fs.mkdir(dst, { recursive: true })
     for (const name of await fs.readdir(src)) {
-      if (!isScratchName(name)) await copyEntry(fs, path.join(src, name), path.join(dst, name), link)
+      if (!isScratchName(name)) await copyEntry(fs, l.join(src, name), l.join(dst, name), link, l)
     }
   } else if (st.isFile()) {
-    await placeFile(fs, src, dst, st, link)
+    await placeFile(fs, src, dst, st, link, l)
   }
 }
 
@@ -128,12 +135,13 @@ async function copyEntry(fs: ProjectContentFs, src: string, dst: string, link: b
  *  fails, and refuses a `to` inside `from`'s `Media/`, which the copy would
  *  copy into itself. */
 export async function copyProjectContent(from: string, to: string, fs: ProjectContentFs, platform: PathPlatform = process.platform): Promise<void> {
-  const target = await realDir(fs, to)
-  if (target === await realDir(fs, from)) return
-  if (isInside(target, await realDir(fs, toNative(from, MEDIA, platform)))) {
+  const l = pathLib(platform)
+  const target = await realDir(fs, to, l)
+  if (target === await realDir(fs, from, l)) return
+  if (isInside(target, await realDir(fs, toNative(from, MEDIA, platform), l), l)) {
     throw new Error("A project cannot be saved inside the Media folder of the project it is saved from")
   }
-  for (const entry of PROJECT_CONTENT) await copyEntry(fs, toNative(from, entry, platform), toNative(to, entry, platform), entry === MEDIA)
+  for (const entry of PROJECT_CONTENT) await copyEntry(fs, toNative(from, entry, platform), toNative(to, entry, platform), entry === MEDIA, l)
 }
 
 /** After Save As switched folders: copies each of `paths` that is in `from`
@@ -141,6 +149,7 @@ export async function copyProjectContent(from: string, to: string, fs: ProjectCo
  *  copied put its file in `from` after the copy passed it. Never throws: the
  *  folders have already switched, and a file that fails shows as missing. */
 export async function copyLateFiles(from: string, to: string, paths: readonly ProjectPath[], fs: ProjectContentFs, platform: PathPlatform = process.platform): Promise<void> {
+  const l = pathLib(platform)
   for (const p of paths) {
     try {
       const dst = toNative(to, p, platform)
@@ -148,8 +157,8 @@ export async function copyLateFiles(from: string, to: string, paths: readonly Pr
       const src = toNative(from, p, platform)
       const st = await lstatOrNull(fs, src)
       if (!st?.isFile()) continue
-      await fs.mkdir(path.dirname(dst), { recursive: true })
-      await placeFile(fs, src, dst, st, true)
+      await fs.mkdir(l.dirname(dst), { recursive: true })
+      await placeFile(fs, src, dst, st, true, l)
     } catch (error) {
       console.warn('[project] a media file was not copied to the saved folder', p, error)
     }
@@ -164,6 +173,7 @@ export interface MissingFile { path: string; diagnostic: string }
  *  source is gone is skipped. Never throws: answers the copies that left
  *  their target without a file. */
 export async function placeFilePlans(dir: string, plans: readonly FilePlan[], fs: ProjectContentFs, platform: PathPlatform = process.platform): Promise<MissingFile[]> {
+  const l = pathLib(platform)
   const missing: MissingFile[] = []
   for (const plan of plans) {
     try {
@@ -171,7 +181,7 @@ export async function placeFilePlans(dir: string, plans: readonly FilePlan[], fs
       const to = toNative(dir, parseProjectPath(plan.to), platform)
       if (await lstatOrNull(fs, to)) continue
       let source = await lstatOrNull(fs, from)
-      if (!source?.isFile() && plan.mode === 'copy' && plan.recorded && path.isAbsolute(plan.recorded)) {
+      if (!source?.isFile() && plan.mode === 'copy' && plan.recorded && l.isAbsolute(plan.recorded)) {
         from = plan.recorded
         source = await lstatOrNull(fs, from).catch(() => null)
       }
@@ -179,11 +189,11 @@ export async function placeFilePlans(dir: string, plans: readonly FilePlan[], fs
         if (plan.mode === 'copy') missing.push({ path: plan.to, diagnostic: `${plan.from} is not in the project folder` })
         continue
       }
-      await fs.mkdir(path.dirname(to), { recursive: true })
+      await fs.mkdir(l.dirname(to), { recursive: true })
       // Never a link: later syntheses reuse the cached voiceover, and an edit
       // made in place to the project's file would change what they reuse.
       if (plan.mode === 'move') await fs.rename(from, to)
-      else await placeFile(fs, from, to, source, false)
+      else await placeFile(fs, from, to, source, false, l)
     } catch (error) {
       if (plan.mode === 'copy') missing.push({ path: plan.to, diagnostic: String(error) })
       else console.warn('[project] planned file move failed', plan, error)

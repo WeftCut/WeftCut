@@ -130,7 +130,7 @@ describe('saveProjectAs — the content goes first', () => {
     const deps: OrchestratorDeps = {
       actor: { replaceState: vi.fn(), snapshot: () => blankProject(seededGen(), 'Demo'), dispatch: vi.fn() },
       napi: { commitWorkspace, pushRecent: vi.fn(), setLastNewProjectParent: vi.fn(), enqueueJobsForMedia: vi.fn() },
-      fs: disk.fs, join: (...p: string[]) => p.join('/'), idGen: seededGen(), contentFs: disk.contentFs,
+      fs: disk.fs, join: (...p: string[]) => p.join('/'), idGen: seededGen(), contentFs: disk.contentFs, platform: 'linux',
     }
     await expect(saveProjectAs(deps, '/projects/Copy', '/projects/Demo')).rejects.toMatchObject({ code: 'ENOSPC' })
     expect(disk.fs.exists('/projects/Copy/project.json')).toBe(false)
@@ -149,6 +149,7 @@ describe('the open project in its folder (host)', () => {
       poolFs: disk.poolFs,
       fs: disk.fs,
       contentFs: disk.contentFs,
+      platform: 'linux',
       join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
       napi: {
         commitWorkspace: async (p: string) => { wsDir = p }, pushRecent: () => {}, setLastNewProjectParent: () => {}, enqueueJobsForMedia,

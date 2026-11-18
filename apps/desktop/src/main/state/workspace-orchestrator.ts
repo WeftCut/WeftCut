@@ -313,7 +313,7 @@ export async function saveProjectAs(deps: OrchestratorDeps, dir: string, from?: 
   const { actor, napi, fs, join } = deps
   const snap = actor.snapshot()
   fs.mkdirp(dir)                                              // save_to_dir's create_dir_all
-  const moves = !!from && !(deps.contentFs && await sameFolder(deps.contentFs, from, dir))
+  const moves = !!from && !(deps.contentFs && await sameFolder(deps.contentFs, from, dir, deps.platform ?? process.platform))
   if (from) {
     if (deps.contentFs) await copyProjectContent(from, dir, deps.contentFs, deps.platform ?? process.platform)
     deps.copyMotifs?.(from, dir, Object.keys(snap.motifs))
@@ -327,7 +327,7 @@ export async function saveProjectAs(deps: OrchestratorDeps, dir: string, from?: 
     const pooled = Object.values(pool).flatMap(item => item.path_rel ? [item.path_rel] : [])
     if (deps.contentFs) await copyLateFiles(from!, dir, pooled, deps.contentFs, deps.platform ?? process.platform)
     const placed = mediaAtFolder(pool, dir, deps.platform ?? process.platform)
-    const result = actor.dispatch('rebase_media', { project_dir: dir, derivatives: await cachedDerivatives(napi, placed) })
+    const result = actor.dispatch('rebase_media', { project_dir: dir, platform: deps.platform ?? process.platform, derivatives: await cachedDerivatives(napi, placed) })
     if (!result.ok) throw new Error(`rebase_media: ${JSON.stringify(result.error)}`)
   }
   await napi.pushRecent(dir, snap.metadata.name)
