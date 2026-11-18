@@ -305,10 +305,16 @@ export class GpuTransport implements DecodeTransport {
       this.port?.postMessage(ack);
     } catch {
       // The renderer has completed its read, but native cannot learn that if the
-      // port has failed. Close the session instead of leaving its pool one slot
-      // short forever. Defer disposal so `dropFor` cannot mutate the fence queue
-      // re-entrantly while that queue is draining other completed slots.
-      queueMicrotask(() => this.dispose());
+      // port has failed. Report it and close the session instead of leaving its
+      // pool one slot short forever: the report is what lets `FfmpegSource`
+      // fall back, a silent close would leave it `ready` on a dead transport.
+      // Deferred so `dropFor` cannot mutate the fence queue re-entrantly while
+      // that queue is draining other completed slots.
+      queueMicrotask(() => {
+        if (this._disposed) return;
+        this.errorCb?.("GPU slot ack could not be delivered");
+        void this.dispose().catch(() => {});
+      });
     }
   }
 

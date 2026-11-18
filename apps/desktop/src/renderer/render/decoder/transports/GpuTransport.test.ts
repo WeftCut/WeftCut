@@ -389,11 +389,13 @@ describe("GpuTransport", () => {
     t.dispose();
   });
 
-  it("closes the session when a completed slot ack cannot cross the port", async () => {
+  it("reports and closes the session when a completed slot ack cannot cross the port", async () => {
     const { api, getPort } = installFakePreviewGpu();
     const device = installFakeSlotFenceDevice();
     const t = new GpuTransport();
+    const errors: string[] = [];
     t.onFrame(() => {});
+    t.onError((reason) => errors.push(reason));
     await t.open({ streamId: "rf-ack-failed", path: "C:/x.mp4" });
     const port = getPort()!;
     port.postMessage = vi.fn(() => {
@@ -407,6 +409,8 @@ describe("GpuTransport", () => {
     await vi.waitFor(() =>
       expect(api.close).toHaveBeenCalledWith({ streamId: "rf-ack-failed" }),
     );
+    // One report: the source falls back on it; a second would start two switches.
+    expect(errors).toEqual(["GPU slot ack could not be delivered"]);
     expect(sharedSlotFenceQueue().pendingCount()).toBe(0);
   });
 
