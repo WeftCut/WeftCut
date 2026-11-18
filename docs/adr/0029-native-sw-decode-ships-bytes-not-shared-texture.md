@@ -33,12 +33,14 @@ Date: 2026-10-31
 - **One CPU transport.** The software lane and every non-Windows hardware lane
   deliver frames as packed bytes (8-bit NV12, or tightly packed I420P10 for
   10-bit VideoToolbox sessions) through a napi `ThreadsafeFunction` →
-  `webContents.send` → the renderer's `SwTransport`. Hardware lanes (NVDEC,
+  `webContents.send` → the session's port, held by the preload → the
+  renderer's `SwTransport`. Hardware lanes (NVDEC,
   VAAPI, VideoToolbox) decode on the GPU and `av_hwframe_transfer_data` the
   surface to CPU; the packed bytes match the software lane's, so nothing
   downstream can tell which lane produced them.
-- **No YUV→RGB in Rust.** Bytes cross as YUV with color tags; conversion
-  happens once, in the renderer's owned ingest shaders (ADR 0032).
+- **No YUV→RGB in Rust.** Bytes cross as YUV, untagged; conversion happens
+  once, in the renderer's owned ingest shaders, with the source's resolved
+  colour (ADR 0032).
 - **Lane order NVDEC → VAAPI → d3d11va → videotoolbox** (`HW_LANE_PRIORITY`),
   walking only lanes `capabilities()` advertises. VAAPI probes each DRM render
   node, because libva's default device is often the wrong GPU on multi-GPU

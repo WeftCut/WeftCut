@@ -1,83 +1,74 @@
-// Native-SOFTWARE `DecodeTransport` — the per-frame bytes-over-IPC path
-// (transport recap: why we ship bytes, not a shared texture — ADR 0029).
-// `window.api.previewSw.{open,requestFrameAt,close}` carry session commands
-// only. Decoded frames arrive as plain byte buffers
-// directly over the contextBridge (no shared texture, no MessagePort — a
-// `previewSw:frame` IPC event per frame), delivered via `onFrame`.
+// Native byte-frame `DecodeTransport`: the software lane and the copy-back
+// hardware lanes, which ship decoded frames as bytes (ADR 0029). The transport
+// owns its session's port: frames, the end and errors arrive on it in the
+// session's order, and `request` and `release` go up it
+// (docs/preview.md § The Standard engine).
 //
-// Frames are wrapped ZERO-COPY, dispatched on the message's `format` tag —
-// NV12 as `NativeNv12Frame`s, I420P10 (the 10-bit VideoToolbox-lane sessions,
-// issue #10) as `TenBitFrame`s — never reconstructed as
-// `VideoFrame`s: Chromium's software conversion of a buffer-defined NV12 frame
-// applies BT.601 regardless of the stamped colorSpace (see nv12Frame.ts /
-// ADR 0032), so the Compositor converts these in its own ingest passes
-// (`Nv12Ingest` / `TenBitIngest`).
-//
-// preview_sw sends no eof/error to the renderer mid-stream (log-only in
-// main), so `onError` never fires; an open failure is `open()`'s rejection.
+// Frames wrap zero-copy as CPU-plane frames (`cpuPlaneFrame`), dispatched on
+// each frame's own `format`, and the Compositor converts them in its own
+// ingest passes (`Nv12Ingest` / `TenBitIngest`), never as `VideoFrame`s.
 //
 // This is the transport half only — no FrameRing, no first-frame/fatal-error
 // hooks, no idle bookkeeping. Those stay with `FfmpegSource` (the caller),
 // which owns exactly one `DecodeTransport` at a time and sets the ring's
 // eviction anchor itself (see `requestFrameAt` below).
-import type { PreviewSwFrameMsg } from "../../../../shared/ipc";
+import type { DecodeWireFrame, DecodeWireMsg, PreviewDecodeCommand, PreviewDecodeOptions } from "../../../../shared/frameCarrier/wire";
+import { openDecodeSession } from "../../../ipc/decodeSession";
+import { cpuPlaneFrame } from "../../frameCarrier/cpuPlaneFrame";
 import type { SourceColor } from "../ffprobeColorSpace";
-import { nv12FrameFromBytes } from "../nv12Frame";
-import { tenBitFrameFromBytes } from "../tenBitFrame";
 import type { DecodeTransport, DecodeTransportOpen, TransportFrame } from "./DecodeTransport";
 
+/// The transport's end of its session port.
+interface SessionPort {
+  onmessage: ((event: MessageEvent<DecodeWireMsg>) => void) | null;
+  postMessage(cmd: PreviewDecodeCommand): void;
+  close(): void;
+}
+
 export class SwTransport implements DecodeTransport {
-  /// Stream identity supplied by the caller's `open()` call, stamped on every
-  /// `previewSw` call and every frame message this transport should accept.
+  /// The session id, supplied by the caller's `open()`: fresh per open, so a
+  /// late message of an earlier session can never reach this one.
   private streamId = "";
 
   /// The colour stamped on every frame: the source's resolved colour from
-  /// `open()`, which installs the frame listener only after setting it.
-  ///
-  /// LANDMINE: never the per-frame `f.color*` tags. Those are raw FFmpeg
-  /// `.name()` strings (e.g. `bt2020nc`, `smpte2084`, `arib-std-b67`), not
-  /// WebCodecs enum members (`bt2020-ncl`, `pq`, `hlg`): they would fork the
-  /// app's single colour model and, for a wide-gamut/HDR source, throw inside
-  /// `new VideoFrame` (silently dropping the frame).
+  /// `open()`. Frames carry none of their own.
   private colorSpace!: SourceColor;
 
-  private unsub: (() => void) | null = null;
+  private port: SessionPort | null = null;
 
   private _disposed = false;
 
+  /// A terminal error ended the session: its frames are released, not shown.
+  private failed = false;
+
   private frameCb: ((frame: TransportFrame, ptsUs: number, durUs: number) => void) | null = null;
 
-  /// Last target sent to `previewSw.requestFrameAt`, for cheap same-target
-  /// dedup. Unlike `GpuTransport`'s coalescing pump, the transport here is a
-  /// fire-and-forget `send`, so there is no async round-trip to coalesce
-  /// behind.
+  private errorCb: ((reason: string) => void) | null = null;
+
+  /// Last target requested, for cheap same-target dedup. Unlike `GpuTransport`'s
+  /// coalescing pump, a request is a fire-and-forget post with no round-trip
+  /// to coalesce behind.
   private lastSentTargetUs: number | null = null;
   /// Discontinuity generation, not a refill sequence. Forward refills must
   /// accept still-useful frames already travelling from the preceding horizon.
   private requestId = 1;
 
-  /// `accel`: optional hardware copy-back accel (Linux NVDEC/VAAPI, macOS
-  /// VideoToolbox), forwarded to main on `open()` so the GPU/OS media engine
-  /// decodes and copies NV12 back to CPU. Absent (software) means no accel rides
-  /// through and the native path stays plain CPU decode. The frame path is
-  /// IDENTICAL NV12 either way — copy-back is not a distinct frame format, just
-  /// a different decode source.
+  /// `accel`: optional hardware copy-back lane (Linux NVDEC/VAAPI, macOS
+  /// VideoToolbox), opened in place of the software lane. The frame path is
+  /// identical either way.
   ///
   /// `scaleDiv`: optional playback-resolution divisor (1 | 2 | 4). Native
-  /// downscales each frame before it crosses IPC — 4K NV12 is 12.44 MB/frame at
-  /// full res — and reports the shipped dims on the frame, which the Compositor
-  /// renormalizes against the media size. Absent or 1 = full resolution, and
-  /// nothing extra rides through: an unscaled open stays exactly today's call.
+  /// downscales each frame before it crosses IPC and reports the shipped
+  /// dims on the frame, which the Compositor renormalizes against the media
+  /// size. Absent or 1 = full resolution, and nothing rides the open.
   ///
-  /// `cadenceDiv`: optional output cadence divisor. Decode still advances every
-  /// source frame, but native only performs copy-back/scale/pack/IPC for every
-  /// Nth frame. Absent or 1 leaves the ordinary path byte-for-byte unchanged.
+  /// `cadenceDiv`: optional output cadence divisor; absent or 1 ships every
+  /// frame and nothing rides the open.
   ///
-  /// `outFormat`: optional CPU transport format for the native session. Absent
-  /// or 'NV12' = today's 8-bit path exactly; 'I420P10' opens 10-bit output —
-  /// `FfmpegSource` picks it for a 10-bit source on the videotoolbox lane
-  /// (issue #10). Delivery still dispatches per frame on the
-  /// message's own `format` tag, never on this request.
+  /// `outFormat`: optional CPU transport format. Absent or 'NV12' = the 8-bit
+  /// path; 'I420P10' opens 10-bit output — `FfmpegSource` picks it for a
+  /// 10-bit source on the videotoolbox lane. Delivery still dispatches per
+  /// frame on the frame's own `format`, never on this request.
   constructor(
     private readonly accel?: { lane: string; device: string | null },
     private readonly scaleDiv?: number,
@@ -85,64 +76,79 @@ export class SwTransport implements DecodeTransport {
     private readonly outFormat?: "NV12" | "I420P10",
   ) {}
 
-  /// Subscribe to the frame event, then open the native session. Throws on
-  /// failure (`previewSw.open` rejecting); the caller (`FfmpegSource`)
-  /// decides whether that's recoverable. The rejection is the only report of
-  /// it: an `onError` as well would hand one failure to two recovery paths.
+  /// Open the native session and take its port. Throws on failure (the open
+  /// rejecting); the caller (`FfmpegSource`) decides whether that's
+  /// recoverable. The rejection is the only report of it: an `onError` as well
+  /// would hand one failure to two recovery paths (ADR 0162).
+  ///
+  /// No frame is lost between the open and the listener below: the port is
+  /// created before main opens the session and queues what it receives until
+  /// `onmessage` is set, and frames only follow a `request` anyway.
   async open(o: DecodeTransportOpen): Promise<void> {
     this.streamId = o.streamId;
     this.colorSpace = o.sourceColor;
-    // Subscribe BEFORE open() — frames can start flowing as soon as the
-    // native decode thread is up, so a listener attached after open() could
-    // miss an early frame.
-    this.unsub = window.api.previewSw.onFrame(this.streamId, (f) => this.handleFrame(f));
-    await window.api.previewSw.open({
-      streamId: this.streamId,
-      path: o.path,
-      ...(this.accel ? { lane: this.accel.lane, device: this.accel.device } : {}),
-      ...(this.scaleDiv !== undefined && this.scaleDiv > 1 ? { scaleDiv: this.scaleDiv } : {}),
-      ...(this.cadenceDiv !== undefined && this.cadenceDiv > 1
-        ? { cadenceDiv: this.cadenceDiv }
-        : {}),
-      // Only a NON-default format rides the wire: an NV12 open must stay
-      // byte-identical to today's payload (mirrors scaleDiv/cadenceDiv).
-      ...(this.outFormat === "I420P10" ? { outFormat: this.outFormat } : {}),
-    });
+    const { port } = await openDecodeSession(this.streamId, () =>
+      window.api.previewDecode.open({ sessionId: this.streamId, path: o.path, options: this.openOptions() }),
+    );
+    // Disposed while opening: the close already went out by session id.
+    if (this._disposed) {
+      port.close();
+      return;
+    }
+    this.port = port;
+    port.onmessage = (event) => this.onMessage(event.data);
   }
 
-  /// Wrap one frame message zero-copy — the structured-cloned IPC bytes are
-  /// adopted as the frame's planes — dispatched on the message's `format` tag:
-  /// NV12 → `NativeNv12Frame` (`Nv12Ingest`), I420P10 → `TenBitFrame` via the
-  /// existing ten-bit adapter (`tenBitFrameFromBytes` → `TenBitIngest`; both
-  /// producers feed one consumer path). A layout-drifted buffer (either
-  /// adapter THROWS — never truncates, the landmine contract) must not crash
-  /// the `onFrame` callback (mirrors the GPU transport's non-fatal posture for
-  /// a bad port message): the frame is dropped with a warning.
-  private handleFrame(f: PreviewSwFrameMsg): void {
-    if (f.streamId !== this.streamId) return;
-    if (this._disposed) return;
-    try {
-      // The receipt is still returned for stale/corrupt frames. A new request
-      // never manufactures credit for bytes that remain in napi or IPC.
-      if (f.requestId !== undefined && f.requestId !== this.requestId) return;
-      this.acceptFrame(f);
-    } finally {
-      if (f.receipt) window.api.previewSw.consume({ streamId: this.streamId, receipt: f.receipt });
+  /// Only what differs from the default open rides the wire.
+  private openOptions(): PreviewDecodeOptions {
+    return {
+      ...(this.accel ? { lane: this.accel.lane } : {}),
+      ...(this.accel?.device != null ? { device: this.accel.device } : {}),
+      ...(this.scaleDiv !== undefined && this.scaleDiv > 1 ? { scaleDiv: this.scaleDiv } : {}),
+      ...(this.cadenceDiv !== undefined && this.cadenceDiv > 1 ? { cadenceDiv: this.cadenceDiv } : {}),
+      ...(this.outFormat === "I420P10" ? { outFormat: this.outFormat } : {}),
+    };
+  }
+
+  private onMessage(msg: DecodeWireMsg): void {
+    switch (msg.kind) {
+      case "bytes":
+        this.onBytes(msg);
+        return;
+      // Not reported: the native cursor already absorbs requests past the end.
+      case "end":
+      case "mark":
+        return;
+      // A non-terminal error (a failed seek or decode) is logged in main and
+      // the next request seeks again. A terminal one ended the session.
+      case "error":
+        if (!msg.terminal || this.failed || this._disposed) return;
+        this.failed = true;
+        this.errorCb?.(msg.message);
+        return;
     }
   }
 
-  private acceptFrame(f: PreviewSwFrameMsg): void {
+  /// Every frame's lease goes back exactly once, whatever becomes of the frame:
+  /// shown, superseded, malformed, or arriving after dispose or a terminal error.
+  private onBytes(msg: DecodeWireFrame): void {
+    try {
+      if (this._disposed || this.failed) return;
+      // A frame of an earlier request generation fills a hole the ring no longer has.
+      if (msg.requestId !== undefined && msg.requestId !== this.requestId) return;
+      this.acceptFrame(msg);
+    } finally {
+      this.port?.postMessage({ type: "release", lease: msg.lease });
+    }
+  }
+
+  /// A layout-drifted buffer must not crash the stream (mirrors the GPU
+  /// transport's non-fatal posture for a bad port message): the frame is
+  /// dropped with a warning.
+  private acceptFrame(msg: DecodeWireFrame): void {
     let frame: TransportFrame;
     try {
-      const init = {
-        data: f.data,
-        width: f.width,
-        height: f.height,
-        timestamp: f.ptsUs,
-        duration: f.durUs,
-        colorSpace: this.colorSpace,
-      };
-      frame = f.format === "I420P10" ? tenBitFrameFromBytes(init) : nv12FrameFromBytes(init);
+      frame = cpuPlaneFrame(msg, this.colorSpace);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn(`[weftcut/pixi] preview-sw ${this.streamId} frame wrap failed:`, e);
@@ -151,35 +157,35 @@ export class SwTransport implements DecodeTransport {
     // ptsUs is already source-normalized microseconds (Rust's shared
     // `media_time::ticks_to_source_us`, matching DecodeClock's truncation
     // contract) — no further offset needed before handing it to the caller.
-    this.frameCb?.(frame, f.ptsUs, f.durUs);
+    this.frameCb?.(frame, msg.ptsUs, msg.durUs);
   }
 
   onFrame(cb: (frame: TransportFrame, ptsUs: number, durUs: number) => void): void {
     this.frameCb = cb;
   }
 
-  /// No-op subscriptions: preview_sw emits neither error nor eof to the
-  /// renderer (see file header). Kept only to satisfy `DecodeTransport`.
-  onError(_cb: (reason: string) => void): void {
-    // intentionally empty
+  /// A terminal session error: the session is gone. Never called from
+  /// `open()`, whose failure is its rejection.
+  onError(cb: (reason: string) => void): void {
+    this.errorCb = cb;
   }
+
+  /// No-op: the session's `end` is not reported (see `onMessage`).
   onEof(_cb: () => void): void {
     // intentionally empty
   }
 
-  /// Nudge the native session's decode target toward `tUs`. Fire-and-forget
-  /// `send` — no async round-trip to coalesce behind, so this only needs a
-  /// cheap same-target dedup rather than `GpuTransport`'s in-flight
-  /// coalescing pump. Does NOT touch a ring anchor — the ring lives on
-  /// `FfmpegSource`, which sets its own anchor before/around calling this.
+  /// Nudge the native session's decode target toward `tUs`. Does NOT touch a
+  /// ring anchor — the ring lives on `FfmpegSource`, which sets its own anchor
+  /// before/around calling this.
   requestFrameAt(tUs: number): void {
-    if (this._disposed) return;
+    if (this._disposed || this.failed || !this.port) return;
     if (tUs === this.lastSentTargetUs) return;
     if (this.lastSentTargetUs !== null && (tUs < this.lastSentTargetUs || tUs - this.lastSentTargetUs > 1_000_000)) {
       this.requestId = (this.requestId + 1) >>> 0;
     }
     this.lastSentTargetUs = tUs;
-    window.api.previewSw.requestFrameAt({ streamId: this.streamId, targetUs: tUs, requestId: this.requestId });
+    this.port.postMessage({ type: "request", targetUs: tUs, requestId: this.requestId });
   }
 
   /// Drop the same-target dedup latch. Without this, a ring flush followed by a
@@ -192,13 +198,17 @@ export class SwTransport implements DecodeTransport {
     this.requestId = (this.requestId + 1) >>> 0;
   }
 
-  /// Tear down: unsubscribe from frame events, close the native session
-  /// (main closes the decode thread). Safe even if `open()` never completed.
+  /// Tear down: end the session in main, then drop the port. Safe even if
+  /// `open()` never completed.
+  ///
+  /// LANDMINE: the close goes by session id over IPC, not up the port. A port
+  /// message reaches main only after the next transport's open, which the
+  /// caller starts right after this; that open would then be refused while
+  /// this session still holds its memory reservation.
   dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
-    this.unsub?.();
-    this.unsub = null;
-    window.api.previewSw.close({ streamId: this.streamId });
+    if (this.streamId) window.api.previewDecode.close({ sessionId: this.streamId });
+    this.port?.close();
   }
 }

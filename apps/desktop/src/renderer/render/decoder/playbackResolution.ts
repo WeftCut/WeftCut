@@ -3,8 +3,8 @@
 // file, the UI and the i18n keys speak in fractions (`full` | `half` |
 // `quarter`); the two halves of the setting each want a different shape of the
 // same number — the native ship stage takes a divisor
-// (`FfmpegSourceInit.playbackScaleDiv` → `SwTransport` → `preview_sw_open`'s
-// `scale_div` → Rust `OutScale`), Pixi's renderer takes the smaller of its
+// (`FfmpegSourceInit.playbackScaleDiv` → `SwTransport` → `previewDecodeOpen`'s
+// `scaleDiv` → Rust `OutScale`), Pixi's renderer takes the smaller of its
 // reciprocal and how much of the composition the preview panel can show at
 // all (`fitScale`). See docs/render.md §Preview canvas, ADR 0071.
 import type { PlaybackResolution } from "../../../shared/app-settings";

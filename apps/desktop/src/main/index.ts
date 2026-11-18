@@ -92,7 +92,7 @@ import { createFxCacheLayout, createNodeAudioFxFs, fxCacheRoot } from './audioFx
 import { fxWaveformKey } from '../shared/audioEffects/status.js'
 import { installPreviewGpuIpc } from './previewGpuIpc.js'
 import { recordFrameReadySent } from './previewGpuTiming.js'
-import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw, consumePreviewSw } from './previewSw.js'
+import { openPreviewDecode, type PreviewDecodeRequest } from './previewDecode.js'
 import { openExportDecode } from './exportDecode.js'
 import { installDecodeSessionIpc, ipcCarrierPort } from './frameCarrier/ipcCarrierPort.js'
 import { serveSinkPort } from './exportSinkPort.js'
@@ -2324,35 +2324,12 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('decodeCap:probeHw', (_e, a: { path: string; classKey: string }) => resolveHardware(a))
 
-  // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
-  // WebCodecs-blind-format path). Frames flow out of band on the dedicated
-  // `previewSw:frame` channel (see ./previewSw), not through the generic
-  // `evt:*` EventSink relay above.
-  ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null; outFormat?: string | null }) => {
-    const win = BrowserWindow.fromWebContents(e.sender)
-    if (!win) throw new Error('previewSw:open — no window for sender')
-    return openPreviewSw(ndBackend(), win, a.streamId, a.path, a.lane ?? null, a.device ?? null, a.scaleDiv ?? null, a.cadenceDiv ?? null, a.outFormat ?? null)
-  })
-  ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number; requestId?: number }) => {
-    // napi can throw Err (e.g. an unknown/already-closed streamId from a renderer
-    // race) — this is a fire-and-forget .on listener, not .handle, so an uncaught
-    // throw here would be an uncaught exception in the main process. Swallow.
-    try { requestFrameAtPreviewSw(ndBackend(), a.streamId, a.targetUs, a.requestId) }
-    catch (e) { console.warn('[main] previewSw:requestFrameAt failed', e) }
-  })
-  ipcMain.on('previewSw:close', (_e, a: { streamId: string }) => {
-    try { closePreviewSw(ndBackend(), a.streamId) }
-    catch (e) { console.warn('[main] previewSw:close failed', e) }
-  })
-  ipcMain.on('previewSw:consume', (e, a: { streamId: string; receipt: number }) => {
-    try { consumePreviewSw(ndBackend(), e.sender.id, a.streamId, a.receipt) }
-    catch (e) { console.warn('[main] previewSw:consume failed', e) }
-  })
-
-  // Native software export-decode: each session is served on a port the
-  // sender's preload holds, whose other end the page hands to the export Worker
-  // (docs/export-ipc-transport.md § Decode-in).
+  // Native decode sessions, preview and export: each is served on a port the
+  // sender's preload holds, whose other end the page keeps (preview) or hands
+  // to the export Worker (docs/export-ipc-transport.md § Decode-in).
   installDecodeSessionIpc(ipcMain)
+  ipcMain.handle('previewDecode:open', (event, a: PreviewDecodeRequest) =>
+    openPreviewDecode(ndBackend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), a))
   ipcMain.handle('exportDecode:open', (event, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number }) =>
     openExportDecode(ndBackend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), {
       sessionId: a.sessionId, path: a.path, outFormat: a.outFormat, window: a.window,

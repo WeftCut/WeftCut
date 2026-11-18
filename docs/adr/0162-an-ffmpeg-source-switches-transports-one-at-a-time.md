@@ -41,7 +41,8 @@ Two failures followed:
 - **One report per failure.** A failed open is its rejection. `onError` is a
   failure of an open transport; one that arrives before the open settles is
   taken as that open failing. Callbacks from an attempt that is no longer
-  current are dropped by identity. `SwTransport` never calls `onError`.
+  current are dropped by identity. `SwTransport` calls `onError` only for a
+  session that ended after open (a terminal error), never from `open`.
 - **One failure table** (`judgeFailure`) for every switch: a capacity refusal
   holds the source in `blocked`, unmarked, and a frame request retries after
   1 s; a budget refusal asks the pool to reclaim once, then spills; a
@@ -56,6 +57,7 @@ Two failures followed:
 - A runtime GPU→SW fallback waits for main to close the GPU session; the ring
   keeps the last frame on screen meanwhile.
 - A forced lane is now fatal on a runtime failure too, not only at open.
-- Software and copy-back lanes still cannot report a decode error after open:
-  main only logs native's `Error` events. Forwarding them is a separate change
-  through native, main and preload.
+- Software and copy-back lanes report a session that died after open (a
+  native panic) through `onError`. A failed seek or decode stays log-only,
+  so a lane that fails every request (a lost device) still freezes its clip
+  instead of falling back; how many failures make an error terminal is open.

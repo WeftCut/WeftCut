@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DecodeMsg } from '@weftcut/native-decode'
-import type { DecodeCommand } from '../../shared/frameCarrier/wire'
-import { hostDecodeSession, type CarrierPort } from './decodeSessionHost'
+import { hostDecodeSession, parseRelease, type CarrierPort } from './decodeSessionHost'
 import type { DocumentOwner } from './documentOwner'
 
 function fakePort() {
@@ -34,17 +33,23 @@ function fakeOwner() {
 const frame = (lease: number, ptsUs: number): DecodeMsg =>
   ({ kind: 'bytes', lease, ptsUs, durUs: 1, width: 2, height: 2, format: 'NV12', data: Buffer.alloc(6) })
 
+/** A pipeline's own command, which the host routes without knowing it. */
+type Go = { type: 'go'; n: number }
+const parseGo = (data: Record<string, unknown>): Go | null =>
+  data.type === 'go' && typeof data.n === 'number' ? { type: 'go', n: data.n } : null
+
 /** Opens a hosted session whose native side records what it is asked. */
 function hosted() {
   const port = fakePort()
   const owner = fakeOwner()
-  const commands: DecodeCommand[] = []
+  const commands: Go[] = []
   const close = vi.fn()
   let deliver!: (msg: DecodeMsg) => void
   const info = hostDecodeSession({
     port: port.port,
     owner: owner.owner,
     open: onMsg => { deliver = onMsg; return { width: 2 } },
+    parse: parseGo,
     command: cmd => { commands.push(cmd) },
     close,
   })
@@ -73,31 +78,41 @@ describe('hostDecodeSession', () => {
     expect(port.posted).toEqual(delivered)
   })
 
-  it('routes range and release commands from the port to the session, and nothing else', () => {
+  it('routes the commands its pipeline parses from the port to the session, and nothing else', () => {
     const { port, commands } = hosted()
-    port.send({ type: 'range', aUs: 0, bUs: 500 })
-    port.send({ type: 'release', lease: 3 })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    port.send({ type: 'go', n: 1 })
     port.send({ type: 'pause' })
-    port.send({ type: 'release', lease: -1 })
-    port.send({ type: 'range', aUs: 'x', bUs: 1 })
+    port.send({ type: 'go', n: 'x' })
     port.send(null)
-    expect(commands).toEqual([{ type: 'range', aUs: 0, bUs: 500 }, { type: 'release', lease: 3 }])
+    port.send('close')
+    port.send({ type: 'go', n: 2 })
+    expect(commands).toEqual([{ type: 'go', n: 1 }, { type: 'go', n: 2 }])
+  })
+
+  it('parses a release by its lease, never a negative or fractional one', () => {
+    expect(parseRelease({ type: 'release', lease: 3 })).toEqual({ type: 'release', lease: 3 })
+    expect(parseRelease({ type: 'release', lease: -1 })).toBeNull()
+    expect(parseRelease({ type: 'release', lease: 1.5 })).toBeNull()
+    expect(parseRelease({ type: 'release' })).toBeNull()
+    expect(parseRelease({ type: 'range', lease: 3 })).toBeNull()
   })
 
   it('a command the session refuses does not throw out of the port', () => {
     const port = fakePort()
     hostDecodeSession({
-      port: port.port, owner: fakeOwner().owner, open: () => null, close: () => {},
+      port: port.port, owner: fakeOwner().owner, open: () => null, close: () => {}, parse: parseGo,
       command: () => { throw new Error('no export_decode session') },
     })
-    expect(() => port.send({ type: 'release', lease: 0 })).not.toThrow()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(() => port.send({ type: 'go', n: 0 })).not.toThrow()
   })
 
   it('closes the session and its port once on a close command', () => {
     const { port, owner, close, commands } = hosted()
     port.send({ type: 'close' })
     port.send({ type: 'close' })
-    port.send({ type: 'release', lease: 0 })
+    port.send({ type: 'go', n: 0 })
     expect(close).toHaveBeenCalledOnce()
     expect(port.state.closed).toBe(true)
     expect(commands, 'close is the host\'s, not the session\'s').toEqual([])
@@ -129,7 +144,7 @@ describe('hostDecodeSession', () => {
     port.farEndCloses()
     deliver(frame(1, 10))
     deliver({ kind: 'end' })
-    port.send({ type: 'release', lease: 0 })
+    port.send({ type: 'go', n: 0 })
     expect(port.posted).toEqual([frame(0, 0)])
     expect(commands).toEqual([])
   })
@@ -139,7 +154,7 @@ describe('hostDecodeSession', () => {
     const owner = fakeOwner()
     const close = vi.fn()
     expect(() => hostDecodeSession({
-      port: port.port, owner: owner.owner, command: () => {}, close,
+      port: port.port, owner: owner.owner, parse: parseGo, command: () => {}, close,
       open: () => { throw new Error('codec failed') },
     })).toThrow('codec failed')
     expect(owner.subscribers.size).toBe(0)

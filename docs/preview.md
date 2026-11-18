@@ -188,12 +188,27 @@ Export uses the same Automatic/Standard/Lite vocabulary through
 - **`SwTransport`.** libavcodec decodes in the main process, and NV12 (or
   I420P10) bytes go over classic IPC
   ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
-  The compositor's own ingest pass converts them to RGB using the source's
+  Each `preview_sw` session is a decode session on the same carrier as export
+  decode ([`export-ipc-transport.md`](export-ipc-transport.md#decode-in)):
+  `previewDecode:open` reserves the decoder's memory and opens it, main sends
+  each of its messages (`bytes`, `end`, `error`) on `decodeSession:msg`, and
+  the preload posts it on the session's port with the frame buffer
+  transferred. `SwTransport` on the page main thread holds the other end and
+  posts `request` and `release` up it. Frames carry no colour: the
+  compositor's own ingest pass converts them to RGB using the source's
   resolved colour (`resolveSourceColor`, the one rule every lane shares; see
   [`conformance.md`](conformance.md#decode-color-tags)), never through
   `createImageBitmap`, which always applies BT.601
   ([ADR 0032](adr/0032-cpu-plane-yuv-converts-in-owned-shaders.md)). The gate
   is `preview-sw-color.spec.ts`.
+- **A software session reports its own death.** A native panic ends the
+  session with a terminal `error`, which reaches `SwTransport.onError` and the
+  failure table like a GPU error. A failed seek or decode is a non-terminal
+  `error`: native logs it and the next request seeks again; the renderer does
+  not act on it. The `end` of the material is not reported, because the
+  native cursor already absorbs requests past it. `SwTransport.dispose` sends
+  `close` by session id over IPC, not up the port, so main frees the session
+  before the replacement transport's open arrives.
 - **Software requests continue; they do not re-seek.** The native session
   keeps a cursor between requests. A target moving forward continues the same
   pass. Only a backward move, or a jump more than 1 s past the frontier,
@@ -201,16 +216,18 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   every request cost 137× decode amplification on a 240-frame GOP. The
   renderer requests a refill only when forward coverage drops below 150 ms
   (`REFILL_LOOKAHEAD_US`), and not while `FrameRing.isLookaheadFull()`.
-- **Software delivery uses credits.** Production opens allow at most 8
-  outstanding frames and 32 MiB (`preview_sw/flow.rs`); one oversized frame may
-  travel alone. Each frame stays charged until the renderer returns its unique
-  receipt, sent whether the frame was accepted or dropped. Duplicate or
-  foreign receipts are ignored. A seek changes the request identity but does
-  not cancel outstanding receipts. Forward refills keep the identity. A cache
-  flush changes it. Native code and the renderer both reject superseded work.
-  Decode runs in 8 ms cooperative slices and resumes the same cursor; it
-  cannot interrupt a blocking FFmpeg call. Renderer reload closes the producer.
-  Callers that use native code directly keep the uncredited contract.
+- **Software delivery uses leases.** A session has at most 8 frames and
+  32 MiB in flight (`WINDOW_FRAMES`, `WINDOW_BYTES` in
+  `preview_sw/session.rs`); one oversized frame may travel alone. Each frame
+  holds its lease until `SwTransport` releases it by id, exactly once,
+  whether the frame was shown or dropped. A duplicate or unknown lease is
+  ignored. A full window never parks the session: it keeps the frame it has
+  and serves the next request, and a released lease wakes it. A seek changes
+  the request id but does not forgive leases in flight. Forward refills keep
+  the id. A cache flush changes it. Every frame names the request it answers;
+  native code and the renderer both reject superseded work. Decode runs in
+  8 ms cooperative slices and resumes the same cursor; it cannot interrupt a
+  blocking FFmpeg call. Renderer reload closes the session.
 - **Hardware→software fallback happens inside the source.** A hardware error
   or device loss, at open or later, closes the failed transport and then opens
   `SwTransport` into the same ring with a fresh `streamId`, keeping the last
