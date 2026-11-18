@@ -227,7 +227,7 @@ describe("NativeExportSourceHandle", () => {
       colorTransfer: "smpte2084",
       colorRange: "tv",
     });
-    expect(handle.firstFrameDiag?.configColor).toEqual({
+    expect(handle.firstFrameDiag?.configColor).toMatchObject({
       matrix: "bt470bg",
       primaries: "bt709",
       transfer: "bt709",
@@ -240,7 +240,7 @@ describe("NativeExportSourceHandle", () => {
     await handle.ensureReady();
     relay.sink!.onFrame(frameMsg(0));
     const nv = handle.ring.frameAt(0) as NativeNv12Frame;
-    expect(nv.colorSpace).toEqual({
+    expect(nv.colorSpace).toMatchObject({
       matrix: "smpte170m",
       primaries: "smpte170m",
       transfer: "smpte170m",
@@ -390,7 +390,7 @@ describe("NativeExportSourceHandle — I420P10 lane", () => {
     expect(tb.timestamp).toBe(0);
     expect(tb.duration).toBe(DUR);
     // Same sourceColor stamp as the NV12 branch.
-    expect(tb.colorSpace).toEqual({
+    expect(tb.colorSpace).toMatchObject({
       matrix: "bt470bg",
       primaries: "bt709",
       transfer: "bt709",
@@ -486,7 +486,7 @@ describe("NativeExportSourceHandle — NV12 lane", () => {
     expect(nv.data.buffer).toBe(bytes);
     expect(nv.timestamp).toBe(0);
     expect(nv.duration).toBe(DUR);
-    expect(nv.colorSpace).toEqual({
+    expect(nv.colorSpace).toMatchObject({
       matrix: "bt709",
       primaries: "bt709",
       transfer: "bt709",
@@ -502,6 +502,7 @@ describe("NativeExportSourceHandle — NV12 lane", () => {
       primaries: "smpte170m",
       transfer: "smpte170m",
       fullRange: false,
+      matrixAssumed: false,
     });
     await handle.ensureReady();
     relay.sink!.onFrame(frameMsg(0));

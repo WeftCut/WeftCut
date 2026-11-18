@@ -15,6 +15,9 @@ export interface SourceColor {
   transfer: VideoTransferCharacteristics;
   matrix: VideoMatrixCoefficients;
   fullRange: boolean;
+  /// The source declares no matrix; `matrix` is the rule's. Hardware
+  /// WebCodecs decoders need to know (`decodesInSoftwareForColour`).
+  matrixAssumed: boolean;
 }
 
 /// What the rule reads off a `MediaSummary`: the ffprobe tags and the
@@ -61,11 +64,13 @@ const TRANSFER: Record<string, VideoTransferCharacteristics> = {
 /// hand the analyzer the intended matrix explicitly (docs/conformance.md).
 export function resolveSourceColor(media: SourceColorProbe): SourceColor {
   const absent = media.height !== null && media.height < HD_MIN_HEIGHT ? "smpte170m" : "bt709";
+  const matrix = mapped(MATRIX, media.color_matrix);
   return {
     primaries: mapped(PRIMARIES, media.color_primaries) ?? absent,
     transfer: mapped(TRANSFER, media.color_transfer) ?? absent,
-    matrix: mapped(MATRIX, media.color_matrix) ?? absent,
+    matrix: matrix ?? absent,
     fullRange: media.color_range === "pc",
+    matrixAssumed: matrix === undefined,
   };
 }
 

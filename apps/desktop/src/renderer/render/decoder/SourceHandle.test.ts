@@ -10,7 +10,7 @@ vi.mock("./transports/GpuTransport", () => ({ GpuTransport: class {} }));
 vi.mock("../../ipc", () => ({ logEmit: vi.fn(async () => {}) }));
 
 import { SourceHandle, SourceMedia } from "./SourceDecoderPool";
-import { resolveSourceColor } from "./ffprobeColorSpace";
+import { resolveSourceColor, type SourceColor } from "./ffprobeColorSpace";
 
 interface FakePacket {
   timestamp: number; // seconds — mediabunny's EncodedPacket unit
@@ -89,11 +89,8 @@ class FakeVideoDecoder {
 /// Every fake settles in microtasks; one macrotask drains them all.
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-function makeHandle(): SourceHandle {
-  return new SourceHandle(
-    "layer-1",
-    new SourceMedia("media-1", "weftcut-media://localhost/test.mp4", resolveSourceColor({ height: 1080 })),
-  );
+function makeHandle(sourceColor: SourceColor = resolveSourceColor({ height: 1080 })): SourceHandle {
+  return new SourceHandle("layer-1", new SourceMedia("media-1", "weftcut-media://localhost/test.mp4", sourceColor));
 }
 
 function warnings(): string[] {
@@ -216,6 +213,28 @@ describe("SourceHandle after an unclassified decoder error", () => {
       expect(FakeVideoDecoder.instances, "progress past the failure re-arms the rebuild").toHaveLength(3);
       expect(warnings().filter((m) => m.includes("video decoder stopped"))).toEqual([]);
     } finally {
+      h.dispose();
+    }
+  });
+});
+
+// A hardware decoder converts a stream that declares no matrix as BT.709,
+// whatever the config says, so only a software decoder can show the colour the
+// rule supplies for an untagged SD source.
+describe("SourceHandle decoder lane", () => {
+  it.each([
+    ["an untagged SD source", resolveSourceColor({ height: 480 }), "prefer-software"],
+    ["an untagged HD source", resolveSourceColor({ height: 1080 }), "prefer-hardware"],
+    ["a 601-tagged SD source", resolveSourceColor({ height: 480, color_matrix: "smpte170m" }), "prefer-hardware"],
+  ] as const)("builds the decoder of %s as its colour needs", async (_name, sourceColor, lane) => {
+    const configure = vi.spyOn(FakeVideoDecoder.prototype, "configure");
+    const h = makeHandle(sourceColor);
+    try {
+      await h.requestFrameAt(0);
+      await settle();
+      expect(configure).toHaveBeenCalledWith(expect.objectContaining({ hardwareAcceleration: lane }));
+    } finally {
+      configure.mockRestore();
       h.dispose();
     }
   });

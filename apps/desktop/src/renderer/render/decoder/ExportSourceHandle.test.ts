@@ -711,6 +711,23 @@ describe("ExportSourceHandle preferSoftware", () => {
     }
   });
 
+  it.each([
+    ["an untagged SD source", resolveSourceColor({ height: 480 }), "prefer-software"],
+    ["an untagged HD source", resolveSourceColor({ height: 1080 }), "prefer-hardware"],
+    ["a 601-tagged SD source", resolveSourceColor({ height: 480, color_matrix: "smpte170m" }), "prefer-hardware"],
+  ] as const)("configures the decoder of %s as its colour needs", async (_name, sourceColor, lane) => {
+    sink = makeSink([pkt(0, "key")]);
+    const configure = vi.spyOn(FakeVideoDecoder.prototype, "configure");
+    const handle = makeHandle({ sourceColor });
+    try {
+      await handle.ensureReady();
+      expect(configure).toHaveBeenCalledWith(expect.objectContaining({ hardwareAcceleration: lane }));
+    } finally {
+      configure.mockRestore();
+      handle.dispose();
+    }
+  });
+
   it("captures the hardwareAcceleration config via spy before ensureReady", async () => {
     const packets = [pkt(0, "key")];
     sink = makeSink(packets);

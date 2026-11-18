@@ -12,6 +12,20 @@ import type { SourceColor } from "./ffprobeColorSpace";
 /// LANDMINE: the WebCodecs decoder follows this config over the bitstream VUI
 /// (verified in Chromium/Electron), so leaving a field unset lets the decoder
 /// pick an implementation-defined matrix that disagrees with the other lanes.
+/// Whether a WebCodecs decode of this source must run in software to show the
+/// resolved colour.
+///
+/// LANDMINE: a hardware decoder's frames convert by what the bitstream
+/// declares, and as BT.709 when it declares nothing, whatever the config's
+/// `colorSpace` says (observed: macOS VideoToolbox in Electron 44, an untagged
+/// 720x480 H.264 chart previews and exports with BT.709 colours under a
+/// smpte170m config). A software decoder's frames follow the config. So a
+/// source whose matrix is the rule's and is not BT.709 decodes in software;
+/// it is below 720 lines by the rule, where that costs little.
+export function decodesInSoftwareForColour(sourceColor: SourceColor): boolean {
+  return sourceColor.matrixAssumed && sourceColor.matrix !== "bt709";
+}
+
 export function withDefaultColorSpace(
   config: VideoDecoderConfig,
   sourceColor: SourceColor,

@@ -16,7 +16,7 @@
 
 import type { EncodedPacketSink } from "mediabunny";
 import { logEmit } from "../../ipc";
-import { withDefaultColorSpace } from "./colorSpaceDefault";
+import { decodesInSoftwareForColour, withDefaultColorSpace } from "./colorSpaceDefault";
 import type { SourceColor } from "./ffprobeColorSpace";
 import { DecodeClock } from "./decodeClock";
 import { FrameRing } from "./FrameRing";
@@ -45,6 +45,11 @@ export class SourceMedia {
   /// `withDefaultColorSpace` so 601/full-range/untagged sources preview with
   /// the colour every other lane uses, from either URL.
   private readonly sourceColor: SourceColor;
+  /// Every decoder of this media is built prefer-software
+  /// (`decodesInSoftwareForColour`).
+  get softwareForColour(): boolean {
+    return decodesInSoftwareForColour(this.sourceColor);
+  }
   private readonly knownStartPtsUs: number | null;
   private opened: OpenedMedia | null = null;
   private config: VideoDecoderConfig | null = null;
@@ -472,7 +477,8 @@ export class SourceHandle {
     }
     return {
       ...this.config,
-      hardwareAcceleration: this.downgraded ? "prefer-software" : "prefer-hardware",
+      hardwareAcceleration:
+        this.downgraded || this.media.softwareForColour ? "prefer-software" : "prefer-hardware",
     };
   }
 

@@ -12,7 +12,7 @@
 import type { EncodedPacket } from "mediabunny";
 import type { DecoderPool, ExportDecodeSession, FrameStore, SourceHandleInit } from "./session";
 import { NativeExportSourceHandle } from "../worker/nativeExportSource";
-import { withDefaultColorSpace } from "./colorSpaceDefault";
+import { decodesInSoftwareForColour, withDefaultColorSpace } from "./colorSpaceDefault";
 import type { SourceColor } from "./ffprobeColorSpace";
 import { DecodeClock } from "./decodeClock";
 import { handleDecodeError } from "./decoderFallback";
@@ -640,7 +640,10 @@ export class ExportSourceHandle implements ExportDecodeSession {
     }
     return {
       ...this.config,
-      hardwareAcceleration: this.downgraded || this.preferSoftware ? "prefer-software" : "prefer-hardware",
+      hardwareAcceleration:
+        this.downgraded || this.preferSoftware || decodesInSoftwareForColour(this.sourceColor)
+          ? "prefer-software"
+          : "prefer-hardware",
     };
   }
 
