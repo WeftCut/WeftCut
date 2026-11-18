@@ -10,13 +10,14 @@ import { openExportDecode, type ExportDecodeRequest } from './exportDecode'
 function fakePort() {
   const listeners: { message?: (e: { data: unknown }) => void; close?: () => void } = {}
   const posted: DecodeMsg[] = []
+  const closes = { count: 0 }
   const port: CarrierPort = {
     on: ((event: 'message' | 'close', listener: never) => { listeners[event] = listener }) as CarrierPort['on'],
     postMessage: msg => { posted.push(msg) },
     start: () => {},
-    close: () => {},
+    close: () => { closes.count += 1 },
   }
-  return { port, posted, send: (data: unknown) => listeners.message!({ data }), farEndCloses: () => listeners.close!() }
+  return { port, posted, closes, send: (data: unknown) => listeners.message!({ data }), farEndCloses: () => listeners.close!() }
 }
 
 type OnMsg = (err: Error | null, msg: DecodeMsg) => void
@@ -55,6 +56,21 @@ describe('openExportDecode', () => {
     // Once the first session closes, its id is free again.
     first.farEndCloses()
     expect(() => openExportDecode(native, contents(), fakePort().port, request('dup'))).not.toThrow()
+  })
+
+  it('closes the port of a session it refuses, and leaves the open one alone', () => {
+    const { native } = fakeBackend()
+    const live = fakePort()
+    openExportDecode(native, contents(), live.port, request('held'))
+    const duplicate = fakePort()
+    expect(() => openExportDecode(native, contents(), duplicate.port, request('held'))).toThrow('already exists')
+    resources.reserve.mockImplementationOnce(() => { throw new Error('capacity exceeded') })
+    const unadmitted = fakePort()
+    expect(() => openExportDecode(native, contents(), unadmitted.port, request('full'))).toThrow('capacity exceeded')
+    expect([duplicate.closes.count, unadmitted.closes.count, live.closes.count]).toEqual([1, 1, 0])
+    // The refused duplicate did not take the live session's id with it.
+    expect(() => openExportDecode(native, contents(), fakePort().port, request('held'))).toThrow('already exists')
+    expect(() => openExportDecode(native, contents(), fakePort().port, request('full'))).not.toThrow()
   })
 
   it('releases its reservation once, when the session closes', () => {

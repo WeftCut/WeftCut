@@ -23,7 +23,8 @@ export interface ExportDecodeRequest {
 const sessions = new Set<string>()
 
 /** Opens a session served on `port` until its consumer closes it or `owner`'s
- * document goes away. Messages flow only after the first `range` command. */
+ * document goes away. Messages flow only after the first `range` command. A
+ * refused session closes `port`. */
 export function openExportDecode(
   backend: NativeDecode,
   owner: WebContents,
@@ -31,11 +32,12 @@ export function openExportDecode(
   request: ExportDecodeRequest,
 ): ExportDecodeOpenInfo {
   const { sessionId, path, outFormat, window, finalizationId } = request
-  if (sessions.has(sessionId)) throw new Error('Export decoder session already exists')
-  const release = reserveDecoderResources(path, finalizationId)
-  sessions.add(sessionId)
-  const forget = () => { sessions.delete(sessionId); release() }
+  let forget = () => {}
   try {
+    if (sessions.has(sessionId)) throw new Error('Export decoder session already exists')
+    const release = reserveDecoderResources(path, finalizationId)
+    sessions.add(sessionId)
+    forget = () => { sessions.delete(sessionId); release() }
     return hostDecodeSession({
       port,
       owner: documentOwner(owner),
@@ -55,6 +57,7 @@ export function openExportDecode(
     })
   } catch (error) {
     forget()
+    port.close()
     throw error
   }
 }
