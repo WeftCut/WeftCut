@@ -30,7 +30,10 @@ export type { PreviewDecodeOpenInfo, PreviewDecodeOptions }
 /** Hands back the lease of a frame that has left the consumer. */
 export type ReleaseCommand = { type: 'release'; lease: number }
 
-/** Ends the session. Every pipeline takes it; the session host handles it. */
+/** Ends the session, for every pipeline; the session host handles it. The
+ * preload sends it by session id (`decodeSessionPorts.close`), never a
+ * consumer up its port: it must reach main ahead of any open asked for after
+ * it, and only the route opens take guarantees that. */
 export type CloseCommand = { type: 'close' }
 
 /** Up an export session's port: `range` asks for every frame in `[aUs, bUs]`. */
@@ -41,5 +44,5 @@ export type ExportDecodeCommand = { type: 'range'; aUs: number; bUs: number } | 
  * discontinuity; frames name the request they answer. */
 export type PreviewDecodeCommand = { type: 'request'; targetUs: number; requestId: number } | ReleaseCommand
 
-/** Anything a consumer posts up a decode session's port. */
+/** Anything main takes for a decode session on `decodeSession:cmd`. */
 export type DecodeCommand = ExportDecodeCommand | PreviewDecodeCommand | CloseCommand

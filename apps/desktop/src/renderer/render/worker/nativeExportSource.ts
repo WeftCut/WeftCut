@@ -10,7 +10,7 @@
 // Backpressure is a lease window: the session parks once `window` frames are
 // out, and each frame's lease goes back when that frame leaves the ring.
 
-import type { CloseCommand, DecodeWireFrame, DecodeWireMsg, ExportDecodeCommand, ExportDecodeOpenInfo } from "../../../shared/frameCarrier/wire";
+import type { DecodeWireFrame, DecodeWireMsg, ExportDecodeCommand, ExportDecodeOpenInfo } from "../../../shared/frameCarrier/wire";
 import type { ExportColorDiag } from "../decoder/ExportDecoderPool";
 import { ExportFrameStore } from "../decoder/ExportDecoderPool";
 import type { SourceColor } from "../decoder/ffprobeColorSpace";
@@ -24,7 +24,7 @@ import type { ExportEvent, ExportRequest } from "./protocol";
 /// The handle's end of its session port (a `MessagePort` in the Worker).
 export interface DecodePort {
   onmessage: ((event: MessageEvent<DecodeWireMsg>) => void) | null;
-  postMessage(cmd: ExportDecodeCommand | CloseCommand): void;
+  postMessage(cmd: ExportDecodeCommand): void;
   close(): void;
 }
 
@@ -35,10 +35,19 @@ export interface NativeDecodeOpenRequest {
   window: number;
 }
 
-/// Opens a native session and resolves with its open info and its port.
-export type OpenNativeDecode = (
-  request: NativeDecodeOpenRequest,
-) => Promise<{ info: ExportDecodeOpenInfo; port: DecodePort }>;
+/// How a handle starts and ends its native session.
+export interface NativeDecodeSessions {
+  /// Opens a session and resolves with its open info and its port.
+  open(request: NativeDecodeOpenRequest): Promise<{ info: ExportDecodeOpenInfo; port: DecodePort }>;
+  /// Ends session `sessionId` in main, opened or still opening.
+  ///
+  /// LANDMINE: never as a command on the session's port. The export releases
+  /// one phase's handle and opens the next phase's in the same turn; a close
+  /// on the port takes a different route to main than the open and can arrive
+  /// behind it, while the old session still holds its decoder memory, so main
+  /// refuses the open on a host with a small memory target.
+  close(sessionId: string): void;
+}
 
 /// The Worker global's part of the `nd:open` ⇄ `nd:openResult` handshake.
 export interface OpenScope {
@@ -46,12 +55,13 @@ export interface OpenScope {
   postMessage(message: ExportEvent): void;
 }
 
-/// Asks the page to open each session (`nd:open`) and matches every
-/// `nd:openResult` to its request by `reqId`.
+/// Asks the page to open each session (`nd:open`), matching every
+/// `nd:openResult` to its request by `reqId`, and to close it (`nd:close`).
+/// Both go to the page in the order they were asked for.
 ///
 /// LANDMINE: exportWorker.ts owns `self.onmessage`; this listens with
 /// `addEventListener` so both coexist, and ignores every other message type.
-export function createNativeDecodeOpener(scope: OpenScope): OpenNativeDecode {
+export function createNativeDecodeSessions(scope: OpenScope): NativeDecodeSessions {
   let nextReqId = 1;
   const pending = new Map<
     number,
@@ -66,22 +76,25 @@ export function createNativeDecodeOpener(scope: OpenScope): OpenNativeDecode {
     if (msg.ok) waiting.resolve({ info: msg.info, port: msg.port });
     else waiting.reject(new Error(msg.error));
   });
-  return (request) =>
-    new Promise((resolve, reject) => {
-      const reqId = nextReqId++;
-      pending.set(reqId, { resolve, reject });
-      scope.postMessage({ type: "nd:open", reqId, ...request });
-    });
+  return {
+    open: (request) =>
+      new Promise((resolve, reject) => {
+        const reqId = nextReqId++;
+        pending.set(reqId, { resolve, reject });
+        scope.postMessage({ type: "nd:open", reqId, ...request });
+      }),
+    close: (sessionId) => scope.postMessage({ type: "nd:close", sessionId }),
+  };
 }
 
-let workerOpener: OpenNativeDecode | null = null;
+let workerSessions: NativeDecodeSessions | null = null;
 
 /// LANDMINE: lazy. Nothing at module top level may touch `self`: the node
 /// vitest suites import the export pool, which imports this module.
-function openInWorker(request: NativeDecodeOpenRequest): ReturnType<OpenNativeDecode> {
-  workerOpener ??= createNativeDecodeOpener(self as unknown as OpenScope);
-  return workerOpener(request);
-}
+const sessionsInWorker: NativeDecodeSessions = {
+  open: (request) => (workerSessions ??= createNativeDecodeSessions(self as unknown as OpenScope)).open(request),
+  close: (sessionId) => (workerSessions ??= createNativeDecodeSessions(self as unknown as OpenScope)).close(sessionId),
+};
 
 /// Module counter for a realm-safe unique `sessionId`. Math.random / Date.now
 /// are banned/absent in some realms; a monotonic counter is deterministic and
@@ -91,7 +104,7 @@ let seq = 0;
 export class NativeExportSourceHandle implements ExportDecodeSession {
   readonly mediaId: string;
   readonly ring = new ExportFrameStore();
-  private readonly open: OpenNativeDecode;
+  private readonly sessions: NativeDecodeSessions;
   private readonly sessionId: string;
   private readonly sourcePath: string;
   private readonly outFormat: ExportTransportFormat;
@@ -109,6 +122,8 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   /// Null until the session is open, and again once it is over (disposed, or a
   /// terminal error): nothing is posted to a session that is gone.
   private port: DecodePort | null = null;
+  /// The session was asked to end; a port that arrives later is only closed.
+  private ended = false;
   private _disposed = false;
 
   /// Aggregated into the export `done` perf payload. `dispatchedTotal` mirrors
@@ -121,7 +136,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     return this.sourcePath;
   }
 
-  constructor(init: SourceHandleInit, open: OpenNativeDecode = openInWorker) {
+  constructor(init: SourceHandleInit, sessions: NativeDecodeSessions = sessionsInWorker) {
     this.mediaId = init.mediaId;
     const ne = init.nativeExport!;
     this.sourcePath = ne.sourcePath;
@@ -130,7 +145,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.frameColorSpace = init.sourceColor;
     // Unique, realm-safe, stable for this handle's lifetime.
     this.sessionId = `nd-${seq++}-${init.mediaId}-${init.handleKey ?? init.mediaId}`;
-    this.open = open;
+    this.sessions = sessions;
   }
 
   get disposed(): boolean {
@@ -141,14 +156,14 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     if (this.readyP) return this.readyP;
     // The open info is not needed: frames carry their own dimensions and an
     // already source-normalized `ptsUs`, and colour comes from `sourceColor`.
-    this.readyP = this.open({
+    this.readyP = this.sessions.open({
       sessionId: this.sessionId,
       path: this.sourcePath,
       outFormat: this.outFormat,
       window: this.window,
     }).then(({ port }) => {
-      if (this._disposed) {
-        port.postMessage({ type: "close" });
+      // Ended while opening: the close already went out, behind the open.
+      if (this.ended) {
         port.close();
         return;
       }
@@ -204,7 +219,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
       // terminal one also ends the session, so its port closes now.
       case "error":
         this.ring.fail(msg.message);
-        if (msg.terminal) this.closePort();
+        if (msg.terminal) this.endSession();
         return;
     }
   }
@@ -242,14 +257,16 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.ring.push(frame, msg.ptsUs);
   }
 
-  /// Ends the native session in main, then drops the port. Messages posted
-  /// before a port closes are still delivered.
-  private closePort(): void {
+  /// Ends the native session in main, once, and drops the port. A session
+  /// that was never asked for has nothing to end.
+  private endSession(): void {
+    if (this.ended) return;
+    this.ended = true;
+    if (this.readyP) this.sessions.close(this.sessionId);
     const port = this.port;
     this.port = null;
     if (!port) return;
     port.onmessage = null;
-    port.postMessage({ type: "close" });
     port.close();
   }
 
@@ -270,6 +287,6 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this._disposed = true;
     // Hands back the lease of every frame still held, then ends the session.
     this.ring.dispose();
-    this.closePort();
+    this.endSession();
   }
 }
