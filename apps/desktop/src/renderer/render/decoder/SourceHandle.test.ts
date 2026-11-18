@@ -87,7 +87,7 @@ class FakeVideoDecoder {
 }
 
 /// Every fake settles in microtasks; one macrotask drains them all.
-const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 function makeHandle(sourceColor: SourceColor = resolveSourceColor({ height: 1080 })): SourceHandle {
   return new SourceHandle("layer-1", new SourceMedia("media-1", "weftcut-media://localhost/test.mp4", sourceColor));
