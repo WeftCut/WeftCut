@@ -23,6 +23,7 @@ goes where.
 - `motif-preview-progress-2026-10-05.md` — Motif preparation progress during playback.
 - `motif-live-store-2026-11-05.md` — playback with every captured Motif frame stored outside the lease; on the PNG host the utility lane is then the limit.
 - `motif-frame-checksum-2026-11-06.md` — zstd's content checksum against BLAKE3: cost and bit-flip detection.
+- `byte-frame-transport-2026-11-18.md` — which channel carries decoded byte frames from main to a renderer: the `contextBridge` copy, the cost of a `MessagePortMain` send, and the port the preload holds.
 - `slot-read-completion-2026-11-18.md` — hardware preview slots: the page's WebGPU fence against a synchronous one-pixel proof per frame; why the fence stays.
 - `motif-texture-read-path-2026-11-06.md` — where a Windows texture-lane read spends its time; read barriers compared, with a check that can fail.
 - `motif-texture-upload-2026-11-07.md` — decode buffer reuse and premultiplying into a staging texture; partial-alpha test frames; why uploads still wait for the GPU copy.

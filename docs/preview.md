@@ -168,7 +168,8 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   formats that get probed and never overrides a negative probe.
 - **`GpuTransport` (d3d11va).** A pooled shared D3D11 texture reaches the
   compositor with no pixel bytes crossing IPC. Each `preview_gpu` session is a
-  decode session on the same carrier as the byte lanes: `previewGpu:open`
+  decode session under the same host as the byte lanes
+  ([ADR 0175](adr/0175-frames-cross-processes-on-two-carriers.md)): `previewGpu:open`
   reserves the GPU admission (sessions, coded pixel area, shared-buffer bytes)
   and the decoder's memory, opens the session, and hands the pool's textures
   to the requesting document once, each sent with its tag `{key: session id,
