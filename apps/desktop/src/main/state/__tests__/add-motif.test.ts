@@ -6,15 +6,14 @@ import { routeMcpTool } from '../../mcp/mutationTools'
 import { createActor } from '../actor'
 import { blankProject } from '../model'
 import { seededGen } from '../ids'
-import { MotifCatalog } from '../../../shared/motifs/catalog'
 import { root } from './fixtures/project'
+import { libraryMotifs } from './fixtures/motifs'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function makeActor() {
   const idGen = seededGen()
-  const catalog = new MotifCatalog()
   const proj = blankProject(idGen, 'test')
-  return createActor({ initial: proj, idGen, motifCatalog: catalog })
+  return createActor({ initial: proj, idGen, motifs: libraryMotifs() })
 }
 
 // ── a. routing ────────────────────────────────────────────────────────────────
@@ -55,7 +54,7 @@ describe('actor.command("add_motif") — no track_id', () => {
     expect(overlayTrack!.id < layerId).toBe(true)
   })
 
-  it('layer params: kind=Motif, correct motif_id/version, canonical defaults, src_in_us=0, identity transform, Static(1) opacity', () => {
+  it('layer params: kind=Motif, correct motif_id, canonical defaults, src_in_us=0, identity transform, Static(1) opacity', () => {
     const actor = makeActor()
     const result = actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 })
     expect(result.ok).toBe(true)
@@ -68,7 +67,6 @@ describe('actor.command("add_motif") — no track_id', () => {
     expect(p.kind).toBe('Motif')
     if (p.kind !== 'Motif') return
     expect(p.motif_id).toBe('countdown')
-    expect(p.motif_version).toBe(1) // countdown manifest version=1
     // Canonical defaults for countdown: accent, label, seconds (alphabetical BTreeMap order)
     expect(p.props).toEqual({ accent: '#ff4d4d', label: 'GO', seconds: 5 })
     expect(p.src_in_us).toBe(0)
@@ -228,40 +226,112 @@ describe('actor.mcpCall("add_layers") — kind motif', () => {
   })
 })
 
-// ── e. store-fallback resolver ────────────────────────────────────────────────
-// A Motif written to disk externally (e.g. an editor save) is visible to
-// list_motifs (disk-backed) immediately, but the in-memory catalog is only
-// refreshed asynchronously by the file watcher (debounced). add_motif must still
-// resolve it via the store-fallback resolver so placement never loses that race.
-describe('actor.command("add_motif") — store-fallback resolver', () => {
-  function diskManifest(id: string): import('../../../shared/motifs/catalog').Manifest {
-    return { id, name: 'Disk Motif', version: 1, size: [100, 100], default_duration_s: 2, fonts: [], props_schema: {} }
-  }
+// ── e. the project's Motif table ──────────────────────────────────────────────
+// A layer renders the project's own copy: placing a library Motif records its
+// table entry in the commit that adds the layer.
+describe('placing records the project Motif with its layer', () => {
+  const entries = (actor: ReturnType<typeof makeActor>) => actor.snapshot().motifs
+  const layersOn = (actor: ReturnType<typeof makeActor>, id: string) =>
+    root(actor.snapshot()).tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Motif' && l.params.motif_id === id)
 
-  it('resolves a cache-miss id via the resolver (disk write before watcher refresh)', () => {
-    const idGen = seededGen()
-    const catalog = new MotifCatalog((id) => (id === 'disk-x' ? diskManifest('disk-x') : null))
-    const actor = createActor({ initial: blankProject(idGen, 'p'), idGen, motifCatalog: catalog })
-    const r = actor.command('add_motif', { motifId: 'disk-x', tStartUs: 0 })
-    expect(r.ok).toBe(true)
+  it('a library Motif lands in the table with its layer, and one undo removes both', () => {
+    const actor = makeActor()
+    const track = actor.dispatch('add_track', { label: 'T' })
+    const trackId = track.ok ? track.value as string : ''
+    const before = actor.historyStatus().len
+    expect(actor.command('add_motif', { motifId: 'countdown', trackId, tStartUs: 0 }).ok).toBe(true)
+    expect(Object.keys(entries(actor))).toEqual(['countdown'])
+    expect(actor.historyStatus().len).toBe(before + 1)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(entries(actor)).toEqual({})
+    expect(layersOn(actor, 'countdown')).toHaveLength(0)
   })
 
-  it('still rejects an id absent from builtins, cache, AND resolver', () => {
+  it('placing it again reuses the entry the table holds', () => {
+    const actor = makeActor()
+    expect(actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 }).ok).toBe(true)
+    const entry = entries(actor).countdown
+    expect(actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 }).ok).toBe(true)
+    expect(entries(actor)).toEqual({ countdown: entry })
+    expect(layersOn(actor, 'countdown')).toHaveLength(2)
+  })
+
+  it('from_library places the library Motif under a new id when another lineage holds the id', () => {
+    const motifs = libraryMotifs()
     const idGen = seededGen()
-    const catalog = new MotifCatalog(() => null)
-    const actor = createActor({ initial: blankProject(idGen, 'p'), idGen, motifCatalog: catalog })
-    const r = actor.command('add_motif', { motifId: 'ghost', tStartUs: 0 })
+    const actor = createActor({ initial: blankProject(idGen, 'p'), idGen, motifs })
+    const own = { uid: '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d', revision: 'a'.repeat(64), from: null }
+    expect(actor.dispatch('set_project_motif', { motif_id: 'countdown', ...own }).ok).toBe(true)
+    motifs.folders.set('countdown', { id: 'countdown', name: 'Own', version: 1, size: [10, 10], default_duration_s: 1, fonts: [], props_schema: {} })
+    // Without from_library the project's own Motif is placed.
+    expect(actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 }).ok).toBe(true)
+    const r = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'motif', motif_id: 'countdown', from_library: true } }] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const placed = (r.result.structuredContent as { layers: Array<{ motif_id: string }> }).layers[0]!.motif_id
+    expect(placed).not.toBe('countdown')
+    expect(entries(actor).countdown).toEqual(own)
+    expect(entries(actor)[placed]!.uid).not.toBe(own.uid)
+    expect(layersOn(actor, 'countdown')).toHaveLength(1)
+    expect(layersOn(actor, placed)).toHaveLength(1)
+  })
+
+  it('remove_project_motif is refused while a layer uses it, and drops the entry once none does', () => {
+    const actor = makeActor()
+    const added = actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 })
+    const layerId = added.ok ? added.value as string : ''
+    const refused = actor.dispatch('remove_project_motif', { motif_id: 'countdown' })
+    expect(refused).toEqual({ ok: false, error: { error: 'MotifInUse', motif_id: 'countdown', referenced_by: [layerId] } })
+    expect(actor.dispatch('delete_layers', { layers: [layerId] }).ok).toBe(true)
+    expect(actor.dispatch('remove_project_motif', { motif_id: 'countdown' }).ok).toBe(true)
+    expect(entries(actor)).toEqual({})
+  })
+
+  it('a layer may name only a Motif the table holds', () => {
+    const actor = makeActor()
+    const added = actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 })
+    const layerId = added.ok ? added.value as string : ''
+    const r = actor.dispatch('update_layer_params', { layer: layerId, patch: { kind: 'Motif', motif_id: 'not-in-project' } })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toMatchObject({ error: 'ValidationFailed', detail: { rule: 'MotifNotInProject', layer: layerId, motif_id: 'not-in-project' } })
   })
 
-  it('cache/builtins win over the resolver (resolver is only a miss fallback)', () => {
-    const idGen = seededGen()
-    let resolverCalls = 0
-    const catalog = new MotifCatalog((id) => { resolverCalls++; return diskManifest(id) })
-    const actor = createActor({ initial: blankProject(idGen, 'p'), idGen, motifCatalog: catalog })
-    // 'countdown' is a built-in → resolver must not be consulted.
-    const r = actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 })
+  it('set_project_motif records a new revision of that Motif alone', () => {
+    const actor = makeActor()
+    actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 })
+    actor.command('add_motif', { motifId: 'lower-third', tStartUs: 0 })
+    const before = entries(actor)
+    expect(actor.dispatch('set_project_motif', { motif_id: 'countdown', revision: 'b'.repeat(64) }).ok).toBe(true)
+    expect(entries(actor)).toEqual({ ...before, countdown: { ...before.countdown!, revision: 'b'.repeat(64) } })
+  })
+
+  it('update_project_motif records the new revision, source and rebound props in one step', () => {
+    const actor = makeActor()
+    const added = actor.command('add_motif', { motifId: 'countdown', tStartUs: 0, props: { seconds: 3 } })
+    const layerId = added.ok ? added.value as string : ''
+    const before = actor.snapshot()
+    const from = { uid: before.motifs.countdown!.uid, version: 2, revision: 'c'.repeat(64) }
+    const r = actor.dispatch('update_project_motif', { motif_id: 'countdown', revision: 'd'.repeat(64), from, updates: [{ layer_id: layerId, motif_id: 'countdown', props: { seconds: 4 } }] })
     expect(r.ok).toBe(true)
-    expect(resolverCalls).toBe(0)
+    expect(actor.snapshot().motifs.countdown).toEqual({ uid: from.uid, revision: 'd'.repeat(64), from })
+    expect(layersOn(actor, 'countdown')[0]!.params).toMatchObject({ props: { seconds: 4 } })
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(actor.snapshot().motifs).toEqual(before.motifs)
+    expect(layersOn(actor, 'countdown')[0]!.params).toMatchObject({ props: { seconds: 3 } })
+  })
+})
+
+// ── f. Review ─────────────────────────────────────────────────────────────────
+describe('an agent edit of a project Motif in Review', () => {
+  it('is an unreviewed change of that Motif, ranged where its layers play and nowhere else', () => {
+    const actor = makeActor()
+    const edited = actor.command('add_motif', { motifId: 'countdown', tStartUs: 0, tEndUs: 2_000_000 })
+    actor.command('add_motif', { motifId: 'lower-third', tStartUs: 4_000_000, tEndUs: 6_000_000 })
+    const layer = root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((l) => edited.ok && l.id === edited.value)!
+    actor.dispatch('set_project_motif', { motif_id: 'countdown', revision: 'e'.repeat(64) }, { kind: 'Agent', client: 'files' })
+    const review = actor.reviewState()
+    expect(review.unreviewed.map((c) => c.id)).toEqual(['Motif:countdown'])
+    expect(review.ranges.map((r) => [r.t_start_us, r.t_end_us, r.change_ids])).toEqual([[layer.t_start_us, layer.t_end_us, ['Motif:countdown']]])
   })
 })

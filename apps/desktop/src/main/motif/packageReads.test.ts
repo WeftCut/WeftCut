@@ -9,8 +9,8 @@ import { listMotifsInner, motifRevision } from './authoring'
 import { packageContentHash } from './contentHash'
 import { readMotifDirectory } from './packageFiles'
 import { PackageRevisions, STAMP_SETTLE_MS } from './packageRevisions'
+import { MotifResolver } from './resolver'
 import { UserMotifStore } from './store'
-import { MotifWorkspace } from './workspace'
 
 vi.mock('node:fs', async importOriginal => {
   const fs = await importOriginal<typeof import('node:fs')>()
@@ -106,18 +106,19 @@ describe('an installed package with a model', () => {
 
   it('is pinned under the revision it lists, before and after an edit in the store', () => {
     const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
+    const resolver = new MotifResolver(store, [])
     install(store)
     const first = listed(store) as string
 
-    const pin = store.pinPackage('scene', first)
-    expect(store.readFile('scene', `.revisions/${first}/assets/model.glb`)).toEqual(MODEL)
-    pin!.release()
+    const pin = resolver.pin('scene--library', first)
+    expect(resolver.readFile('scene--library', `.revisions/${first}/assets/model.glb`)).toEqual(MODEL)
+    pin.release()
 
     rewrite(model, OTHER_MODEL)
     const second = listed(store) as string
-    const repinned = store.pinPackage('scene', second)
-    expect(store.readFile('scene', `.revisions/${second}/assets/model.glb`)).toEqual(OTHER_MODEL)
-    repinned!.release()
+    const repinned = resolver.pin('scene--library', second)
+    expect(resolver.readFile('scene--library', `.revisions/${second}/assets/model.glb`)).toEqual(OTHER_MODEL)
+    repinned.release()
   })
 
   it('keeps its recorded revision through the move to its version folder', () => {
@@ -142,64 +143,6 @@ describe('an installed package with a model', () => {
     const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
     install(store)
     listed(store)
-    expect(() => store.pinPackage('scene', 'f'.repeat(64))).toThrow(/revision changed/)
-  })
-})
-
-describe('a draft linked to a directory with a model', () => {
-  let store: UserMotifStore, workspace: MotifWorkspace, directory: string, model: string, id: string
-  const row = () => (workspace.list() as Array<{ id: string; revision: string; diagnostic?: string }>).find(e => e.id === id)!
-  beforeEach(() => {
-    store = new UserMotifStore(temp(), { revisions: new PackageRevisions(null, '', settledClock) })
-    workspace = new MotifWorkspace(store, [])
-    directory = temp()
-    model = path.join(directory, 'assets', 'model.glb')
-    writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify({ name: 'Scene', size: [64, 64], default_duration_s: 1, props_schema: {} }))
-    writeFileSync(path.join(directory, 'index.html'), '<html><body>one</body></html>')
-    mkdirSync(path.dirname(model))
-    writeFileSync(model, MODEL)
-    id = workspace.open({ kind: 'directory', path: directory }).motif_id
-  })
-  const mirrored = () => path.join(store.root(), 'drafts', id, 'assets', 'model.glb')
-
-  it('is listed without the directory or its package being read, while neither changed', () => {
-    const first = row().revision
-    forgetReads()
-    expect(row().revision).toBe(first)
-    expect(pathsRead()).not.toContain(model)
-    expect(pathsRead()).not.toContain(mirrored())
-  })
-
-  it('takes an edit made in the directory at the next listing', () => {
-    const first = row().revision
-    rewrite(model, OTHER_MODEL)
-    expect(row().revision).not.toBe(first)
-    expect(store.readFile(id, 'assets/model.glb')).toEqual(OTHER_MODEL)
-  })
-
-  it('keeps reporting a directory that makes no package, without reading it again', () => {
-    writeFileSync(path.join(directory, 'manifest.json'), '{broken')
-    const diagnostic = row().diagnostic
-    expect(diagnostic).toMatch(/JSON/)
-    expect(store.readFile(id, 'assets/model.glb'), 'the last valid package stays').toEqual(MODEL)
-
-    forgetReads()
-    expect(row().diagnostic).toBe(diagnostic)
-    expect(pathsRead()).not.toContain(model)
-  })
-
-  it('recovers when the directory makes a package again', () => {
-    const good = readFileSync(path.join(directory, 'manifest.json'))
-    writeFileSync(path.join(directory, 'manifest.json'), '{broken')
-    expect(row().diagnostic).toBeDefined()
-    rewrite(path.join(directory, 'manifest.json'), good)
-    expect(row().diagnostic).toBeUndefined()
-  })
-
-  it('is mirrored again when its package was changed behind the app', () => {
-    row()
-    rewrite(mirrored(), OTHER_MODEL)
-    row()
-    expect(store.readFile(id, 'assets/model.glb')).toEqual(MODEL)
+    expect(() => new MotifResolver(store, []).pin('scene--library', 'f'.repeat(64))).toThrow(/revision changed/)
   })
 })

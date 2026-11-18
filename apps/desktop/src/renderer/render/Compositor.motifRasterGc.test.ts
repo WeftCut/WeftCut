@@ -12,10 +12,14 @@ import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { useMotifBakeStatusStore, setLayerBakeStatuses } from "../timeline/motifBakeStatusStore";
 import { summaryFixture } from "../testing/summaryFixture";
 import type { MotifBakePlan, MotifBakeSnapshot } from '../../shared/motifs/baking';
+import { holdBuiltinMotifs } from '../testing/projectMotifs';
+
+// The project these tests render holds the built-ins.
+holdBuiltinMotifs();
 
 const { warm, stopWarm } = vi.hoisted(() => ({ warm: vi.fn(), stopWarm: vi.fn() }));
 vi.mock('./motifs/MotifPrewarmer', () => ({ MotifPrewarmer: class { setTargets = warm; dispose = stopWarm; } }));
-vi.mock("./motifs/syncCatalog", () => ({ syncUserMotifsFromBackend: vi.fn(async () => {}) }));
+vi.mock("./motifs/syncCatalog", () => ({ syncProjectMotifsFromBackend: vi.fn(async () => {}) }));
 
 function motifLayer(props: Record<string, unknown>): LayerSummary {
   return {

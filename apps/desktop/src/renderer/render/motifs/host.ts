@@ -13,7 +13,7 @@ import { captureMotif } from './frameTransport';
  * @param width      capture width in pixels
  * @param height     capture height in pixels
  * @param contentHash optional blake3 content hash — threaded to the host URL's
- *                    `?v=` cache-buster so an in-place draft edit reloads the
+ *                    `?v=` cache-buster so an in-place edit reloads the
  *                    capture host (else it re-captures the stale loaded DOM).
  * @param fpsNum/fpsDen optional composition fps (exact rational) — becomes the
  *                    `meta.fps` a Motif script reads; must be the rate `tSec`

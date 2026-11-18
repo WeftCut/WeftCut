@@ -58,7 +58,7 @@ describe('mergeMcpResources', () => {
     expect(uris).toContain('project://media')                 // rust resource kept
     // TS entry, not the Rust one
     const motifRes = merged.find((r) => r.uri === 'motifs://current')!
-    expect(motifRes.name).toBe('Motif catalog')               // from MOTIF_RESOURCE_DEFS
+    expect(motifRes.name).toBe('Project Motifs')              // from MOTIF_RESOURCE_DEFS
   })
 
   it('preserves Rust resources whose uri is not overridden', () => {

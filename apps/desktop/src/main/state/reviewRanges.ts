@@ -9,6 +9,7 @@
 import type { Change, ChangeClass, ChangedRange, EntityKey } from '../../shared/review'
 import { entityKey } from '../../shared/review'
 import { keyTimeUs } from '../../shared/keyframe'
+import { motifEntry } from '../../shared/motifs/projectMotifs'
 import { localAtContent } from '../../renderer/layerTiming'
 import { addTime, approximateTime, exactTime, ZERO_TIME } from '../../renderer/timeMapping'
 import { playbackValues } from '../agent/playbackValues'
@@ -45,12 +46,14 @@ interface Timeline {
 
 const EMPTY_TIMELINE: Timeline = { slices: [], end: 0 }
 
-function itemKey(l: Layer): string {
+/** What a layer plays, apart from its values: a Motif's is the revision its
+ *  project holds, so an edited Motif plays differently wherever it plays. */
+function itemKey(project: Project, l: Layer): string {
   const p = l.params
   switch (p.kind) {
     case 'VideoClip': case 'Audio': case 'ImageOverlay': return `${p.kind}:${p.media}`
     case 'CompositionRef': return `${p.kind}:${p.composition}`
-    case 'Motif': return `${p.kind}:${p.motif_id}`
+    case 'Motif': return `${p.kind}:${p.motif_id}@${motifEntry(project.motifs, p.motif_id)?.revision ?? ''}`
     case 'Text': case 'Color': return p.kind
   }
 }
@@ -94,8 +97,15 @@ function transitionWindow(tr: Transition, layers: ReadonlyMap<string, Layer>): [
 /** A composition's slices, kept per composition object: a commit re-slices
  *  only the compositions it touched (immer keeps the rest), and a reader of
  *  both sides slices the baseline once. */
-interface Kept { roles: Project['audio_roles']; inner: Map<string, Timeline>; timeline: Timeline }
+interface Kept { roles: Project['audio_roles']; motifs: string; inner: Map<string, Timeline>; timeline: Timeline }
 const kept = new WeakMap<Composition, Kept>()
+
+/** The table revisions of the Motifs `c`'s layers play, as one string. */
+function motifRevisions(p: Project, c: Composition): string {
+  let out = ''
+  for (const t of c.tracks) for (const l of t.layers) if (l.params.kind === 'Motif') out += `${l.params.motif_id}@${motifEntry(p.motifs, l.params.motif_id)?.revision ?? ''}|`
+  return out
+}
 
 /** The Group compositions `c` shows, by id. */
 function referenced(c: Composition): Set<string> {
@@ -104,8 +114,8 @@ function referenced(c: Composition): Set<string> {
   return ids
 }
 
-/** `c`'s slices in project `p`: kept while `c`, the role gains and every Group
- *  timeline it shows are the same objects. */
+/** `c`'s slices in project `p`: kept while `c`, the role gains, the revisions
+ *  of the Motifs it plays and every Group timeline it shows are the same. */
 function timelineOf(p: Project, c: Composition, depth = 0): Timeline {
   const refs = referenced(c)
   const inner = new Map<string, Timeline>()
@@ -115,10 +125,11 @@ function timelineOf(p: Project, c: Composition, depth = 0): Timeline {
   }
   const k = kept.get(c)
   const hasAudio = c.tracks.some(t => t.layers.some(l => l.params.kind === 'Audio'))
-  if (k && (!hasAudio || k.roles === p.audio_roles) && k.inner.size === inner.size
+  const motifs = motifRevisions(p, c)
+  if (k && (!hasAudio || k.roles === p.audio_roles) && k.motifs === motifs && k.inner.size === inner.size
     && [...inner].every(([id, tl]) => k.inner.get(id) === tl)) return k.timeline
   const timeline = slice(p, c, inner)
-  kept.set(c, { roles: p.audio_roles, inner, timeline })
+  kept.set(c, { roles: p.audio_roles, motifs, inner, timeline })
   return timeline
 }
 
@@ -165,7 +176,7 @@ function slice(p: Project, c: Composition, inner: ReadonlyMap<string, Timeline>)
     })
     const transitions: Played[] = []
     for (const tr of c.transitions) { const w = windows.get(tr); if (w !== undefined && w[0] <= s && w[1] > s) transitions.push({ tr, start: w[0] }) }
-    const key = items.length === 0 ? '' : `${items.map(x => itemKey(x.layer)).join('|')}#${transitions.length}`
+    const key = items.length === 0 ? '' : `${items.map(x => itemKey(p, x.layer)).join('|')}#${transitions.length}`
     slices.push({ start: s, end: e, items, transitions, key })
   }
   return { slices, end }
@@ -471,6 +482,7 @@ function entitiesIn(S: Side, c: Composition, t0: number, t1: number, out: Set<En
       out.add(entityKey('Layer', x.layer.id))
       const p = x.layer.params
       if (p.kind === 'Audio') out.add(entityKey('AudioRole', p.role))
+      if (p.kind === 'Motif') out.add(entityKey('Motif', p.motif_id))
       if (p.kind !== 'CompositionRef' || depth >= MAX_NESTING) continue
       const inner = S.p.compositions[p.composition]
       if (!inner) continue
@@ -787,7 +799,7 @@ function onlyOf(keys: readonly EntityKey[], before: ReadonlyMap<string, Layer>, 
   let audio = false, picture = false
   for (const k of keys) {
     if (k.startsWith('AudioRole:')) { audio = true; continue }
-    if (k.startsWith('Transition:') || k.startsWith('Composition:')) { picture = true; continue }
+    if (k.startsWith('Transition:') || k.startsWith('Composition:') || k.startsWith('Motif:')) { picture = true; continue }
     if (!k.startsWith('Layer:')) continue
     const id = k.slice('Layer:'.length)
     const l = now.get(id) ?? before.get(id)

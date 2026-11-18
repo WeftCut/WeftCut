@@ -20,30 +20,41 @@ vi.mock('electron', () => ({
 
 import { CAPTURE_HOST_CSP, MOTIF_CSP, MOTIF_PARAMS_CSP, cspForMotifFile, registerMotifProtocol } from './protocol'
 import { CAPTURE_HOST_FILE } from '../../shared/motifs/frameMarker'
+import { composeMotifHtml } from '../../shared/motifs/catalog'
+import { builtinMotifs } from './authoring'
+import { ProjectMotifStore } from './projectStore'
+import { MotifResolver } from './resolver'
 import { UserMotifStore } from './store'
 
 const BUILTIN_DIR = path.resolve(__dirname, '../../shared/motifs/builtin')
 
 let root: string
+let resolver: MotifResolver
 beforeEach(() => {
   handler = null
   root = mkdtempSync(path.join(tmpdir(), 'motif-protocol-'))
+  resolver = new MotifResolver(new UserMotifStore(path.join(root, 'library')), builtinMotifs(BUILTIN_DIR))
+  resolver.setProject(new ProjectMotifStore(path.join(root, 'Film')))
+  registerMotifProtocol(resolver)
 })
 afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-/// Install version 1 of a user motif with the given files, under `<root>/<id>/v1/`.
-function installUserMotif(id: string, files: Record<string, string>): void {
-  const dir = path.join(root, id, 'v1')
-  mkdirSync(dir, { recursive: true })
-  for (const [name, body] of Object.entries(files)) writeFileSync(path.join(dir, name), body)
-}
+const page = (id: string) => composeMotifHtml({ id, name: id, version: 1, size: [320, 180], default_duration_s: 2, props_schema: {} }, '<html><body>i</body></html>')
 
-function serve(id: string, rest: string): Promise<Response> {
-  const store = new UserMotifStore(root)
-  registerMotifProtocol(BUILTIN_DIR, store)
-  return handler!(new Request(`motif://${id}/${rest}`))
+/// Writes `files` beside a page into `dir`.
+function writePackage(dir: string, id: string, files: Record<string, string>): void {
+  mkdirSync(dir, { recursive: true })
+  for (const [name, body] of Object.entries({ 'index.html': page(id), ...files })) writeFileSync(path.join(dir, name), body)
+}
+/// A Motif in the open project's `Motifs/<id>/`.
+const projectMotif = (id: string, files: Record<string, string> = {}) => writePackage(path.join(root, 'Film', 'Motifs', id), id, files)
+/// Version 1 of library Motif `id`.
+const libraryMotif = (id: string, files: Record<string, string> = {}) => writePackage(path.join(root, 'library', id, 'v1'), id, files)
+
+function serve(host: string, rest: string): Promise<Response> {
+  return handler!(new Request(`motif://${host}/${rest}`))
 }
 
 describe('cspForMotifFile', () => {
@@ -76,7 +87,7 @@ describe('cspForMotifFile', () => {
 
 describe('registerMotifProtocol responses', () => {
   it('serves companion modules and models without stale browser caching', async () => {
-    installUserMotif('scene', { 'index.html': '<html/>', 'scene.mjs': 'export const x = 1', 'scene.glb': 'glTF' })
+    projectMotif('scene', { 'scene.mjs': 'export const x = 1', 'scene.glb': 'glTF' })
     const js = await serve('scene', 'scene.mjs')
     expect(await js.text()).toBe('export const x = 1')
     expect(js.headers.get('Content-Type')).toBe('text/javascript; charset=utf-8')
@@ -87,12 +98,12 @@ describe('registerMotifProtocol responses', () => {
   })
 
   it('refuses encoded path escapes', async () => {
-    installUserMotif('scene', { 'index.html': '<html/>' })
+    projectMotif('scene')
     expect((await serve('scene', '%2e%2e%2fsecret')).status).toBe(404)
     expect((await serve('scene', '%zz')).status).toBe(400)
   })
-  it('serves a user motif params.html with the params CSP', async () => {
-    installUserMotif('user-p', { 'index.html': '<html>i</html>', 'params.html': '<html>p</html>' })
+  it('serves a params.html with the params CSP', async () => {
+    projectMotif('user-p', { 'params.html': '<html>p</html>' })
     const res = await serve('user-p', 'params.html')
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Security-Policy')).toBe(MOTIF_PARAMS_CSP)
@@ -101,30 +112,50 @@ describe('registerMotifProtocol responses', () => {
   })
 
   it('keeps the render CSP on index.html of the same motif', async () => {
-    installUserMotif('user-p', { 'index.html': '<html>i</html>', 'params.html': '<html>p</html>' })
+    projectMotif('user-p', { 'params.html': '<html>p</html>' })
     const res = await serve('user-p', 'index.html')
     expect(res.headers.get('Content-Security-Policy')).toBe(MOTIF_CSP)
   })
 
   it('keeps the render CSP on a built-in document', async () => {
-    const res = await serve('countdown', 'index.html')
+    const res = await serve('countdown--library', 'index.html')
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Security-Policy')).toBe(MOTIF_CSP)
   })
 
   it('404s a params.html the motif does not ship (no CSP promise for a miss)', async () => {
-    installUserMotif('bare', { 'index.html': '<html>i</html>' })
+    projectMotif('bare')
     const res = await serve('bare', 'params.html')
     expect(res.status).toBe(404)
   })
 
   it('the ?v= cache buster does not change resolution or CSP', async () => {
-    installUserMotif('user-p', { 'index.html': '<html>i</html>', 'params.html': '<html>p</html>' })
-    const store = new UserMotifStore(root)
-    registerMotifProtocol(BUILTIN_DIR, store)
+    projectMotif('user-p', { 'params.html': '<html>p</html>' })
     const res = await handler!(new Request('motif://user-p/params.html?v=7'))
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Security-Policy')).toBe(MOTIF_PARAMS_CSP)
+  })
+})
+
+describe('what a host serves', () => {
+  it('serves a bare id from the project and its library host from the library', async () => {
+    projectMotif('badge', { 'art.svg': 'project' })
+    libraryMotif('badge', { 'art.svg': 'library' })
+    expect(await (await serve('badge', 'art.svg')).text()).toBe('project')
+    expect(await (await serve('badge--library', 'art.svg')).text()).toBe('library')
+  })
+
+  it('serves a built-in id only from the project, and its bundled package from its library host', async () => {
+    expect((await serve('countdown', 'index.html')).status).toBe(404)
+    projectMotif('countdown')
+    expect(await (await serve('countdown', 'index.html')).text()).toBe(page('countdown'))
+    expect(await (await serve('countdown--library', 'index.html')).text()).toContain('motif.define')
+  })
+
+  it('serves nothing of a Motif whose files make no package', async () => {
+    projectMotif('broken', { 'manifest.json': '{ not json', 'art.svg': 'x' })
+    expect((await serve('broken', 'index.html')).status).toBe(404)
+    expect((await serve('broken', 'art.svg')).status).toBe(404)
   })
 })
 

@@ -7,7 +7,7 @@ import { expect, it } from 'vitest';
 // content and standalone developer fixtures deliberately keep their own scale.
 const exceptions = new Set([
   'render/sprite/TextSprite.ts',
-  'render/motifs/newDraftSource.ts',
+  'render/motifs/newMotifSource.ts',
   'calibration.html',
   'public/render-play.html',
 ]);

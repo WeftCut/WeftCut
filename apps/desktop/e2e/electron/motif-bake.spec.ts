@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import { supportsMotifSharedTextures } from './helpers/motif-gpu'
-import { createMotifDraft, publishMotifDraft } from './helpers/motif'
+import { createMotif } from './helpers/motif'
 import type { MotifBakeSnapshot } from '../../src/shared/motifs/baking'
 import { hashCacheKey } from '../../src/shared/motifs/cacheKey'
 
@@ -29,10 +29,9 @@ test('Pre-bake now moves a clip ahead of unfinished background work @serial', as
     const layers: { layerId: string; key: string }[] = []
     for (let i = 0; i < 3; i++) {
       // Clip i paints rgb(50 + 50 i, 2 x frame, 100), so a frame's pixels name its clip.
-      const draft = await createMotifDraft(page, { id: `ordered-${i}`, name: `Ordered ${i}`, version: 1,
+      const motifId = await createMotif(page, { name: `Ordered ${i}`, version: 1,
         size: [64, 64], default_duration_s: 2, props_schema: {} },
         `<!doctype html><body><script>motif.define({frame(t){document.body.style.background='rgb(${50+i*50},'+Math.floor(t*60)+',100)'}})</script>`)
-      const motifId = await publishMotifDraft(page, draft)
       const layerId = await page.evaluate(motifId => (window as any).__weftcutTest.addMotifLayer({ motifId, durationUs: 2_000_000 }), motifId)
       const key = await page.evaluate(id => (window as any).__weftcutTest.cacheKeyForLayer(id), layerId)
       layers.push({ layerId, key })
@@ -334,13 +333,13 @@ test('A live capture stores the same pixels a bake stores at its address, and co
     for (let i = 0; i < left.rgba.length; i++) if (left.rgba[i] !== right.rgba[i]) differing++
     return differing
   }, { addon, a, b })
-  // Published once: a second publish takes a new id, and so another cache address.
-  let motifId: string | undefined
+  // Made in each project from the same files: the same id and revision, and
+  // so the same cache address in both.
   const stableLayer = async () => {
     await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: false } })
-    motifId ??= await publishMotifDraft(page, await createMotifDraft(page, {
-      id: 'raster-stable', name: 'Raster stable', version: 1, size: [480, 480], default_duration_s: 1, props_schema: {},
-    }, RASTER_STABLE_MOTIF))
+    const motifId = await createMotif(page, {
+      name: 'Raster stable', version: 1, size: [480, 480], default_duration_s: 1, props_schema: {},
+    }, RASTER_STABLE_MOTIF)
     return await page.evaluate(motifId => (window as any).__weftcutTest.addMotifLayer({ motifId, durationUs: 1_000_000 }), motifId) as string
   }
   const rasterDir = async (key: string) => path.join(await invokeCmd<string>(page, 'workspace_dir'), 'Cache', 'raster', hashCacheKey(key))
@@ -395,13 +394,12 @@ test('Motif background work survives renderer reload and reuses pages across mul
     await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: false } })
     const layers: { layerId: string; motifId: string; cacheKey: string }[] = []
     for (let i = 0; i < 4; i++) {
-      const draft = await createMotifDraft(page, {
-        id: `affinity-${i}`, name: `Affinity ${i}`, version: 1,
+      const motifId = await createMotif(page, {
+        name: `Affinity ${i}`, version: 1,
         size: [64, 64], default_duration_s: 2, props_schema: {},
       }, `<!doctype html><html><body style="margin:0"><script>
         motif.define({ frame(t) { document.body.style.background = 'rgb(${40 + i * 40},' + Math.floor(t * 60) + ',180)'; }});
       </script></body></html>`)
-      const motifId = await publishMotifDraft(page, draft)
       const layerId = await page.evaluate(motifId => (window as any).__weftcutTest.addMotifLayer({ motifId, durationUs: 2_000_000 }), motifId) as string
       const cacheKey = await page.evaluate(layerId => (window as any).__weftcutTest.cacheKeyForLayer(layerId), layerId) as string
       layers.push({ layerId, motifId, cacheKey })
@@ -476,13 +474,12 @@ test('Motif background preparation resumes automatically after a failed workspac
       canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 },
     })
     await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: false } })
-    const draft = await createMotifDraft(page, {
-      id: 'workspace-recovery-probe', name: 'Workspace recovery probe', version: 1,
+    const motifId = await createMotif(page, {
+      name: 'Workspace recovery probe', version: 1,
       size: [64, 64], default_duration_s: 2, props_schema: {},
     }, `<!doctype html><html><body style="margin:0"><script>
       motif.define({ frame(t) { document.body.style.background = 'rgb(70,' + Math.floor(t * 60) + ',160)'; }});
     </script></body></html>`)
-    const motifId = await publishMotifDraft(page, draft)
     await waitForHook(page, 'addMotifLayer')
     const layerId = await page.evaluate(motifId => (window as any).__weftcutTest.addMotifLayer({
       motifId, durationUs: 2_000_000,

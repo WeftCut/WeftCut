@@ -1,45 +1,6 @@
 
 
 
-/* Corner-notice skin (CornerNotice + MotifStaleDialog) — reuses .export-panel
-   chrome but sits in the opposite corner (top-right) so it never overlaps the
-   export panel (bottom-left) when both are open. */
-.import-proxy-dialog {
-  left: auto;
-  right: calc(16 * var(--ui-px));
-  bottom: auto;
-  top: calc(16 * var(--ui-px));
-  padding-bottom: calc(8 * var(--ui-px));
-}
-
-.import-proxy-list {
-  list-style: none;
-  margin: 0;
-  padding: calc(4 * var(--ui-px)) calc(12 * var(--ui-px));
-  display: flex;
-  flex-direction: column;
-  gap: calc(4 * var(--ui-px));
-}
-
-.import-proxy-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: calc(12 * var(--ui-px));
-  font-size: var(--font-size-body);
-  color: var(--foreground);
-}
-
-.import-proxy-reason {
-  color: var(--muted-foreground);
-  white-space: nowrap;
-}
-
-.import-proxy-note {
-  margin: 0;
-  padding: calc(2 * var(--ui-px)) calc(12 * var(--ui-px));
-  font-size: var(--font-size-caption);
-  color: var(--muted-foreground);
-}
 .media-pool {
   grid-area: mediapool;
   display: flex;

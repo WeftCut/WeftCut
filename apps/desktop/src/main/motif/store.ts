@@ -5,21 +5,18 @@ import {
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog";
-import { hasMotifFile, motifFileSegments, readMotifFile, readMotifDirectory, sameStamp, stampMotifFile, type MotifFile } from './packageFiles';
+import { hasMotifFile, motifFileSegments, readMotifFile, readMotifDirectory, stampMotifFile, type MotifFile } from './packageFiles';
 import { packageContentHash } from './contentHash';
-import { PackageRevisions, type PackageStamp } from './packageRevisions';
+import { PackageRevisions } from './packageRevisions';
+import { PackageSource, type PackageListing, type PackageSnapshot } from './packageSource';
 import { LINEAGE_FILE, MotifLineage } from './lineage';
-import { MotifError } from '../../shared/motifs/errors';
 
+/** An older release's app-wide drafts, left in the library folder untouched
+ *  and unlisted; only the v5 upgrade reads them (`legacyResolve.ts`). */
 export const DRAFTS_DIR = "drafts";
-/** Frozen packages of pending publications, one per draft (`workspace.ts`). */
+/** Frozen packages of proposed publications, one per proposal id
+ *  (`publications.ts`), served under `proposalPreviewId(<proposal id>)`. */
 export const PROPOSALS_DIR = ".proposals";
-/** The id a pending publication's frozen package is served and captured
- *  under: `<draft id>--proposal`. `idFromName` never emits `--`, so no
- *  library or draft id can take this form. */
-const PROPOSAL_SUFFIX = "--proposal";
-export function proposalPreviewId(draftId: string): string { return draftId + PROPOSAL_SUFFIX; }
-export function isProposalPreviewId(id: string): boolean { return id.endsWith(PROPOSAL_SUFFIX); }
 
 /** Reject an id segment that could traverse or escape. */
 function safeSeg(seg: string): string {
@@ -28,15 +25,6 @@ function safeSeg(seg: string): string {
   }
   return seg;
 }
-
-type MotifSource = { manifest: Manifest; html: string };
-
-/** One package as the catalog lists it: its page, its revision and the paths
- *  of its files. */
-export interface PackageListing { html: string; revision: string; paths: string[] }
-
-/** A capture host's hold on a pinned revision snapshot; `release` is idempotent. */
-export interface PinnedPackage { release(): void }
 
 /** The store layout this build writes, recorded in `<root>/.format`: 1 has no
  *  private file in any package (ADR 0171); 2 keeps every installed version in
@@ -58,15 +46,14 @@ export interface MotifVersion { version: number; revision: string; saved_at: str
 /** Moves a file or folder to the system trash; rejects when it cannot. */
 export type Trash = (absPath: string) => Promise<void>;
 
-/** Snapshots no host holds that stay for reuse; held ones never leave. */
-const UNHELD_SNAPSHOTS = 2;
-
-/** On-disk store of user Motifs rooted at `<userData>/motifs/`. */
+/** On-disk library of user Motifs rooted at `<userData>/motifs/`: installed
+ *  Motifs, each version in `<id>/v<n>/`, and the frozen packages of proposed
+ *  publications in `.proposals/`. */
 export class UserMotifStore {
-  /** Revision snapshots by `id/revision`, oldest first, with their holders. */
-  private pinned = new Map<string, { files: Map<string, Buffer>; holders: number }>();
-  /** Also keeps the linked directories' records (`workspace.ts`). */
+  /** Also keeps the records of the folders a v5 upgrade reads
+   *  (`legacyResolve.ts`) and of project Motif folders. */
   readonly revisions: PackageRevisions;
+  private readonly source: PackageSource;
   readonly lineage: MotifLineage;
   private readonly trash: Trash;
   /** Without `trash`, nothing can be deleted: a delete never falls back to
@@ -76,32 +63,16 @@ export class UserMotifStore {
     options: { revisions?: PackageRevisions; lineage?: MotifLineage; trash?: Trash } = {},
   ) {
     this.revisions = options.revisions ?? new PackageRevisions();
+    this.source = new PackageSource(this.revisions, files => packageContentHash(files));
     this.lineage = options.lineage ?? new MotifLineage(path.join(_root, LINEAGE_FILE));
     this.trash = options.trash ?? (async () => { throw new Error('No system trash is available'); });
   }
 
   root(): string { return this._root; }
-  assertRenderable(id:string):void {
-    if(motifFileSegments(id)?.length!==1)return;
-    const file=path.join(this._root,'.workspaces',id+'.json');
-    if(existsSync(file)){
-      const diagnostic=JSON.parse(readFileSync(file,'utf8')).diagnostic;
-      if(diagnostic)throw new MotifError('content','Motif working directory is invalid: '+diagnostic);
-    }
-  }
-  private draftsRoot(): string { return path.join(this._root, DRAFTS_DIR); }
 
-  /** Choose one complete package; never fill missing published assets from a draft. */
-  private packageRel(id: string): string | null {
-    if (id === DRAFTS_DIR || motifFileSegments(id)?.length !== 1) return null;
-    if (isProposalPreviewId(id)) {
-      const rel = `${PROPOSALS_DIR}/${id.slice(0, -PROPOSAL_SUFFIX.length)}`;
-      return hasMotifFile(this._root, `${rel}/index.html`) ? rel : null;
-    }
-    const current = this.currentRel(id);
-    if (current) return current;
-    const draft = `${DRAFTS_DIR}/${id}`;
-    return hasMotifFile(this._root, `${draft}/index.html`) ? draft : null;
+  /** Whether `id` can name an installed Motif's folder. */
+  private libraryId(id: string): boolean {
+    return id !== DRAFTS_DIR && !id.startsWith(".") && motifFileSegments(id)?.length === 1;
   }
 
   /** The version numbers `<id>/` holds, highest first, packaged or not. */
@@ -115,6 +86,7 @@ export class UserMotifStore {
    *  `v<n>` holding an index.html. Every read of an installed Motif resolves
    *  through here, so an older version is never served as the Motif. */
   private currentRel(id: string): string | null {
+    if (!this.libraryId(id)) return null;
     for (const n of this.versionNumbers(id)) {
       const rel = `${id}/${versionDirName(n)}`;
       if (hasMotifFile(this._root, `${rel}/index.html`)) return rel;
@@ -122,160 +94,74 @@ export class UserMotifStore {
     return null;
   }
 
-  /** The lineage of the package `id` selects, as `read` and `export` see it
-   *  (a proposal's preview is its draft's); null when `id` has none. An
-   *  installed Motif's is keyed by its id, one lineage for all its versions. */
-  lineageOf(id: string): string | null {
-    const rel = this.packageRel(id);
+  /** The current version of installed `id` from one read: its files,
+   *  revision and version; null when `id` is not installed. */
+  installedSnapshot(id: string): (PackageSnapshot & { version: number }) | null {
+    const rel = this.currentRel(id);
+    return rel ? { ...this.source.snapshot(path.join(this._root, rel)), version: versionOfDir(rel.slice(id.length + 1))! } : null;
+  }
+
+  /** The current version of installed `id` as `describe` lists it; null
+   *  when `id` is not installed, throws when it is no package. */
+  installedListing(id: string): PackageListing | null {
+    const rel = this.currentRel(id);
     if (!rel) return null;
-    if (isProposalPreviewId(id)) return this.lineage.of(`${DRAFTS_DIR}/${id.slice(0, -PROPOSAL_SUFFIX.length)}`);
-    return this.lineage.of(rel === `${DRAFTS_DIR}/${id}` ? rel : id);
+    const { html, revision, paths } = this.source.listing(path.join(this._root, rel));
+    return { html, revision, paths };
   }
 
-  /** The selected package's files from one read, with their revision; null
-   *  when `id` has no package. */
-  packageSnapshot(id: string): { files: MotifFile[]; revision: string } | null {
-    const rel = this.packageRel(id);
-    return rel ? this.snapshot(path.join(this._root, rel)) : null;
+  /** The version number and revision of installed `id`'s current version,
+   *  its files read only when they changed since its revision was recorded;
+   *  null when `id` is not installed. */
+  installedHead(id: string): { version: number; revision: string } | null {
+    const rel = this.currentRel(id);
+    if (!rel) return null;
+    return { version: versionOfDir(rel.slice(id.length + 1))!, revision: this.source.listing(path.join(this._root, rel)).revision };
   }
 
-  /** The bytes are hashed only when their stamp has no record; a read that a
-   *  write crossed is hashed and not recorded. */
-  private snapshot(dir: string, taken?: PackageStamp): { files: MotifFile[]; revision: string } {
-    const { files, stamp } = this.revisions.read(dir, taken);
-    const known = stamp && this.revisions.lookup(dir, stamp);
-    if (known && 'revision' in known) return { files, revision: known.revision };
-    const revision = packageContentHash(files);
-    if (stamp) this.revisions.record(dir, stamp, { revision });
-    return { files, revision };
-  }
-
-  private listing(dir: string): PackageListing {
-    const stamp = this.revisions.stamp(dir);
-    const known = this.revisions.lookup(dir, stamp);
-    if (known && 'revision' in known) {
-      const html = readMotifFile(dir, 'index.html');
-      // The page is the stamped one only if it did not move while it was read.
-      if (html && sameStamp(stamp.files.find(f => f.path === 'index.html'), stampMotifFile(dir, 'index.html')))
-        return { html: html.toString('utf8'), revision: known.revision, paths: stamp.files.map(f => f.path) };
-    }
-    const { files, revision } = this.snapshot(dir, stamp);
-    return { html: files.find(f => f.path === 'index.html')!.bytes.toString('utf8'), revision, paths: files.map(f => f.path) };
-  }
-
-  /** The selected package of `id`, read in full only when its files changed
-   *  since its revision was recorded. Null when there is none; throws when
-   *  its directory or its manifest island is not a package's. */
-  describe(id: string): PackageListing | null {
-    const rel = this.packageRel(id);
-    return rel ? this.listing(path.join(this._root, rel)) : null;
-  }
-
-  /** The revision of the draft package itself, whatever is published under
-   *  its id; null when it has none or it does not read as a package. */
-  draftRevision(draftId: string): string | null {
-    try {
-      const dir = path.join(this.draftsRoot(), safeSeg(draftId));
-      return hasMotifFile(dir, 'index.html') ? this.listing(dir).revision : null;
-    } catch { return null; }
-  }
-
-  readFile(id: string, rel: string): Buffer | null {
-    const revision = /^\.revisions\/([0-9a-f]{64})\/(.+)$/.exec(rel);
-    if (revision) return this.pinned.get(`${id}/${revision[1]}`)?.files.get(revision[2]!) ?? null;
+  /** A file of installed `id`'s current version. */
+  installedFile(id: string, rel: string): Buffer | null {
     if (!motifFileSegments(rel)) return null;
-    const pkg = this.packageRel(id);
-    return pkg ? readMotifFile(this._root, `${pkg}/${rel}`) : null;
+    const current = this.currentRel(id);
+    return current ? readMotifFile(this._root, `${current}/${rel}`) : null;
   }
 
-  /** Pins the revision's files for a capture host, which serves its page and
-   * companion URLs from the revision directory, so a source save cannot mix
-   * old HTML with new assets. A held snapshot stays until every host holding
-   * it releases it: a host still loading its page must not lose it to a later
-   * pin. Null when the Motif is gone. */
-  pinPackage(id: string, revision: string): PinnedPackage | null {
-    const key = `${id}/${revision}`;
-    let snapshot = this.pinned.get(key);
-    if (snapshot) this.pinned.delete(key);
-    else {
-      if (!this.getMotif(id)) return null;
-      const read = this.snapshot(path.join(this._root, this.packageRel(id)!));
-      if (read.revision !== revision) throw new Error('Motif revision changed before capture; refresh the catalog');
-      snapshot = { files: new Map(read.files.map(f => [f.path, f.bytes])), holders: 0 };
-    }
-    snapshot.holders++;
-    // Most recently pinned last.
-    this.pinned.set(key, snapshot);
-    const held = snapshot;
-    let released = false;
-    return {
-      release: () => {
-        if (released) return;
-        released = true;
-        held.holders--;
-        this.trimPinned();
-      },
-    };
+  /** The manifest of installed `id`'s current version; null when it is not
+   *  installed or its page has no island. */
+  installedManifest(id: string): Manifest | null {
+    const html = this.installedFile(id, "index.html");
+    if (!html) return null;
+    try { return parseManifestIsland(html.toString("utf8")); } catch { return null; }
   }
 
-  private trimPinned(): void {
-    let unheld = 0;
-    for (const s of this.pinned.values()) if (s.holders === 0) unheld++;
-    for (const [key, s] of this.pinned) {
-      if (unheld <= UNHELD_SNAPSHOTS) return;
-      if (s.holders > 0) continue;
-      this.pinned.delete(key);
-      unheld--;
-    }
+  /** The folder of proposal `key`'s frozen package. */
+  proposalDir(key: string): string { return path.join(this._root, PROPOSALS_DIR, safeSeg(key)); }
+
+  private proposalRel(key: string): string | null {
+    if (motifFileSegments(key)?.length !== 1) return null;
+    const rel = `${PROPOSALS_DIR}/${key}`;
+    return hasMotifFile(this._root, `${rel}/index.html`) ? rel : null;
   }
 
-  packageFiles(id: string): MotifFile[] {
-    const rel = this.packageRel(id);
-    return rel ? readMotifDirectory(path.join(this._root, rel)) : [];
+  /** Proposal `key`'s frozen package as `describe` lists it; null when it
+   *  has none, throws when it is no package. */
+  proposalListing(key: string): PackageListing | null {
+    const rel = this.proposalRel(key);
+    if (!rel) return null;
+    const { html, revision, paths } = this.source.listing(path.join(this._root, rel));
+    return { html, revision, paths };
   }
 
-  /** Presence in the selected package, with the same confinement as reads. */
-  hasFile(id: string, rel: string): boolean {
-    return this.readFile(id, rel) !== null;
+  /** A file of proposal `key`'s frozen package. */
+  proposalFile(key: string, rel: string): Buffer | null {
+    const pkg = this.proposalRel(key);
+    return pkg && motifFileSegments(rel) ? readMotifFile(this._root, `${pkg}/${rel}`) : null;
   }
 
-  readHtml(id: string): string | null {
-    const b = this.readFile(id, "index.html");
-    return b ? b.toString("utf8") : null;
-  }
-
-  getMotif(id: string): MotifSource | null {
-    if (id === DRAFTS_DIR) return null;
-    const html = this.readHtml(id);
-    if (html == null) return null;
-    try { return { manifest: parseManifestIsland(html), html }; } catch { return null; }
-  }
-
-  writeDraft(draftId: string, html: string): void {
-    const dir = path.join(this.draftsRoot(), safeSeg(draftId));
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, "index.html"), html);
-  }
-
-  /** New drafts copy a validated snapshot, preserving relative asset URLs. */
-  writeDraftPackage(draftId: string, html: string, files: readonly MotifFile[]): void {
-    const dir = path.join(this.draftsRoot(), safeSeg(draftId));
-    if (existsSync(dir)) throw new Error(`draft '${draftId}' already exists`);
-    for (const file of files) {
-      if (!motifFileSegments(file.path)) throw new Error(`Invalid Motif asset path: ${file.path}`);
-    }
-    try {
-      this.writeDraft(draftId, html);
-      for (const file of files) {
-        if (file.path === 'index.html') continue;
-        const dest = path.join(dir, ...file.path.split('/'));
-        mkdirSync(path.dirname(dest), { recursive: true });
-        writeFileSync(dest, file.bytes);
-      }
-    } catch (error) {
-      rmSync(dir, { recursive: true, force: true });
-      throw error;
-    }
+  /** Proposal `key`'s frozen files from one read, with their revision. */
+  proposalSnapshot(key: string): PackageSnapshot | null {
+    const rel = this.proposalRel(key);
+    return rel ? this.source.snapshot(path.join(this._root, rel)) : null;
   }
 
   /** Brings a store an older release wrote to this build's layout, once: the
@@ -285,7 +171,7 @@ export class UserMotifStore {
     let format = 0;
     try { format = Number(readFileSync(marker, "utf8").trim()) || 0; } catch { /* format 0 */ }
     if (format >= STORE_FORMAT) return;
-    if (format < 1) this.adoptLegacyTargets();
+    if (format < 1) this.removeLegacyTargets();
     if (!this.versionLegacyPackages()) return;
     try {
       mkdirSync(this._root, { recursive: true });
@@ -338,62 +224,22 @@ export class UserMotifStore {
     return complete;
   }
 
-  /** Format 0 kept a draft's Update target as a `target` file inside its
-   *  package, hidden from every read. A draft's file becomes its `source_id`
-   *  (the Motif its Update button offers) unless it has one or a publication;
-   *  the file leaves every package, so a package holds only its own files. A
-   *  file that cannot be removed stays, as an ordinary file of its package. */
-  private adoptLegacyTargets(): void {
-    const packages = [
-      ...this.listDraftIds().map(id => ({ dir: path.join(this.draftsRoot(), id), draft: id })),
-      ...this.packageDirNames().map(name => ({ dir: path.join(this._root, name), draft: null })),
-    ];
-    for (const { dir, draft } of packages) {
+  /** Format 0 kept a package's Update target as a `target` file inside it,
+   *  hidden from every read; the file leaves every package, drafts included,
+   *  so a package holds only its own files. A file that cannot be removed
+   *  stays, as an ordinary file of its package. */
+  private removeLegacyTargets(): void {
+    const drafts = path.join(this._root, DRAFTS_DIR);
+    let draftDirs: string[] = [];
+    try { draftDirs = readdirSync(drafts).map(name => path.join(drafts, name)); } catch { /* none */ }
+    for (const dir of [...draftDirs, ...this.packageDirNames().map(name => path.join(this._root, name))]) {
       const file = path.join(dir, "target");
-      let target: string;
       try {
         if (!statSync(file).isFile()) continue;
-        target = readFileSync(file, "utf8").trim();
-      } catch { continue; }
-      try {
-        if (draft && target && motifFileSegments(target)?.length === 1) {
-          const stateFile = path.join(this._root, ".workspaces", `${draft}.json`);
-          const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, "utf8")) : {};
-          if (!state.source_id && !state.publication) {
-            mkdirSync(path.dirname(stateFile), { recursive: true });
-            writeFileSync(stateFile + ".tmp", JSON.stringify({ ...state, source_id: target }));
-            renameSync(stateFile + ".tmp", stateFile);
-          }
-        }
         rmSync(file);
         this.revisions.forget(dir);
       } catch { /* left in place: see above */ }
     }
-  }
-
-  listDraftIds(): string[] {
-    let entries: string[] = [];
-    try {
-      entries = readdirSync(this.draftsRoot()).filter((name) =>
-        statSync(path.join(this.draftsRoot(), name)).isDirectory(),
-      );
-    } catch { return []; }
-    return entries.sort();
-  }
-
-  listDrafts(): MotifSource[] {
-    return this.listDraftIds()
-      .map((id) => this.getDraft(id))
-      .filter((m): m is MotifSource => m !== null);
-  }
-
-  getDraft(draftId: string): MotifSource | null {
-    let seg: string;
-    try { seg = safeSeg(draftId); } catch { return null; }
-    let html: string;
-    try { html = readFileSync(path.join(this.draftsRoot(), seg, "index.html"), "utf8"); }
-    catch { return null; }
-    try { return { manifest: parseManifestIsland(html), html }; } catch { return null; }
   }
 
   /** The number the next version of installed `id` takes: one above every
@@ -406,7 +252,8 @@ export class UserMotifStore {
    *  version. Written aside and renamed into place whole, so a reader sees
    *  all of it or none; refuses a version that exists. */
   addVersion(id: string, version: number, files: readonly MotifFile[]): void {
-    const library = path.join(this._root, safeSeg(id));
+    if (!this.libraryId(id)) throw new Error(`Invalid Motif id: ${JSON.stringify(id)}`);
+    const library = path.join(this._root, id);
     const dir = path.join(library, versionDirName(version));
     if (versionOfDir(versionDirName(version)) !== version) throw new Error(`Invalid Motif version: ${version}`);
     for (const file of files) {
@@ -437,7 +284,7 @@ export class UserMotifStore {
       const page = hasMotifFile(this._root, `${id}/${versionDirName(version)}/index.html`) ? stampMotifFile(dir, 'index.html') : null;
       if (!page) continue;
       try {
-        out.push({ version, revision: this.listing(dir).revision, saved_at: new Date(Number(BigInt(page.mtimeNs) / 1_000_000n)).toISOString() });
+        out.push({ version, revision: this.source.listing(dir).revision, saved_at: new Date(Number(BigInt(page.mtimeNs) / 1_000_000n)).toISOString() });
       } catch { /* not a package */ }
     }
     return out;
@@ -451,32 +298,27 @@ export class UserMotifStore {
     return readMotifDirectory(path.join(this._root, rel));
   }
 
-  /** Moves installed `id`, every version of it, and its draft to the system
-   *  trash. A folder the trash refuses stays where it is, and the error is
-   *  thrown: nothing is ever removed for good. */
+  /** Moves installed `id` and every version of it to the system trash. A
+   *  folder the trash refuses stays where it is, and the error is thrown:
+   *  nothing is ever removed for good. */
   async trashMotif(id: string): Promise<void> {
-    const safeId = safeSeg(id);
-    const library = path.join(this._root, safeId);
-    const versions = this.versionNumbers(safeId).map(n => path.join(library, versionDirName(n)));
-    const draft = path.join(this.draftsRoot(), safeId);
-    for (const [dir, forget] of [
-      [library, () => { for (const v of versions) this.revisions.forget(v); this.lineage.forget(safeId); }],
-      [draft, () => { this.revisions.forget(draft); this.lineage.forget(`${DRAFTS_DIR}/${safeId}`); }],
-    ] as const) {
-      if (!existsSync(dir)) continue;
-      try { await this.trash(dir); } catch (error) {
-        throw new Error(`Could not move “${path.relative(this._root, dir)}” to the trash: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      forget();
+    if (!this.libraryId(id)) throw new Error(`Invalid Motif id: ${JSON.stringify(id)}`);
+    const library = path.join(this._root, id);
+    const versions = this.versionNumbers(id).map(n => path.join(library, versionDirName(n)));
+    if (!existsSync(library)) return;
+    try { await this.trash(library); } catch (error) {
+      throw new Error(`Could not move “${id}” to the trash: ${error instanceof Error ? error.message : String(error)}`);
     }
+    for (const v of versions) this.revisions.forget(v);
+    this.lineage.forget(id);
   }
 
   publishedIds(): string[] {
     return this.listManifests().map((m) => m.id);
   }
 
-  /** The root's directories that may hold an installed Motif: not the
-   *  drafts directory, nor the store's own dot-directories. */
+  /** The root's directories that may hold an installed Motif: not an older
+   *  release's drafts directory, nor the store's own dot-directories. */
   private packageDirNames(): string[] {
     let entries: string[];
     try { entries = readdirSync(this._root); } catch { return []; }
@@ -486,7 +328,7 @@ export class UserMotifStore {
     });
   }
 
-  /** Every installed user manifest, id-sorted; skips drafts + broken. */
+  /** Every installed user manifest, id-sorted; skips broken packages. */
   listManifests(): Manifest[] {
     const out: Manifest[] = [];
     for (const name of this.packageDirNames()) {

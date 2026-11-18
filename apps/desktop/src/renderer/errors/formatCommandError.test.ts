@@ -6,6 +6,7 @@ import { useProjectStore } from "../state/projectStore";
 import type { CommandError } from "../../shared/commandErrors";
 import type { CompositionSummary, ProjectSummary } from "../ipc";
 import { summaryFixture } from "../testing/summaryFixture";
+import { setProjectMotifs } from "../render/motifs/catalog";
 
 /// Minimal mirror snapshot: two named clips on a labelled track, one track
 /// with no label (positional fallback), 30 fps composition.
@@ -148,6 +149,16 @@ describe("formatCommandError — curated tier", () => {
       track: "99999999-aaaa-4bbb-8ccc-000000000000",
     });
     expect(out.message).toBe("#99999999 is locked.");
+  });
+
+  it("MotifInUse names the Motif as the project shows it, by its id when none renders", () => {
+    setProjectMotifs([{ id: "title-card", name: "Title Card", version: 1, size: [1920, 1080], default_duration_s: 4, props_schema: {} }]);
+    try {
+      expect(formatCommandError({ error: "MotifInUse", motif_id: "title-card", referenced_by: ["l-a", "l-b"] }).message)
+        .toBe("Motif “Title Card” is used by 2 clips. Remove those clips first.");
+      expect(formatCommandError({ error: "MotifInUse", motif_id: "end-slate", referenced_by: ["l-a"] }).message)
+        .toBe("Motif “end-slate” is used by 1 clip. Remove the clip first.");
+    } finally { setProjectMotifs(); }
   });
 
   it("SplitOutsideLayer renders the position as composition timecode", () => {

@@ -226,7 +226,6 @@ pub struct MotifParams {
     #[serde(flatten)]
     pub timing: super::timing::TimingFields,
     pub motif_id: String,
-    pub motif_version: u32,
     /// Validated against the motif manifest's `props_schema` at apply time.
     pub props: imbl::HashMap<String, Value>,
     /// Window offset (µs) into the motif's intrinsic content. The window

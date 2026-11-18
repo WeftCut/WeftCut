@@ -82,7 +82,7 @@ the Motifs panel (the proposed package in the preview player, its props, the
 change against the installed version, the clips that will rebind). Approval,
 rejection and the user's own Install are renderer-only channels, so no MCP
 client can approve its own proposal. See
-[motif-workspaces.md](../motif-workspaces.md#review-publication-and-export).
+[motif-workspaces.md](../motif-workspaces.md#saving-to-the-library).
 
 ## Note (2026-11): the skill is also served over MCP
 
@@ -95,3 +95,14 @@ told to read the running version's instead. "One skill, skill version = app
 version" stands, and the copy into a client's skills directory stays: that is
 what lets the client load the skill by its description, and hosts mostly do not
 list MCP-served skills yet, so the extension itself is not declared.
+
+## Note (2026-11-17): proposals are for the library only
+
+Projects now render their own Motifs, in `Motifs/<id>/`
+([ADR 0173](0173-the-project-folder-holds-what-it-renders.md)). An agent
+creates and edits those without approval: each edit is a commit in the user's
+undo history and shows in Review, like any other edit. Approval guards the
+library alone. `install_motif` proposes saving a project Motif to the library;
+the card shows the change against the library version it would replace, and
+approval adds a library version and rebinds no clip in any project. The user's
+own Save to library is a renderer-only channel, as approval is.

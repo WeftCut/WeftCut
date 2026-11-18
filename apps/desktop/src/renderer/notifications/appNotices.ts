@@ -43,6 +43,10 @@ const NOTICES: Record<AppNoticeCode, NoticeEntry> = {
     page: "agent",
     logMessage: "Agent skill refresh failed; the offered folder is an earlier version's copy.",
   },
+  motif_drafts_left: {
+    page: "agent",
+    logMessage: "Motif drafts from an earlier version remain in the library folder; create_motif with a directory source brings one into a project.",
+  },
 };
 
 /// The i18n key of each page's tab label, for copy that names the page.

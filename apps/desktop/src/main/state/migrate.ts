@@ -49,7 +49,26 @@ export interface MigrationContext {
   sampleScalar?: (track: unknown, times: readonly number[], fallback: number) => number[]
   samplePosition?: (position: unknown, times: readonly number[]) => { x: number; y: number }[]
   onBake?: (report: PositionBakeReport) => void
+  /** v5 → v6: the package a v5 project's Motif id rendered (`main/motif/
+   *  legacyResolve.ts`), with the lineage and library source its table entry
+   *  takes; null when none did. */
+  legacyMotif?: (id: string) => LegacyMotif | null
+  /** v5 → v6: a package the table now says is in `Motifs/<id>/`. The step
+   *  only plans it; the open copies it once the upgraded project validates. */
+  onMotifCopy?: (copy: MotifCopy) => void
+  /** v5 → v6: a new lineage uid for a Motif nothing resolved. */
+  newUid?: () => string
 }
+
+export interface LegacyMotif {
+  uid: string
+  revision: string
+  from: { uid: string; version: number; revision: string } | null
+}
+
+/** A package the table names, for the open to copy into `Motifs/<id>/`;
+ *  `source` is the v5 id it resolved as, when the key differs from it. */
+export interface MotifCopy { id: string; source?: string; revision: string }
 
 export interface PositionBakeReport {
   compositionId: string
@@ -295,6 +314,67 @@ export const STEPS: readonly MigrationStep[] = [{
         }
       }
     }
+  },
+}, {
+  from: 5,
+  apply(wire, context = {}) {
+    // v6 renders each Motif from the project's own copy, named in a table.
+    // Every id a Motif layer of any composition references gets an entry: the
+    // package v5 rendered for it, planned as a copy, or a missing entry with a
+    // lineage of its own when nothing resolved. An open is never refused for
+    // a Motif. Layers drop `motif_version`, which only told how old a layer's
+    // binding was: the table's revision says what it renders.
+    type Entry = { uid: string; revision: string | null; from: LegacyMotif['from'] }
+    type MotifLayer = { params: { kind: 'Motif'; motif_id: string; motif_version?: unknown } }
+    const compositions = wire.compositions as Record<string, { tracks?: unknown }> | undefined
+    const layers: MotifLayer[] = []
+    for (const composition of Object.values(compositions ?? {})) {
+      if (!Array.isArray(composition?.tracks)) continue
+      for (const track of composition.tracks) {
+        if (!Array.isArray(track?.layers)) continue
+        for (const layer of track.layers) {
+          if (layer?.params?.kind === 'Motif' && typeof layer.params.motif_id === 'string') layers.push(layer as MotifLayer)
+        }
+      }
+    }
+    // A key is a folder name and the Motif's `motif://` host, which URL
+    // parsing lowercases, so v5 ids in another form (a hand-made library
+    // folder could be named anything) are keyed by their letters and digits,
+    // lowercased and joined by single dashes, and their layers follow. A key
+    // two ids come to takes the later one's lineage prefix, as an automatic
+    // copy does. Ids already in key form go first, so none is displaced.
+    // LANDMINE: the frozen twin of `isProjectMotifKey` and `projectMotifKey`
+    // (shared/motifs/projectMotifs.ts), which placement keys by; a key one
+    // rejects fails validation, refusing the open. Change both.
+    const isKey = (id: string) => id.length <= 63 && /^[a-z0-9_]+(?:-[a-z0-9_]+)*$/.test(id) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(id)
+      && !(id in Object.prototype) && id !== 'prototype'
+    const keyFor = (id: string) => {
+      if (isKey(id)) return id
+      const key = id.toLowerCase().replace(/[^a-z0-9_]+/g, '-').slice(0, 63).replace(/^-+|-+$/g, '')
+      return isKey(key) ? key : 'motif'
+    }
+    const prefixed = (key: string, uid: string) => {
+      const suffix = '-' + uid.replace(/-/g, '').slice(0, 8).toLowerCase()
+      return key.slice(0, 63 - suffix.length).replace(/-+$/, '') + suffix
+    }
+    const newUid = context.newUid ?? (() => globalThis.crypto.randomUUID())
+    const ids = [...new Set(layers.map(l => l.params.motif_id))].sort()
+    const keys = new Map<string, string>()
+    const motifs: Record<string, Entry> = {}
+    for (const id of [...ids.filter(isKey), ...ids.filter(id => !isKey(id))]) {
+      const found = context.legacyMotif?.(id) ?? null
+      const entry: Entry = found ? { uid: found.uid, revision: found.revision, from: found.from } : { uid: newUid(), revision: null, from: null }
+      let key = keyFor(id)
+      if (Object.hasOwn(motifs, key)) key = prefixed(key, entry.uid)
+      keys.set(id, key)
+      motifs[key] = entry
+      if (found) context.onMotifCopy?.(key === id ? { id: key, revision: found.revision } : { id: key, source: id, revision: found.revision })
+    }
+    for (const layer of layers) {
+      layer.params.motif_id = keys.get(layer.params.motif_id)!
+      delete layer.params.motif_version
+    }
+    wire.motifs = Object.fromEntries(Object.keys(motifs).sort().map(key => [key, motifs[key]!]))
   },
 }]
 

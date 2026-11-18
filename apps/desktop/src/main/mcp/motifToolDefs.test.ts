@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { MOTIF_TOOL_DEFS } from './motifToolDefs.js'
 
-const MCP_MOTIF_NAMES = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif'])
+const MCP_MOTIF_NAMES = new Set(['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif'])
 
 describe('MOTIF_TOOL_DEFS', () => {
   it('contains exactly the MCP-advertised motif tool names', () => {

@@ -11,6 +11,7 @@ import { createActor, type ActorHandle } from '../state/actor'
 import { seededGen } from '../state/ids'
 import { blankProject, type MotifParams } from '../state/model'
 import { root } from '../state/__tests__/fixtures/project'
+import { libraryMotifs } from '../state/__tests__/fixtures/motifs'
 import { BUILTIN_MANIFESTS, type Manifest } from '../../shared/motifs/catalog'
 import { checkComposition } from '../lint/checkComposition'
 
@@ -60,7 +61,7 @@ describe('the taste view', () => {
 describe('placing and restyling a style Motif', () => {
   function actor(t: Tokens | null) {
     const gen = seededGen()
-    const a = createActor({ initial: blankProject(gen, 'm'), idGen: gen, clock: () => '<TS>', tasteTokens: () => t, installedFonts: () => new Set(['impact']) })
+    const a = createActor({ initial: blankProject(gen, 'm'), idGen: gen, clock: () => '<TS>', tasteTokens: () => t, installedFonts: () => new Set(['impact']), motifs: libraryMotifs() })
     return a
   }
   const call = (a: ActorHandle, tool: string, args: Record<string, unknown>) => a.mcpCall(tool, JSON.stringify(args))

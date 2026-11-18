@@ -94,3 +94,20 @@ allocator to coordinate, nothing to order); UUIDs as ids (agents type ids and
 paths, and a long random string is easy to mangle); numbering ids made from
 lineage-less names (`motif-2` says nothing and still collides across
 machines).
+
+## Note (2026-11-17): project Motifs keep their lineage in the project
+
+Drafts are gone ([ADR 0173](0173-the-project-folder-holds-what-it-renders.md)),
+and `main/motif/workspace.ts` with them. A project Motif's lineage is the `uid`
+of its entry in the project's Motif table; `motifs/.lineage.json` keeps the
+library's alone, and its `drafts/<id>` keys are read only to upgrade a v5
+project. Which lineage a package takes is now decided in
+`main/motif/projectStore.ts` (making and placing) and
+`main/motif/publications.ts` (saving to the library):
+
+- `create_motif` from empty, a copy or a directory starts one;
+- a ZIP takes the lineage the archive names, unless the project holds it;
+- placing a library Motif takes the library Motif's;
+- a publication that replaces a library Motif keeps that Motif's;
+- a first publication takes the project Motif's unless the library holds it,
+  as before; when the source project is open, its entry follows the fork.

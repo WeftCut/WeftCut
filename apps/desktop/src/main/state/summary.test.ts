@@ -215,7 +215,7 @@ describe('layerParamsView carries the transform anchor on every visual kind', ()
   const cases: Array<[string, LayerParams]> = [
     ['VideoClip', { kind: 'VideoClip', media: 'm', src_in_us: 0, src_out_us: 1, transform: { ...xf(), anchor_x: { mode: 'Static', value: 0.25 }, anchor_y: { mode: 'Static', value: 0.75 } }, opacity: stat(1), speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0, crop: null } as unknown as LayerParams],
     ['ImageOverlay', { kind: 'ImageOverlay', media: 'm', transform: { ...xf(), anchor_x: { mode: 'Static', value: 0.25 }, anchor_y: { mode: 'Static', value: 0.75 } }, opacity: stat(1), fade_in_us: 0, fade_out_us: 0 } as unknown as LayerParams],
-    ['Motif', { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: { ...xf(), anchor_x: { mode: 'Static', value: 0.25 }, anchor_y: { mode: 'Static', value: 0.75 } }, opacity: stat(1) } as unknown as LayerParams],
+    ['Motif', { kind: 'Motif', motif_id: 'countdown', props: {}, src_in_us: 0, transform: { ...xf(), anchor_x: { mode: 'Static', value: 0.25 }, anchor_y: { mode: 'Static', value: 0.75 } }, opacity: stat(1) } as unknown as LayerParams],
   ]
   for (const [kind, params] of cases) {
     it(`${kind} view exposes anchor_x/anchor_y`, () => {
@@ -379,7 +379,7 @@ describe('Motif view media_keys', () => {
   it('names the picture each media prop resolves to, and is absent without one', async () => {
     const { motifLayerParams } = await import('./mutations/motif')
     const pool = { img: { kind: 'Image', file_hash_blake3: 'h1' }, vid: { kind: 'Video', file_hash_blake3: 'h2' } } as unknown as Parameters<typeof layerParamsView>[1]
-    const view = (props: Record<string, unknown>) => layerParamsView(motifLayerParams('clipping-sticker', 1, props, [600, 600], null), pool) as { media_keys?: Record<string, string> }
+    const view = (props: Record<string, unknown>) => layerParamsView(motifLayerParams('clipping-sticker', props, [600, 600], null), pool) as { media_keys?: Record<string, string> }
     expect(view({ photo: 'img', back: 'vid@40000', label: 'hi' }).media_keys).toEqual({ photo: 'h1', back: 'h2@40000' })
     expect(view({ photo: '', label: 'gone' })).not.toHaveProperty('media_keys')
   })

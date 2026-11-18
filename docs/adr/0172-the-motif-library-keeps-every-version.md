@@ -66,3 +66,12 @@ one Motif, and the current one is still overwritten); a `current` pointer file
 (a second source of truth that can disagree with the folders); removing the
 folder when the trash is unavailable (a delete that cannot be undone is what
 this replaces).
+
+## Note (2026-11-17): saving to the library changes no project
+
+Projects now hold copies of their Motifs
+([ADR 0173](0173-the-project-folder-holds-what-it-renders.md)). Approval, Save
+to library and restore add a library version and rebind no clip; projects of
+that lineage show *update available*. Deleting a library Motif leaves every
+project's copy in place. Drafts are gone, so delete moves the Motif's version
+folders only.

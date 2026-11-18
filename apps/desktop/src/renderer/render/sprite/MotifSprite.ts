@@ -21,7 +21,7 @@ import { type Container, Rectangle, Sprite, Texture } from "pixi.js";
 import { frameIndexInLayer } from "../../frames";
 import { anchorPivot, textureExtent } from "../anchorPivot";
 import type { ResolvedMotifView } from "../resolveView";
-import { getMotif, type Motif } from "../motifs/catalog";
+import { getMotif, motifUnavailable, type Motif } from "../motifs/catalog";
 import { MotifPlaybackCursor, type MotifPlaybackSnapshot } from "../motifs/MotifPlaybackCursor";
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import { motifDurationFrames } from "../motifs/motifFrames";
@@ -46,6 +46,64 @@ function neutralPlaceholder(): HTMLCanvasElement {
   return _placeholder;
 }
 
+/// The error placeholder's bitmap is at most this many pixels on its long
+/// side and stretched over its logical size, so a 4K canvas holds no 4K
+/// bitmap and the strokes keep a weight that reads at preview scale.
+const UNAVAILABLE_BITMAP_MAX = 960;
+/// Placeholder bitmaps by size; a project has one or two canvas sizes.
+const unavailableBySize = new Map<string, HTMLCanvasElement>();
+const UNAVAILABLE_SIZES_KEPT = 4;
+const unavailableBitmaps = new WeakSet<object>();
+
+// What a Motif layer shows while its project Motif is missing or invalid:
+// red hatching in a red frame over the layer's area, so the picture says
+// "broken here" instead of leaving a gap nobody notices (spec § Project
+// Motifs, "Missing is visible"). The red is the app's dark-theme
+// `--destructive`. Preview only: an export refuses such a Motif before it
+// draws anything.
+function unavailablePlaceholder(logical: { width: number; height: number }): HTMLCanvasElement {
+  const scale = Math.min(1, UNAVAILABLE_BITMAP_MAX / Math.max(logical.width, logical.height, 1));
+  const width = Math.max(1, Math.round(logical.width * scale));
+  const height = Math.max(1, Math.round(logical.height * scale));
+  const key = `${width}x${height}`;
+  const kept = unavailableBySize.get(key);
+  if (kept) return kept;
+  const c = document.createElement("canvas");
+  c.width = width;
+  c.height = height;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = "rgba(248,113,113,0.16)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "rgba(248,113,113,0.4)";
+  ctx.lineWidth = 6;
+  for (let x = -height; x < width; x += 28) {
+    ctx.beginPath();
+    ctx.moveTo(x, height);
+    ctx.lineTo(x + height, 0);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "#f87171";
+  ctx.lineWidth = 8;
+  ctx.strokeRect(4, 4, width - 8, height - 8);
+  // An exclamation mark in a disc: no text, so no font or locale to wait on.
+  // Drawn for a radius of 40, smaller only on a small canvas.
+  const cx = width / 2, cy = height / 2;
+  const k = Math.min(1, Math.min(width, height) / 160);
+  ctx.fillStyle = "#f87171";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 40 * k, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#0a0c10";
+  ctx.fillRect(cx - 5 * k, cy - 26 * k, 10 * k, 34 * k);
+  ctx.beginPath();
+  ctx.arc(cx, cy + 20 * k, 6 * k, 0, Math.PI * 2);
+  ctx.fill();
+  if (unavailableBySize.size >= UNAVAILABLE_SIZES_KEPT) unavailableBySize.delete(unavailableBySize.keys().next().value!);
+  unavailableBySize.set(key, c);
+  unavailableBitmaps.add(c);
+  return c;
+}
+
 export interface MotifSpriteInit {
   layerId: string;
   motifId: string;
@@ -61,7 +119,13 @@ export interface MotifSpriteInit {
   onLoaded?: () => void;
   /// Preview's Playback Resolution divisor; 1 when absent.
   scaleDiv?: () => MotifReaderDiv;
+  /// The composition canvas the layer draws into: the error placeholder of
+  /// a Motif that cannot render covers it, as a Motif layer has no box of
+  /// its own without its manifest. 1920×1080 when absent.
+  canvasSize?: () => { width: number; height: number };
 }
+
+const DEFAULT_CANVAS = { width: 1920, height: 1080 } as const;
 
 interface BoundRaster { bitmap: ImageBitmap | HTMLCanvasElement; release(): void }
 const unpinned = (bitmap: ImageBitmap | HTMLCanvasElement): BoundRaster => ({ bitmap, release: () => {} });
@@ -81,7 +145,8 @@ export class MotifSprite implements StageableSprite {
   private source: UnbindingImageSource | null = null;
   private texture: Texture | null = null;
   /// The texture's local size (`Texture.orig`): the Motif's logical size for
-  /// preview frames, the bitmap's own for the placeholder and export frames.
+  /// preview frames, the canvas for the error placeholder, the bitmap's own
+  /// for the neutral placeholder and export frames.
   /// The texture's frame still follows the bitmap, so a 1/2 bitmap stretches
   /// over the same quad.
   private readonly orig = new Rectangle();
@@ -94,6 +159,7 @@ export class MotifSprite implements StageableSprite {
   /// with the size it is drawn at.
   private chosen: { raster: BoundRaster; size: { width: number; height: number } } | null = null;
   private onLoaded: (() => void) | null;
+  private readonly canvasSize: () => { width: number; height: number };
   private disposed = false;
   private boundOnce = false;
 
@@ -107,6 +173,7 @@ export class MotifSprite implements StageableSprite {
     this.fpsNum = init.fpsNum;
     this.fpsDen = init.fpsDen;
     this.onLoaded = init.onLoaded ?? null;
+    this.canvasSize = init.canvasSize ?? (() => DEFAULT_CANVAS);
     this.motif = getMotif(this.motifId);
     this.playback = new MotifPlaybackCursor({
       bind: (lease, d) => this.choose(lease, { width: d.renderW, height: d.renderH }),
@@ -114,12 +181,6 @@ export class MotifSprite implements StageableSprite {
       onRetryDue: () => this.onLoaded?.(),
       scaleDiv: init.scaleDiv ?? (() => 1),
     });
-    if (!this.motif && typeof document !== "undefined") {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[weftcut/pixi] MotifSprite ${this.layerId}: unknown motif "${this.motifId}"`,
-      );
-    }
     this.sprite = new Sprite(Texture.EMPTY);
   }
 
@@ -238,10 +299,21 @@ export class MotifSprite implements StageableSprite {
     this.playback.update(desc, playing);
   }
 
-  /// Binds the frame the cursor chose last, or the placeholder before any.
+  /// Binds the frame the cursor chose last, or a placeholder: the neutral one
+  /// before any frame, the error one while the project Motif cannot render.
   /// `update` presents; the scene gate's `demand` never does.
   present(): void {
     if (this.disposed) return;
+    if (!this.motif) {
+      // An id the catalog has not heard of is a sync still in flight, not a
+      // broken Motif: nothing is drawn until it lands.
+      if (typeof document === "undefined" || !motifUnavailable(this.motifId)) return;
+      const canvas = this.canvasSize();
+      // Bound again when the canvas is resized under it.
+      if (this.showsUnavailable && this.orig.width === canvas.width && this.orig.height === canvas.height) return;
+      this.bindRaster(unpinned(unavailablePlaceholder(canvas)), { width: canvas.width, height: canvas.height });
+      return;
+    }
     const chosen = this.chosen;
     if (chosen) {
       this.chosen = null;
@@ -249,6 +321,11 @@ export class MotifSprite implements StageableSprite {
     } else if (this.motif && !this.boundOnce && this.texture === null && typeof document !== "undefined") {
       this.bindRaster(unpinned(neutralPlaceholder()));
     }
+  }
+
+  /// Whether the picture shows the error placeholder (`present`).
+  get showsUnavailable(): boolean {
+    return this.bound !== null && unavailableBitmaps.has(this.bound.bitmap);
   }
 
   playbackSnapshot(): MotifPlaybackSnapshot { return this.playback.snapshot(); }
@@ -261,13 +338,16 @@ export class MotifSprite implements StageableSprite {
 
   /// Re-fetch this layer's Motif from the runtime catalog and reset the render
   /// target so the next `update()` re-evaluates the cache key and re-captures.
-  /// Called by `Compositor.refreshMotifs()` on a catalog change (draft edit /
-  /// install / delete). Does NOT dispose — the last bound bitmap stays on screen
-  /// until the fresh frame lands, so there's no flash. No-op once disposed.
+  /// Called by `Compositor.refreshMotifs()` on a catalog change (an edit,
+  /// an update from the library, a folder gone or back). Does NOT dispose —
+  /// the last bound bitmap stays on screen until the fresh frame lands, so
+  /// there's no flash; only the error placeholder of a Motif that renders
+  /// again gives way at once. No-op once disposed.
   refreshMotif(): void {
     if (this.disposed) return;
     this.motif = getMotif(this.motifId);
     this.playback.invalidate();
+    if (this.motif && this.showsUnavailable) this.bindRaster(unpinned(neutralPlaceholder()));
   }
 
   /// Takes the cursor's lease until it is presented or a later choice
@@ -278,7 +358,7 @@ export class MotifSprite implements StageableSprite {
   }
 
   /// Takes `raster`'s lease. `size` is the local size the bitmap is drawn
-  /// at; the placeholder and export frames keep their own.
+  /// at; the neutral placeholder and export frames keep their own.
   private bindRaster(
     raster: BoundRaster,
     size: { width: number; height: number } = raster.bitmap,

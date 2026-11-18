@@ -4,9 +4,9 @@ The app supports local glTF/GLB, Draco geometry and KTX2/Basis textures. Start
 with the official `templates/three-model.zip` beside the installed WeftCut
 skill. It contains a working demo, Three.js 0.186.1, bundled loaders and local
 decoder JS/WASM. Import it with **Import Motif**, or call
-`open_motif_draft { "source": { "kind": "zip", "path": "<absolute path to three-model.zip>" } }` over MCP.
-The result includes `{ "draft_id": "...", "revision": "..." }`; importing does not publish or place it.
-Preview the draft, then place it with `add_layers` as needed.
+`create_motif { "source": { "kind": "zip", "path": "<absolute path to three-model.zip>" } }` over MCP.
+The result includes `{ "motif_id": "...", "revision": "...", "path": "..." }`: the Motif is in the open project; importing does not save it to the library or place it.
+Preview it, then place it with `add_layers` as needed.
 
 ## Use your own model
 

@@ -4,7 +4,7 @@ import { MOTIF_RUNTIME_SOURCE } from "../render/motifs/runtime";
 import { installMotifFrameWorkspaceListener } from "../render/motifs/motifFrameWorkspace";
 import {
   installMotifsChangedListener,
-  syncUserMotifsFromBackend,
+  syncProjectMotifsFromBackend,
 } from "../render/motifs/syncCatalog";
 
 interface StartupTask {
@@ -58,7 +58,7 @@ const STARTUP_TASKS: readonly StartupTask[] = [
   {
     id: "motif_catalog",
     name: "Motif catalog",
-    run: syncUserMotifsFromBackend,
+    run: syncProjectMotifsFromBackend,
   },
   {
     id: "motif_catalog_listener",

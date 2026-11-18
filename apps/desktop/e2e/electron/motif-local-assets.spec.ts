@@ -6,8 +6,9 @@ import { buildSync } from 'esbuild'
 import { PNG } from 'pngjs'
 import { zipSync } from 'fflate'
 import { readMotifDirectory } from '../../src/main/motif/packageFiles'
-import { launchApp, tmpDir } from './helpers/driver'
-import { publishMotifDraft } from './helpers/motif'
+import { libraryHost } from '../../src/shared/motifs/projectMotifs'
+import { launchApp, newProject, tmpDir } from './helpers/driver'
+import { motifContentHash, saveMotifToLibrary } from './helpers/motif'
 
 const require = createRequire(import.meta.url)
 
@@ -53,10 +54,9 @@ function model(): Buffer {
   return glb
 }
 
-test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and textures and refreshes asset-only edits', async () => {
+test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and textures and refreshes asset-only edits in its folder', async () => {
   test.setTimeout(120_000)
   const directory = tmpDir('motif-local-source-')
-  const userDataDir = tmpDir('motif-local-profile-')
   mkdirSync(path.join(directory, 'vendor'))
   mkdirSync(path.join(directory, 'assets'))
   const threeBuild = path.dirname(require.resolve('three'))
@@ -98,18 +98,22 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
     readMotifDirectory(directory).map(file => [`scene/${file.path}`, file.bytes]),
   )))
 
-  const { app, page } = await launchApp({ userDataDir })
+  const { app, page } = await launchApp()
   try {
+    await newProject(page, { parentFolder: tmpDir('motif-local-project-'), name: 'Local assets',
+      canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 } })
     const invoke = <T>(command: string, args: Record<string, unknown> = {}) => page.evaluate(
       async ({ command, args }) => (window as any).api.backend.invoke(command, args), { command, args },
     ) as Promise<T>
-    const sourceId = (await invoke<{motif_id:string}>('open_motif_draft', { source:{kind:'zip',path:sourceZip} })).motif_id
+    const sourceId = (await invoke<{motif_id:string}>('create_motif', { source:{kind:'zip',path:sourceZip} })).motif_id
     const archive = path.join(tmpDir('motif-zip-'), 'scene.zip')
     await invoke('export_motif', { motif_id: sourceId, path: archive })
-    const id = (await invoke<{motif_id:string}>('open_motif_draft', { source:{kind:'zip',path:archive} })).motif_id
+    // The archive carries the lineage the project holds: the import is a
+    // copy beside it, under another id.
+    const made = await invoke<{motif_id:string; path:string}>('create_motif', { source:{kind:'zip',path:archive} })
+    const id = made.motif_id
     expect(id).not.toBe(sourceId)
-    const catalog = () => invoke<Array<{ id: string; content_hash: string }>>('list_motifs')
-    const hash = async (motifId: string) => (await catalog()).find(m => m.id === motifId)!.content_hash
+    const hash = (motifId: string, group: 'project' | 'library' = 'project') => motifContentHash(page, motifId, group)
     const capture = async (motifId: string, tSec: number, contentHash: string) => {
       const bytes = await page.evaluate(async (args) => {
         const data = await (window as any).api.backend.invoke('motif_capture_frame', args)
@@ -147,22 +151,24 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
     expect(confinement.value).toBe('local-buffer')
     expect(confinement.hasNode).toBe(false)
 
-    const publishedId = await publishMotifDraft(page, id)
-    expect(publishedId).not.toBe(id)
-    const publishedHash = await hash(publishedId)
-    expect((await capture(publishedId, 0, publishedHash)).equals(first)).toBe(true)
-    const installed = path.join(userDataDir, 'data', 'motifs', publishedId, 'v1')
-    writeFileSync(path.join(installed, 'assets', 'texture.png'), texture(0, 255))
-    writeFileSync(path.join(installed, 'scene.js'), sceneSource(0.5))
-    const changedHash = await hash(publishedId)
-    expect(changedHash).not.toBe(publishedHash)
-    const updated = PNG.sync.read(await capture(publishedId, 0, changedHash))
+    // Saved to the library, the Motif renders the same from the library's host.
+    const libraryId = await saveMotifToLibrary(page, id)
+    const libraryHash = await hash(libraryId, 'library')
+    expect((await capture(libraryHost(libraryId), 0, libraryHash)).equals(first)).toBe(true)
+    // An author edits assets in the project's folder, the page untouched.
+    writeFileSync(path.join(made.path, 'assets', 'texture.png'), texture(0, 255))
+    writeFileSync(path.join(made.path, 'scene.js'), sceneSource(0.5))
+    const changedHash = await hash(id)
+    expect(changedHash).not.toBe(firstHash)
+    const updated = PNG.sync.read(await capture(id, 0, changedHash))
     expect([...updated.data.subarray(center, center + 4)]).toEqual([0, 0, 255, 255])
     // The smaller triangle proves the unversioned companion JS refreshed too.
     expect(updated.data[(48 * 64 + 32) * 4 + 3]).toBe(0)
     expect(pixels.data[(48 * 64 + 32) * 4 + 3]).toBe(255)
-    // Publication retains an independent draft; installed edits cannot alter it.
-    expect(await hash(id)).toBe(firstHash)
-    expect((await capture(id, 0, firstHash)).equals(first)).toBe(true)
+    // The library's copy and the project's other Motif are their own files:
+    // the edit reaches neither.
+    expect(await hash(libraryId, 'library')).toBe(libraryHash)
+    expect((await capture(libraryHost(libraryId), 0, libraryHash)).equals(first)).toBe(true)
+    expect((await capture(sourceId, 0, await hash(sourceId))).equals(first)).toBe(true)
   } finally { await app.close() }
 })

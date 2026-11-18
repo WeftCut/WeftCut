@@ -83,7 +83,6 @@ import {
 } from "./settings/SettingsPanel";
 import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
-import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { noticeLogMessage, useAppNotices, type NoticeSettingsPage } from "./notifications/appNotices";
 import type { SaveFailureActions } from "./components/SaveFailedPill";
 import { useDerivativeJobEvents } from "./state/derivativeJobsStore";
@@ -385,7 +384,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   // timeline being left.
   useEffect(() => registerRevealCollapse(() => setRevealedTrackId(null)), []);
 
-  // "New Motif" auto-places the fresh draft (MotifPicker.onDraftPlaced) and
+  // "New Motif" auto-places the new Motif (MotifPicker.onNewPlaced) and
   // should land the user on its property panel with the layer visible. The
   // owner track is only knowable from the refreshed summary (the layer sits
   // on a just-created, role-null Overlay track the A/B Roll filter hides), so the
@@ -492,8 +491,6 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     agentMode,
     exitAgentMode,
     enterAgentMode,
-    staleMotifs,
-    setStaleMotifs,
   } = useAppWiring();
   useWindowTitle(summary?.name);
 
@@ -1316,12 +1313,6 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         />
       )}
       {!backgroundExportActive && !settingsOpen && exportPanel}
-      {staleMotifs.length > 0 && (
-        <MotifStaleDialog
-          entries={staleMotifs}
-          onDone={() => setStaleMotifs([])}
-        />
-      )}
       <PickOverlayHost />
       {settingsOpen && (
         <SettingsPanel
@@ -1359,7 +1350,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         <MotifPicker
           onClose={() => setMotifPickerOpen(false)}
           onAdded={settle}
-          onDraftPlaced={setPendingRevealLayerId}
+          onNewPlaced={setPendingRevealLayerId}
           currentTimeUs={focusedPlayheadUs()}
           compositionId={comp?.id ?? null}
           tracks={comp?.tracks ?? []}

@@ -914,11 +914,11 @@ export class Compositor {
     await this.root.preloadImages();
   }
 
-  /// Refresh every live Motif sprite against the current runtime catalog and
-  /// schedule a repaint. Called when `motifs:changed` fires (a draft edit /
-  /// install / delete) so an edited draft's preview re-captures. Cheap +
-  /// user-paced; no sprite is recreated (refreshMotif keeps the last bitmap
-  /// until the fresh capture lands).
+  /// Refresh every live Motif sprite against the project's render catalog
+  /// and schedule a repaint. Called on every catalog change (a project Motif
+  /// edited, updated from the library, gone or back) so an edited Motif's
+  /// preview re-captures. Cheap + user-paced; no sprite is recreated
+  /// (refreshMotif keeps the last bitmap until the fresh capture lands).
   refreshMotifs(): void {
     this.root.refreshMotifs();
     this.scheduleRepaint();

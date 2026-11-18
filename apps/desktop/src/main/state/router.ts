@@ -33,8 +33,8 @@ export type Route =
   | { kind: 'reject'; reason: string }
   | { kind: 'rust' }
 
-/** Hybrid Rust-compute → TS-write channels. install_motif and
- *  acknowledge_motif_staleness ride the motif route instead.
+/** Hybrid Rust-compute → TS-write channels. install_motif rides the motif
+ *  route instead.
  *
  *  `drop_shot_markers` and `apply_shot_cuts` are hybrids by definition — Rust
  *  scans and reduces the shot report, the TS actor writes the splits or the
@@ -125,13 +125,15 @@ export const AUDIO_FX_CHANNELS: ReadonlySet<string> = new Set([
   'audio_fx_snapshot', 'ensure_export_audio_fx', 'audio_fx_reverify',
 ])
 
-/** Motif catalog-read + authoring + publication + staleness channels, served in
- *  TS by runMotifTool. Renderer-only (never in MCP's `MOTIF_TOOLS`): the
- *  user's own `publish_motif`, the approval card's `list_motif_proposals` /
- *  `approve_motif_proposal` / `reject_motif_proposal` (ADR 0046), the
- *  library card's `list_motif_versions` / `restore_motif_version` (ADR 0172),
- *  and the two staleness channels. The renderer never calls `install_motif`, which proposes. */
-export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'motif_staleness_report', 'acknowledge_motif_staleness'])
+/** Motif catalog-read + authoring + publication channels, served in TS by
+ *  the host's Motif dispatch. Renderer-only (never in MCP's `MOTIF_TOOLS`):
+ *  the user's own "Save to library" `publish_motif`, the approval card's
+ *  `list_motif_proposals` / `approve_motif_proposal` / `reject_motif_proposal`
+ *  (ADR 0046), the library card's `list_motif_versions` /
+ *  `restore_motif_version` (ADR 0172) and `delete_library_motif`, and
+ *  `update_project_motif`, the user's update of a project copy from the
+ *  library. The renderer never calls `install_motif`, which proposes. */
+export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'update_project_motif'])
 
 /** Native read/compute handlers that receive their project state slice (a MediaItem
  *  or the full Project) as an injected call argument — the TS host forwards it

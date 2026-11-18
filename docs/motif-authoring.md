@@ -193,7 +193,7 @@ animation — deleting it breaks seeking back to earlier times.
   (anything else fails validation). A placed layer takes it unless the placing
   call names its own; absent means untagged.
 - **`fonts`** — declares bundled font files; meaningful only for Motifs
-  installed as a directory with an `assets/` folder. A single-file
+  packaged as a directory with an `assets/` folder. A single-file
   Motif embeds fonts as `data:` URIs instead.
 
 ### Duration: three shapes
@@ -285,7 +285,7 @@ The document renders in an offline, isolated capture host. Hard limits:
 - **A self-contained file or directory.** A directory has `index.html` plus
   companion JS, CSS, models, textures and fonts. Inline scripts/styles and
   local ES modules work. Use relative URLs: the app assigns the package's id,
-  including when forking or publishing. Bare imports such as `three` need a
+  including when copying or saving to the library. Bare imports such as `three` need a
   local import map or a bundle produced before import; the app does not
   resolve npm packages. Root `.revisions` is a reserved path.
 - **Local resource loading.** Render pages may fetch their own `motif://<id>/`
@@ -301,16 +301,16 @@ The document renders in an offline, isolated capture host. Hard limits:
   at most 256 MiB compressed or expanded and 10,000 entries; symbolic
   links, escaping paths, ambiguous paths and case collisions are rejected.
   **Import Motif** in the app takes a `.zip` (a single-file Motif goes in as
-  `index.html`) and copies it into a new draft with a new id; editing the
+  `index.html`) and copies it into the open project's `Motifs/`; editing the
   original folder later does not edit that copy. **Export Motif ZIP** writes
   `<motif-id>/index.html` and every companion, including `params.html`, with
   a `weftcut-lineage.json` entry beside the folder naming which Motif it is;
-  a draft imported from that ZIP keeps it. Keep only distributable assets in
+  a project that imports the ZIP keeps it. Keep only distributable assets in
   the folder.
 - **Edits invalidate frames.** Companion file names and bytes enter the
-  content hash, just like HTML edits. Edit/fork and publish preserve the
-  complete directory. The source panel edits `index.html`; companion files are
-  edited on disk.
+  content hash, just like HTML edits. Copying, placing and saving to the
+  library preserve the complete directory. A project Motif's files are edited
+  in its folder under `Motifs/`.
 - **The clock is virtual.** `Date.now`, `performance.now`, `setTimeout`,
   `setInterval`, and `requestAnimationFrame` are all owned by the harness. Do
   not capture references to time sources before `motif.define` runs.
@@ -362,17 +362,18 @@ The host-generated form described above is the normal path — a Motif is fully
 editable with zero UI effort. A Motif MAY instead ship a `params.html` beside
 its `index.html` to own its whole parameter panel; presence of the file is the
 only switch. That page is a separate, sandboxed document (opaque origin, no
-network, no storage) with its own message protocol. An empty draft gets the
-generated form; a draft copied from an existing Motif keeps its parameter page
-with the rest of its files.
+network, no storage) with its own message protocol. An empty Motif gets the
+generated form; a copy of an existing Motif keeps its parameter page with the
+rest of its files.
 
 ## Authoring over MCP
 
 Use the directory/file workflow in [motif-workspaces.md](motif-workspaces.md):
-`open_motif_draft` takes a linked directory, a ZIP, an existing Motif or an
-empty package; clients without filesystem access use `read_motif` and
-`update_motif_files`. A read returns a revision; pass it to file updates and,
-after reviewing `preview_motif`, to `install_motif`, which proposes the
-publication for the user to approve in the app. The app never rewrites a
-linked directory to assign ids, and copying a Motif never selects an
-overwrite target — name one explicitly when publishing an update.
+`create_motif` makes a Motif in the open project from a package folder, a ZIP,
+a copy of a project or library Motif, or an empty package, and answers the
+folder under the project's `Motifs/` that holds it; edit that folder in place,
+with no approval: each valid save is an edit in the user's undo history.
+Clients without filesystem access use `read_motif` and `update_motif_files`.
+A read returns a revision; pass it to file updates. `install_motif` proposes a
+project Motif to the library for the user to approve in the app; it targets the
+library Motif of the same lineage, and no project changes when it is approved.

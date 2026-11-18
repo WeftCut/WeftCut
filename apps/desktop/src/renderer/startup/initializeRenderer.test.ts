@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   initEval: vi.fn(),
   invoke: vi.fn(),
-  syncUserMotifsFromBackend: vi.fn(),
+  syncProjectMotifsFromBackend: vi.fn(),
   installMotifsChangedListener: vi.fn(),
   installMotifFrameWorkspaceListener: vi.fn(),
 }));
@@ -14,7 +14,7 @@ vi.mock("../render/motifs/runtime", () => ({
   MOTIF_RUNTIME_SOURCE: "runtime source",
 }));
 vi.mock("../render/motifs/syncCatalog", () => ({
-  syncUserMotifsFromBackend: mocks.syncUserMotifsFromBackend,
+  syncProjectMotifsFromBackend: mocks.syncProjectMotifsFromBackend,
   installMotifsChangedListener: mocks.installMotifsChangedListener,
 }));
 vi.mock("../render/motifs/motifFrameWorkspace", () => ({
@@ -27,7 +27,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.initEval.mockResolvedValue(undefined);
   mocks.invoke.mockResolvedValue(undefined);
-  mocks.syncUserMotifsFromBackend.mockResolvedValue(undefined);
+  mocks.syncProjectMotifsFromBackend.mockResolvedValue(undefined);
   mocks.installMotifsChangedListener.mockResolvedValue(() => {});
   mocks.installMotifFrameWorkspaceListener.mockResolvedValue(() => {});
 });
@@ -60,7 +60,7 @@ describe("startRendererInitialization", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("motif_register_runtime", {
       source: "runtime source",
     });
-    expect(mocks.syncUserMotifsFromBackend).toHaveBeenCalledOnce();
+    expect(mocks.syncProjectMotifsFromBackend).toHaveBeenCalledOnce();
     expect(mocks.installMotifsChangedListener).toHaveBeenCalledOnce();
     expect(mocks.installMotifFrameWorkspaceListener).toHaveBeenCalledOnce();
     expect(settled).toBe(false);
@@ -85,7 +85,7 @@ describe("startRendererInitialization", () => {
   it("reports a failed subsystem and still opens the startup gate", async () => {
     const error = new Error("catalog unavailable");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.syncUserMotifsFromBackend.mockRejectedValue(error);
+    mocks.syncProjectMotifsFromBackend.mockRejectedValue(error);
 
     await expect(
       startRendererInitialization().completion,

@@ -99,3 +99,15 @@ The user store is edited by hand as well as by the app: a file saved into
 version in `<dataRoot>/motifs/<id>/v<n>/`. A record is keyed by the version
 folder, which is written once; a hand edit inside it is still seen by its
 stamps. The move to version folders carries each record with its folder.
+
+## Note (2026-11-17): records cover project Motif folders; pins live in the resolver
+
+Projects now render their own Motifs from `Motifs/<id>/`
+([ADR 0173](0173-the-project-folder-holds-what-it-renders.md)). A project
+folder's revision is remembered by its file stamps the same way, in the same
+record file, keyed by the folder. It hashes the files as they stand, since the
+app never rewrites a project folder. Linked directories are gone, and with them
+the bullet on their outcome. Consumers now ask one resolver
+(`main/motif/resolver.ts`) rather than the store: it reads the project, the
+library or a proposal by `motif://` host, and holds the capture pins, keyed by
+scope, id and revision.

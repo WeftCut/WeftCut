@@ -79,6 +79,17 @@ describe('Motif covers', () => {
     await expect(make(file).get('badge', 'package-a')).resolves.toEqual(png)
   })
 
+  it('keeps one slot per served host, so a project copy and its library Motif never share one', async () => {
+    await make().get('badge', 'package-a')
+    await make().get('badge--library', 'package-a')
+    expect(capture).toHaveBeenCalledTimes(2)
+    expect(await readdir(root)).toHaveLength(2)
+    await make().prune(['badge--library'])
+    expect(await readdir(root)).toHaveLength(1)
+    await make().get('badge--library', 'package-a')
+    expect(capture).toHaveBeenCalledTimes(2)
+  })
+
   it('does not serve deleted sources and reclaims only owned cache slots on startup', async () => {
     await make().get('badge', 'package-a')
     const slot = (await readdir(root))[0]!

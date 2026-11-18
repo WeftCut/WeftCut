@@ -5,7 +5,7 @@
 // current project, and the IPC view the renderer reads. Main computes them
 // (main/state/reviewDiff.ts, History's baseline); the renderer only displays.
 
-export type EntityKind = 'Composition' | 'Track' | 'Layer' | 'Marker' | 'Transition' | 'Link' | 'AudioRole' | 'Media'
+export type EntityKind = 'Composition' | 'Track' | 'Layer' | 'Marker' | 'Transition' | 'Link' | 'AudioRole' | 'Media' | 'Motif'
 /** `Layer:<id>`, `Marker:<id>` … — stable across snapshots, unique project-wide. */
 export type EntityKey = `${EntityKind}:${string}`
 
@@ -20,7 +20,7 @@ export function parseEntityKey(key: EntityKey): { kind: EntityKind; id: string }
 
 /** Net structural differences, without operation or causal inference. */
 export type ChangeClass = 'added' | 'removed' | 'modified'
-export type ChangeAspect = 'placement' | 'timing' | 'retime' | 'params' | 'effects' | 'keyframes' | 'label' | 'flags'
+export type ChangeAspect = 'placement' | 'timing' | 'retime' | 'params' | 'effects' | 'keyframes' | 'label' | 'flags' | 'content'
 export interface TimeRange { composition_id: string; t_start_us: number; t_end_us: number }
 /** A range on one track (`track_id` null for a marker or transition). */
 export interface PlacedRange extends TimeRange { track_id: string | null }
@@ -63,7 +63,7 @@ export interface Change {
   id: EntityKey
   class: ChangeClass
   /** The composition the change is listed under (current side, else baseline);
-   *  null for a Composition, AudioRole or Media entity. */
+   *  null for a Composition, AudioRole, Media or Motif entity. */
   composition_id: string | null
   /** Measured changes to this entity, without an inferred cause. Empty for
    *  added/removed except a length; every compared difference has one. */

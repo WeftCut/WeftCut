@@ -244,6 +244,32 @@ describe('saveProjectAs', () => {
     expect(d.calls).toEqual(['commit:/out', 'recent:/out:snap']) // snapshot() name is 'snap'
     expect(d.actor.replaceState).not.toHaveBeenCalled()           // save-as never swaps state
   })
+
+  const withMotifs = () => {
+    const project = blankProject(seededGen(), 'snap')
+    const entry = { uid: '00000000-0000-4000-8000-000000000001', revision: 'r', from: null }
+    return { ...project, motifs: { 'lower-third': entry, 'title-card': entry } }
+  }
+
+  it('copies every Motif folder the table names from the open project before writing project.json', async () => {
+    const order: string[] = []
+    const fs = memFs()
+    const writeFile = fs.writeFile
+    fs.writeFile = (p, t) => { order.push(`write:${p}`); writeFile(p, t) }
+    const copyMotifs = vi.fn((from: string, to: string, ids: readonly string[]) => { order.push(`copy:${from}->${to}:${ids.join(',')}`) })
+    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs) } })
+    await saveProjectAs(d, '/out', '/ws')
+    expect(order).toEqual(['copy:/ws->/out:lower-third,title-card', `write:/out/${PROJECT_FILE}`])
+  })
+
+  it('fails without writing project.json when a Motif folder cannot be copied', async () => {
+    const fs = memFs()
+    const copyMotifs = vi.fn(() => { throw new Error('EACCES') })
+    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs) } })
+    await expect(saveProjectAs(d, '/out', '/ws')).rejects.toThrow('EACCES')
+    expect(fs.files.has(`/out/${PROJECT_FILE}`)).toBe(false)
+    expect(d.calls).toEqual([])
+  })
 })
 
 describe('newWorkspace', () => {

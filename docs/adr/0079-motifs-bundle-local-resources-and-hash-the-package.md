@@ -50,3 +50,11 @@ and edits/forks that copied only HTML would lose assets.
 `.revisions` stays reserved. Import still mints a new id, but a ZIP the app
 exports names its Motif's lineage in a `weftcut-lineage.json` entry beside the
 folder, and the imported draft keeps it.
+
+## Note (2026-11-17): a ZIP becomes a project Motif
+
+Importing a ZIP makes a Motif in the open project
+([ADR 0173](0173-the-project-folder-holds-what-it-renders.md)). It keeps the id
+its manifest carries, or one made from its name when that id is not valid; an
+id the project holds becomes `<id>-<first 8 hex of its lineage>`. It keeps the
+lineage the archive names unless the project already holds that lineage.

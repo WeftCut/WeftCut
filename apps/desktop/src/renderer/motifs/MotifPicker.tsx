@@ -1,9 +1,18 @@
+// The Motifs panel: the open project's Motifs and the library's, in two
+// groups (spec § Project Motifs, "Panel"). Placing a library Motif copies it
+// into the project in the same undo step; there is no separate "add to
+// project". A project row says what it needs (an update, edits not in the
+// library, a broken folder) and offers it; library rows keep placing, ZIP
+// export, version history and the trash. An agent's proposals sit on top.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FolderInputIcon, PlusIcon } from "lucide-react";
 import { MotifCard } from './MotifCard';
 import { MotifProposalList, useMotifProposals } from './MotifProposalCard';
 import { MotifVersionHistory } from './MotifVersionHistory';
+import { useSaveToLibrary } from './SaveToLibrary';
+import { MotifProblem } from './MotifProblem';
+import { matchRows, previewMotif, projectCopyOf, rowKey, rowName, type MotifRow } from './motifRows';
 import { listen } from "@/bridge/events";
 import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
@@ -13,32 +22,36 @@ import { AppInput } from "../components/AppInput";
 import { AppSelect } from "../components/AppSelect";
 import { Button } from "@/components/ui/button";
 import {
-  importMotif,
+  createProjectMotif,
+  deleteLibraryMotif,
   exportMotif,
-  deleteMotif,
-  listMotifs,
+  importMotif,
+  listMotifCatalog,
   MOTIFS_CHANGED_EVENT,
-  writeMotifDraft,
+  removeProjectMotif,
+  updateProjectMotif,
+  type LibraryMotifRow,
+  type MotifCatalog,
   type MotifSummary,
   type TrackSummary,
 } from "../ipc";
 import { addMotifIn } from "../ipc/compositionScoped";
+import { refusalText } from "../errors/tryMutate";
 import { trackDisplayName } from "../lib/trackName";
 import { MotifPropField } from "../properties/MotifPropFields";
 import { defaultPropsFor, MotifPreview, useDebounced } from "./MotifPreview";
-import { setUserMotifs, type MotifManifest } from "../render/motifs/catalog";
-import { newDraftSource } from "../render/motifs/newDraftSource";
+import { newMotifSource } from "../render/motifs/newMotifSource";
+import { syncProjectMotifsFromBackend } from "../render/motifs/syncCatalog";
 import { AppIcon } from "@/components/AppIcon";
 
 interface Props {
   onClose: () => void;
   onAdded: () => Promise<void>;
-  /// Fired after "New Motif" auto-places the fresh draft at the playhead.
-  /// The App selects the layer and reveals its (role-null, AB-hidden)
-  /// auto-created overlay track, landing the user straight in the property
-  /// panel's source editor — the draft's real editing home (docs/motifs.md
-  /// canvas-context editing).
-  onDraftPlaced: (layerId: string) => void;
+  /// Fired after "New Motif" auto-places the new project Motif at the
+  /// playhead. The App selects the layer and reveals its (role-null,
+  /// AB-hidden) auto-created overlay track, landing the user straight in the
+  /// property panel's source editor (docs/motifs.md canvas-context editing).
+  onNewPlaced: (layerId: string) => void;
   /// The composition the picker is adding to — the timeline that holds the
   /// keyboard, resolved by the App when the dialog opens. The picker's tracks,
   /// canvas and clock are all read off it, so the layer has to be committed to
@@ -69,7 +82,7 @@ const AUTO_OVERLAY_SENTINEL = "__auto_overlay__";
 export function MotifPicker({
   onClose,
   onAdded,
-  onDraftPlaced,
+  onNewPlaced,
   compositionId,
   currentTimeUs,
   tracks,
@@ -79,37 +92,37 @@ export function MotifPicker({
   compHeight,
 }: Props) {
   const { t } = useTranslation();
-  const [motifs, setMotifs] = useState<MotifSummary[] | null>(null);
+  const [catalog, setCatalog] = useState<MotifCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  /// What the last row action left for the user to find (unfinished files
+  /// moved aside); cleared by the next action.
+  const [notice, setNotice] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [deleting, setDeleting] = useState<MotifSummary | null>(null);
+  const [deleting, setDeleting] = useState<LibraryMotifRow | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [history, setHistory] = useState<MotifSummary | null>(null);
+  const [history, setHistory] = useState<LibraryMotifRow | null>(null);
   // An agent's proposed publications, each a card the user approves or
   // rejects here (ADR 0046). They sit above the catalog, where the status
   // bar's notice sends the user.
   const proposals = useMotifProposals();
+  const save = useSaveToLibrary((id) => catalog?.library.find((r) => r.id === id)?.motif.name);
 
   const aliveRef = useRef(true);
   const reloadGeneration = useRef(0);
   const reload = () => {
     const generation = ++reloadGeneration.current;
-    return listMotifs().then(
-      (list) => {
+    return listMotifCatalog().then(
+      (next) => {
         if (!aliveRef.current || generation !== reloadGeneration.current) return;
-        setMotifs(list);
-        // Refresh the runtime frame-math catalog from the SAME fetch the picker
-        // shows, so every Motif the picker can add also resolves in the
-        // compositor/export. Startup seeds that catalog and a `motifs:changed`
-        // listener keeps it fresh (both in `startup/initializeRenderer.ts`);
-        // this covers a boot sync that failed or an event that was missed.
-        setUserMotifs(list as MotifManifest[]);
-        setSelectedId((prev) => list.some(m => m.id === prev) ? prev : list[0]?.id ?? null);
+        setCatalog(next);
+        const rows: MotifRow[] = [...next.project, ...next.library];
+        setSelectedKey((prev) => rows.some((r) => rowKey(r) === prev) ? prev
+          : rowKey(rows.find((r) => r.motif) ?? rows[0] ?? { group: "library", id: "" }));
       },
       (e) => {
-        if (aliveRef.current && generation === reloadGeneration.current) setError(String(e));
+        if (aliveRef.current && generation === reloadGeneration.current) setError(refusalText(e));
       },
     );
   };
@@ -134,9 +147,9 @@ export function MotifPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const selected = useMemo(
-    () => motifs?.find((tpl) => tpl.id === selectedId) ?? null,
-    [motifs, selectedId],
+  const selected = useMemo<MotifRow | null>(
+    () => catalog && [...catalog.project, ...catalog.library].find((r) => rowKey(r) === selectedKey) || null,
+    [catalog, selectedKey],
   );
 
   const videoTracks = useMemo(
@@ -144,82 +157,98 @@ export function MotifPicker({
     [tracks],
   );
 
-  // Catalog search. Matches the id too: it's off the card (tooltip-only),
-  // but agents quote ids in logs/chats and pasting one here should work.
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (q === "" || motifs === null) return motifs;
-    return motifs.filter(
-      (tpl) =>
-        tpl.name.toLowerCase().includes(q) || tpl.id.toLowerCase().includes(q),
-    );
-  }, [motifs, query]);
+  const projectRows = useMemo(() => catalog && matchRows(catalog.project, query), [catalog, query]);
+  const libraryRows = useMemo(() => catalog && matchRows(catalog.library, query), [catalog, query]);
 
-  const createDraft = async () => {
-    try {
-      const name = untitledName(motifs ?? [], t("motif_picker.untitled_name"));
-      const { manifest, html } = newDraftSource(name);
-      const draftId = await writeMotifDraft(manifest, html);
-      // Keeps the picker useful if the auto-place below fails: the draft's
-      // card is already selected and the error shows in place.
-      setSelectedId(draftId); // motifs:changed → reload() surfaces the card
-      // Straight into the editing surface: place the draft at the playhead
-      // (default props/duration, fresh overlay track), hand the new layer to
-      // the App for select + reveal, and close the picker.
-      const layerId = await addMotifIn({
-        compositionId,
-        motifId: draftId,
-        tStartUs: currentTimeUs,
-      });
-      await onAdded();
-      onDraftPlaced(layerId);
-      onClose();
-    } catch (e) {
-      setError(String(e));
-    }
+  /// Runs a row action; its refusal shows in the panel's error line.
+  const act = (fn: () => Promise<unknown>) => async () => {
+    setError(null);
+    setNotice(null);
+    try { await fn(); } catch (e) { setError(refusalText(e)); }
   };
 
-  const importFile = async () => {
-    try {
-      setError(null);
-      const path = await openDialog({
-        multiple: false,
-        filters: [{ name: "Motif ZIP", extensions: ["zip"] }],
-      });
-      if (typeof path !== "string") return; // cancelled / multiple
-      const draftId = await importMotif(path);
-      setSelectedId(draftId); // motifs:changed → reload() surfaces the card
-    } catch (e) {
-      setError(String(e));
-    }
+  const takeLibrary = (id: string) => act(async () => {
+    const { unfinished } = await updateProjectMotif(id);
+    if (unfinished) setNotice(t("motif_picker.unfinished_moved", { path: unfinished }));
+  });
+
+  /// A placement lands a layer on a Motif the render catalog may not hold
+  /// yet (a library copy): pull it before the App looks.
+  const placed = async () => {
+    await syncProjectMotifsFromBackend();
+    await onAdded();
   };
 
-  const exportItem = async (id: string) => {
-    try {
-      setError(null);
-      const path = await saveDialog({
-        title: t("motif_picker.export_button"),
-        defaultPath: `${id}.zip`,
-        filters: [{ name: "Motif ZIP", extensions: ["zip"] }],
-      });
-      if (!path) return;
-      await exportMotif(id, path);
-    } catch (e) {
-      setError(String(e));
-    }
-  };
+  const createMotif = act(async () => {
+    const name = untitledName(catalog ? [...catalog.project, ...catalog.library] : [], t("motif_picker.untitled_name"));
+    const { manifest, html } = newMotifSource(name);
+    const id = await createProjectMotif(manifest, html);
+    // Keeps the picker useful if the auto-place below fails: the new card is
+    // already selected and the error shows in place.
+    setSelectedKey(rowKey({ group: "project", id }));
+    // Straight into the editing surface: place it at the playhead (default
+    // props/duration, fresh overlay track), hand the new layer to the App for
+    // select + reveal, and close the picker.
+    const layerId = await addMotifIn({ compositionId, motifId: id, tStartUs: currentTimeUs });
+    await placed();
+    onNewPlaced(layerId);
+    onClose();
+  });
+
+  const importFile = act(async () => {
+    const path = await openDialog({
+      multiple: false,
+      filters: [{ name: "Motif ZIP", extensions: ["zip"] }],
+    });
+    if (typeof path !== "string") return; // cancelled / multiple
+    const id = await importMotif(path);
+    setSelectedKey(rowKey({ group: "project", id })); // motifs:changed → reload() surfaces the card
+  });
+
+  const exportItem = (row: MotifRow) => act(async () => {
+    const path = await saveDialog({
+      title: t("motif_picker.export_button"),
+      defaultPath: `${row.id}.zip`,
+      filters: [{ name: "Motif ZIP", extensions: ["zip"] }],
+    });
+    if (!path) return;
+    await exportMotif(row.id, path, row.group === "library" ? "library" : undefined);
+  });
 
   const removeItem = async () => {
     if (!deleting || deleteBusy) return;
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      await deleteMotif(deleting.id);
+      await deleteLibraryMotif(deleting.id);
       await reload();
       setDeleting(null);
-    } catch (e) { setDeleteError(String(e)); }
+    } catch (e) { setDeleteError(refusalText(e)); }
     finally { setDeleteBusy(false); }
   };
+
+  const card = (row: MotifRow) => (
+    <MotifCard
+      key={rowKey(row)}
+      row={row}
+      selected={rowKey(row) === selectedKey}
+      fpsNum={fpsNum} fpsDen={fpsDen}
+      projectCopy={row.group === "library" && catalog ? projectCopyOf(row, catalog.project) : null}
+      onSelect={() => setSelectedKey(rowKey(row))}
+      onExport={() => void exportItem(row)()}
+      onHistory={() => row.group === "library" && setHistory(row)}
+      onDelete={() => { if (row.group === "library") { setDeleteError(null); setDeleting(row); } }}
+      onTakeLibrary={() => void takeLibrary(row.id)()}
+      onSave={() => void act(() => save.start(row.id))()}
+      onRemove={() => void act(() => removeProjectMotif(row.id))()}
+    />
+  );
+
+  const empty = (all: readonly MotifRow[], none: string) => (
+    <p className="settings-status">
+      {all.length === 0 ? none : t("motif_picker.no_matches", { query: query.trim() })}
+    </p>
+  );
 
   return (
     <AppDialog
@@ -227,17 +256,19 @@ export function MotifPicker({
       onClose={onClose}
       panelClassName="motif-picker"
     >
-        {error && <p className="settings-error">{error}</p>}
+        {error && <p className="settings-error motif-picker-message" role="alert">{error}</p>}
+        {notice && <p className="settings-status motif-picker-message" role="status">{notice}</p>}
         {proposals && <MotifProposalList proposals={proposals} />}
 
-        {motifs === null || filtered === null ? (
+        {catalog === null || projectRows === null || libraryRows === null ? (
           <p className="settings-status">{t("motif_picker.loading")}</p>
         ) : (
           <div className="motif-picker-body">
             <div className="motif-picker-catalog">
               {/* Media-pool-style management bar: search claims the free
-                  width, the catalog actions (new draft / import) sit at the
-                  trailing edge. Fixed sibling above the scrolling list. */}
+                  width, the catalog actions (new / import, both into the
+                  project) sit at the trailing edge. Fixed sibling above the
+                  scrolling list. */}
               <div className="motif-picker-bar">
                 <AppInput
                   type="search"
@@ -262,7 +293,7 @@ export function MotifPicker({
                   size="icon-xs"
                   title={t("motif_picker.new_button")}
                   aria-label={t("motif_picker.new_button")}
-                  onClick={() => void createDraft()}
+                  onClick={() => void createMotif()}
                 >
                   <AppIcon icon={PlusIcon} size="title" aria-hidden />
                 </Button>
@@ -277,33 +308,26 @@ export function MotifPicker({
                 </Button>
               </div>
               <div className="motif-picker-list">
-                {filtered.length === 0 && (
-                  <p className="settings-status">
-                    {motifs.length === 0
-                      ? t("motif_picker.empty")
-                      : t("motif_picker.no_matches", { query: query.trim() })}
-                  </p>
-                )}
-                {filtered.map((tpl) => (
-                  <MotifCard
-                    key={tpl.id}
-                    motif={tpl}
-                    selected={tpl.id === selectedId}
-                    fpsNum={fpsNum} fpsDen={fpsDen}
-                    onSelect={() => setSelectedId(tpl.id)}
-                    onExport={() => void exportItem(tpl.id)}
-                    onHistory={() => setHistory(tpl)}
-                    onDelete={() => { setDeleteError(null); setDeleting(tpl); }}
-                  />
-                ))}
+                <section aria-label={t("motif_picker.group_project")}>
+                  <h3 className="motif-picker-group">{t("motif_picker.group_project")}</h3>
+                  {projectRows.length === 0 && empty(catalog.project, t("motif_picker.project_empty"))}
+                  {projectRows.map(card)}
+                </section>
+                <section aria-label={t("motif_picker.group_library")}>
+                  <h3 className="motif-picker-group">{t("motif_picker.group_library")}</h3>
+                  {libraryRows.length === 0 && empty(catalog.library, t("motif_picker.empty"))}
+                  {libraryRows.map(card)}
+                </section>
               </div>
             </div>
 
             <div className="motif-picker-form">
-              {selected ? (
+              {selected?.motif ? (
                 <MotifForm
-                  key={selected.id}
-                  motif={selected}
+                  key={rowKey(selected)}
+                  motif={selected.motif}
+                  preview={previewMotif(selected)!}
+                  fromLibrary={selected.group === "library"}
                   currentTimeUs={currentTimeUs}
                   tracks={videoTracks}
                   fpsNum={fpsNum}
@@ -316,24 +340,32 @@ export function MotifPicker({
                       await addMotifIn({
                         compositionId,
                         motifId: selected.id,
+                        ...(selected.group === "library" ? { fromLibrary: true } : {}),
                         tStartUs,
                         props,
                         trackId,
                       });
-                      await onAdded();
+                      await placed();
                       onClose();
                     } catch (e) {
-                      setError(String(e));
+                      setError(refusalText(e));
                     }
                   }}
                 />
+              ) : selected?.group === "project" ? (
+                <div className="motif-picker-unavailable">
+                  <h3>{t("motif_picker.unavailable_title", { name: rowName(selected) })}</h3>
+                  {selected.status !== "ok" && <MotifProblem id={selected.id} status={selected.status} diagnostic={selected.diagnostic} />}
+                  <p className="settings-status">{t("motif_picker.unavailable_hint", { id: selected.id })}</p>
+                </div>
               ) : (
                 <p className="settings-status">{t("motif_picker.empty")}</p>
               )}
             </div>
           </div>
         )}
-        {history && <MotifVersionHistory motif={history} onClose={() => setHistory(null)} />}
+        {save.dialog}
+        {history && <MotifVersionHistory motif={history.motif} onClose={() => setHistory(null)} />}
         {deleting && (
           <AppDialog
             title={t("motif_picker.delete_button")}
@@ -343,7 +375,7 @@ export function MotifPicker({
             <div className="settings-body">
               <div className="settings-card">
                 <p className="settings-blurb">
-                  {t("motif_picker.delete_confirm", { name: deleting.name })}
+                  {t("motif_picker.delete_confirm", { name: deleting.motif.name })}
                 </p>
                 {deleteError && <p className="settings-error" role="alert">{deleteError}</p>}
                 <div className="export-actions">
@@ -362,12 +394,12 @@ export function MotifPicker({
   );
 }
 
-/// Default name for a one-click draft: the localized base, or "base N" when
-/// taken. Names aren't a uniqueness key anywhere (drafts get fresh ids), so
-/// this is purely to keep the catalog legible until the user renames the
-/// draft in its manifest island (the source editor they land in).
-function untitledName(existing: MotifSummary[], base: string): string {
-  const names = new Set(existing.map((m) => m.name));
+/// Default name for a new Motif: the localized base, or "base N" when taken.
+/// Names are not a uniqueness key (the id is), so this only keeps the list
+/// legible until the user renames it in its manifest island (the source
+/// editor they land in).
+function untitledName(existing: readonly MotifRow[], base: string): string {
+  const names = new Set(existing.map(rowName));
   if (!names.has(base)) return base;
   for (let n = 2; ; n++) {
     const candidate = `${base} ${n}`;
@@ -377,6 +409,8 @@ function untitledName(existing: MotifSummary[], base: string): string {
 
 function MotifForm({
   motif,
+  preview,
+  fromLibrary,
   currentTimeUs,
   tracks,
   fpsNum,
@@ -386,6 +420,10 @@ function MotifForm({
   onSubmit,
 }: {
   motif: MotifSummary;
+  /// `motif` under the host its scope serves it from.
+  preview: MotifSummary;
+  /// Placing copies it into the project first.
+  fromLibrary: boolean;
   currentTimeUs: number;
   tracks: TrackSummary[];
   fpsNum: number;
@@ -450,7 +488,7 @@ function MotifForm({
         </span>
       </h3>
       <MotifPreview
-        motif={motif}
+        motif={preview}
         props={debouncedProps}
         maxWidth={480}
         large
@@ -508,6 +546,7 @@ function MotifForm({
           value: formatTimecode(Math.round(motif.default_duration_s * 1_000_000), fpsNum, fpsDen),
         })}
       </p>
+      {fromLibrary && <p className="motif-picker-hint">{t("motif_picker.place_copy_hint")}</p>}
 
       <div className="motif-picker-actions">
         <Button type="submit" variant="default" size="lg" disabled={busy}>

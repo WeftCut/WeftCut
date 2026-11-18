@@ -52,7 +52,8 @@ drag does not flood the serial capture queue. The picker's props form uses the
 same generator.
 
 **`params.html`.** The catalog carries `has_params_ui`, which main derives by
-stat'ing the file (built-ins once at boot; user Motifs on every listing). It
+stat'ing the file (built-ins once at boot; project and saved Motifs on every
+listing). It
 never enters the manifest. Adding or deleting the file switches the panel on the
 next catalog refresh (the Motif watcher triggers one). Of the built-ins only
 `text-fx` ships a page; `src/shared/motifs/builtin/text-fx/params.html` is the
@@ -616,50 +617,79 @@ queued at the time ([Admission](#admission)). A failed
 write leaves that frame uncached and the export keeps its pixels; a capture
 failure fails the export. Cancelling stops admission and keeps completed cache files.
 
-## User Motifs
+## Project Motifs and the library
 
-User Motifs live under `<dataRoot>/motifs/`, shared by all projects, and render
-through the same path as built-ins. Each installed version keeps its own folder,
-`<id>/v<n>/`; the highest is the current one, and no version is written over
-([ADR 0172](adr/0172-the-motif-library-keeps-every-version.md)). Lifecycle in
-the property panel:
+A project renders only its own Motifs: each a folder `<project>/Motifs/<id>/`
+named in the `motifs` table of `project.json`
+([ADR 0173](adr/0173-the-project-folder-holds-what-it-renders.md)). The table
+gives each id its lineage (`uid`), the revision the project last recorded, and
+the library version it was copied from (`from`, null for a Motif made in the
+project). Every Motif layer names a table entry (`MotifNotInProject`
+otherwise).
 
-- **Built-in** → "Duplicate & edit" forks a draft (built-ins cannot be
-  overwritten). **Installed** → Edit opens a working draft targeting it, and the
-  selected layer swaps onto the draft.
-- **Update** publishes the draft as its target's next version; every
-  placement in every project re-renders (the key is source-derived). Layers in
-  this project that referenced the draft rebind to the target with props
-  lenient-migrated, in one undo step. **Save as new** publishes a separate id;
-  **Discard** swaps the layer back and deletes the draft.
-- A placed draft has a source panel (edit HTML + island, Apply). The Motif store
-  is watched: saving any Motif file externally resyncs the catalog and
-  re-captures.
+The library is `<dataRoot>/motifs/`: built-ins plus the Motifs the user saved.
+Each saved version keeps its own folder, `<id>/v<n>/`; the highest is the
+current one, and no version is written over
+([ADR 0172](adr/0172-the-motif-library-keeps-every-version.md)). Placing a
+library Motif copies its package into the project, built-ins included, and
+records the entry with the layer in one undo step. Saving to the library adds
+a version and changes no project.
 
-Because updates are live, a layer's `motif_version` is only a seen-at marker.
-On project open a mismatch raises a one-time **"Motifs changed since you placed
-them"** notice and a status-log entry (`main/motif/staleness.ts`); dismissing it
-bumps the markers in one undo step. There is no global reverse index of which
-projects use a Motif. A project referencing a deleted Motif shows an error
-placeholder.
+`motif://` hosts name the scope: `<id>` is the open project's folder,
+`<id>--library` the library's current version (a built-in's bundled bytes
+included), `<proposal id>--proposal` a pending proposal's frozen package. One
+resolver (`main/motif/resolver.ts`) decides each host's status (`ok`,
+`missing`, `invalid`) for the protocol, capture, covers and pins; nothing
+reads a store directly.
 
-A package's revision hashes every byte of it. The store keeps each one against
-the stamps of the package's files (size, times, file id), in
-`<dataRoot>/cache/motif-revisions.json`, and reads a package again only when a
-stamp differs or was taken within 2 s of the file's last change. The catalog
-listing, covers and capture pins all ask the store, so an unchanged package
-costs a stat per file; an edit in the store, by the app or by hand, costs one
-read ([ADR 0164](adr/0164-a-motif-package-revision-is-remembered-by-its-file-stamps.md)).
+- **Panel.** The Motifs panel shows two groups, *This project* and *Library*.
+  A project row's state against the library Motif of its lineage is derived on
+  every read, never stored: *in sync*, *modified* (changed since copied),
+  *update available* (an unchanged copy the library moved past) or *project
+  only*. Actions: update the project copy from the library, and save to the
+  library (the default target follows the lineage, "save as new" beside it).
+- **Editing.** A project Motif is edited in place, by an agent or by hand. The
+  project's `Motifs/` is watched recursively; a folder that changes to a new
+  valid revision becomes a recorded `set_project_motif` commit attributed to
+  file edits, and Review lists it where it plays. A folder that becomes
+  invalid changes status only. A folder's revision is its files as they
+  stand: the app never rewrites one.
+- **Backups.** Every revision the table records is kept, content-addressed,
+  in `<project>/Backups/motifs/` (`.blobs/<sha256>` plus
+  `<id>/<revision>.json`). Undo, redo and checkpoint restores put each folder
+  back as the restored table says (`main/motif/projectRecords.ts`); a folder
+  holding an invalid package is left alone with a status-log warning. Backups
+  are collected at open to what the table records.
+- **Update the project copy** replaces the folder with the library's current
+  version of its lineage and rebinds every layer on it to the new props
+  schema, in one undo step.
+- **Missing is visible.** A Motif whose folder is gone or invalid draws an
+  error placeholder, is listed in `project://session`, and fails an export
+  that uses it with `MotifUnavailable`.
 
-**Import Motif** takes a `.zip`; **Export Motif ZIP** writes `<motif-id>/` with
-every companion file (private draft metadata omitted). Library cards offer
-Export, and in the context menu Delete and, for an installed Motif, Version
-history (not for built-ins). Version history lists the saved versions, newest
-first; Restore saves an older one again as the newest version, and this
-project's clips of it rebind as an Update rebinds them. Delete moves the Motif's
-folder, every version with it, to the system trash; when the trash refuses,
-nothing is deleted. Limits and directory workspaces:
+A package's revision hashes every byte of it. Each one is kept against the
+stamps of the package's files (size, times, file id), in
+`<dataRoot>/cache/motif-revisions.json`, for library versions and project
+folders alike, and a package is read again only when a stamp differs or was
+taken within 2 s of the file's last change. An unchanged package costs a stat
+per file; an edit, by the app or by hand, costs one read
+([ADR 0164](adr/0164-a-motif-package-revision-is-remembered-by-its-file-stamps.md)).
+
+**Import Motif** takes a `.zip` into the project; **Export Motif ZIP** writes
+`<motif-id>/` with every companion file and a `weftcut-lineage.json` entry
+naming its lineage. Library cards offer Export, and in the context menu Delete
+and, for an installed Motif, Version history (not for built-ins). Version
+history lists the saved versions, newest first; Restore saves an older one
+again as the newest version. Delete moves the Motif's folder, every version
+with it, to the system trash; when the trash refuses, nothing is deleted. No
+project loses a Motif by either. Agent and file workflows:
 [`motif-workspaces.md`](motif-workspaces.md).
+
+Drafts and linked working directories from earlier versions stay on disk in
+`<dataRoot>/motifs/drafts/` and `.workspaces/`, unlisted; a startup notice
+counts the drafts. Only the v5 → v6 upgrade reads them
+(`main/motif/legacyResolve.ts`), to copy what a v5 project rendered into its
+`Motifs/`.
 
 Library **covers** are default-props PNGs captured at the poster time at 30 fps,
 scaled to fit 480×270, cached under `<dataRoot>/cache/motif-covers/` and
@@ -668,15 +698,19 @@ independent of placed props, project fps and frame bakes.
 
 ## Agent surface
 
-`add_layers` (kind `motif`) places a Motif by props only and resolves built-ins, installed
-Motifs and drafts. `list_motifs` (mirrored by `motifs://current`) returns the
-manifest-only catalog with `status` (`builtin | installed | draft`),
-`revision` and `target_id`; a draft with a proposal carries `publication`.
-Authoring uses `open_motif_draft`, `read_motif`, `update_motif_files`,
+`add_layers` (kind `motif`) places a Motif by props only: a project Motif, or
+a library Motif (a built-in included), which it copies into the project's
+`Motifs/` first (`from_library: true` places the library's Motif of an id the
+project uses for another one). `list_motifs` returns the manifest-only catalog of the open
+project's Motifs and the library: project rows with `status`
+(`ok | missing | invalid`) and `state` against the library, library rows with
+`status` (`builtin | installed`); `motifs://current` mirrors the project rows.
+Authoring uses `create_motif`, `read_motif`, `update_motif_files`,
 `preview_motif`, `install_motif`, `export_motif` and `delete_motif`
-([`motif-workspaces.md`](motif-workspaces.md)). `install_motif` only proposes:
-the user approves or rejects the proposal on its card in the Motifs panel
-(ADR 0046). Agents never drive the renderer directly.
+([`motif-workspaces.md`](motif-workspaces.md)) on the project's own Motifs.
+`install_motif` only proposes saving one to the library: the user approves or
+rejects the proposal on its card in the Motifs panel (ADR 0046). Agents never
+drive the renderer directly.
 
 ## Security
 
@@ -699,8 +733,9 @@ granting `'unsafe-eval'` ([`motif-three-model.md`](motif-three-model.md)).
 - Capture deadlines fail a hung frame and rebuild the host (above).
 - The `motif:` resolver rejects `..`, absolute and separator escapes and
   confirms the path stays under the Motif's directory.
-- Minted ids never shadow a built-in or the reserved `drafts/` segment; the
-  manifest's own `id`/`version` are ignored.
+- A project Motif id is one lowercase host label with no `--`, so it can never
+  name the library or a proposal; a library id is minted by the app and never
+  takes a built-in's id or the reserved `drafts` segment.
 - The parameter page runs inside the editor window in its own sandbox
   ([Parameter UI](#parameter-ui), [`security.md`](security.md)).
 

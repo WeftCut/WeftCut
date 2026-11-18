@@ -470,14 +470,34 @@ export function coreManifestForHash(m: Manifest): Record<string, unknown> {
   };
 }
 
+/** The page `composeMotifHtml` was given, when `html` is its output: the
+ *  island and the newlines it wrote around it removed. Null when the island
+ *  is not where it puts one. */
+function uncomposed(html: string): string | null {
+  const idMarker = html.indexOf(ISLAND_MARKER);
+  if (idMarker < 0) return null;
+  const open = html.lastIndexOf("<script", idMarker);
+  const closeRel = html.indexOf("</script>", idMarker);
+  if (open < 0 || closeRel < 0) return null;
+  const close = closeRel + "</script>".length;
+  if (html[close] !== "\n") return null;
+  const headPos = findCi(html, "<head>");
+  const after = headPos >= 0 ? headPos + "<head>".length : -1;
+  if (headPos >= 0 && headPos < open && open === after + 1 && html[after] === "\n")
+    return html.slice(0, after) + html.slice(close + 1);
+  if (open === 0 && (headPos < 0 || headPos > close)) return html.slice(close + 1);
+  return null;
+}
+
 /**
  * Compose the canonical single-file Motif HTML: strip any existing island, then
  * inject a fresh pretty-JSON island (with `<` escaped as < so a string
  * field can't close the island early) right after the opening <head> (or at the
- * top if none). Round-trips through `parseManifestIsland`.
+ * top if none). Round-trips through `parseManifestIsland`. Composing a composed
+ * page changes only its island: a package normalised again keeps its bytes.
  */
 export function composeMotifHtml(manifest: Manifest, html: string): string {
-  const stripped = stripManifestIsland(html);
+  const stripped = uncomposed(html) ?? stripManifestIsland(html);
   const json = JSON.stringify(coreManifestForHash(manifest), null, 2).replaceAll("<", "\\u003c");
   const island = `<script type="application/json" id="motif-manifest">\n${json}\n</script>\n`;
   const headPos = findCi(stripped, "<head>");
@@ -555,46 +575,7 @@ export function motifCtxDurationS(manifest: Manifest, props: Record<string, unkn
   return manifest.default_duration_s;
 }
 
-// ---------------------------------------------------------------------------
-// MotifCatalog class
-// ---------------------------------------------------------------------------
-
-/**
- * Motif catalog with a built-in layer (always present) and a settable user
- * layer. Built-ins win on id collision so an uploaded motif can never shadow
- * a built-in.
- */
-export class MotifCatalog {
-  private _user: Map<string, Manifest> = new Map();
-
-  /**
-   * @param resolveMissing optional source-of-truth fallback for a cache miss.
-   *   The in-memory user layer is a cache refreshed asynchronously by the file
-   *   watcher (debounced); a Motif written to disk is visible to the disk-backed
-   *   `list_motifs` before that refresh lands. Wiring this to the store
-   *   (`store.getMotif(id)?.manifest`) lets `add_motif` resolve such a Motif
-   *   without losing the watcher race. Omitted in tests/renderer → cache-only.
-   *   Called SYNCHRONOUSLY on the main thread and only on a cache MISS (the `??`
-   *   chain short-circuits on builtins/cache) — a mutation-time slow path
-   *   (add_motif / the content-window clamp), never the per-frame render path.
-   */
-  constructor(private readonly resolveMissing?: (id: string) => Manifest | null) {}
-
-  get(id: string): Manifest | undefined {
-    return BUILTIN_MANIFESTS.get(id) ?? this._user.get(id) ?? this.resolveMissing?.(id) ?? undefined;
-  }
-
-  setUserManifests(ms: Manifest[]): void {
-    this._user = new Map(ms.map((m) => [m.id, m]));
-  }
-
-  list(): Manifest[] {
-    const out: Manifest[] = [...BUILTIN_MANIFESTS.values()];
-    for (const [id, m] of this._user) {
-      if (!BUILTIN_MANIFESTS.has(id)) {
-        out.push(m);
-      }
-    }
-    return out;
-  }
+/** Motif manifests by id, as a reader of layers' `motif_id` looks them up. */
+export interface MotifManifests {
+  get(id: string): Manifest | undefined;
 }

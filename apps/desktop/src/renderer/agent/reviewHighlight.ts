@@ -38,7 +38,7 @@ export function changeWeights(ranges: readonly ChangedRange[]): ReadonlyMap<stri
 /** The entity kinds a changed range can list (ADR 0169). Any other kind —
  *  a track, a marker, a link — is never in one, so the ranges say nothing
  *  of how it plays: no weight. */
-const WEIGHED = new Set<EntityKind>(['Layer', 'Transition', 'AudioRole'])
+const WEIGHED = new Set<EntityKind>(['Layer', 'Transition', 'AudioRole', 'Motif'])
 
 /** `change`'s weight under `weights` (`changeWeights`), or null for a kind no
  *  range lists. Only a modified change can be soft: a clip removed or added

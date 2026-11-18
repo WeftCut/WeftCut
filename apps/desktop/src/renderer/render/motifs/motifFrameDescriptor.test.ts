@@ -4,6 +4,10 @@ import { motifFrameDescriptor } from "./motifFrameDescriptor";
 import { resetMotifPreview, setMotifPreviewProps } from "./previewOverlay";
 import { motifContentFrame, motifFrameCacheKey } from "./motifFrames";
 import { canonicalizeProps } from "./Rasterizer";
+import { holdBuiltinMotifs } from "../../testing/projectMotifs";
+
+// The project these tests render holds the built-ins.
+holdBuiltinMotifs();
 
 function view(props: Record<string, unknown>, srcInUs = 0): any {
   return { motif_id: "countdown", x: 0, y: 0, scale_x: 1, scale_y: 1, opacity: 1, src_in_us: srcInUs, props };
@@ -83,7 +87,7 @@ describe("motifFrameDescriptor", () => {
     expect("stale" in desc!.canonicalProps).toBe(false);
   });
 
-  it("cacheKey changes when the motif's content_hash changes (draft hot-reload)", () => {
+  it("cacheKey changes when the motif's content_hash changes (an edit hot-reloads)", () => {
     const v = view({});
     const base = { manifest: { id: "d1", name: "X", version: 1, size: [100, 100] as [number, number],
       default_duration_s: 5, props_schema: {}, content_hash: "hashA" } };

@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, it, vi } from "vitest";
 
-// `getMotif` is controlled per-test so a "draft edit" (content_hash change) can
+// `getMotif` is controlled per-test so an edit (content_hash change) can
 // be simulated between `update()` calls.
 const getMotifMock = vi.fn();
 vi.mock("../motifs/catalog", async (importOriginal) => {
@@ -66,6 +66,7 @@ import { resetMotifPreview, setMotifPreviewProps } from "../motifs/previewOverla
 import { captureMotif, MotifTransportError } from "../motifs/frameTransport";
 import { MotifError } from "../../../shared/motifs/errors";
 import { MOTIF_DEADLINES } from "../../../shared/motifs/tuning";
+import { setProjectMotifs } from "../motifs/catalog";
 
 describe("MotifSprite export frames", () => {
   it("renders baked user Motifs without a runtime catalog in the Worker", () => {
@@ -197,7 +198,7 @@ describe("motifContentFrame", () => {
 describe("MotifSprite.refreshMotif", () => {
   // A minimal Motif whose only varying field is `content_hash` — which the
   // descriptor folds into the frame cache key (motifFrameDescriptor), so a
-  // draft edit (new content_hash) MUST produce a different requested key.
+  // project Motif edit (new content_hash) MUST produce a different requested key.
   function motifWith(contentHash: string): Motif {
     const manifest: MotifManifest = {
       id: "d1",
@@ -207,7 +208,6 @@ describe("MotifSprite.refreshMotif", () => {
       default_duration_s: 5,
       props_schema: {},
       content_hash: contentHash,
-      status: "draft",
     };
     return { manifest, hasParamsUi: false };
   }
@@ -740,7 +740,6 @@ describe("MotifSprite overlay gesture lane", () => {
       // (a schema-less motif would canonicalize it away, key unchanged).
       props_schema: { seconds: { type: "number", default: 5 } },
       content_hash: contentHash,
-      status: "draft",
     };
     return { manifest, hasParamsUi: false };
   }
@@ -830,5 +829,70 @@ describe("MotifSprite overlay gesture lane", () => {
     expect(captureMotif).toHaveBeenCalledOnce();
     expect(bound(sibling)).toBe(bound(sprite));
     sibling.dispose();
+  });
+});
+
+describe("MotifSprite error placeholder", () => {
+  // A 2D context that draws nothing: the placeholder's pixels are not the
+  // point, which picture the sprite binds is.
+  const context = new Proxy({}, { get: () => () => {}, set: () => true });
+  const view: ResolvedMotifView = {
+    motif_id: "gone", x: 0, y: 0, scale_x: 1, scale_y: 1, rotation_deg: 0,
+    anchor_x: 0.5, anchor_y: 0.5, opacity: 1, src_in_us: 0, props: {},
+  };
+  beforeEach(() => {
+    vi.stubGlobal("document", { createElement: () => ({ width: 0, height: 0, getContext: () => context }) });
+    getMotifMock.mockReset().mockReturnValue(null);
+    setProjectMotifs([], [{ motif_id: "gone", status: "missing", diagnostic: "" }]);
+  });
+  afterEach(() => { vi.unstubAllGlobals(); setProjectMotifs(); });
+
+  it("draws an error placeholder over the canvas where the project records a Motif it cannot render", () => {
+    const canvas = { width: 1080, height: 1920 };
+    const sprite = new MotifSprite({ layerId: "L", motifId: "gone", fpsNum: 30, fpsDen: 1, canvasSize: () => canvas });
+    try {
+      sprite.update(view, 0, 5_000_000);
+      expect(sprite.showsUnavailable).toBe(true);
+      expect(sprite.stageReady).toBe(true);
+      // It covers the canvas the layer draws into, whatever its shape...
+      expect(sprite.sprite.texture.orig).toMatchObject(canvas);
+      // ...from a bitmap of the same shape, never larger than it.
+      const bitmap = sprite.sprite.texture.source!.resource as { width: number; height: number };
+      expect(bitmap.width / bitmap.height).toBeCloseTo(canvas.width / canvas.height, 2);
+      expect(bitmap.height).toBeLessThanOrEqual(canvas.height);
+    } finally { sprite.dispose(); }
+  });
+
+  it("follows the canvas when it is resized under the placeholder", () => {
+    let canvas = { width: 1920, height: 1080 };
+    const sprite = new MotifSprite({ layerId: "L", motifId: "gone", fpsNum: 30, fpsDen: 1, canvasSize: () => canvas });
+    try {
+      sprite.update(view, 0, 5_000_000);
+      expect(sprite.sprite.texture.orig).toMatchObject({ width: 1920, height: 1080 });
+      canvas = { width: 1280, height: 1280 };
+      sprite.update(view, 0, 5_000_000);
+      expect(sprite.showsUnavailable).toBe(true);
+      expect(sprite.sprite.texture.orig).toMatchObject({ width: 1280, height: 1280 });
+    } finally { sprite.dispose(); }
+  });
+
+  it("draws nothing for an id the catalog has not heard of yet: a sync in flight is not a broken Motif", () => {
+    const sprite = new MotifSprite({ layerId: "L", motifId: "pending", fpsNum: 30, fpsDen: 1 });
+    try {
+      sprite.update({ ...view, motif_id: "pending" }, 0, 5_000_000);
+      expect(sprite.showsUnavailable).toBe(false);
+      expect(sprite.stageReady).toBe(false);
+    } finally { sprite.dispose(); }
+  });
+
+  it("gives the placeholder up as soon as the Motif renders again", () => {
+    const sprite = new MotifSprite({ layerId: "L", motifId: "gone", fpsNum: 30, fpsDen: 1 });
+    try {
+      sprite.update(view, 0, 5_000_000);
+      expect(sprite.showsUnavailable).toBe(true);
+      getMotifMock.mockReturnValue({ manifest: { id: "gone", name: "Back", version: 1, size: [480, 480], default_duration_s: 5, props_schema: {}, content_hash: "r" }, hasParamsUi: false });
+      sprite.refreshMotif();
+      expect(sprite.showsUnavailable).toBe(false);
+    } finally { sprite.dispose(); }
   });
 });

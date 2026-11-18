@@ -1,18 +1,18 @@
-// Built-in motif catalog — thin renderer layer over src/shared/motifs/catalog.ts.
-// Types and logic live once in the shared module (Rust-faithful); this file adds
-// the React useSyncExternalStore subscription layer (setUserMotifs / subscribe /
-// revision) that is renderer-only.
+// The open project's Motifs as rendering reads them: every layer's `motif_id`
+// resolves here and nowhere else (the project folder holds what it renders,
+// spec § Project Motifs). Library Motifs are not in it; the Motifs panel
+// fetches them apart. Types and frame math live in the shared module; this
+// file adds the React `useSyncExternalStore` subscription layer.
 //
-// Plan: docs/motifs.md
+// Filled by `syncCatalog.ts`; plan: docs/motifs.md
 
 import {
   type PropSpec,
   type Manifest,
-  BUILTIN_MANIFESTS,
-  MotifCatalog,
   canonicalizePropsLenient as _sharedLenient,
   resolveMotifContentDurationUs,
 } from "../../../shared/motifs/catalog";
+import type { UnavailableMotif } from "../../../shared/motifs/projectMotifs";
 
 // Re-export shared types/functions so consumers see a stable surface.
 export type { PropSpec };
@@ -24,9 +24,7 @@ export type MotifManifest = Manifest;
 export interface Motif {
   manifest: MotifManifest;
   /// The Motif ships its own parameter page (`params.html`). Stamped by the
-  /// backend catalog payload — only the main process can stat the file — and
-  /// tracked beside the manifest layer rather than inside it, because built-in
-  /// manifests come from static JSON imports that never see the payload.
+  /// backend catalog payload — only the main process can stat the file.
   hasParamsUi: boolean;
 }
 
@@ -34,50 +32,46 @@ export interface Motif {
 // Catalog state
 // ---------------------------------------------------------------------------
 
-const catalog = new MotifCatalog();
+let renderable: ReadonlyMap<string, Motif> = new Map();
+let unavailable: ReadonlyMap<string, UnavailableMotif> = new Map();
 
-// --- catalog change notification (so React consumers re-render after
-// `setUserMotifs` — a plain mutation otherwise). ---
 let catalogRevision = 0;
 const catalogSubscribers = new Set<() => void>();
 
-/// Subscribe to catalog changes (a `setUserMotifs` call). Returns an unsubscribe fn.
+/// Subscribe to catalog changes (a `setProjectMotifs` call). Returns an unsubscribe fn.
 /// Pair with `motifCatalogRevision` for React's `useSyncExternalStore`.
 export function subscribeMotifCatalog(cb: () => void): () => void {
   catalogSubscribers.add(cb);
   return () => catalogSubscribers.delete(cb);
 }
 
-/// A monotonically increasing revision, bumped on every `setUserMotifs`. The
+/// A monotonically increasing revision, bumped on every `setProjectMotifs`. The
 /// `getSnapshot` for `useSyncExternalStore`.
 export function motifCatalogRevision(): number {
   return catalogRevision;
 }
 
-/// Ids whose backend payload reported a `params.html` companion. Kept OUTSIDE
-/// `MotifCatalog` on purpose: `catalog.get` answers built-ins from the static
-/// `BUILTIN_MANIFESTS` JSON, which the payload never replaces, so a flag stored
-/// on the user manifest layer would be invisible for exactly the built-ins.
-/// The payload lists built-ins too, so this set covers every entry.
-let paramsUiIds: ReadonlySet<string> = new Set();
-
-/// Replace the runtime user-Motif layer (from the backend `list_motifs` IPC).
-/// Built-ins are always present and authoritative; this only adds/removes the
-/// user entries. Idempotent — call it whenever the backend catalog changes.
-export function setUserMotifs(manifests: MotifManifest[]): void {
-  catalog.setUserManifests(manifests);
-  paramsUiIds = new Set(manifests.filter((m) => m.has_params_ui === true).map((m) => m.id));
+/// Replaces the catalog with the open project's Motifs: `manifests` those
+/// that render, `missing` those whose folder is gone or makes no package.
+/// Idempotent — call it whenever the backend catalog changes, and with no
+/// arguments when no project is open.
+export function setProjectMotifs(manifests: MotifManifest[] = [], missing: UnavailableMotif[] = []): void {
+  renderable = new Map(manifests.map((m) => [m.id, { manifest: m, hasParamsUi: m.has_params_ui === true }]));
+  unavailable = new Map(missing.map((m) => [m.motif_id, m]));
   catalogRevision += 1;
   for (const cb of catalogSubscribers) cb();
 }
 
+/// The project Motif `id`, or null when the project holds none that renders.
 export function getMotif(id: string): Motif | null {
-  const m = catalog.get(id);
-  return m != null ? { manifest: m, hasParamsUi: paramsUiIds.has(id) } : null;
+  return renderable.get(id) ?? null;
 }
 
-export function listMotifs(): MotifManifest[] {
-  return catalog.list();
+/// Why project Motif `id` cannot render, when the project records it but its
+/// folder is missing or invalid; null for one that renders or one the catalog
+/// has not heard of yet (a sync still in flight).
+export function motifUnavailable(id: string): UnavailableMotif | null {
+  return unavailable.get(id) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +94,3 @@ export function canonicalizePropsLenient(
 ): Record<string, unknown> {
   return _sharedLenient(manifest, props);
 }
-
-// Re-export BUILTIN_MANIFESTS for any code that references it directly.
-export { BUILTIN_MANIFESTS };

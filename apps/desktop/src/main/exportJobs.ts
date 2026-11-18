@@ -5,7 +5,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { TsActorHost } from './state/ts-actor-host';
-import { rootComposition } from './state/model';
+import { rootComposition, type Project } from './state/model';
+import type { UnavailableMotif } from '../shared/motifs/projectMotifs';
 import { snapFrameRound } from './state/snap';
 import { resolveExportRequest, resolveExportOptions, EXPORT_COMPATIBILITY, ExportValidationError } from '../shared/exportValidation';
 import { exportTerminal, exportWire, type ExportCanceller, type ExportJob, type ExportRun } from '../shared/exportJob';
@@ -56,6 +57,41 @@ function exportQueued(value: unknown): NonNullable<ExportJob['queued']> {
   return { reason, holders };
 }
 
+/** The Motifs an export of `range` draws: those of the enabled layers on
+ *  enabled root tracks that `range` overlaps, and those of every enabled layer
+ *  inside a Group so placed. A Group's own timing (windows, retiming) is not
+ *  followed, so it counts whole: a superset of what the renderer bakes
+ *  (`renderer/render/exportBake.ts`), never less. */
+export function exportedMotifIds(p: Pick<Project, 'compositions' | 'root_id'>, range: { startUs: number; endUs: number }): Set<string> {
+  const ids = new Set<string>();
+  const entered = new Set<string>();
+  const walk = (compositionId: string, within: { startUs: number; endUs: number } | null) => {
+    for (const track of p.compositions[compositionId]?.tracks ?? []) {
+      if (!track.enabled) continue;
+      for (const layer of track.layers) {
+        if (!layer.enabled) continue;
+        if (within && (layer.t_end_us <= within.startUs || layer.t_start_us >= within.endUs)) continue;
+        if (layer.params.kind === 'Motif') ids.add(layer.params.motif_id);
+        else if (layer.params.kind === 'CompositionRef' && !entered.has(layer.params.composition)) {
+          entered.add(layer.params.composition);
+          walk(layer.params.composition, null);
+        }
+      }
+    }
+  };
+  walk(p.root_id, range);
+  return ids;
+}
+
+/** The project's Motifs that cannot render and that the export of `range`
+ *  draws: it would draw nothing where they play (spec § Project Motifs). */
+function unrenderableMotifs(h: TsActorHost, range: { startUs: number; endUs: number }): UnavailableMotif[] {
+  const unavailable = h.unavailableMotifs?.() ?? [];
+  if (!unavailable.length) return [];
+  const drawn = exportedMotifIds(h.actor.snapshot(), range);
+  return unavailable.filter(m => drawn.has(m.motif_id));
+}
+
 /** Suggest only: the UI adopts the name explicitly and publication rechecks it. */
 export async function suggestExportName(file: string): Promise<string | null> {
   const { dir, name, ext } = path.parse(file);
@@ -73,6 +109,7 @@ export class ExportJobs {
   private active?: Entry;
   private ready?: { token: string; session: string };
   private idleWaiters = new Set<() => void>();
+  private idleListeners = new Set<() => void>();
   private stopping = false;
   private stills = new Map<string, { token: string; resolve: (v: StillsResult) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   constructor(private deps: Deps) { }
@@ -110,6 +147,12 @@ export class ExportJobs {
     else pending.resolve({ frames: p.frames ?? [], ...(p.sheet ? { sheet: p.sheet } : {}) });
   }
   isActive() { return !!this.active; }
+  /** Hears each end of the active export, when edits are taken again;
+   *  answers the unsubscribe. */
+  onIdle(listener: () => void): () => void {
+    this.idleListeners.add(listener);
+    return () => { this.idleListeners.delete(listener); };
+  }
   assertWritable() {
     if (this.active) throw new ExportJobError('export_busy', 'An export is active; finish or discard it before editing or switching projects', this.status());
   }
@@ -280,6 +323,12 @@ export class ExportJobs {
   private async plan(h: TsActorHost, preset: ExportPreset | undefined, a: Record<string, unknown>, agent: boolean, policy: Entry['policy']) {
     const resolved = resolveExportRequest(await this.savedSettings(h, preset), agent ? exportWire(a.settings, false) : a.settings,
       this.composition(h), (agent ? exportWire(a.range, false) : a.range) as ExportJob['range'] | undefined, !agent || a.allow_experimental_10bit === true, snapFrameRound);
+    const motifs = unrenderableMotifs(h, resolved.range);
+    if (motifs.length) {
+      const ids = motifs.map(m => m.motif_id);
+      throw new ExportJobError('motif_unavailable', `${motifs.map(m => `Motif '${m.motif_id}' is ${m.status} (${m.diagnostic})`).join('; ')}; a layer in the export uses ${ids.length > 1 ? 'them' : 'it'}, so nothing was exported — restore its folder under Motifs/, fix its files, or remove the layers that use it`,
+        { error: 'MotifUnavailable', motif_ids: ids, motifs });
+    }
     let destination: string;
     if (a.output_path === undefined) {
       const dir = path.join(h.openedProject()!.dir, 'output');
@@ -389,7 +438,10 @@ export class ExportJobs {
       j.view.phase = j.view.state;
       if (message && !j.published) j.view.error = { ...fault, code, message };
       else delete j.view.error;
-      if (this.active === j) { this.active = undefined; this.idleWaiters.forEach(resolve => resolve()); this.idleWaiters.clear(); }
+      if (this.active === j) {
+        this.active = undefined; this.idleWaiters.forEach(resolve => resolve()); this.idleWaiters.clear();
+        for (const listener of [...this.idleListeners]) { try { listener(); } catch (error) { console.warn('[exportJobs] idle listener failed', error); } }
+      }
       this.notify(j);
     })().catch(error => {
       j.finishing = undefined;

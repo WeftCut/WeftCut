@@ -268,7 +268,9 @@ export function runCopy(
 }
 
 // Build a per-motif content-identity map for a motifs/ dir. Keys are an
-// installed version, `<id>/v<n>`, or `drafts/<id>`; values are the reused motifContentHash (or a
+// installed version, `<id>/v<n>`, or `drafts/<id>`: an older release's drafts
+// move with the library because only they can upgrade a v5 project that uses
+// one (`motif/legacyResolve.ts`). Values are the reused motifContentHash (or a
 // raw-content fallback for a motif whose manifest island won't parse, so a
 // corrupt copy still can't pass as "ok").
 function motifValueAt(dir: string, fs: MigrationFs, join: Join): string | null {

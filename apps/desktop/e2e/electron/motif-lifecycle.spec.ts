@@ -1,20 +1,14 @@
-import {createMotifDraft,publishMotifDraft} from './helpers/motif'
-// e2e gate: motif authoring lifecycle + staleness + file-watch hot-reload —
-// sections A, B and C below, in that order.
-//
-// userData path: minted per test via tmpDir() and handed to launchApp as an
-// explicit userDataDir — user motifs live under the default data root of that
-// isolated profile (<userData>/data/motifs — src/main/dataRoot.ts), never the
-// developer's real one.
+// e2e gate: a project Motif's lifecycle through the renderer bridge — made in
+// the project's Motifs/ folder, listed in the project group, refused removal
+// while a layer uses it, then removed from the project with its folder left
+// on disk. An edit to the folder re-rendering the preview is the acceptance
+// spec's (project-motifs.spec.ts).
 
 import { test, expect } from '@playwright/test'
 import type { ElectronApplication } from '@playwright/test'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { forceCloseApp, launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+import { existsSync } from 'node:fs'
+import { forceCloseApp, invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
+import { createMotif } from './helpers/motif'
 
 /// Playwright's electronApp.close() can hang (darwin window-all-closed not
 /// quitting the app, a lingering handle), so bound it and then force-close. Two
@@ -52,318 +46,45 @@ async function closeAppRobustly(app: ElectronApplication): Promise<void> {
   }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+interface ProjectRow { id: string; group: string; status: string; state: string; path: string }
 
-function motifHtml(opts: { id: string; version: number; color: string; name?: string }): string {
-  const manifest = {
-    id: opts.id,
-    name: opts.name ?? 'E2E User Motif',
-    version: opts.version,
-    size: [320, 320],
-    default_duration_s: 4,
-    props_schema: {},
-  }
-  return (
-    `<!doctype html><html><head><meta charset="utf-8">` +
-    `<script type="application/json" id="motif-manifest">${JSON.stringify(manifest)}</script>` +
-    `<style>html,body{margin:0;background:transparent}#box{width:320px;height:320px;background:${opts.color}}</style>` +
-    `</head><body><div id="box"></div>` +
-    `<script>motif.define({ setup() {} });</script>` +
-    `</body></html>`
-  )
-}
-
-function writeUserMotifAt(
-  motifsRoot: string,
-  opts: { id: string; version: number; color: string },
-): void {
-  // An installed Motif's version `n` lives in `<id>/v<n>/` (ADR 0172).
-  const dir = path.join(motifsRoot, opts.id, `v${opts.version}`)
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(path.join(dir, 'index.html'), motifHtml(opts))
-}
-
-function removeUserMotifAt(motifsRoot: string, id: string): void {
-  rmSync(path.join(motifsRoot, id), { recursive: true, force: true })
-}
-
-function invoke(page: import('@playwright/test').Page, channel: string, args: unknown) {
-  return page.evaluate(
-    ([c, a]) => (window as any).api.backend.invoke(c, a),
-    [channel, args] as const,
-  )
-}
-
-// Poll the catalog (via IPC) until a motif with `motifId` appears (or deadline).
-// Needed after disk writes: the TS UserMotifStore re-reads disk on each call so
-// no watcher event is required; just retry until the write is visible.
-async function waitForMotifInCatalog(
-  page: import('@playwright/test').Page,
-  motifId: string,
-  timeoutMs = 10_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const catalog = (await invoke(page, 'list_motifs', {})) as Array<{ id: string }>
-    if (catalog.find((m) => m.id === motifId)) return
-    await page.waitForTimeout(500)
-  }
-  throw new Error(`motif '${motifId}' never appeared in list_motifs within ${timeoutMs}ms`)
-}
-
-// ── Section A: authoring lifecycle ─────────────────────────────────────────────
-
-test('motif authoring: open_motif_draft → install → list → delete', async () => {
+test('project Motif: create_motif → list → removal refused while used → delete_motif keeps the folder', async () => {
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   try {
-    // open_motif_draft — the motif tool expects { args: { manifest, html } }
-    const manifest = {
-      id: 'e2e-lifecycle-draft', // overwritten by app; just needs a name field
-      name: 'E2E Lifecycle Draft',
-      version: 1,
-      size: [320, 320],
-      default_duration_s: 2,
-      props_schema: {},
-    }
+    await newProject(page, {
+      parentFolder: tmpDir('weftcut-e2e-lifecycle-'),
+      name: 'Lifecycle',
+      canvas: { width: 320, height: 320, fpsNum: 30, fpsDen: 1 },
+    })
+    const manifest = { name: 'E2E Lifecycle Motif', version: 1, size: [320, 320], default_duration_s: 2, props_schema: {} }
     const html =
       `<!doctype html><html><head><meta charset="utf-8">` +
-      `<script type="application/json" id="motif-manifest">${JSON.stringify(manifest)}</script>` +
       `<style>html,body{margin:0;background:transparent}#box{width:320px;height:320px;background:#aabbcc}</style>` +
       `</head><body><div id="box"></div>` +
       `<script>motif.define({ setup() {} });</script></body></html>`
+    const id = await createMotif(page, manifest, html)
+    expect(id).toBe('e2e-lifecycle-motif')
 
-    const draftId = await createMotifDraft(page,manifest,html)
-    expect(typeof draftId).toBe('string')
-    expect((draftId as string).length).toBeGreaterThan(0)
-    console.log('[lifecycle] draft id:', draftId)
+    const projectRows = () => invokeCmd<ProjectRow[]>(page, 'list_motifs', { group: 'project' })
+    const row = (await projectRows()).find((m) => m.id === id)
+    // Made here, of a lineage the library does not hold.
+    expect(row).toMatchObject({ group: 'project', status: 'ok', state: 'project_only' })
+    expect(existsSync(row!.path)).toBe(true)
 
-    // Publish the reviewed revision and use the separate installed identity.
-    const publishedId = await publishMotifDraft(page,draftId)
-    expect(typeof publishedId).toBe('string')
-    expect((publishedId as string).length).toBeGreaterThan(0)
-    console.log('[lifecycle] published id:', publishedId)
+    // A layer names it: the project cannot drop it.
+    await invokeCmd(page, 'add_motif', { motifId: id, tStartUs: 0 })
+    await expect(invokeCmd(page, 'delete_motif', { motif_id: id })).rejects.toThrow(/MotifInUse/)
+    await invokeCmd(page, 'project_undo')
 
-    // list_motifs — published Motif must appear with status "installed" (not "builtin")
-    const catalog = (await invoke(page, 'list_motifs', {})) as Array<{
-      id: string
-      status: string
-    }>
-    expect(Array.isArray(catalog)).toBe(true)
-    const found = catalog.find((m) => m.id === publishedId)
-    expect(found).toBeDefined()
-    expect(found!.status).toBe('installed')
-    console.log('[lifecycle] list_motifs found installed motif:', found!.id)
-
-    // delete_motif — the motif tool expects { motif_id }
-    await invoke(page, 'delete_motif', { motif_id: publishedId })
-
-    // Confirm gone from catalog.
-    const catalogAfter = (await invoke(page, 'list_motifs', {})) as Array<{ id: string }>
-    expect(catalogAfter.find((m) => m.id === publishedId)).toBeUndefined()
-    console.log('[lifecycle] deleted; catalog size:', catalogAfter.length)
+    await invokeCmd(page, 'delete_motif', { motif_id: id })
+    expect((await projectRows()).find((m) => m.id === id)).toBeUndefined()
+    // Removed from the table, never from the disk: the folder is the author's.
+    expect(existsSync(row!.path)).toBe(true)
+    // One recorded step: undo brings the Motif back to the project.
+    await invokeCmd(page, 'project_undo')
+    expect((await projectRows()).find((m) => m.id === id)).toMatchObject({ status: 'ok' })
   } finally {
     await closeAppRobustly(app)
-  }
-})
-
-// ── Section B: staleness notice ─────────────────────────────────────────────────
-
-test('motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it', async () => {
-  test.setTimeout(120_000)
-  const STALE_ID = 'e2e-stale-' + Date.now()
-  const PROJECT_PARENT = tmpDir('weftcut-e2e-stale-proj-')
-  const userData = tmpDir('weftcut-e2e-stale-userdata-')
-
-  const { app: appHandle, page } = await launchApp({ userDataDir: userData })
-  const motifsRoot = path.join(userData, 'data', 'motifs')
-  console.log('[stale] motifsRoot:', motifsRoot)
-
-  try {
-    // Write v1 of the user Motif directly to disk.
-    writeUserMotifAt(motifsRoot, { id: STALE_ID, version: 1, color: '#e02424' })
-
-    // Create a project + enter the editor.
-    await newProject(page, {
-      parentFolder: PROJECT_PARENT,
-      name: 'e2e-stale-' + Date.now(),
-      canvas: { width: 320, height: 320, fpsNum: 30, fpsDen: 1 },
-    })
-    await waitForHook(page, 'addMotifLayer')
-    await waitForHook(page, 'motifReopenProject')
-
-    // Retrieve the actual workspace path that the hook created.
-    const projectPath = await invoke(page, 'workspace_dir', {})
-    console.log('[stale] workspace dir:', projectPath)
-    expect(typeof projectPath).toBe('string')
-
-    // Wait for the motif to appear in the catalog (it re-reads disk on each call).
-    await waitForMotifInCatalog(page, STALE_ID)
-
-    // Place two layers at v1.
-    for (let i = 0; i < 2; i++) {
-      const r = await page.evaluate(
-        (id) =>
-          (window as any).__weftcutTest
-            .addMotifLayer({ motifId: id, durationUs: 2_000_000 })
-            .then((layerId: string) => ({ ok: true, layerId }))
-            .catch((e: unknown) => ({ ok: false, error: String(e) })),
-        STALE_ID,
-      )
-      if (!r.ok) throw new Error('addMotifLayer failed: ' + r.error)
-    }
-
-    // Freshly placed = no stale entry now (placed version matches current).
-    const reportBefore = (await invoke(page, 'motif_staleness_report', {})) as Array<{
-      motif_id: string
-    }>
-    expect(reportBefore.find((e) => e.motif_id === STALE_ID)).toBeUndefined()
-
-    // "Another project updated it": bump v2 on disk.
-    writeUserMotifAt(motifsRoot, { id: STALE_ID, version: 2, color: '#1ea64a' })
-
-    // Reopen the project — the on-mount staleness check fires.
-    const rr = await page.evaluate(
-      (p) =>
-        (window as any).__weftcutTest
-          .motifReopenProject({ path: p })
-          .then(() => ({ ok: true }))
-          .catch((e: unknown) => ({ ok: false, error: String(e) })),
-      projectPath as string,
-    )
-    if (!rr.ok) throw new Error('motifReopenProject failed: ' + rr.error)
-    await waitForHook(page, 'addMotifLayer')
-    // Poll motif_staleness_report until it returns a non-empty array (or ~10s deadline).
-    // The report is pull-based (computes from current snapshot + disk catalog on each call),
-    // so polling is safe and idempotent — no race condition from a fixed wall-clock wait.
-    let reportAfter: Array<{
-      motif_id: string
-      placed_version: number
-      current_version: number
-      layer_count: number
-    }> = []
-    {
-      const deadline = Date.now() + 10_000
-      while (Date.now() < deadline) {
-        reportAfter = (await invoke(page, 'motif_staleness_report', {})) as typeof reportAfter
-        if (reportAfter.length > 0) break
-        await page.waitForTimeout(300)
-      }
-      // If still empty after deadline, fall through so the existing assertion fails with context.
-    }
-
-    // motif_staleness_report must now show the stale row.
-    console.log('[stale] report after reopen:', JSON.stringify(reportAfter))
-    const row = reportAfter.find((e) => e.motif_id === STALE_ID)
-    expect(row).toBeDefined()
-    expect(row!.placed_version).toBe(1)
-    expect(row!.current_version).toBe(2)
-    expect(row!.layer_count).toBe(2)
-
-    // acknowledge_motif_staleness returns the count of markers bumped (≥ 1).
-    const ackCount = (await invoke(page, 'acknowledge_motif_staleness', {})) as number
-    console.log('[stale] ack count:', ackCount)
-    expect(ackCount).toBeGreaterThanOrEqual(1)
-  } finally {
-    await closeAppRobustly(appHandle)
-    removeUserMotifAt(motifsRoot, STALE_ID)
-  }
-})
-
-// ── Section C: file-watch hot-reload ───────────────────────────────────────────
-
-test('motif file-watch: disk-placed Motif renders; external rewrite hot-reloads', async () => {
-  test.setTimeout(180_000)
-  const WATCH_ID = 'e2e-watch-' + Date.now()
-  const PROJECT_PARENT = tmpDir('weftcut-e2e-watch-proj-')
-  const RED = '#e02424'
-  const GREEN = '#1ea64a'
-  const userData = tmpDir('weftcut-e2e-watch-userdata-')
-
-  const { app: appHandle, page } = await launchApp({ userDataDir: userData })
-  const motifsRoot = path.join(userData, 'data', 'motifs')
-  console.log('[watch] motifsRoot:', motifsRoot)
-
-  try {
-    // 1. Write the Motif directly to disk WHILE the app is running.
-    writeUserMotifAt(motifsRoot, { id: WATCH_ID, version: 1, color: RED })
-
-    // 2. Create a 320×320 project so the Motif fills the frame.
-    await newProject(page, {
-      parentFolder: PROJECT_PARENT,
-      name: 'e2e-watch-' + Date.now(),
-      canvas: { width: 320, height: 320, fpsNum: 30, fpsDen: 1 },
-    })
-    await waitForHook(page, 'addMotifLayer')
-    await waitForHook(page, 'weftcutSampleComposite')
-
-    // 3. Wait for the motif to appear in the catalog (it re-reads disk on each call).
-    await waitForMotifInCatalog(page, WATCH_ID)
-
-    // 4. Place the user Motif.
-    const added = await page.evaluate(
-      (id) =>
-        (window as any).__weftcutTest
-          .addMotifLayer({ motifId: id, durationUs: 2_000_000 })
-          .then((layerId: string) => ({ ok: true, layerId }))
-          .catch((e: unknown) => ({ ok: false, error: String(e) })),
-      WATCH_ID,
-    )
-    if (!added.ok) throw new Error('addMotifLayer failed: ' + added.error)
-
-    // Helper: poll the composite until `predicate(px)` holds. Re-seek each round;
-    // weftcutSeekUs throws until the PixiPreview bridge registers (swallow it).
-    async function waitForCenter(
-      predicate: (px: { r: number; g: number; b: number; a: number }) => boolean,
-      label: string,
-    ) {
-      const deadline = Date.now() + 60_000
-      let last: { r: number; g: number; b: number; a: number } | null = null
-      while (Date.now() < deadline) {
-        await page.evaluate(() => {
-          try {
-            ;(window as any).__weftcutTest.weftcutSeekUs(500_000)
-          } catch {
-            // bridge not ready yet
-          }
-        })
-        await page.waitForTimeout(800)
-        const snap = await page.evaluate(() =>
-          (window as any).__weftcutTest
-            .weftcutSampleComposite(160, 160)
-            .then((p: { r: number; g: number; b: number; a: number }) => ({ ok: true, p }))
-            .catch((e: unknown) => ({ ok: false, error: String(e) })),
-        )
-        if (!snap.ok) continue
-        last = snap.p as typeof last
-        if (predicate(last!)) return last!
-      }
-      throw new Error(`${label}: composite never matched; last=${JSON.stringify(last)}`)
-    }
-
-    // 5. The placed layer renders the RED box.
-    const red = await waitForCenter(
-      (p) => p.a > 200 && p.r > 150 && p.g < 100,
-      'initial red render',
-    )
-    console.log('[watch] initial red pixel:', JSON.stringify(red))
-    expect(red.r).toBeGreaterThan(150)
-    expect(red.g).toBeLessThan(100)
-
-    // 6. External edit: same id, same version, new color.
-    writeUserMotifAt(motifsRoot, { id: WATCH_ID, version: 1, color: GREEN })
-
-    // 7. Hot reload: compositor turns green with NO UI action (watcher fires
-    //    motifs:changed → content_hash bust → CDP recapture).
-    const green = await waitForCenter(
-      (p) => p.a > 200 && p.g > 120 && p.r < 100,
-      'hot-reloaded green render',
-    )
-    console.log('[watch] hot-reload green pixel:', JSON.stringify(green))
-    expect(green.g).toBeGreaterThan(120)
-    expect(green.r).toBeLessThan(100)
-  } finally {
-    await closeAppRobustly(appHandle)
-    removeUserMotifAt(motifsRoot, WATCH_ID)
   }
 })

@@ -19,8 +19,9 @@ function seed(profile: string) {
 async function cover(page: Page) {
   return page.evaluate(async () => {
     const api = (window as any).api.backend
-    const entry = (await api.invoke('list_motifs')).find((m: any) => m.id === 'cover-badge')
-    const bytes = await api.invoke('motif_get_cover', { id: entry.id, contentHash: entry.content_hash })
+    const entry = (await api.invoke('list_motifs', { group: 'library' })).find((m: any) => m.id === 'cover-badge')
+    // A library Motif's cover is captured under its library host.
+    const bytes = await api.invoke('motif_get_cover', { id: `${entry.id}--library`, contentHash: entry.content_hash })
     const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }))
     const canvas = document.createElement('canvas')
     canvas.width = bitmap.width; canvas.height = bitmap.height

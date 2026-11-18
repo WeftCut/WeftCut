@@ -9,6 +9,10 @@ import {
   motifLayerStatuses, planLookaheadTargets, planMotifDemand, planMotifPreparation, planMotifPresence,
   type LookaheadContent, type LookaheadInput, type LookaheadTarget, type PreparationInput,
 } from './motifDemand';
+import { holdBuiltinMotifs } from '../../testing/projectMotifs';
+
+// The project these tests render holds the built-ins.
+holdBuiltinMotifs();
 
 const stat = (value: number): AnimTrack<number> => ({ mode: 'Static', value });
 const motif = (id: string, start: number, end: number, props: Record<string, unknown> = { seconds: 5 }): LayerSummary => ({

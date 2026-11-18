@@ -6,9 +6,12 @@ import { MotifDemandSession } from './MotifDemandSession';
 import { requestPrebake } from './prebakeIntents';
 import { sharedBakedKeyIndex } from './motifFrameSource';
 import { useMotifBakeStatusStore } from '../../timeline/motifBakeStatusStore';
-import { syncUserMotifsFromBackend } from './syncCatalog';
-import { setUserMotifs } from './catalog';
+import { syncProjectMotifsFromBackend } from './syncCatalog';
 import { declareMotifPresence } from './frameTransport';
+import { holdBuiltinMotifs } from '../../testing/projectMotifs';
+
+// The project these tests render holds the built-ins.
+holdBuiltinMotifs();
 
 const { warm, bake, state } = vi.hoisted(() => ({ warm: vi.fn(), bake: vi.fn(), state: { generation: 0, automatic: true, fail: false, publish: () => {},
   coverage: {} as Record<string, number[]>, statuses: {} as Record<string, object> } }));
@@ -29,7 +32,7 @@ vi.mock('./bakeClient', () => ({ MotifBakeClient: class {
   }
   invalidate() {} dispose() {}
 } }));
-vi.mock('./syncCatalog', () => ({ syncUserMotifsFromBackend: vi.fn(async () => {}) }));
+vi.mock('./syncCatalog', () => ({ syncProjectMotifsFromBackend: vi.fn(async () => {}) }));
 vi.mock('../../settings/appSettingsStore', () => ({
   useAppSettingsStore: { getState: () => ({ settings: { prebake_motifs: state.automatic } }), subscribe: () => () => {} },
 }));
@@ -102,13 +105,13 @@ describe('MotifDemandSession', () => {
     try {
       service.handleProjectChanged(); await Promise.resolve();
       service.handleProjectChanged(); await Promise.resolve();
-      expect(syncUserMotifsFromBackend).not.toHaveBeenCalled();
+      expect(syncProjectMotifsFromBackend).not.toHaveBeenCalled();
       const plans = bake.mock.calls.length;
-      setUserMotifs([]); await Promise.resolve();
+      holdBuiltinMotifs(); await Promise.resolve();
       expect(bake).toHaveBeenCalledTimes(plans + 1);
     } finally { service.dispose(); }
     const plans = bake.mock.calls.length;
-    setUserMotifs([]); await Promise.resolve();
+    holdBuiltinMotifs(); await Promise.resolve();
     expect(bake).toHaveBeenCalledTimes(plans);
   });
 

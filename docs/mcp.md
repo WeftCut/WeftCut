@@ -476,14 +476,15 @@ Save As, `open_project` and `create_project` land, cleared on Close Project.
 **No project open ⇒ every project tool refuses** with `NoProjectOpen` and
 dispatches nothing. Default-deny: only `APP_SCOPE_TOOLS` /
 `APP_SCOPE_RESOURCES` in `main/mcp/mutationTools.ts` answer — the
-Motif library tools, the export preset tools,
+Motif reads that can name the library (`list_motifs`, `read_motif`,
+`preview_motif`, `export_motif` with `group: "library"`), the export preset tools,
 `get_export_status`, `cancel_export`, `retry_export`, `open_project`,
 `create_project`, `open_side_preview`, `read_project` for views `session` / `effects` / `taste` /
 `skill`, and the resources `project://session`, `project://taste`,
 `effects://catalog`, `motifs://current`, `skill://weftcut/*`. One predicate (`servesWithoutProject`) serves both gates;
-`mcp.project-scope` sweeps the whole catalog. `install_motif` with no project
-open proposes as usual; approved then, it rebinds no layers. The renderer is
-not gated.
+`mcp.project-scope` sweeps the whole catalog. The Motif tools that change a
+project (`create_motif`, `update_motif_files`, `delete_motif`,
+`install_motif`) are project tools. The renderer is not gated.
 
 Agents open or create a project **only when the user asked for that one**;
 otherwise they ask. `project://session` reports `project` (null when none),
@@ -519,7 +520,7 @@ path nodes keep their stored `id` (`get_param_track` answers them as
 | `project://transitions` | a composition's transitions as transition records (`transition_id`, `from_layer_id`, `to_layer_id`) |
 | `project://settings` | editing preferences, `audio_roles` (role gain / mute / solo) and `metadata`; `modified_at` moves on every recorded edit and is restored by undo/redo/restore — compare for change, not order |
 | `project://taste` | the merged style (`extends` in `TASTE.md`, else `weftcut-default`) + overrides: roles, tokens, example `motifs` per role, `fonts` resolved against installed families, provenance, diagnostics, revision. Pixel tokens are for a 1080-px frame. Read fresh every call; the app never writes `TASTE.md` |
-| `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder` |
+| `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder`, `motifs: {missing, invalid}` (the open project's Motifs that cannot render, each with `motif_id` and `diagnostic`) |
 | `project://tacks` | the opening's tacks, oldest first (see *Tacks*) |
 | `project://playhead` | where the user is in the editor, asked of the editor window at read time (see below) |
 | `project://history` | recent ops and checkpoints (no snapshots); see below |
@@ -533,7 +534,7 @@ path nodes keep their stored `id` (`get_param_track` answers them as
 | `media://{id}/description` | cached clip descriptions for the app's preferred engine and settings; `404` until `describe_clip` (purpose `clip`) ran; never runs inference |
 | `media://{id}/shot-description` | the same for purpose `shot` |
 | `effects://catalog` | every effect kind with param defaults, ranges and the keyframe path |
-| `motifs://current` | Motif catalog without HTML (same as `list_motifs`) |
+| `motifs://current` | the open project's Motifs without HTML (`list_motifs { group: "project" }`); empty with no project open |
 
 Templates (`resources/templates/list`, RFC 6570): `project://layers/{id}`,
 `project://composition{?composition}`, `project://tracks{?composition}`,
@@ -707,11 +708,10 @@ One line per tool with a near neighbour: why both exist (convention 6).
 - `start_export` vs `export_captions`: a rendered file as a job vs a caption
   body answered inline.
 - `list_motifs` vs `read_motif`: the catalog rows vs one Motif's files.
-- `open_motif_draft` vs `update_motif_files`: opens or copies a draft (a
-  linked folder you edit with your own tools) vs writes its files when the app
-  cannot read your folder.
-- `install_motif` vs `export_motif`: proposes a publication the user approves
-  in the app vs saves a ZIP to a path.
+- `create_motif` vs `update_motif_files`: makes a project Motif (a folder you
+  edit with your own tools) vs writes its files when you cannot reach the folder.
+- `install_motif` vs `export_motif`: proposes saving a project Motif to the
+  library, for the user to approve in the app, vs saves a ZIP to a path.
 
 ### Analysis tools
 
@@ -1047,46 +1047,67 @@ Audio, animated ImageOverlay, Motif and CompositionRef retime; static images,
 Text and Color do not.
 
 Motifs ([motif-workspaces.md](motif-workspaces.md)) take paths, not file
-handles, and name their subject `motif_id` on every tool: `list_motifs`
-(rows without HTML or `content_hash`; a draft with a proposal carries
-`publication`), `open_motif_draft` (`kind: 'motif'` resumes a draft id and
-copies any other id, `kind: 'copy'` copies any Motif, drafts included; a copy
-answers `source: {id, version}`; `empty` is 960×540, 5 s, no props),
-`read_motif` (a path answers UTF-8 text ≤ 256 KiB, or `{size, sha256}` for a
-binary file), `update_motif_files` (revision-checked batch; exact-match
-`edits`; the one inline binary form is an entry `{path, base64}`, ≤ 256 KiB
-decoded each and ≤ 4 MiB per call), `preview_motif` (`local_t_s`: 1–24 times
-in seconds from the Motif's start, not timeline time, on one labelled PNG
-contact sheet; each frame the whole canvas scaled to bounds, 640 wide by
-default, never cropped; reads and syncs only that Motif), `install_motif`
-(proposes; see below), `export_motif` (`path` required: an absolute `.zip` in
-an existing folder; an existing file is `PathExists`, never overwritten;
-annotated destructive) and `delete_motif`. A stale `expected_revision` on any
-of them refuses `RevisionConflict` with `current_revision`.
+handles, and name their subject `motif_id` on every tool. A project renders
+its own Motifs, each a folder `Motifs/<id>/` recorded in the project's Motif
+table; the library (built-ins and saved Motifs) is what Motifs are placed and
+copied from. `add_layers` places a project Motif by its id, or copies a
+library Motif in first, in the same commit; a lineage the project holds is
+placed under its existing id, and `from_library: true` places the library's
+Motif of an id the project uses for another. Tools name a project Motif by
+default and a library Motif with `group: "library"`. `list_motifs` (both groups unless `group` names one; rows
+without HTML or `content_hash`): project rows carry `status` ok | missing |
+invalid (with `diagnostic`), `state` in_sync | modified | update_available |
+project_only against the library Motif of the same lineage (derived, never
+stored), `from`, `path` and the latest proposal's `publication`; library rows
+carry `status` builtin | installed, `version` and `in_project` (the project id
+holding that lineage, or null). `create_motif { source }` makes a Motif in the
+open project and answers `{motif_id, revision, path}`: `empty` (960×540, 5 s,
+no props), `copy` (a project Motif, or a library one with `group: "library"`),
+`zip` (keeps the id and lineage the archive carries; a taken id gets
+`-<8 hex of the lineage>`) or `directory` (copied; a folder written under the
+project's `Motifs/` that the table does not hold is adopted in place). Every
+other source starts a new lineage, its id made from its name and numbered when
+taken; the commit is the agent's. `read_motif` (a path answers
+UTF-8 text ≤ 256 KiB, or `{size, sha256}` for a binary file; a folder whose
+files make no package is still read, with its diagnostic), `update_motif_files`
+(revision-checked batch; exact-match `edits`; the one inline binary form is an
+entry `{path, base64}`, ≤ 256 KiB decoded each and ≤ 4 MiB per call; one
+recorded commit, no approval), `preview_motif` (`local_t_s`: 1–24 times in
+seconds from the Motif's start, not timeline time, on one labelled PNG contact
+sheet; each frame the whole canvas scaled to bounds, 640 wide by default, never
+cropped), `install_motif` (proposes; see below), `export_motif` (`path`
+required: an absolute `.zip` in an existing folder; an existing file is
+`PathExists`, never overwritten; annotated destructive) and `delete_motif`
+(removes the Motif from the project, its folder kept; `MotifInUse` while a
+layer uses it). A stale `expected_revision` on any of them refuses
+`RevisionConflict` with `current_revision`. A Motif that cannot render is
+named in `project://session` (`motifs: {missing, invalid}`), and
+`start_export` refuses `MotifUnavailable` with its `motif_ids` while a layer
+uses one.
 
-**Publication waits for the user (ADR 0046).** `install_motif` freezes the
-draft's revision as a pending publication and answers `{state:
+**Saving to the library waits for the user (ADR 0046).** `install_motif`
+freezes a project Motif's files as a proposal and answers `{state:
 "awaiting_approval", proposal_id, revision, target: {id, version} |
-{new_id}}`; the library is not touched. The user approves or rejects it on a
-card in the app's Motifs panel (preview with editable props, the change
-against the installed version, the clips that will rebind); a status-bar note
-points to it. Approval publishes version N from the frozen package and rebinds
-the trial layers; rejection keeps the draft and stores the user's note. The
-draft row's `publication: {state: awaiting_approval | approved | rejected,
-note?, version?, rebound?: [{layer_id, dropped_props}]}` reports the outcome,
-and every transition sends `notifications/resources/list_changed`; there is no
-blocking wait, so an agent tells the user to review and does not poll. A newer
-proposal from the same draft supersedes the older (`superseded_proposal_id`).
-A first publication takes its id from the manifest name (a name with no ASCII
-letter or digit gives `motif-` and lineage hex digits, ADR 0171); an id someone holds
-refuses `MotifIdTaken {id, holder, options}` (rename the draft, or replace with
-`target_id` + `expected_version`), never a numbered `-2`. Draft ids carry a
-`-draft` suffix so the name's own id stays free; a draft from an earlier
-release that holds its name's id is not its own collision: approval moves it
-to `<id>-draft` (reported as `publication.renamed_draft {from, to}`; a held
-`<id>-draft` refuses `DraftIdTaken` naming the holder) and publishes `<id>`. Approval, rejection and the
-user's own Install are renderer-only channels (`approve_motif_proposal`,
-`reject_motif_proposal`, `publish_motif`), as are the two staleness channels:
+{new_id}}`; the library is not touched. The target is the library Motif of the
+project Motif's lineage (a new version), or `target_id` with
+`expected_version`; with neither, a new library Motif whose id comes from the
+manifest name (a name with no ASCII letter or digit gives `motif-` and lineage
+hex digits, ADR 0171); an id someone holds refuses `MotifIdTaken {id, holder,
+options}`, never a numbered `-2`. The user approves or rejects it on a card in
+the app's Motifs panel (preview with editable props, the change against the
+library version); approval adds a library version from the frozen package, or
+saves it as a new library Motif, and writes no project, except that a Motif
+saved as new while its project is open follows it (one recorded commit of the
+user's). Rejection stores the user's note. The project row's `publication:
+{state: awaiting_approval | approved | rejected, note?, library_id?,
+version?}` reports the outcome, and every transition sends
+`notifications/resources/list_changed`; there is no blocking wait, so an agent
+tells the user to review and does not poll. A newer proposal from the same
+Motif supersedes the older (`superseded_proposal_id`). Approval, rejection,
+the user's own Save to library, restoring or deleting a library Motif and
+updating a project copy from the library are renderer-only channels
+(`approve_motif_proposal`, `reject_motif_proposal`, `publish_motif`,
+`restore_motif_version`, `delete_library_motif`, `update_project_motif`):
 none is an MCP tool, so no client approves its own proposal.
 
 ### Workflow / safety

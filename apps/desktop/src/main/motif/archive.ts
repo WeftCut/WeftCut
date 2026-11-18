@@ -18,7 +18,7 @@ function lineageOf(bytes: Uint8Array): string | null {
   } catch { return null }
 }
 
-// Bound both the archive read and the expanded snapshot before writing a draft.
+// Bound both the archive read and the expanded snapshot before writing a package.
 const MAX_BYTES = 256 * 1024 * 1024
 export const MAX_ENTRIES = 10_000
 

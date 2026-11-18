@@ -11,11 +11,13 @@ import { upsertKeyframe } from '../../../renderer/keyframe/edits'
 // both can prove it. `descriptors.ts` is pure data with type-only imports, so it
 // pulls no DOM into the main-process test realm.
 import { animatableParams } from '../../../renderer/keyframe/descriptors'
-import { MotifCatalog } from '../../../shared/motifs/catalog'
+import { BUILTIN_MANIFESTS, type MotifManifests } from '../../../shared/motifs/catalog'
 import { validate } from '../validate'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
+/** A project holding the built-in Motifs under their own ids. */
+const BUILTINS: MotifManifests = { get: (id) => BUILTIN_MANIFESTS.get(id) }
 function expectCmd(fn: () => void, code: string) {
   try { fn(); throw new Error(`expected ${code}`) } catch (e) { expect(isCommandFailure(e) && e.err.error).toBe(code) }
 }
@@ -28,61 +30,61 @@ describe('applyUpdateLayerParams (field merge)', () => {
   it('Text patch sets content/opacity/x (animated fields → Static)', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('hi', root(p)), 0, 1_000_000)
-    applyUpdateLayerParams(p, id, { kind: 'Text', content: 'world', opacity: 0.5, x: 10 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', content: 'world', opacity: 0.5, x: 10 }, BUILTINS)
     const t = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Text' }>
     expect([t.content, t.opacity, t.transform.position.x]).toEqual(['world', { mode: 'Static', value: 0.5 }, { mode: 'Static', value: 10 }])
   })
   it('Color patch sets color + width', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 100, 100), 0, 1_000_000)
-    applyUpdateLayerParams(p, id, { kind: 'Color', color: { r: 1, g: 2, b: 3, a: 255 }, width: 640 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Color', color: { r: 1, g: 2, b: 3, a: 255 }, width: 640 }, BUILTINS)
     const c = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
     expect([c.color, c.width, c.height]).toEqual([{ mode: 'Static', value: { r: 1, g: 2, b: 3, a: 255 } }, 640, 100])
   })
   it('VideoClip patch sets src range + scale + flip', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const id = applyAddLayer(p, g, root(p).tracks[0].id, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
-    applyUpdateLayerParams(p, id, { kind: 'VideoClip', src_in_us: 500_000, src_out_us: 3_000_000, scale_x: 2, flip_h: true }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'VideoClip', src_in_us: 500_000, src_out_us: 3_000_000, scale_x: 2, flip_h: true }, BUILTINS)
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
     expect([v.src_in_us, v.src_out_us, v.transform.scale_x, v.flip_h]).toEqual([500_000, 3_000_000, { mode: 'Static', value: 2 }, true])
   })
   it('Audio patch sets gain/mute/role', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const id = applyAddLayer(p, g, root(p).tracks[0].id, audioParams(MID, 0, 3_000_000), 0, 3_000_000)
-    applyUpdateLayerParams(p, id, { kind: 'Audio', gain_db: -6, mute: true, role: 'dialogue' }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Audio', gain_db: -6, mute: true, role: 'dialogue' }, BUILTINS)
     const a = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Audio' }>
     expect([a.gain_db, a.mute, a.role]).toEqual([{ mode: 'Static', value: -6 }, true, 'dialogue'])
   })
   it('Motif patch merges props field-wise (does not replace the map)', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
-    const motif: MotifParams = { kind: 'Motif', motif_id: 'm', motif_version: 1, props: { a: 1, b: 2 },
+    const motif: MotifParams = { kind: 'Motif', motif_id: 'm', props: { a: 1, b: 2 },
       src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, graphic_role: null }
     root(p).tracks[0].layers.push({ id: 'mo', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
-    applyUpdateLayerParams(p, 'mo', { kind: 'Motif', opacity: 0.3, props: { b: 9, c: 3 } }, new MotifCatalog())
+    applyUpdateLayerParams(p, 'mo', { kind: 'Motif', opacity: 0.3, props: { b: 9, c: 3 } }, BUILTINS)
     const m = layerOf(p, 'mo').params as MotifParams
     expect([m.props, m.opacity]).toEqual([{ a: 1, b: 9, c: 3 }, { mode: 'Static', value: 0.3 }])
   })
   it('Text patch sets and clears intro/outro, refusing a preset that runs the wrong way', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('hi', root(p)), 0, 2_000_000)
-    applyUpdateLayerParams(p, id, { kind: 'Text', intro: 'SlideUp', outro: 'FadeOut' }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', intro: 'SlideUp', outro: 'FadeOut' }, BUILTINS)
     expect([(layerOf(p, id).params as TextParams).intro, (layerOf(p, id).params as TextParams).outro]).toEqual(['SlideUp', 'FadeOut'])
-    applyUpdateLayerParams(p, id, { kind: 'Text', outro: null }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', outro: null }, BUILTINS)
     expect((layerOf(p, id).params as TextParams).outro).toBeNull()
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', intro: 'FadeOut' }, new MotifCatalog()), 'InvalidArgument')
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', outro: 'Typewriter' }, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', intro: 'FadeOut' }, BUILTINS), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', outro: 'Typewriter' }, BUILTINS), 'InvalidArgument')
   })
   it('kind mismatch → LayerParamsKindMismatch', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 10, 10), 0, 1_000_000)
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', content: 'x' }, new MotifCatalog()), 'LayerParamsKindMismatch')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', content: 'x' }, BUILTINS), 'LayerParamsKindMismatch')
   })
   it('locked track → TrackLocked; missing layer → LayerNotFound', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 10, 10), 0, 1_000_000)
     root(p).tracks[0].locked = true
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Color', width: 1 }, new MotifCatalog()), 'TrackLocked')
-    expectCmd(() => applyUpdateLayerParams(p, 'ghost', { kind: 'Color', width: 1 }, new MotifCatalog()), 'LayerNotFound')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Color', width: 1 }, BUILTINS), 'TrackLocked')
+    expectCmd(() => applyUpdateLayerParams(p, 'ghost', { kind: 'Color', width: 1 }, BUILTINS), 'LayerNotFound')
   })
 })
 
@@ -106,22 +108,22 @@ describe('Text box patch', () => {
   it('a width alone lands in auto height; an explicit null returns to auto width', () => {
     const { p, id } = textLayer()
     expect(boxOf(p, id)).toEqual([null, null]) // born in auto width
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800 }, BUILTINS)
     expect(boxOf(p, id)).toEqual([800, null])
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null }, BUILTINS)
     expect(boxOf(p, id)).toEqual([null, null])
   })
 
   it('both axes in one patch land in fixed', () => {
     const { p, id } = textLayer()
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800, box_h: 200 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800, box_h: 200 }, BUILTINS)
     expect(boxOf(p, id)).toEqual([800, 200])
   })
 
   it('a height on a layer that already has a width succeeds', () => {
     const { p, id } = textLayer()
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800 }, new MotifCatalog())
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_h: 200 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800 }, BUILTINS)
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_h: 200 }, BUILTINS)
     expect(boxOf(p, id)).toEqual([800, 200])
   })
 
@@ -131,16 +133,16 @@ describe('Text box patch', () => {
     // The refusal must precede the merge: `content` rides along precisely so a
     // half-applied patch would be visible in the snapshot compare below.
     let err: unknown
-    try { applyUpdateLayerParams(p, id, { kind: 'Text', box_h: 200, content: 'never lands' }, new MotifCatalog()) } catch (e) { err = e }
+    try { applyUpdateLayerParams(p, id, { kind: 'Text', box_h: 200, content: 'never lands' }, BUILTINS) } catch (e) { err = e }
     expect(isCommandFailure(err) && err.err).toMatchObject({ error: 'InvalidArgument', field: 'box_h' })
     expect(JSON.stringify(p)).toBe(before)
   })
 
   it('clearing the width out from under a height refuses too — fixed exits through both fields', () => {
     const { p, id } = textLayer()
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800, box_h: 200 }, new MotifCatalog())
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null }, new MotifCatalog()), 'InvalidArgument')
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null, box_h: null }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800, box_h: 200 }, BUILTINS)
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null }, BUILTINS), 'InvalidArgument')
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null, box_h: null }, BUILTINS)
     expect(boxOf(p, id)).toEqual([null, null])
   })
 
@@ -149,13 +151,13 @@ describe('Text box patch', () => {
     // auto width. Refusing every unrelated edit would make that file unfixable.
     const { p, id } = textLayer()
     ;(layerOf(p, id).params as TextParams).box_h = 200
-    applyUpdateLayerParams(p, id, { kind: 'Text', content: 'still editable' }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', content: 'still editable' }, BUILTINS)
     expect((layerOf(p, id).params as TextParams).content).toBe('still editable')
   })
 
   it('align/valign/line_height/letter_spacing all merge on a boxed layer', () => {
     const { p, id } = textLayer()
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800, align: 'Left', valign: 'Top', line_height: 1.4, letter_spacing: 2 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 800, align: 'Left', valign: 'Top', line_height: 1.4, letter_spacing: 2 }, BUILTINS)
     const t = layerOf(p, id).params as TextParams
     expect([t.align, t.valign, t.line_height, t.letter_spacing]).toEqual(['Left', 'Top', 1.4, 2])
   })
@@ -168,13 +170,13 @@ describe('Text box patch', () => {
     const { p, id } = textLayer()
     const t = () => layerOf(p, id).params as TextParams
     expect(t().outline).toBeNull()
-    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 3 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 3 }, BUILTINS)
     expect(t().outline).toEqual({ color: { r: 0, g: 0, b: 0, a: 255 }, width: 3 })
-    applyUpdateLayerParams(p, id, { kind: 'Text', outline_color: { r: 255, g: 0, b: 0, a: 255 } }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_color: { r: 255, g: 0, b: 0, a: 255 } }, BUILTINS)
     expect(t().outline).toEqual({ color: { r: 255, g: 0, b: 0, a: 255 }, width: 3 })
-    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 5 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 5 }, BUILTINS)
     expect(t().outline).toEqual({ color: { r: 255, g: 0, b: 0, a: 255 }, width: 5 })
-    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 0 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 0 }, BUILTINS)
     expect(t().outline).toBeNull()
   })
 
@@ -182,7 +184,7 @@ describe('Text box patch', () => {
   // one commit — the width lands first, then the colour lands on it.
   it('outline_width and outline_color in one patch create a coloured stroke', () => {
     const { p, id } = textLayer()
-    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 2, outline_color: { r: 0, g: 0, b: 255, a: 255 } }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 2, outline_color: { r: 0, g: 0, b: 255, a: 255 } }, BUILTINS)
     expect((layerOf(p, id).params as TextParams).outline).toEqual({ color: { r: 0, g: 0, b: 255, a: 255 }, width: 2 })
   })
 
@@ -209,7 +211,7 @@ describe('Text box patch', () => {
     const before = JSON.stringify(p)
     let err: unknown
     try {
-      applyUpdateLayerParams(p, id, { kind: 'Text', ...bad } as LayerParamsPatch, new MotifCatalog())
+      applyUpdateLayerParams(p, id, { kind: 'Text', ...bad } as LayerParamsPatch, BUILTINS)
     } catch (e) { err = e }
     expect(isCommandFailure(err) && err.err).toMatchObject({ error: 'InvalidArgument', field })
     expect(JSON.stringify(p)).toBe(before)
@@ -217,7 +219,7 @@ describe('Text box patch', () => {
 
   it('a null box axis is still accepted — null is auto, not a bad number', () => {
     const { p, id } = textLayer()
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null, box_h: null }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: null, box_h: null }, BUILTINS)
     expect(boxOf(p, id)).toEqual([null, null])
   })
 })
@@ -362,7 +364,7 @@ describe('applyUpdateLayerParamTrack — a colour track', () => {
   it('a colour patch through update_layer_params still collapses the track to Static', () => {
     const { p, id } = layerOfKind('Color')
     applyUpdateLayerParamTrack(p, id, 'color', colorTrack())
-    applyUpdateLayerParams(p, id, { kind: 'Color', color: GREEN }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Color', color: GREEN }, BUILTINS)
     expect(resolveAnimatedRgba(layerOf(p, id), 'color')).toEqual({ mode: 'Static', value: GREEN })
   })
 })
@@ -417,7 +419,7 @@ describe('animatable params are writable on both sides of the IPC boundary', () 
       kind === 'Text' ? textParamsDefault('hi', root(p))
       : kind === 'Color' ? colorParams({ r: 1, g: 2, b: 3, a: 255 }, 16, 9)
       : kind === 'Audio' ? audioParams('00000000-0000-0000-0000-0000000000a1', 0, 1_000_000)
-      : kind === 'Motif' ? { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, graphic_role: null } as LayerParams
+      : kind === 'Motif' ? { kind: 'Motif', motif_id: 'countdown', props: {}, src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, graphic_role: null } as LayerParams
       : kind === 'ImageOverlay' ? { kind: 'ImageOverlay', media: '00000000-0000-0000-0000-0000000000a2', transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0, graphic_role: null } as LayerParams
       : videoClipParams('00000000-0000-0000-0000-0000000000a3', 0, 1_000_000)
     const id = applyAddLayer(p, g, root(p).tracks[0].id, params, 0, 1_000_000)
@@ -436,12 +438,12 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
   function makeCountdownProject(motifId = 'countdown') {
     const g = seededGen()
     const p = blankProject(g, 'clamp-test')
+    p.motifs[motifId] = { uid: '00000000-0000-4000-8000-000000000001', revision: null, from: null }
     // fps 30/1 for clean integer frame boundaries
     root(p).fps = { num: 30, den: 1 }
     const motif: MotifParams = {
       kind: 'Motif',
       motif_id: motifId,
-      motif_version: 1,
       // props.seconds=10 → contentDur=10s; t_end=10s, src_in=0 → window fits exactly
       props: { seconds: 10, label: 'GO', accent: '#ff4d4d' },
       src_in_us: 0,
@@ -465,7 +467,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
 
   it('shrink: seconds 10→3 clamps t_end to 3s (src_in stays 0)', () => {
     const { p } = makeCountdownProject()
-    const catalog = new MotifCatalog() // countdown is built-in
+    const catalog = BUILTINS
     applyUpdateLayerParams(p, 'mo1', { kind: 'Motif', props: { seconds: 3 } }, catalog)
     const layer = root(p).tracks[0].layers.find((l) => l.id === 'mo1')!
     const m = layer.params as MotifParams
@@ -477,7 +479,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     // NOTE: countdown max_duration_prop="seconds" so contentDur = props.seconds * 1e6
     // After setting seconds=15, contentDur=15s; window is 0..10s (10s wide) which fits → no clamp.
     const { p } = makeCountdownProject()
-    const catalog = new MotifCatalog()
+    const catalog = BUILTINS
     applyUpdateLayerParams(p, 'mo1', { kind: 'Motif', props: { seconds: 15 } }, catalog)
     const layer = root(p).tracks[0].layers.find((l) => l.id === 'mo1')!
     const m = layer.params as MotifParams
@@ -496,9 +498,9 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     // rather than by writing past the schema.
     const { p } = makeCountdownProject('tiny')
     root(p).fps = fps
-    const catalog = new MotifCatalog()
-    catalog.setUserManifests([{ id: 'tiny', name: 'Tiny', version: 1, size: [480, 480], default_duration_s: 5, max_duration_s: 60, max_duration_prop: 'seconds',
-      props_schema: { seconds: { type: 'number', default: 5, min: 0.001, max: 60 }, label: { type: 'string', default: 'GO' }, accent: { type: 'color', default: '#ff4d4d' } } }])
+    const tiny = { id: 'tiny', name: 'Tiny', version: 1, size: [480, 480] as [number, number], default_duration_s: 5, max_duration_s: 60, max_duration_prop: 'seconds',
+      props_schema: { seconds: { type: 'number' as const, default: 5, min: 0.001, max: 60 }, label: { type: 'string' as const, default: 'GO' }, accent: { type: 'color' as const, default: '#ff4d4d' } } }
+    const catalog: MotifManifests = { get: (id) => id === 'tiny' ? tiny : BUILTINS.get(id) }
     applyUpdateLayerParams(p, 'mo1', { kind: 'Motif', props: { seconds: 0.01 } }, catalog)
     const layer = root(p).tracks[0].layers.find((l) => l.id === 'mo1')!
     expect(layer.t_start_us).toBe(0)
@@ -513,7 +515,6 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     const motif: MotifParams = {
       kind: 'Motif',
       motif_id: 'unknown-id',
-      motif_version: 1,
       props: { seconds: 5 },
       src_in_us: 0,
       transform: textParamsDefaultTransform(),
@@ -521,19 +522,19 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
       graphic_role: null,
     }
     root(p).tracks[0].layers.push({ id: 'mo2', label: null, t_start_us: 0, t_end_us: 10_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
-    const catalog = new MotifCatalog()
+    const catalog = BUILTINS
     applyUpdateLayerParams(p, 'mo2', { kind: 'Motif', props: { seconds: 3 } }, catalog)
     const layer = root(p).tracks[0].layers.find((l) => l.id === 'mo2')!
     // No clamp because no catalog entry
     expect(layer.t_end_us).toBe(10_000_000)
   })
 
-  it('existing Motif tests pass unchanged (catalog=new MotifCatalog(), motif_id "m" not in catalog → no clamp)', () => {
+  it('existing Motif tests pass unchanged (catalog=BUILTINS, motif_id "m" not in catalog → no clamp)', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
-    const motif: MotifParams = { kind: 'Motif', motif_id: 'm', motif_version: 1, props: { a: 1, b: 2 },
+    const motif: MotifParams = { kind: 'Motif', motif_id: 'm', props: { a: 1, b: 2 },
       src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, graphic_role: null }
     root(p).tracks[0].layers.push({ id: 'mo', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
-    applyUpdateLayerParams(p, 'mo', { kind: 'Motif', opacity: 0.3, props: { b: 9, c: 3 } }, new MotifCatalog())
+    applyUpdateLayerParams(p, 'mo', { kind: 'Motif', opacity: 0.3, props: { b: 9, c: 3 } }, BUILTINS)
     const m = layerOf(p, 'mo').params as MotifParams
     expect([m.props, m.opacity]).toEqual([{ a: 1, b: 9, c: 3 }, { mode: 'Static', value: 0.3 }])
   })
@@ -558,7 +559,7 @@ describe('authored precision at the write seam', () => {
     // What a drag actually produces: a client delta divided by the preview's fit
     // scale, which is never 1 because there is no 1:1 zoom.
     applyUpdateLayerParams(p, id, { kind: 'VideoClip',
-      x: 10.373737373737374, y: -20.9499, scale_x: 1.0416666, scale_y: 0.98765 }, new MotifCatalog())
+      x: 10.373737373737374, y: -20.9499, scale_x: 1.0416666, scale_y: 0.98765 }, BUILTINS)
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
     expect([staticOf(v.transform.position.x), staticOf(v.transform.position.y)]).toEqual([10.4, -20.9])
     expect([staticOf(v.transform.scale_x), staticOf(v.transform.scale_y)]).toEqual([1.042, 0.988])
@@ -566,7 +567,7 @@ describe('authored precision at the write seam', () => {
 
   it('keeps a half-pixel — an odd-width composition centres on one', () => {
     const { p, id } = visualLayer()
-    applyUpdateLayerParams(p, id, { kind: 'VideoClip', x: 1921 / 2 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'VideoClip', x: 1921 / 2 }, BUILTINS)
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
     expect(staticOf(v.transform.position.x)).toBe(960.5)
   })
@@ -574,7 +575,7 @@ describe('authored precision at the write seam', () => {
   it('refuses an out-of-range opacity and writes NOTHING', () => {
     const { p, id } = visualLayer()
     expectCmd(() => applyUpdateLayerParams(p, id,
-      { kind: 'VideoClip', x: 500, opacity: 1.5 }, new MotifCatalog()), 'InvalidArgument')
+      { kind: 'VideoClip', x: 500, opacity: 1.5 }, BUILTINS), 'InvalidArgument')
     // The whole point of resolving every numeric before the first assignment: a
     // refused patch leaves the project byte-identical, so `x` never landed.
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
@@ -583,35 +584,35 @@ describe('authored precision at the write seam', () => {
 
   it('accepts an opacity that rounds INTO range', () => {
     const { p, id } = visualLayer()
-    applyUpdateLayerParams(p, id, { kind: 'VideoClip', opacity: 1.0004 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'VideoClip', opacity: 1.0004 }, BUILTINS)
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
     expect(staticOf(v.opacity)).toBe(1)
   })
 
   it('refuses a scale axis that records as zero, but not a mirror', () => {
     const { p, id } = visualLayer()
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', scale_x: 0 }, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', scale_x: 0 }, BUILTINS), 'InvalidArgument')
     // 0.0004 at d=3 rounds to 0 — the reason the check runs after rounding.
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', scale_x: 0.0004 }, new MotifCatalog()), 'InvalidArgument')
-    applyUpdateLayerParams(p, id, { kind: 'VideoClip', scale_x: -2 }, new MotifCatalog())
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', scale_x: 0.0004 }, BUILTINS), 'InvalidArgument')
+    applyUpdateLayerParams(p, id, { kind: 'VideoClip', scale_x: -2 }, BUILTINS)
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
     expect(staticOf(v.transform.scale_x)).toBe(-2)
   })
 
   it('refuses a non-positive speed', () => {
     const { p, id } = visualLayer()
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: 0 } as never, new MotifCatalog()), 'InvalidArgument')
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: -1 } as never, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: 0 } as never, BUILTINS), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: -1 } as never, BUILTINS), 'InvalidArgument')
   })
 
   it('rounds the text box to whole pixels and refuses one that rounds away', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
     const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('t', root(p)), 0, 1_000_000)
-    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 640.4 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 640.4 }, BUILTINS)
     expect((layerOf(p, id).params as TextParams).box_w).toBe(640)
     // Passes a raw `> 0` test, then records as the zero box that test exists to
     // refuse — which is why the check moved after the rounding.
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 0.4 }, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 0.4 }, BUILTINS), 'InvalidArgument')
   })
 
   it('rounds a Color layer to whole pixels, at BOTH the patch and the constructor', () => {
@@ -621,7 +622,7 @@ describe('authored precision at the write seam', () => {
     const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920.7, 1080.2), 0, 1_000_000)
     const born = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
     expect([born.width, born.height]).toEqual([1921, 1080])
-    applyUpdateLayerParams(p, id, { kind: 'Color', width: 640.4, height: 360.5 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Color', width: 640.4, height: 360.5 }, BUILTINS)
     const c = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
     expect([c.width, c.height]).toEqual([640, 361])
   })
@@ -630,7 +631,7 @@ describe('authored precision at the write seam', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
     const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080), 0, 1_000_000)
     expectCmd(() => applyUpdateLayerParams(p, id,
-      { kind: 'Color', color: { r: 0, g: 255, b: 0, a: 255 }, width: 0.4 }, new MotifCatalog()), 'InvalidArgument')
+      { kind: 'Color', color: { r: 0, g: 255, b: 0, a: 255 }, width: 0.4 }, BUILTINS), 'InvalidArgument')
     const c = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
     expect([(c.color as { value: { g: number } }).value.g, c.width]).toEqual([0, 1920])
     expectCmd(() => colorParams({ r: 0, g: 0, b: 0, a: 255 }, 0, 1080), 'InvalidArgument')
@@ -639,18 +640,18 @@ describe('authored precision at the write seam', () => {
   it('refuses a non-positive font size', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
     const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('t', root(p)), 0, 1_000_000)
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', font_size_px: 0 }, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', font_size_px: 0 }, BUILTINS), 'InvalidArgument')
   })
 
   it('quantizes gain_db and refuses an out-of-range pan', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
     const id = applyAddLayer(p, g, root(p).tracks[0].id, audioParams(MID, 0, 3_000_000), 0, 3_000_000)
-    applyUpdateLayerParams(p, id, { kind: 'Audio', gain_db: -6.0333, pan: 0.333333 }, new MotifCatalog())
+    applyUpdateLayerParams(p, id, { kind: 'Audio', gain_db: -6.0333, pan: 0.333333 }, BUILTINS)
     const au = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Audio' }>
     expect([staticOf(au.gain_db), staticOf(au.pan)]).toEqual([-6, 0.333])
     // Previously storable, and then silently clamped by the mixer on the way out
     // (audio/envelope.rs sample_pan) — so the store disagreed with what played.
-    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Audio', pan: 2 }, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Audio', pan: 2 }, BUILTINS), 'InvalidArgument')
   })
 
   it('quantizes every keyframe of a track write, not just the first', () => {
@@ -679,7 +680,7 @@ describe('param updates inside a Group', () => {
   it('applyUpdateLayerParams finds the layer in its Group; the root is untouched', () => {
     const { p, groupId, innerId } = groupedProject()
     const rootBefore = structuredClone(root(p))
-    applyUpdateLayerParams(p, innerId, { kind: 'Color', width: 640 }, new MotifCatalog())
+    applyUpdateLayerParams(p, innerId, { kind: 'Color', width: 640 }, BUILTINS)
     expect((group(p, groupId).tracks[0].layers[0].params as Extract<Layer['params'], { kind: 'Color' }>).width).toBe(640)
     expect(root(p)).toEqual(rootBefore)
   })
@@ -691,7 +692,7 @@ describe('applyUpdateLayerParams — a Group layer', () => {
 
   it('sets the transform, opacity and source window', () => {
     const { p, refLayerId } = groupedProject()
-    applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', x: 12, scale_x: 2, opacity: 0.25, src_in_us: 100_000 }, new MotifCatalog())
+    applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', x: 12, scale_x: 2, opacity: 0.25, src_in_us: 100_000 }, BUILTINS)
     const g = refOf(p, refLayerId)
     expect([g.transform.position.x, g.transform.scale_x, g.opacity, g.src_in_us]).toEqual([
       { mode: 'Static', value: 12 }, { mode: 'Static', value: 2 }, { mode: 'Static', value: 0.25 }, 100_000,
@@ -701,7 +702,7 @@ describe('applyUpdateLayerParams — a Group layer', () => {
   it('takes a window past the composition duration — this path has no upper bound', () => {
     const { p, groupId, refLayerId } = groupedProject()
     const beyond = group(p, groupId).duration_us + 5_000_000
-    applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', src_out_us: beyond }, new MotifCatalog())
+    applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', src_out_us: beyond }, BUILTINS)
     expect(refOf(p, refLayerId).src_out_us).toBe(beyond)
     // Overhang is legal in state and clamped at the gesture (ADR 0052 §6), so
     // the validator must accept what this patch just wrote.
@@ -722,7 +723,7 @@ describe('applyUpdateLayerParams — a Group layer', () => {
 
   it('rejects a patch aimed at the wrong kind', () => {
     const { p, innerId } = groupedProject()
-    expectCmd(() => applyUpdateLayerParams(p, innerId, { kind: 'CompositionRef', x: 1 }, new MotifCatalog()), 'LayerParamsKindMismatch')
+    expectCmd(() => applyUpdateLayerParams(p, innerId, { kind: 'CompositionRef', x: 1 }, BUILTINS), 'LayerParamsKindMismatch')
   })
 })
 

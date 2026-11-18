@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { hashCacheKey } from '../../src/renderer/render/motifs/frameCache'
 import type { E2EHook } from '../../src/renderer/testhook/e2eHook'
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
-import { createMotifDraft, publishMotifDraft } from './helpers/motif'
+import { createMotif } from './helpers/motif'
 import { resourceDiagnostics } from './helpers/resourceDiagnostics'
 import type { MotifBakeSnapshot } from '../../src/shared/motifs/baking'
 import { MOTIF_TUNING_DEFAULTS } from '../../src/shared/motifs/tuning'
@@ -30,15 +30,14 @@ for (const complete of [false, true]) {
       await invokeCmd(running.page, 'app_settings_set', { patch: {
         prebake_motifs: false, performance_policy: { cache_mib: 512 }, resource_policy: { background_playback: false },
       } })
-      const draft = await createMotifDraft(running.page, {
-        id: 'partial-bake-probe', name: 'Partial bake probe', version: 1,
+      const motifId = await createMotif(running.page, {
+        name: 'Partial bake probe', version: 1,
         size: [1920, 1080], default_duration_s: 30, props_schema: {},
       }, `<!doctype html><html><body style="margin:0"><script>
         motif.define({ frame(t) {
           document.body.style.background = Math.floor(t * 2) % 2 ? '#a020f0' : '#20d060';
         }});
       </script></body></html>`)
-      const motifId = await publishMotifDraft(running.page, draft)
       await waitForHook(running.page, 'addMotifLayer')
       const layerId = await running.page.evaluate(motifId =>
         (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.addMotifLayer({ motifId, durationUs: 30_000_000 }), motifId)

@@ -5,12 +5,13 @@ test('motif_capture_frame: deterministic transparent PNG via offscreen CDP', asy
   const { app, page } = await launchApp()
   // The renderer registered the runtime at boot (main.tsx). Capture countdown twice
   // at the same t — same input must yield byte-identical PNGs (PoC determinism).
+  // No project is open, so the built-in renders from the library's host.
   // The channel returns the PNG BYTES (Uint8Array over IPC structured clone);
   // encode to base64 in-page so the spec can string-compare.
   const cap = (t: number) =>
     page.evaluate(async (tSec) => {
       const bytes = (await (window as any).api.backend.invoke('motif_capture_frame', {
-        motifId: 'countdown', tSec, propsJson: JSON.stringify({ seconds: 5, accent: '#ff4d4d' }),
+        motifId: 'countdown--library', tSec, propsJson: JSON.stringify({ seconds: 5, accent: '#ff4d4d' }),
         width: 480, height: 480, contentHash: '',
       })) as Uint8Array
       let bin = ''

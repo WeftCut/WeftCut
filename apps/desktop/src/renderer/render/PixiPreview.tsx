@@ -875,10 +875,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     compositorRef.current.compositeFrame(t);
   }, [summary, targetId, composition, mediaById]);
 
-  // A draft edit / install / delete updates the runtime Motif catalog (via the
-  // async motifs:changed → syncUserMotifsFromBackend → setUserMotifs chain). We
+  // A project Motif edited, updated or gone changes the render catalog (via the
+  // async motifs:changed → syncProjectMotifsFromBackend → setProjectMotifs chain). We
   // subscribe to the catalog CHANGE-NOTIFIER rather than the raw backend event so
-  // we refresh only AFTER `setUserMotifs` has landed the new manifests in the
+  // we refresh only AFTER `setProjectMotifs` has landed the new manifests in the
   // catalog and bumped its revision — subscribing to the raw event races the
   // async re-sync and re-captures stale source. Refresh the live Motif sprites
   // against the fresh catalog + recapture at the current playhead. The

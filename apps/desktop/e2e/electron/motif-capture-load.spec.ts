@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import os from 'node:os';
 import { readFileSync } from 'node:fs';
 import { launchApp, newProject, tmpDir, invokeCmd } from './helpers/driver';
-import { createMotifDraft, publishMotifDraft } from './helpers/motif';
+import { createMotif, motifContentHash } from './helpers/motif';
 
 /// Real-app checks that a capture timeout is probation, not a verdict
 /// (docs/motifs.md#capture-host),
@@ -72,13 +72,10 @@ const backend = async (page: Page) => {
 const isTimeout = (r: Probe) => !r.ok && /timed out/.test(r.error ?? '');
 
 async function publish(page: Page, id: string, html: string): Promise<{ motifId: string; contentHash: string }> {
-  const motifId = await publishMotifDraft(page, await createMotifDraft(page, {
-    id, name: id, version: 1, size: [1920, 1080], default_duration_s: 20, props_schema: {},
-  }, html));
-  const list = await invokeCmd<Array<{ id: string; content_hash?: string }>>(page, 'list_motifs');
-  const contentHash = list.find(m => m.id === motifId)?.content_hash;
-  if (!contentHash) throw new Error(`no content_hash for ${motifId}`);
-  return { motifId, contentHash };
+  const motifId = await createMotif(page, {
+    name: id, version: 1, size: [1920, 1080], default_duration_s: 20, props_schema: {},
+  }, html);
+  return { motifId, contentHash: await motifContentHash(page, motifId) };
 }
 
 const BASE = { width: 1920, height: 1080, fpsNum: 25, fpsDen: 1 };

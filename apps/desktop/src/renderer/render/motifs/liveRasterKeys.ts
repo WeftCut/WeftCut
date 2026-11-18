@@ -9,8 +9,8 @@
 // "Unresolvable right now" is not "orphaned": its `<hash>` dirs are exactly
 // the frames that make an old project playable, and deleting them on a guess
 // is unrecoverable data loss (the full re-bake costs tens of minutes of serial
-// capture time). The conservative tradeoff is deliberate: a draft the user
-// truly deleted leaves its dirs behind until its layers leave every timeline.
+// capture time). The conservative tradeoff is deliberate: a Motif the user
+// truly removed leaves its dirs behind until its layers leave every timeline.
 
 import type { ProjectSummary } from "../../ipc";
 import { forEachLayer } from "../compositionWalk";

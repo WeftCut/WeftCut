@@ -5,7 +5,8 @@ import { localAt } from './compositionClock';
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, MotifView } from "../ipc";
 import { compositionLocalUs, forEachLayerInTime, instanceKey } from "./compositionWalk";
-import { getMotif, type Motif } from "./motifs/catalog";
+import { getMotif, motifUnavailable, type Motif } from "./motifs/catalog";
+import type { UnavailableMotif } from "../../shared/motifs/projectMotifs";
 import { motifDurationFrames } from "./motifs/motifFrames";
 
 /// One Motif layer to bake: its id, the resolved `Motif`, the layer's
@@ -37,11 +38,24 @@ export interface MotifBakeSpec {
   tStartUs: number;
 }
 
+/// An export refused because a layer it renders uses a project Motif that
+/// cannot render. The main process refuses the same before a job starts
+/// (`MotifUnavailable` in `main/exportJobs.ts`); this is the renderer's
+/// agreement, for a Motif that went missing after the job was admitted.
+export class MotifUnavailableError extends Error {
+  constructor(readonly motifId: string, readonly problem: UnavailableMotif | null) {
+    super(problem
+      ? `Motif '${motifId}' is ${problem.status}${problem.diagnostic ? ` (${problem.diagnostic})` : ""}; a layer in the export uses it, so nothing was exported`
+      : `Motif '${motifId}' is not in this project; a layer in the export uses it, so nothing was exported`);
+    this.name = "MotifUnavailableError";
+  }
+}
+
 /// Collect the Motif layers (enabled, on an enabled track) whose interval
 /// overlaps `[startUs, endUs)`, resolving each to a `MotifBakeSpec`. Pure +
-/// Node-testable: no DOM, no rasterize. Layers whose `motif_id` isn't in the
-/// catalog are skipped (they can't render anywhere — the live compositor warns
-/// too). `fpsNum/fpsDen` are the COMPOSITION fps.
+/// Node-testable: no DOM, no rasterize. A layer whose project Motif cannot
+/// render refuses the whole export (`MotifUnavailableError`): skipping it would
+/// export a film without it. `fpsNum/fpsDen` are the COMPOSITION fps.
 export function motifLayersToBake(
   summary: ProjectSummary,
   startUs: number,
@@ -60,14 +74,7 @@ export function motifLayersToBake(
 
     const view = layer.params;
     const motif = getMotif(view.motif_id);
-    if (!motif) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[weftcut/export] bake: unknown motif "${view.motif_id}" ` +
-          `(layer ${layer.id}) — skipping`,
-      );
-      return;
-    }
+    if (!motif) throw new MotifUnavailableError(view.motif_id, motifUnavailable(view.motif_id));
 
     const durationUs = layer.t_end_us - layer.t_start_us;
     const durationFrames = motifDurationFrames(durationUs, fpsNum, fpsDen);

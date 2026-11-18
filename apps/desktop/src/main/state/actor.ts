@@ -9,7 +9,8 @@ import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState, type OpDiff } from './history'
 import { mcpActor } from './mcp-actor'
-import { HISTORY_SUMMARY, addedLayersSummary, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
+import { HISTORY_SUMMARY, addedLayersSummary, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, projectMotifSummary, removedMediaSummary, removedProjectMotifSummary, roleGainSummary, updatedProjectMotifSummary, type HistorySummary } from './history-labels'
+import { motifUsers, parseMotifSource, parseRevision } from './mutations/projectMotifs'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
@@ -49,7 +50,8 @@ import { videoClipParams, audioParams, imageOverlayParams, mediaExtent, applySep
 import type { MediaItem } from './model'
 import { applyParamsPatch, applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applySetScaleLinked, copyTrackFreshIds, enforceScaleLinkInvariant, transformOf } from './mutations/scaleLink'
-import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
+import type { Manifest, MotifManifests } from '../../shared/motifs/catalog'
+import { isProjectMotifKey, motifEntry, type MotifStatus, type ProjectMotifEntry, type ProjectMotifs } from '../../shared/motifs/projectMotifs'
 import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, type CaptionStylePatch, applyMergeCaptions, type MergeCaptionsResult } from './mutations/captions'
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
@@ -72,7 +74,27 @@ setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
 export type Clock = () => string
 export type DiffHint = { kind: 'Coarse' } | { kind: 'Layer'; id: Uuid } | { kind: 'Composition' }
-export interface ChangeEvent { op_id: Uuid; history_op_id?: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[]; new_snapshot: Project; diff_hint: DiffHint; replaced?: true }
+/** `from_history`: the state came back from the stack — undo, redo, a jump, a
+ *  checkpoint restore, Review's revert all — so files that follow the
+ *  project's records (`Motifs/`) are put back to match it. */
+export interface ChangeEvent { op_id: Uuid; history_op_id?: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[]; new_snapshot: Project; diff_hint: DiffHint; replaced?: true; from_history?: true }
+
+/** The open project's Motif folders and the library they are placed from, as
+ *  the actor reads them; the host serves them from `main/motif/`. */
+export interface ProjectMotifAccess {
+  /** The manifest `Motifs/<id>/` declares; null when the folder makes no
+   *  package. */
+  manifest(id: string): Manifest | null
+  /** Whether `Motifs/<id>/` is there and makes a package. */
+  status(id: string): MotifStatus
+  /** Library Motif `id` (a built-in included) copied into `Motifs/` for a
+   *  project whose table is `table`, before the commit that records it: the
+   *  id it is placed under (a lineage the table holds keeps its id, another
+   *  lineage on the id takes `collisionId`), the entry to record and its
+   *  manifest. Null when the library has no `id`; throws when the copy
+   *  cannot be made. */
+  place(id: string, table: Readonly<ProjectMotifs>): { id: string; entry: ProjectMotifEntry; manifest: Manifest } | null
+}
 
 /** The lattice a layer's keys are written on, as a snap of a layer-local µs:
  *  the frame grid of its composition, or 48 kHz samples for Audio — the snap
@@ -145,7 +167,10 @@ export interface ActorLogEntry {
 
 export interface ActorOptions {
   assertWritable?: () => void
-  initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor; motifCatalog?: MotifCatalog
+  initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor
+  /** Absent (tests, a bare actor): no Motif folder is readable and nothing
+   *  can be placed from a library. */
+  motifs?: ProjectMotifAccess
   /** Live app preference, sampled for each edit; never part of history. */
   autoDeleteEmptyTracks?: () => boolean
   /** Live default for authored text, shared by UI and MCP. */
@@ -217,10 +242,6 @@ export interface ActorHandle {
   /** Everything the call records is stamped with the agent `client` names
    *  (normalized; the fallback when absent), never the instance actor. */
   mcpCall(name: string, argsJson: string, client?: string): McpCallResult
-  /** Replace the user-layer of the motif catalog (built-ins are always present).
-   *  Called by the host after motif-store-mutating operations to keep the catalog
-   *  current for the content-window clamp in applyUpdateLayerParams. */
-  setUserMotifManifests(ms: Manifest[]): void
 }
 
 export function createActor(opts: ActorOptions): ActorHandle {
@@ -246,7 +267,35 @@ export function createActor(opts: ActorOptions): ActorHandle {
       try { cb(rev) } catch (err) { console.warn('[actor] review subscriber threw; continuing', err) }
     }
   })
-  const motifCatalog: MotifCatalog = opts.motifCatalog ?? new MotifCatalog()
+  /** The project's own Motifs: an id its table holds, read from its folder.
+   *  A layer names nothing else (validate). */
+  const motifCatalog: MotifManifests = {
+    get: (id) => Object.hasOwn(current().motifs, id) ? opts.motifs?.manifest(id) ?? undefined : undefined,
+  }
+
+  /** The Motif a placement (`add_motif`, `add_layers`, `add_layer`) lands:
+   *  the project's own when its table holds `requested` and `fromLibrary` is
+   *  not asked, else the library's, copied into `Motifs/` now and recorded
+   *  by the placing commit with its layer (`entry`), so one undo takes both
+   *  and leaves the folder behind, untracked, as one leaves Media/. Every
+   *  refusal names `field`. */
+  function motifToPlace(requested: string, fromLibrary: boolean, field: string): { id: string; manifest: Manifest; entry: ProjectMotifEntry | null } {
+    const table = current().motifs
+    if (!fromLibrary && Object.hasOwn(table, requested)) {
+      const manifest = opts.motifs?.manifest(requested) ?? null
+      // `from_library` copies only into a folder that is gone: one holding
+      // files is never written over.
+      if (!manifest) throw new McpArgError(opts.motifs?.status(requested) === 'invalid'
+        ? `${field}: Motif '${requested}' is in this project but the files in Motifs/${requested}/ make no package; fix them (read_motif lists them and says what is wrong), or have the user take the library's copy with Restore from library in the Motifs panel`
+        : `${field}: Motif '${requested}' is in this project but Motifs/${requested}/ is gone; restore its files, or place the library's copy with from_library: true`, field)
+      return { id: requested, manifest, entry: null }
+    }
+    let placed: ReturnType<ProjectMotifAccess['place']>
+    try { placed = opts.motifs?.place(requested, table) ?? null }
+    catch (error) { throw new McpArgError(`${field}: Motif '${requested}' could not be copied into the project: ${error instanceof Error ? error.message : String(error)}`, field) }
+    if (!placed) throw new McpArgError(`${field}: unknown motif_id '${requested}' — call list_motifs for the catalog`, field)
+    return { id: placed.id, manifest: placed.manifest, entry: placed.entry }
+  }
 
   function current(): Project { return history.current() }
 
@@ -409,10 +458,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
 
   /** Snapshot notification with its own event ID. Restore additionally carries
-   *  the recorded history ID; undo/redo and preference changes have none. */
-  function broadcastUnrecorded(summary: string, snapshot: Project, diff: DiffHint = { kind: 'Coarse' }, historyOpId?: Uuid, replaced?: true): void {
+   *  the recorded history ID; undo/redo and preference changes have none.
+   *  `flag` marks a project swap or a state taken from the stack. */
+  function broadcastUnrecorded(summary: string, snapshot: Project, diff: DiffHint = { kind: 'Coarse' }, historyOpId?: Uuid, flag?: 'replaced' | 'from_history'): void {
     const opId = idGen() // the unrecorded broadcast's own deterministic id
-    emit({ op_id: opId, ...(historyOpId ? { history_op_id: historyOpId } : {}), ...(replaced ? { replaced } : {}), actor: who(), timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: diff })
+    emit({ op_id: opId, ...(historyOpId ? { history_op_id: historyOpId } : {}), ...(flag ? { [flag]: true as const } : {}), actor: who(), timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: diff })
   }
 
   // ── affected-ref helpers. Every recorded commit names the entities it touched,
@@ -658,7 +708,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason })
     const snap = history.undo()
     if (snap === null) throw new CommandFailure({ error: 'NothingToUndo' })
-    broadcastUnrecorded('Undo', snap)
+    broadcastUnrecorded('Undo', snap, undefined, undefined, 'from_history')
   }
   function redo(): void {
     opts.assertWritable?.()
@@ -666,7 +716,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason })
     const snap = history.redo()
     if (snap === null) throw new CommandFailure({ error: 'NothingToRedo' })
-    broadcastUnrecorded('Redo', snap)
+    broadcastUnrecorded('Redo', snap, undefined, undefined, 'from_history')
   }
   /** Random-access cursor move — the history panel's click-a-row action.
    *
@@ -685,7 +735,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const snap = history.jumpTo(index)
     if (snap === null) // 0 ids
       throw new CommandFailure({ error: 'InvalidArgument', field: 'index', detail: `history index ${index} outside [0, ${history.len()})` })
-    broadcastUnrecorded('Jump to history entry', snap)
+    broadcastUnrecorded('Jump to history entry', snap, undefined, undefined, 'from_history')
   }
   /** `jumpTo` by the op's id, which no later commit shifts: MCP's `jump_to`.
    *  An id the stack no longer holds (evicted, truncated, never there) is
@@ -711,7 +761,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (!history.hasCheckpoint(id)) throw new CommandFailure({ error: 'CheckpointNotFound', checkpoint: id }) // 0 ids — peek BEFORE mint
     const opId = idGen() // entry op_id — minted FIRST
     const snap = history.restoreCheckpoint(id, opId, clock(), who())!
-    broadcastUnrecorded(`Restored checkpoint ${id}`, snap, { kind: 'Coarse' }, opId) // +1 broadcast id (the SECOND id)
+    broadcastUnrecorded(`Restored checkpoint ${id}`, snap, { kind: 'Coarse' }, opId, 'from_history') // +1 broadcast id (the SECOND id)
   }
   function revertReviewAll(): void {
     opts.assertWritable?.()
@@ -720,7 +770,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (history.reviewBaseline() === null) throw new CommandFailure({ error: 'InvalidArgument', field: 'review', detail: 'no review baseline' }) // 0 ids
     const opId = idGen()
     const snap = history.revertToReviewBaseline(opId, clock(), who())!
-    broadcastUnrecorded('Reverted unreviewed changes', snap, { kind: 'Coarse' }, opId)
+    broadcastUnrecorded('Reverted unreviewed changes', snap, { kind: 'Coarse' }, opId, 'from_history')
   }
   /** Drop a checkpoint. Absent id → CheckpointNotFound, burning ZERO ids (same
    *  peek-before-mint convention restoreCheckpoint follows) — and here nothing is
@@ -927,7 +977,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     runValidate(next)                              // throws CommandFailure(ValidationFailed); no id spent
     history.reset(next, actor, idGen(), clock())   // +1 id (the 'Initial' op_id)
     lockHolderMay = null
-    broadcastUnrecorded('Replaced project state', current(), { kind: 'Coarse' }, undefined, true)  // +1 id (the event op_id)
+    broadcastUnrecorded('Replaced project state', current(), { kind: 'Coarse' }, undefined, 'replaced')  // +1 id (the event op_id)
   }
 
   // ── string dispatch — the op-name core that command(), mcpCall() and the unit
@@ -941,6 +991,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_layer': {
           const kind = a.kind as string
           let params: LayerParams
+          let motif: ReturnType<typeof motifToPlace> | null = null
           // Size-dependent defaults read the composition the TRACK lives in,
           // never the root: a Group carries its own canvas, so centring a text
           // layer on the root frame would place it outside a smaller one.
@@ -956,10 +1007,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
               ? { ...audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')), role: a.role as AudioRole }
               : audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
             case 'image': params = imageOverlayParams(a.media as Uuid, mediaExtent(current().media_pool[a.media as Uuid])); break
-            case 'Motif': { const m = motifCatalog.get(a.motif_id as string); params = motifLayerParams(a.motif_id as string, a.motif_version as number, (a.props ?? {}) as Record<string, unknown>, m?.size, m?.graphic_role ?? null); break }
+            case 'Motif': {
+              motif = motifToPlace(parseStr(a.motif_id, 'motif_id'), a.from_library === true, 'motif_id')
+              params = motifLayerParams(motif.id, (a.props ?? {}) as Record<string, unknown>, motif.manifest.size, motif.manifest.graphic_role ?? null)
+              break
+            }
             default: return { ok: false, error: { error: 'InvalidArgument', field: 'kind', detail: `unknown kind ${kind}` } }
           }
-          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us')))
+          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
+            if (motif?.entry) d.motifs[motif.id] = motif.entry
+            return applyAddLayer(d, idGen, a.track as Uuid, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us'))
+          })
           return { ok: true, value: id }
         }
         // Creation ops take `composition_id?` (root by default) — the ONLY ops
@@ -1594,10 +1652,45 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const value = commit(HISTORY_SUMMARY.captionMerge, (res: MergeCaptionsResult) => layerRefs([res.layer, ...res.removed]), { kind: 'Coarse' }, (d) => applyMergeCaptions(d, a.layers as Uuid[]))
           return { ok: true, value }
         }
-        case 'rebind_motif': {
-          const updates = a.updates as MotifRebindEntry[]
-          const affected: EntityRef[] = updates.map((u) => ({ kind: 'Layer', id: u.layer_id }))
-          return { ok: true, value: commit(HISTORY_SUMMARY.layerRebindMotif, affected, { kind: 'Coarse' }, (d) => applyRebindMotif(d, updates)) }
+        // The project's Motif table (spec § Project Motifs). Each entry is a
+        // folder the host has already written: these record what it holds.
+        case 'set_project_motif': {
+          const id = parseStr(a.motif_id, 'motif_id')
+          // Before the draft is written: `__proto__` would set its prototype,
+          // a change validation cannot see.
+          if (!isProjectMotifKey(id)) throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'InvalidMotifKey', motif_id: id } })
+          const held = motifEntry(current().motifs, id)
+          const entry: ProjectMotifEntry = {
+            uid: held && a.uid === undefined ? held.uid : parseStr(a.uid, 'uid'),
+            revision: parseRevision(a.revision, 'revision'),
+            from: a.from === undefined ? held?.from ?? null : parseMotifSource(a.from, 'from'),
+          }
+          commit(projectMotifSummary(id, !held), [], { kind: 'Coarse' }, (d) => { d.motifs[id] = entry })
+          return { ok: true, value: null }
+        }
+        case 'remove_project_motif': {
+          const id = parseStr(a.motif_id, 'motif_id')
+          if (!Object.hasOwn(current().motifs, id)) throw new CommandFailure({ error: 'MotifNotFound', motif_id: id })
+          const users = motifUsers(current(), id)
+          if (users.length > 0) throw new CommandFailure({ error: 'MotifInUse', motif_id: id, referenced_by: users })
+          commit(removedProjectMotifSummary(id), [], { kind: 'Coarse' }, (d) => { delete d.motifs[id] })
+          return { ok: true, value: null }
+        }
+        // The project copy replaced by the library's version of its lineage:
+        // the entry's revision and source, and every layer of it rebound to the
+        // new props schema (`buildRebindUpdates`), in one commit.
+        case 'update_project_motif': {
+          const id = parseStr(a.motif_id, 'motif_id')
+          const held = motifEntry(current().motifs, id)
+          if (!held) throw new CommandFailure({ error: 'MotifNotFound', motif_id: id })
+          const entry: ProjectMotifEntry = { uid: held.uid, revision: parseRevision(a.revision, 'revision'), from: parseMotifSource(a.from, 'from') }
+          const updates = (a.updates ?? []) as MotifRebindEntry[]
+          if (updates.some((u) => u.motif_id !== id)) throw new McpArgError(`updates: every layer stays on Motif '${id}'`, 'updates')
+          commit(updatedProjectMotifSummary(id), updates.map((u): EntityRef => ({ kind: 'Layer', id: u.layer_id })), { kind: 'Coarse' }, (d) => {
+            d.motifs[id] = entry
+            applyRebindMotif(d, updates)
+          })
+          return { ok: true, value: null }
         }
         case 'replace_state': {
           // Test vehicle — builds a blank from the args; production callers
@@ -1782,11 +1875,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'add_motif': {
           // add_motif — pure TS recorded mutation.
-          // Renderer camelCase: motifId, trackId?, tStartUs, tEndUs?, props?
+          // Renderer camelCase: motifId, fromLibrary?, trackId?, tStartUs, tEndUs?, props?
           const motifId = wireArgs.motifId as string | undefined
           if (typeof motifId !== 'string') return { ok: false, error: { error: 'InvalidArgument', field: 'motifId', detail: 'motifId must be a string' } }
-          const manifest = motifCatalog.get(motifId)
-          if (!manifest) return { ok: false, error: { error: 'InvalidArgument', field: 'motifId', detail: `unknown motif_id '${motifId}' — call list_motifs for the catalog` } }
+          // A library Motif is copied in here, before any refusal below: a
+          // refused placement leaves its folder untracked, as an undone one does.
+          const motif = motifToPlace(motifId, wireArgs.fromLibrary === true, 'motifId')
+          const manifest = motif.manifest
           // Canonicalize props BEFORE any commit (reject-before-commit gate).
           let canonicalProps: Record<string, unknown>
           try {
@@ -1801,13 +1896,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const tEndUsRaw = parseNumOpt(wireArgs.tEndUs, 'tEndUs') ?? null
           const resolvedEnd = resolveMotifTEndUs(tStartUs, tEndUsRaw, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, canonicalProps))
           if (resolvedEnd <= tStartUs) return { ok: false, error: { error: 'InvalidArgument', field: 't_end_us', detail: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
-          const params = motifLayerParams(manifest.id, manifest.version, canonicalProps, manifest.size, manifest.graphic_role ?? null)
+          const params = motifLayerParams(motif.id, canonicalProps, manifest.size, manifest.graphic_role ?? null)
           // Two-commit: if no track_id → spawn the track FIRST (in the named
-          // composition, root by default), THEN the Motif layer.
+          // composition, root by default), THEN the Motif layer with the table
+          // entry it renders, so one undo takes both.
           const scope = scopeComposition(current(), wireCompositionId(wireArgs))
           const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : null
           const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, null, undefined, scope.id))
-          const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
+          const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
+            if (motif.entry) d.motifs[motif.id] = motif.entry
+            return applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd)
+          })
           return { ok: true, value: layerId }
         }
         default:
@@ -1839,6 +1938,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     transform: LayerParamsPatch | null; label: string | null
     /** A Motif's content shortened the requested end (`adjusted` reason `content`). */
     clamped: boolean
+    /** The table entry a Motif copied in from the library records. */
+    motif: { id: string; entry: ProjectMotifEntry } | null
   }
   function planAddLayer(l: AddLayerSpec, snap: Project, scope: Composition, compositionId: Uuid | null): AddLayerPlan {
     let comp = scope
@@ -1868,6 +1969,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     let group: Uuid | null = null
     let audio: LayerParams | null = null
     let clamped = false
+    let motif: ReturnType<typeof motifToPlace> | null = null
     switch (c.kind) {
       case 'video': {
         const item = media(c.media)
@@ -1907,8 +2009,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
       // The composition's canvas, as the UI path sizes it (T13).
       case 'color': params = colorParams(c.color, comp.width, comp.height); break
       case 'motif': {
-        const manifest = motifCatalog.get(c.motif_id)
-        if (!manifest) throw new McpArgError(`${at}.content.motif_id: unknown motif_id '${c.motif_id}' — call list_motifs for the catalog`, `${at}.content.motif_id`)
+        motif = motifToPlace(c.motif_id, c.from_library, `${at}.content.motif_id`)
+        const manifest = motif.manifest
         let props: Record<string, unknown>
         try {
           props = canonicalizeProps(manifest, styledMotifProps(manifest, c.props))
@@ -1921,7 +2023,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         const end = resolveMotifTEndUs(t0, t1, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, props))
         clamped = end !== t1
         t1 = end
-        params = motifLayerParams(manifest.id, manifest.version, props, manifest.size, c.graphic_role ?? manifest.graphic_role ?? null)
+        params = motifLayerParams(motif.id, props, manifest.size, c.graphic_role ?? manifest.graphic_role ?? null)
         break
       }
       case 'group': group = c.composition; break
@@ -1932,7 +2034,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       const kind = params?.kind ?? 'CompositionRef'
       transform = { kind, ...rest, ...(scale !== undefined ? { scale_x: scale, scale_y: scale } : {}) } as LayerParamsPatch
     }
-    return { spec: l, track: l.track, t0, t1, params, group, audio, transform, label: l.label, clamped }
+    return { spec: l, track: l.track, t0, t1, params, group, audio, transform, label: l.label, clamped, motif: motif?.entry ? { id: motif.id, entry: motif.entry } : null }
   }
   type PlacedLayer = { layer_id: Uuid; track_id: Uuid; linked: { audio_layer_id: Uuid; link_id: Uuid } | null }
   /** The auto-paired audio of an `add_layers` video collided with an Audio
@@ -2015,6 +2117,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           let placed: PlacedLayer[]
           try {
             placed = commit(summary, (r: PlacedLayer[]) => layerRefs(r.flatMap((x) => x.linked ? [x.layer_id, x.linked.audio_layer_id] : [x.layer_id])), { kind: 'Coarse' }, (d) => plans.map((pl): PlacedLayer => {
+              if (pl.motif) d.motifs[pl.motif.id] = pl.motif.entry
               // `label: null` leaves a spawned lane's name to its position (docs/data-model.md#track).
               const track = pl.track ?? applyAddTrack(d, idGen, null, undefined, scope.id)
               const id = pl.group !== null
@@ -2042,6 +2145,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
               layer_id: x.layer_id, track_id: x.track_id, t_start_us: l.t_start_us, t_end_us: l.t_end_us,
               adjusted: [...adjusted([['t_start_us', pl.spec.t_start_us, l.t_start_us]]), ...adjusted([['t_end_us', pl.spec.t_end_us, l.t_end_us]], pl.clamped ? 'content' : 'grid')],
               linked: x.linked,
+              // The project id a Motif landed under: a library copy may take
+              // another than the one asked for.
+              ...(l.params.kind === 'Motif' ? { motif_id: l.params.motif_id } : {}),
             }
           }) }) }
         }
@@ -2404,6 +2510,5 @@ export function createActor(opts: ActorOptions): ActorHandle {
     revertReviewAll,
     reviewOpDiff: (ids) => history.opDiff(ids),
     subscribeReview(cb) { reviewSubs.add(cb); return () => reviewSubs.delete(cb) },
-    setUserMotifManifests(ms: Manifest[]) { motifCatalog.setUserManifests(ms) },
   }
 }

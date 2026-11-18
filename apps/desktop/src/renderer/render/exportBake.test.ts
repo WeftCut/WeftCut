@@ -5,15 +5,20 @@ import { afterEach, describe, expect, it, test } from "vitest";
 
 import type { AnimTrack, LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
-import { motifLayersToBake } from "./exportBake";
+import { motifLayersToBake, MotifUnavailableError } from "./exportBake";
 import {
   previewRenderTargetId,
   setPreviewRenderTarget,
 } from "../state/compositionAnchorStore";
 import { useProjectStore } from "../state/projectStore";
 import { motifContentFrame, motifDurationFrames, tInLayerUsForLayerLocalFrame } from "./motifs/motifFrames";
-import { getMotif, type Motif } from "./motifs/catalog";
+import { getMotif, setProjectMotifs, type Motif } from "./motifs/catalog";
+import { BUILTIN_MANIFESTS } from "../../shared/motifs/catalog";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
+import { holdBuiltinMotifs } from "../testing/projectMotifs";
+
+// The project these tests render holds the built-ins.
+holdBuiltinMotifs();
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
 
@@ -191,15 +196,18 @@ describe("motifLayersToBake", () => {
     expect(disabledTrack).toHaveLength(0);
   });
 
-  test("skips non-Motif layers and unknown motif ids", () => {
-    const summary = summaryWith([
-      motifLayer("known", 0, 5_000_000),
-      motifLayer("unknown", 0, 5_000_000, {
-        motif_id: "does-not-exist",
-      } as Partial<MotifView>),
-    ]);
-    const specs = motifLayersToBake(summary, 0, 5_000_000, 30, 1);
-    expect(specs.map((s) => s.layerId)).toEqual(["known"]);
+  test("refuses the export, naming the Motif, when a layer in range uses one the project cannot render", () => {
+    const missing = motifLayer("broken", 0, 5_000_000, { motif_id: "gone" } as Partial<MotifView>);
+    setProjectMotifs([...BUILTIN_MANIFESTS.values()], [{ motif_id: "gone", status: "missing", diagnostic: "" }]);
+    try {
+      const refuse = () => motifLayersToBake(summaryWith([motifLayer("known", 0, 5_000_000), missing]), 0, 5_000_000, 30, 1);
+      expect(refuse).toThrow(MotifUnavailableError);
+      // A missing Motif carries no diagnostic: the status says it all.
+      expect(refuse).toThrow("Motif 'gone' is missing; a layer in the export uses it");
+      // Out of the range it draws nothing, so nothing is refused.
+      expect(motifLayersToBake(summaryWith([motifLayer("known", 0, 5_000_000), { ...missing, t_start_us: 6_000_000, t_end_us: 7_000_000 }]), 0, 5_000_000, 30, 1)
+        .map((s) => s.layerId)).toEqual(["known"]);
+    } finally { holdBuiltinMotifs(); }
   });
 
   test("no Motif layers → empty result", () => {

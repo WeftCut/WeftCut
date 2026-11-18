@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
-import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver';
-import { createMotifDraft, publishMotifDraft } from './helpers/motif';
+import { launchApp, newProject, tmpDir } from './helpers/driver';
+import { createMotif, motifContentHash } from './helpers/motif';
 
 /// A Motif narrower than the frame marker still captures: the marker wraps
 /// over extra rows below the picture, and the frame holds the picture alone
@@ -60,11 +60,10 @@ for (const backend of ['default', 'bitmap'] as const) {
       const results: string[] = [];
       for (const [width, height] of SIZES) {
         const id = `small-${width}x${height}`;
-        const motifId = await publishMotifDraft(page, await createMotifDraft(page, {
-          id, name: id, version: 1, size: [width, height], default_duration_s: 2, props_schema: {},
-        }, OPAQUE(id)));
-        const list = await invokeCmd<Array<{ id: string; content_hash?: string }>>(page, 'list_motifs');
-        const contentHash = list.find(m => m.id === motifId)!.content_hash!;
+        const motifId = await createMotif(page, {
+          name: id, version: 1, size: [width, height], default_duration_s: 2, props_schema: {},
+        }, OPAQUE(id));
+        const contentHash = await motifContentHash(page, motifId);
         const frame = await capture(page, { motifId, contentHash, tSec: 0, propsJson: '{}', width, height, fpsNum: 25, fpsDen: 1 });
         results.push(`${width}x${height}: ${frame.width}x${frame.height}, ${frame.pink} pink`);
         expect(frame, `${width}x${height}`).toEqual({ width, height, pink: width * height });

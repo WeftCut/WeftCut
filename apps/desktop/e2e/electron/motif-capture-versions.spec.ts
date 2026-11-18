@@ -1,11 +1,12 @@
 import { test, expect, type Page } from '@playwright/test'
 import { PNG } from 'pngjs'
-import { invokeCmd, launchApp } from './helpers/driver'
+import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
 
 /// Content versions of one Motif share its capture window: each new version
 /// loads in the window's frame (docs/motifs.md#capture-host). One capture host
-/// in all, so every version switches that window, and no project is open, so
-/// nothing else (library covers, previews) captures. The Motif draws
+/// in all, so every version switches that window, and the project holds no
+/// layer and the panel is closed, so nothing else (covers, previews) captures.
+/// The Motif draws
 /// only into a canvas over a transparent page, so the first frame of every
 /// version must show that version's canvas, with real alpha beside it: a
 /// document whose canvases were missing, or the previous version still in the
@@ -26,7 +27,7 @@ const page = (v: number) => {
   </script></body></html>`
 }
 
-/// Writes version `v` into the draft; its content hash.
+/// Writes version `v` into the project Motif; its content hash.
 async function writeVersion(p: Page, motifId: string, v: number): Promise<string> {
   return p.evaluate(async ({ motifId, html, manifest }) => {
     const invoke = (window as any).api.backend.invoke
@@ -46,9 +47,11 @@ for (const backend of ['default', 'bitmap'] as const) {
       ...(backend === 'bitmap' ? { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } : {}),
     } })
     try {
+      await newProject(p, { parentFolder: tmpDir('weftcut-capture-versions-'), name: 'Versions',
+        canvas: { width: W, height: H, fpsNum: 25, fpsDen: 1 } })
       const motifId = await p.evaluate(async () => {
-        const draft = await (window as any).api.backend.invoke('open_motif_draft', { source: { kind: 'empty', name: 'Versioned canvas' } })
-        return draft.motif_id as string
+        const made = await (window as any).api.backend.invoke('create_motif', { source: { kind: 'empty', name: 'Versioned canvas' } })
+        return made.motif_id as string
       })
       await invokeCmd(p, 'motif_capture_diagnostics', { reset: true })
       const wrong: string[] = []

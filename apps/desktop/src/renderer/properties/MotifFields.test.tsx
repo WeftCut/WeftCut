@@ -27,7 +27,7 @@ vi.mock("../ipc", async (importActual) => {
 });
 
 import { updateLayerParams } from "../ipc";
-import { setUserMotifs, type MotifManifest } from "../render/motifs/catalog";
+import { setProjectMotifs, type MotifManifest } from "../render/motifs/catalog";
 import { clearPropSectionMemory } from "./PropSection";
 
 // Mock AppSwitch to a plain button so jsdom never hits Base UI's PointerEvent
@@ -58,7 +58,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   clearPropSectionMemory();
-  setUserMotifs([]);
+  setProjectMotifs([]);
 });
 
 // One prop per PropSpec variant, plus a second number so BOTH sides of the
@@ -133,7 +133,7 @@ function renderMotifPanel(
   motifId = TEST_MANIFEST.id,
   props: Record<string, unknown> = DEFAULT_PROPS,
 ) {
-  setUserMotifs([TEST_MANIFEST]);
+  setProjectMotifs([TEST_MANIFEST]);
   render(
     <AttributePanel
       tracks={[motifTrack(motifId, props)]}
@@ -169,11 +169,11 @@ describe("MotifFields form generation", () => {
     expect(section.querySelectorAll(".prop-field").length).toBe(5);
   });
 
-  it("shows the unknown note (and no Props section) for a motif missing from the catalog", () => {
-    setUserMotifs([TEST_MANIFEST]);
-    render(
+  it("names why a project Motif cannot render, with no Props section; a catalog not synced yet only says it is loading", () => {
+    setProjectMotifs([TEST_MANIFEST], [{ motif_id: "gone", status: "invalid", diagnostic: "index.html is missing" }]);
+    const panel = (motifId: string) => render(
       <AttributePanel
-        tracks={[motifTrack("builtin/removed", {})]}
+        tracks={[motifTrack(motifId, {})]}
         selectedLayerId="layer-m1"
         onMutated={vi.fn().mockResolvedValue(undefined)}
         fpsNum={30}
@@ -181,9 +181,14 @@ describe("MotifFields form generation", () => {
         currentTimeUs={1_000_000}
       />,
     );
-    expect(
-      screen.getByText("Unknown motif — its props can't be edited here."),
-    ).toBeTruthy();
+    const view = panel("gone");
+    // A localized lead naming the folder; the package error under it as main wrote it.
+    expect(screen.getByText("Motifs/gone/ is not a valid Motif")).toBeTruthy();
+    expect(screen.getByText("index.html is missing")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Props" })).toBeNull();
+    view.unmount();
+    panel("not-synced");
+    expect(screen.getByText("Loading this Motif…")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Props" })).toBeNull();
     expect(updateLayerParams).not.toHaveBeenCalled();
   });
@@ -298,7 +303,7 @@ describe("MotifFields params-page branch", () => {
   });
 
   it("embeds the motif's own sandboxed page instead of the form when it ships one", async () => {
-    setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
+    setProjectMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
     render(
       <AttributePanel
         tracks={[motifTrack(TEST_MANIFEST.id, DEFAULT_PROPS)]}
@@ -322,7 +327,7 @@ describe("MotifFields params-page branch", () => {
   });
 
   it("busts the page URL when the catalog revision bumps (watcher hot-reload)", async () => {
-    setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
+    setProjectMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
     render(
       <AttributePanel
         tracks={[motifTrack(TEST_MANIFEST.id, DEFAULT_PROPS)]}
@@ -336,7 +341,7 @@ describe("MotifFields params-page branch", () => {
     const srcOf = () => screen.getByRole("region", { name: "Props" }).querySelector("iframe")!.getAttribute("src");
     await waitFor(() => expect(srcOf()).toContain("motif://"));
     const before = srcOf();
-    act(() => setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]));
+    act(() => setProjectMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]));
     expect(srcOf()).not.toBe(before);
   });
 
@@ -347,7 +352,7 @@ describe("MotifFields params-page branch", () => {
     });
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
     const container = document.createElement("div");
-    setUserMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
+    setProjectMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]);
     const view = render(
       <AttributePanel tracks={[motifTrack(TEST_MANIFEST.id, DEFAULT_PROPS)]}
         selectedLayerId="layer-m1" onMutated={vi.fn().mockResolvedValue(undefined)}

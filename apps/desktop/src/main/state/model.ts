@@ -4,6 +4,7 @@ import type { DecodeRoute } from '../../shared/decode-route'
 import type { Animated } from '../../shared/keyframe'
 import type { PositionAnimation } from '../../shared/position'
 import type { TimingFields } from '../../shared/timeMapping'
+import type { ProjectMotifs } from '../../shared/motifs/projectMotifs'
 
 /** The on-disk `project.json` schema version this build reads and writes.
  *
@@ -13,7 +14,7 @@ import type { TimingFields } from '../../shared/timeMapping'
  *
  *  This is the only home for the number: Rust deserializes projects but has no
  *  opinion about the version (`native/src/state/project.rs`). */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 export type Uuid = string
 export type TimeUs = number
@@ -97,14 +98,17 @@ export interface TextParams {
   graphic_role: string | null
 }
 export interface MotifParams extends TimingFields {
-  kind: 'Motif'; motif_id: string; motif_version: number; props: Record<string, unknown>
+  kind: 'Motif'
+  /** A key of `Project.motifs`: what the layer renders is that entry's folder. */
+  motif_id: string
+  props: Record<string, unknown>
   src_in_us: TimeUs; transform: Transform; opacity: Animated<number>
   /** What the layer is for (`shared/graphicRole.ts`); born from the manifest's
    *  `graphic_role` unless the caller names one; null = untagged. */
   graphic_role: string | null
 }
 export interface MotifRebindEntry {
-  layer_id: string; motif_id: string; motif_version: number; props: Record<string, unknown>
+  layer_id: string; motif_id: string; props: Record<string, unknown>
 }
 export interface AudioParams extends TimingFields {
   kind: 'Audio'; media: Uuid; src_in_us: TimeUs; src_out_us: TimeUs
@@ -295,6 +299,9 @@ export interface Project {
   next_group_ordinal: number
   media_pool: Record<string, MediaItem>; audio_roles: Record<string, RoleMixSettings>
   settings: ProjectSettings
+  /** The Motifs the project renders, each a folder under `Motifs/`
+   *  (`main/motif/projectStore.ts`). */
+  motifs: ProjectMotifs
 }
 
 /** A reserved-skeleton track. `label` is null because the name is DERIVED from
@@ -364,6 +371,6 @@ export function blankProject(idGen: IdGen, name: string): Project {
     schema_version: SCHEMA_VERSION, project_id: projectId,
     metadata: { name, created_at: now, modified_at: now, description: null },
     compositions: { [rootId]: root }, root_id: rootId, next_group_ordinal: 1,
-    media_pool: {}, audio_roles: {}, settings: defaultSettings(),
+    media_pool: {}, audio_roles: {}, settings: defaultSettings(), motifs: {},
   }
 }
