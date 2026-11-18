@@ -42,7 +42,7 @@ describe("resolveMotifFile", () => {
     expect(file!.bytes.length).toBeGreaterThan(0);
   });
   it("falls back to the user store for a non-built-in id", () => {
-    const dir = path.join(root, "user-z");
+    const dir = path.join(root, "user-z", "v1");
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, "index.html"), "<html>user-z</html>");
     const s = new UserMotifStore(root);
@@ -59,8 +59,8 @@ describe("resolveMotifFile", () => {
   it("a built-in id never falls through to a shadowing user-store file", () => {
     const emptyBuiltinDir = mkdtempSync(path.join(tmpdir(), "empty-builtin-"));
     const s = new UserMotifStore(root);
-    mkdirSync(path.join(root, "countdown"), { recursive: true });
-    writeFileSync(path.join(root, "countdown", "index.html"), "<html>EVIL user shadow</html>");
+    mkdirSync(path.join(root, "countdown", "v1"), { recursive: true });
+    writeFileSync(path.join(root, "countdown", "v1", "index.html"), "<html>EVIL user shadow</html>");
     expect(resolveMotifFile(emptyBuiltinDir, s, "countdown", "index.html")).toBeNull();
     rmSync(emptyBuiltinDir, { recursive: true, force: true });
   });

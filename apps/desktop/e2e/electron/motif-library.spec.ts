@@ -3,8 +3,9 @@ import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'nod
 import path from 'node:path'
 import { launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 
+/** Installs Cover Badge version 1; answers its version folder. */
 function seed(profile: string) {
-  const directory = path.join(profile, 'data', 'motifs', 'cover-badge')
+  const directory = path.join(profile, 'data', 'motifs', 'cover-badge', 'v1')
   mkdirSync(directory, { recursive: true })
   const manifest = { id: 'cover-badge', name: 'Cover Badge', version: 1, size: [640, 360], default_duration_s: 5, props_schema: {} }
   writeFileSync(path.join(directory, 'index.html'), `<!doctype html><html><head>
@@ -88,6 +89,14 @@ test('Motif picker offers per-card export and protected contextual deletion', as
     await expect(picker.locator('.motif-picker-bar').getByRole('button', { name: 'Export Motif ZIP' })).toHaveCount(0)
     const destination = path.join(profile, 'export.zip')
     await app.evaluate(({ dialog }, file) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: file }) }, destination)
+    // Never fill the runner's own trash: folders go to one beside the profile.
+    const trash = path.join(profile, 'trash')
+    mkdirSync(trash)
+    await app.evaluate(({ shell }, bin) => {
+      const fs = process.getBuiltinModule('node:fs')
+      const trashed: string[] = (globalThis as any).__trashed = []
+      shell.trashItem = async (target) => { trashed.push(target); fs.renameSync(target, `${bin}/${trashed.length}`) }
+    }, trash)
     await card.getByRole('button', { name: 'Export Motif ZIP' }).click()
     await expect.poll(() => existsSync(destination)).toBe(true)
     await card.click({ button: 'right' })
@@ -101,6 +110,8 @@ test('Motif picker offers per-card export and protected contextual deletion', as
     await confirm.getByRole('button', { name: 'Delete Motif' }).click()
     await expect(card).toHaveCount(0)
     expect(existsSync(directory)).toBe(false)
+    expect(await app.evaluate(() => (globalThis as any).__trashed)).toEqual([path.dirname(directory)])
+    expect(existsSync(path.join(trash, '1', 'v1', 'index.html'))).toBe(true)
     await expect(picker).toBeVisible()
   } finally { await app.close() }
 })

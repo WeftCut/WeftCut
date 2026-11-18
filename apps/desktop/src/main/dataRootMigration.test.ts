@@ -112,9 +112,9 @@ function memFs() {
 
 // A populated OLD data root at /old with all three buckets.
 function seedOldRoot(m: ReturnType<typeof memFs>): void {
-  m.write('/old/motifs/countdown/index.html', motifHtml('countdown'))
-  m.write('/old/motifs/lower-third/index.html', motifHtml('lower-third'))
-  m.write('/old/motifs/lower-third/logo.png', 'PNGBYTES')
+  m.write('/old/motifs/countdown/v1/index.html', motifHtml('countdown'))
+  m.write('/old/motifs/lower-third/v1/index.html', motifHtml('lower-third'))
+  m.write('/old/motifs/lower-third/v1/logo.png', 'PNGBYTES')
   m.write('/old/motifs/drafts/d1/index.html', motifHtml('d1'))
   m.write('/old/downloads/ffmpeg/ffmpeg.bin', 'FFMPEGDATA')
   // cache MUST NOT be copied — seed it to prove it is skipped.
@@ -174,8 +174,8 @@ describe('runCopy', () => {
     const { createdPaths } = runCopy('/old', '/new', m.fs, join)
 
     // motifs + downloads copied faithfully.
-    expect(m.files.get('/new/motifs/countdown/index.html')).toBe(motifHtml('countdown'))
-    expect(m.files.get('/new/motifs/lower-third/logo.png')).toBe('PNGBYTES')
+    expect(m.files.get('/new/motifs/countdown/v1/index.html')).toBe(motifHtml('countdown'))
+    expect(m.files.get('/new/motifs/lower-third/v1/logo.png')).toBe('PNGBYTES')
     expect(m.files.get('/new/motifs/drafts/d1/index.html')).toBe(motifHtml('d1'))
     expect(m.files.get('/new/downloads/ffmpeg/ffmpeg.bin')).toBe('FFMPEGDATA')
 
@@ -231,7 +231,7 @@ describe('runCopy', () => {
   it('refuses to merge into a pre-existing non-empty bucket', () => {
     const m = memFs()
     seedOldRoot(m)
-    m.write('/new/motifs/existing/index.html', motifHtml('existing'))
+    m.write('/new/motifs/existing/v1/index.html', motifHtml('existing'))
     expect(() => runCopy('/old', '/new', m.fs, join)).toThrow(/refusing to merge/)
   })
 
@@ -248,13 +248,24 @@ describe('runCopy', () => {
 describe('verify', () => {
   it('detects same-size resource corruption without an HTML change', () => {
     const m = memFs()
-    m.write('/old/motifs/scene/index.html', motifHtml('scene'))
-    m.write('/new/motifs/scene/index.html', motifHtml('scene'))
-    m.write('/old/motifs/scene/assets/model.glb', 'AAAA')
-    m.write('/new/motifs/scene/assets/model.glb', 'BBBB')
+    m.write('/old/motifs/scene/v1/index.html', motifHtml('scene'))
+    m.write('/new/motifs/scene/v1/index.html', motifHtml('scene'))
+    m.write('/old/motifs/scene/v1/assets/model.glb', 'AAAA')
+    m.write('/new/motifs/scene/v1/assets/model.glb', 'BBBB')
     expect(verify('/old', '/new', m.fs, join).ok).toBe(false)
-    m.write('/new/motifs/scene/assets/model.glb', 'AAAA')
+    m.write('/new/motifs/scene/v1/assets/model.glb', 'AAAA')
     expect(verify('/old', '/new', m.fs, join).ok).toBe(true)
+  })
+
+  it('verifies every installed version, not only the current one', () => {
+    const m = memFs()
+    seedOldRoot(m)
+    m.write('/old/motifs/countdown/v2/index.html', motifHtml('countdown', 2))
+    runCopy('/old', '/new', m.fs, join)
+    m.files.set('/new/motifs/countdown/v1/index.html', motifHtml('countdown', 9))
+    const r = verify('/old', '/new', m.fs, join)
+    expect(r.ok).toBe(false)
+    expect(r.mismatches.join(' ')).toMatch(/countdown\/v1/)
   })
 
   it('passes for a faithful copy', () => {
@@ -271,7 +282,7 @@ describe('verify', () => {
     seedOldRoot(m)
     runCopy('/old', '/new', m.fs, join)
     // Corrupt a copied motif (different manifest version → different content hash).
-    m.files.set('/new/motifs/countdown/index.html', motifHtml('countdown', 2))
+    m.files.set('/new/motifs/countdown/v1/index.html', motifHtml('countdown', 2))
     const r = verify('/old', '/new', m.fs, join)
     expect(r.ok).toBe(false)
     expect(r.mismatches.join(' ')).toMatch(/countdown/)
@@ -295,7 +306,7 @@ describe('verify-mismatch → rollback', () => {
     const before = m.snapshot('/old')
     const { createdPaths } = runCopy('/old', '/new', m.fs, join)
     // Simulate a verify mismatch.
-    m.files.set('/new/motifs/countdown/index.html', motifHtml('countdown', 9))
+    m.files.set('/new/motifs/countdown/v1/index.html', motifHtml('countdown', 9))
     const r = verify('/old', '/new', m.fs, join)
     expect(r.ok).toBe(false)
 

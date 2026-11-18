@@ -31,10 +31,10 @@ for (const source of ['builtin', 'installed'] as const) {
     if (source === 'installed') {
       // Same animation, but resolved through the runtime user catalog. The
       // export Worker has only built-in manifests: baked pixels must suffice.
-      const motifDir = path.join(userDataDir, 'data', 'motifs', motifId)
-      mkdirSync(motifDir, { recursive: true })
       const builtinDir = path.join(__dirname, '../../src/shared/motifs/builtin/countdown')
       const manifest = { ...JSON.parse(readFileSync(path.join(builtinDir, 'manifest.json'), 'utf8')), id: motifId }
+      const motifDir = path.join(userDataDir, 'data', 'motifs', motifId, `v${manifest.version}`)
+      mkdirSync(motifDir, { recursive: true })
       const html = readFileSync(path.join(builtinDir, 'index.html'), 'utf8')
         .replace('<head>', `<head><script type="application/json" id="motif-manifest">${JSON.stringify(manifest)}</script>`)
       writeFileSync(path.join(motifDir, 'index.html'), html)

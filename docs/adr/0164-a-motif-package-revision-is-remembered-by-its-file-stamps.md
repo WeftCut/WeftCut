@@ -92,3 +92,10 @@ The user store is edited by hand as well as by the app: a file saved into
   the stamp walk is what sees those edits.
 - A pin still holds a package's bytes in memory per revision. Serving pinned
   revisions from disk is a separate change.
+
+## Note (2026-11-17): records key version folders
+
+[ADR 0172](0172-the-motif-library-keeps-every-version.md) keeps each installed
+version in `<dataRoot>/motifs/<id>/v<n>/`. A record is keyed by the version
+folder, which is written once; a hand edit inside it is still seen by its
+stamps. The move to version folders carries each record with its folder.

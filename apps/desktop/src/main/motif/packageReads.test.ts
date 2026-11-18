@@ -43,16 +43,15 @@ afterEach(() => { for (const dir of roots.splice(0)) rmSync(dir, { recursive: tr
 describe('an installed package with a model', () => {
   let root: string, model: string
   const install = (store: UserMotifStore) => {
-    store.writeDraft('scene', page('scene'))
-    store.installDraft('scene', 'scene')
+    store.addVersion('scene', 1, [{ path: 'index.html', bytes: Buffer.from(page('scene')) }])
     mkdirSync(path.dirname(model))
     writeFileSync(model, MODEL)
   }
   const listed = (store: UserMotifStore) => listMotifsInner(store, []).find(e => e.id === 'scene')!.content_hash
-  beforeEach(() => { root = temp(); model = path.join(root, 'scene', 'assets', 'model.glb') })
+  beforeEach(() => { root = temp(); model = path.join(root, 'scene', 'v1', 'assets', 'model.glb') })
 
   it('is listed again without its model being read, while its files are unchanged', () => {
-    const store = new UserMotifStore(root, new PackageRevisions(null, '', settledClock))
+    const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
     install(store)
     const first = listed(store)
     expect(pathsRead(), 'the first listing hashes the model').toContain(model)
@@ -63,7 +62,7 @@ describe('an installed package with a model', () => {
   })
 
   it('answers its revision to a cover or a read without its model being read', () => {
-    const store = new UserMotifStore(root, new PackageRevisions(null, '', settledClock))
+    const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
     install(store)
     const first = listed(store)
 
@@ -83,30 +82,30 @@ describe('an installed package with a model', () => {
   })
 
   it('lists the revision of its new bytes after an edit in the store that keeps every size', () => {
-    const store = new UserMotifStore(root, new PackageRevisions(null, '', settledClock))
+    const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
     install(store)
     const first = listed(store)
 
     rewrite(model, OTHER_MODEL)
     const second = listed(store)
     expect(second).not.toBe(first)
-    expect(second).toBe(packageContentHash(readMotifDirectory(path.join(root, 'scene'))))
+    expect(second).toBe(packageContentHash(readMotifDirectory(path.join(root, 'scene', 'v1'))))
   })
 
   it('lists another revision when a file is added to it or removed', () => {
-    const store = new UserMotifStore(root, new PackageRevisions(null, '', settledClock))
+    const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
     install(store)
     const first = listed(store)
 
-    writeFileSync(path.join(root, 'scene', 'extra.js'), '')
+    writeFileSync(path.join(root, 'scene', 'v1', 'extra.js'), '')
     const withExtra = listed(store)
     expect(withExtra).not.toBe(first)
-    rmSync(path.join(root, 'scene', 'extra.js'))
+    rmSync(path.join(root, 'scene', 'v1', 'extra.js'))
     expect(listed(store)).toBe(first)
   })
 
   it('is pinned under the revision it lists, before and after an edit in the store', () => {
-    const store = new UserMotifStore(root, new PackageRevisions(null, '', settledClock))
+    const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
     install(store)
     const first = listed(store) as string
 
@@ -121,8 +120,26 @@ describe('an installed package with a model', () => {
     repinned!.release()
   })
 
+  it('keeps its recorded revision through the move to its version folder', () => {
+    // A format 1 library kept the package at `<id>/`, recorded there.
+    const flat = path.join(root, 'scene')
+    mkdirSync(path.join(flat, 'assets'), { recursive: true })
+    writeFileSync(path.join(flat, 'index.html'), page('scene'))
+    writeFileSync(path.join(flat, 'assets', 'model.glb'), MODEL)
+    writeFileSync(path.join(root, '.format'), '1')
+    const revisions = new PackageRevisions(null, '', settledClock)
+    const revision = packageContentHash(readMotifDirectory(flat))
+    revisions.record(flat, revisions.stamp(flat), { revision })
+    const store = new UserMotifStore(root, { revisions })
+    store.upgrade()
+
+    forgetReads()
+    expect(listed(store)).toBe(revision)
+    expect(pathsRead()).not.toContain(model)
+  })
+
   it('is not pinned under a revision its bytes never had', () => {
-    const store = new UserMotifStore(root, new PackageRevisions(null, '', settledClock))
+    const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
     install(store)
     listed(store)
     expect(() => store.pinPackage('scene', 'f'.repeat(64))).toThrow(/revision changed/)
@@ -133,7 +150,7 @@ describe('a draft linked to a directory with a model', () => {
   let store: UserMotifStore, workspace: MotifWorkspace, directory: string, model: string, id: string
   const row = () => (workspace.list() as Array<{ id: string; revision: string; diagnostic?: string }>).find(e => e.id === id)!
   beforeEach(() => {
-    store = new UserMotifStore(temp(), new PackageRevisions(null, '', settledClock))
+    store = new UserMotifStore(temp(), { revisions: new PackageRevisions(null, '', settledClock) })
     workspace = new MotifWorkspace(store, [])
     directory = temp()
     model = path.join(directory, 'assets', 'model.glb')

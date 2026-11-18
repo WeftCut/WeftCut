@@ -3280,8 +3280,30 @@ export async function installMotif(
   return result.motif_id;
 }
 
+/// Moves the Motif's folders to the system trash; rejects, deleting nothing,
+/// when the trash refuses.
 export async function deleteMotif(id: string): Promise<void> {
   await invoke("delete_motif", { motif_id: id });
+}
+
+/// One saved version of an installed Motif (ADR 0172). Mirrors
+/// `MotifVersion` in `src/main/motif/store.ts`.
+export interface MotifVersion {
+  version: number;
+  revision: string;
+  saved_at: string;
+}
+
+/// The installed Motif's saved versions, newest (current) first; none for a
+/// built-in or a draft.
+export async function listMotifVersions(id: string): Promise<MotifVersion[]> {
+  return invoke<MotifVersion[]>("list_motif_versions", { motif_id: id });
+}
+
+/// Saves version `version` again as the Motif's newest version; this
+/// project's clips of it rebind as an Update rebinds them.
+export async function restoreMotifVersion(id: string, version: number): Promise<void> {
+  await invoke("restore_motif_version", { motif_id: id, version });
 }
 
 /// Overwrite an existing draft from its full edited source (in-app source panel).

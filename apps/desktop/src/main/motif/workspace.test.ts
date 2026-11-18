@@ -17,8 +17,8 @@ function folder() {
     writeFileSync(path.join(root, 'index.html'), '<html><body>one</body></html>');
     return root;
 }
-it('reopens a linked directory as the same draft, captures edits and never deletes the source', () => {
-    const store = new UserMotifStore(temp());
+it('reopens a linked directory as the same draft, captures edits and never deletes the source', async () => {
+    const store = new UserMotifStore(temp(), { trash: async (target) => rmSync(target, { recursive: true }) });
     const workspace = new MotifWorkspace(store, []);
     const directory = folder();
     const first = workspace.open({ kind: 'directory', path: directory });
@@ -27,7 +27,8 @@ it('reopens a linked directory as the same draft, captures edits and never delet
     const next = workspace.read(first.motif_id);
     expect(next.revision).not.toBe(first.revision);
     expect(store.readHtml(first.motif_id)).toContain('two');
-    workspace.delete(first.motif_id);
+    await workspace.delete(first.motif_id);
+    expect(store.getDraft(first.motif_id)).toBeNull();
     expect(readFileSync(path.join(directory, 'index.html'), 'utf8')).toContain('two');
 });
 it('updates several files together, refuses stale revisions, and publishes a retained draft exactly once', () => {

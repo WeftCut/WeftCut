@@ -62,8 +62,8 @@ test('@serial raster GC keeps frames when a motif is unresolvable, reclaims true
   let { app, page } = await launchApp({ userDataDir: userData })
   try {
     // The user Motif exists on disk BEFORE the project references it.
-    mkdirSync(path.join(motifsRoot, MOTIF_ID), { recursive: true })
-    writeFileSync(path.join(motifsRoot, MOTIF_ID, 'index.html'), motifHtml())
+    mkdirSync(path.join(motifsRoot, MOTIF_ID, 'v1'), { recursive: true })
+    writeFileSync(path.join(motifsRoot, MOTIF_ID, 'v1', 'index.html'), motifHtml())
 
     await newProject(page, {
       parentFolder: tmpDir('weftcut-e2e-raster-gc-proj-'),

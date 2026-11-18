@@ -577,6 +577,11 @@ _Avoid_: Motif uuid, global id, identity (the id's word)
 **Installed Motif**: A published copy with its own identity and version; publishing keeps the draft.
 See [motif-workspaces.md](docs/motif-workspaces.md).
 
+**Motif version**: One saved state of an installed Motif, in its own library folder `<id>/v<n>/` and
+never written over; the highest is the current one. Publishing or restoring an older one adds a
+version. See ADR 0172.
+_Avoid_: revision (the content hash's word), history entry
+
 **Motif proposal**: An agent's request to publish one revision of a draft (`install_motif`), frozen
 when made and pending until the user decides. It replaces an installed Motif at a stated version, or
 takes a new id from the draft's name; a taken id is refused, never numbered. A newer proposal from

@@ -17,6 +17,7 @@
 
 import { parseManifestIsland } from '../shared/motifs/catalog'
 import { motifContentHash } from './motif/contentHash'
+import { versionOfDir } from './motif/store'
 import type { DataRootProgress } from '../shared/data-root'
 
 // The three fixed data-root buckets (dataRoot.ts layout). `motifs` + `downloads`
@@ -266,8 +267,8 @@ export function runCopy(
   }
 }
 
-// Build a per-motif content-identity map for a motifs/ dir. Keys are the motif
-// id (published) or `drafts/<id>`; values are the reused motifContentHash (or a
+// Build a per-motif content-identity map for a motifs/ dir. Keys are an
+// installed version, `<id>/v<n>`, or `drafts/<id>`; values are the reused motifContentHash (or a
 // raw-content fallback for a motif whose manifest island won't parse, so a
 // corrupt copy still can't pass as "ok").
 function motifValueAt(dir: string, fs: MigrationFs, join: Join): string | null {
@@ -313,8 +314,12 @@ function motifValueMap(motifsDir: string, fs: MigrationFs, join: Join): Map<stri
       }
       continue
     }
-    const v = motifValueAt(entry, fs, join)
-    if (v != null) map.set(name, v)
+    for (const child of [...fs.readDir(entry)].sort()) {
+      const version = join(entry, child)
+      if (versionOfDir(child) === null || !fs.isDirectory(version)) continue
+      const v = motifValueAt(version, fs, join)
+      if (v != null) map.set(name + '/' + child, v)
+    }
   }
   return map
 }

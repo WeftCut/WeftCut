@@ -111,7 +111,7 @@ user sees a card in the app's Motifs panel with the proposed package in the
 preview player, its props, what changed against the installed version, and
 the clips of the open project that will rebind; a small note in the status
 bar points to it. Approve publishes the frozen revision, as a new version of
-the target, and rebinds the trial layers; Reject keeps the draft and stores
+the target (earlier versions stay in the library), and rebinds the trial layers; Reject keeps the draft and stores
 the user's note. Tell the user the proposal is waiting and stop; list_motifs
 shows the outcome on the draft's row as publication (state, note, version, and
 for an approval the rebound layers with the props each one dropped), and the
@@ -133,8 +133,10 @@ draft edits; edits made after proposing are not in the proposal.
 export_motif writes a complete ZIP to path, which is required: an absolute
 local `.zip` path in an existing folder; an existing file is refused, never
 overwritten. It accepts expected_revision. A stale expected_revision on any
-tool is refused with the current revision. Deleting a draft removes app-owned
-data, its pending proposal and its association, never linked author files.
+tool is refused with the current revision. Deleting moves the Motif's
+app-owned folders, every installed version with them, to the system trash and
+drops its pending proposal and association; linked author files are never
+touched. When the trash refuses, nothing is deleted.
 
 Captures pin companion URLs under a revision path, so a source edit cannot
 swap assets midway through a capture. Only a bounded number of revisions stay

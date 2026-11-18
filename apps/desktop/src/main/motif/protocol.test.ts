@@ -33,9 +33,9 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-/// Install a user motif directory with the given files under `<root>/<id>/`.
+/// Install version 1 of a user motif with the given files, under `<root>/<id>/v1/`.
 function installUserMotif(id: string, files: Record<string, string>): void {
-  const dir = path.join(root, id)
+  const dir = path.join(root, id, 'v1')
   mkdirSync(dir, { recursive: true })
   for (const [name, body] of Object.entries(files)) writeFileSync(path.join(dir, name), body)
 }

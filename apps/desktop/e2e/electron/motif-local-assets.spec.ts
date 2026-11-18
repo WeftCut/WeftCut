@@ -151,7 +151,7 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
     expect(publishedId).not.toBe(id)
     const publishedHash = await hash(publishedId)
     expect((await capture(publishedId, 0, publishedHash)).equals(first)).toBe(true)
-    const installed = path.join(userDataDir, 'data', 'motifs', publishedId)
+    const installed = path.join(userDataDir, 'data', 'motifs', publishedId, 'v1')
     writeFileSync(path.join(installed, 'assets', 'texture.png'), texture(0, 255))
     writeFileSync(path.join(installed, 'scene.js'), sceneSource(0.5))
     const changedHash = await hash(publishedId)

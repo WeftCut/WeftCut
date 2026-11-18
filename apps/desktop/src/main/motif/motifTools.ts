@@ -2,8 +2,9 @@
 //
 // Host-level Motif tool dispatcher. Both surfaces call this: the renderer IPC
 // path (ts-actor-host.handleInvoke `case 'motif'`) and the MCP path (server.ts
-// `route === 'motif'`). Returns a RAW value (array | object | id string | null);
-// the MCP caller wraps it via shapeMotifMcpResult, the renderer returns it as-is.
+// `route === 'motif'`). Returns a RAW value (array | object | id string | null),
+// or a promise of one for `delete_motif`, which waits on the system trash; the
+// MCP caller wraps it via shapeMotifMcpResult, the renderer returns it as-is.
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { isUtf8 } from 'node:buffer';
@@ -112,9 +113,10 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
         }
         case 'delete_motif': {
             const id = subject(a);
-            workspace.delete(id);
-            transitioned();
-            return { motif_id: id };
+            return workspace.delete(id).then(() => {
+                transitioned();
+                return { motif_id: id };
+            });
         }
         case 'install_motif': {
             // An agent proposes; the user approves in the Motif panel (ADR 0046).
@@ -133,6 +135,15 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
             return result;
         }
         case 'list_motif_proposals': return workspace.proposals(deps.motifLayers());
+        case 'list_motif_versions': return workspace.listVersions(subject(a));
+        case 'restore_motif_version': {
+            // The user restores an older version as the newest one.
+            const { updates, ...result } = workspace.restore(subject(a), a.version as number, deps.motifLayers());
+            if (updates.length)
+                deps.dispatchRebind(updates);
+            transitioned();
+            return result;
+        }
         case 'approve_motif_proposal': {
             const { updates, ...result } = workspace.approve(subject(a), a.proposal_id as string, deps.motifLayers());
             if (updates.length)

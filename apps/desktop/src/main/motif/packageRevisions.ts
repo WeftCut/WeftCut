@@ -93,6 +93,16 @@ export class PackageRevisions {
     if (this.entries.delete(dir)) this.save()
   }
 
+  /** `to` takes `from`'s record: its files were moved with their directory,
+   *  which keeps their stamps. */
+  move(from: string, to: string): void {
+    const entry = this.entries.get(from)
+    if (!entry) return
+    this.entries.delete(from)
+    this.entries.set(to, entry)
+    this.save()
+  }
+
   /** A record that cannot be written costs one more read, never an error. */
   private save(): void {
     if (!this.file) return
