@@ -23,6 +23,7 @@ pub mod link;
 pub mod marker;
 pub mod media;
 pub mod project;
+pub mod project_path;
 pub mod time;
 pub mod timing;
 pub mod track;
@@ -58,6 +59,7 @@ pub use project::{
     PauseReviewSettings, Project, ProjectMetadata, ProjectSettings, ProjectSettingsPatch,
     ShotReviewSettings, TrackFlagsPatch,
 };
+pub use project_path::{fold_case, portable_file_name, ProjectPathError, ProjectRelPath};
 pub use time::{snap_frame_ceil, snap_frame_floor, Rational, TimeUs, US_PER_MS, US_PER_SEC};
 pub use track::{Track, TrackRole};
 pub use transform::{BlendMode, Rect, Transform};
