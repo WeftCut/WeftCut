@@ -315,6 +315,7 @@ const EXCEPTIONS: Record<string, string> = {
   correct_caption_text: 'needs captions to correct; mcp.captions-tools.test.ts covers script and the scope arguments',
   install_motif: 'proposes a project Motif from its folder on disk to the library (motifTools.test.ts covers the lineage target and expected_version)',
   export_motif: 'reads a project or library Motif on disk; the path refusals are pinned in mcp.error-vocabulary and motifTools tests',
+  update_motif_files: 'writes a project Motif folder on disk; motifTools.test.ts covers expected_revision null repairing an invalid folder and refused for a valid one',
   create_export_preset: 'writes the app preference store (exportPresetTools.test.ts)',
   update_export_preset: 'writes the app preference store; exportPresetTools.test.ts covers name / settings / default alone and together',
   start_export: 'its fields shape an asynchronous job that needs the renderer (exportJobs.test.ts; the pre-reservation refusals in this file)',

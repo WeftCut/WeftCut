@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 
 // Vendored shadcn skeleton re-skinned to WeftCut's compact dark scale
 // (ADR 0018): variants/sizes expressed in tokens. Unlayered legacy context
-// rules (e.g. `.preview-transport button`) beat these utilities — delete them
+// rules (e.g. `.transport-buttons button`) beat these utilities — delete them
 // as call sites migrate.
 const buttonVariants = cva(
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 border font-normal whitespace-nowrap transition-colors select-none outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",

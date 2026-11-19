@@ -46,8 +46,9 @@ test('MCP motif tools are advertised and callable', async ({ motifSession: { pag
 
   // list_motifs returns the catalog
   const listResult = await client.callTool({ name: 'list_motifs', arguments: {} })
-  expect(listResult.content[0]).toMatchObject({ type: 'text' })
-  const catalog = JSON.parse((listResult.content[0] as { type: string; text: string }).text)
+  const listContent = listResult.content as Array<{ type: string; text: string }>
+  expect(listContent[0]).toMatchObject({ type: 'text' })
+  const catalog = JSON.parse(listContent[0]!.text)
   expect(Array.isArray(catalog)).toBe(true)
   expect(catalog.length).toBeGreaterThan(0)
   const countdown = catalog.find((m: { id: string }) => m.id === 'countdown')
@@ -58,7 +59,7 @@ test('MCP motif tools are advertised and callable', async ({ motifSession: { pag
     name: 'add_layers',
     arguments: { layers: [{ t_start_us: 0, t_end_us: 5_000_000, content: { kind: 'motif', motif_id: 'countdown' } }] },
   })
-  const layerId = (JSON.parse((addResult.content[0] as { type: string; text: string }).text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
+  const layerId = (JSON.parse((addResult.content as Array<{ text: string }>)[0]!.text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
   expect(layerId).toMatch(/^[0-9a-f-]{36}$/)
 
   // preview_motif returns image content (JS-side capture)
@@ -66,7 +67,7 @@ test('MCP motif tools are advertised and callable', async ({ motifSession: { pag
     name: 'preview_motif',
     arguments: { motif_id: 'countdown', local_t_s: [0, 1.5] },
   }))
-  expect(previewResult.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' })
+  expect((previewResult.content as unknown[])[0]).toMatchObject({ type: 'image', mimeType: 'image/png' })
 
   // motifs://current resource is readable
   const motifRes = await client.readResource({ uri: 'motifs://current' })

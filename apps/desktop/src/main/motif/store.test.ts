@@ -225,6 +225,38 @@ describe("UserMotifStore legacy Update targets", () => {
   });
 });
 
+describe("UserMotifStore staging a crash left", () => {
+  const uuid = "0f8e2b1c-3d4a-4b5c-8d6e-7f8091a2b3c4";
+
+  it("removes it at every launch, and nothing the store lists", () => {
+    const s = new UserMotifStore(root);
+    s.upgrade();
+    install(s, "foo", "Foo");
+    // A publication and a proposal, each interrupted before its rename.
+    mkdirSync(path.join(root, "foo", `.stage-${uuid}`));
+    writeFileSync(path.join(root, "foo", `.stage-${uuid}`, "index.html"), page("foo", "Half", 2));
+    mkdirSync(path.join(root, ".proposals", `${uuid}.stage-${uuid}`), { recursive: true });
+    writeFileSync(path.join(root, ".proposals", `${uuid}.stage-${uuid}`, "index.html"), page("bar", "Half", 1));
+    mkdirSync(path.join(root, ".proposals", uuid));
+    writeFileSync(path.join(root, ".proposals", uuid, "index.html"), page("bar", "Bar", 1));
+    const listed = { manifests: s.listManifests(), versions: s.versions("foo"), proposal: s.proposalListing(uuid) };
+    new UserMotifStore(root).upgrade();
+    expect(readdirSync(path.join(root, "foo"))).toEqual(["v1"]);
+    expect(readdirSync(path.join(root, ".proposals"))).toEqual([uuid]);
+    const after = new UserMotifStore(root);
+    expect({ manifests: after.listManifests(), versions: after.versions("foo"), proposal: after.proposalListing(uuid) }).toEqual(listed);
+  });
+
+  it("leaves an older release's package whole: its files are the author's", () => {
+    writeFileSync(path.join(root, ".format"), "1");
+    mkdirSync(path.join(root, "card", ".stage-mine"), { recursive: true });
+    writeFileSync(path.join(root, "card", "index.html"), page("card", "Card", 1));
+    writeFileSync(path.join(root, "card", ".stage-mine", "notes.txt"), "mine");
+    new UserMotifStore(root).upgrade();
+    expect(readFileSync(path.join(root, "card", "v1", ".stage-mine", "notes.txt"), "utf8")).toBe("mine");
+  });
+});
+
 // ADR 0172: format 1 kept an installed Motif's one version at `<id>/`.
 describe("UserMotifStore versioning a format 1 library", () => {
   /** A format 1 package at `<id>/`, its manifest at `version`. */

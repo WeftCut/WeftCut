@@ -21,7 +21,7 @@ import { uiPixels, useUiScale } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
 import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
 import { adjacentFrameBoundaryUs, formatTimecode } from "../frames";
-import { groupDisplayName, layerDisplayName } from "../lib/layerName";
+import { groupDisplayName, useLayerDisplayName } from "../lib/layerName";
 import { AppInput } from "../components/AppInput";
 import {
   clipDetail,
@@ -530,7 +530,7 @@ export function LayerBlock({
   const layerWidthPx = Math.max(((liveEnd - liveStart) / 1_000_000) * pxPerSec, 1);
   const uiScale = useUiScale();
   const detail = clipDetail(layerWidthPx, uiScale);
-  const label = layerDisplayName(layer, t, groupOrdinals);
+  const label = useLayerDisplayName(layer, t, groupOrdinals);
 
   /// The clip's head in SOURCE time — 0 for the kinds that window no source.
   const srcInUs = approximateTime(sourceIn(layer.params));

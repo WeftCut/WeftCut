@@ -131,11 +131,11 @@ test('@serial paused motif recovers after real capture delivery failures without
     // captured, so nothing is stored for a read to find, and the prewarmer
     // cannot hide the initial failure.
     await app.evaluate(({ ipcMain }) => {
-      const handlers = (ipcMain as any)._invokeHandlers as Map<string, (event: unknown, args: unknown) => unknown>
+      const handlers = ipcMain._invokeHandlers
       const capture = handlers.get('motif:capture')
       if (!capture) throw new Error('motif:capture has no handler')
       ;(globalThis as any).__previewRecoveryCaptureBlocked = true
-      handlers.set('motif:capture', async (event: unknown, args: unknown) => {
+      handlers.set('motif:capture', async (event, args: unknown) => {
         if ((globalThis as any).__previewRecoveryCaptureBlocked) throw new Error('[e2e] temporary capture delivery failure')
         return capture(event, args)
       })
@@ -170,10 +170,10 @@ test('@serial motif content progresses when frame delivery is slower than the di
     // pixels become a bitmap in the isolated preload world, out of reach of
     // the page's own globals.
     await app.evaluate(({ ipcMain }) => {
-      const handlers = (ipcMain as any)._invokeHandlers as Map<string, (event: unknown, args: unknown) => unknown>
+      const handlers = ipcMain._invokeHandlers
       const capture = handlers.get('motif:capture')
       if (!capture) throw new Error('motif:capture has no handler')
-      handlers.set('motif:capture', async (event: unknown, args: unknown) => {
+      handlers.set('motif:capture', async (event, args: unknown) => {
         const reply = await capture(event, args)
         await new Promise(resolve => setTimeout(resolve, 80))
         return reply

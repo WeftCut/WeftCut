@@ -412,7 +412,7 @@ test('background export keeps review available and preserves output across Previ
     await expect.poll(async () => (await transport())?.phase).toBe('playing')
     await expect.poll(async () => (await transport())?.positionUs).toBeGreaterThan(scrubbed)
     await expect.poll(() => page.evaluate(() =>
-      window.__weftcutTest!.compositorPerfSnapshot()?.sync.videoLateMs ?? null)).not.toBeNull()
+      window.__weftcutTest!.compositorPerfSnapshot()?.sync?.videoLateMs ?? null)).not.toBeNull()
     await play.click()
     await expect.poll(async () => (await transport())?.phase).toBe('paused')
     const capture = () => page.screenshot({

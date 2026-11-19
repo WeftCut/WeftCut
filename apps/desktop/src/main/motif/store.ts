@@ -32,6 +32,12 @@ function safeSeg(seg: string): string {
 const STORE_FORMAT = 2;
 const FORMAT_FILE = ".format";
 
+/** A version written aside in `<id>/` before it is renamed into place. */
+const STAGE_PREFIX = ".stage-";
+/** A proposal's package written aside in `.proposals/` (`replacePackage`):
+ *  `<key>.stage-<uuid>`. */
+const PROPOSAL_STAGE = /\.stage-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /** An installed version's directory: `v` and the manifest version it holds. */
 export function versionDirName(version: number): string { return `v${version}`; }
 /** The version a library directory name holds, or null when it is no version's. */
@@ -165,18 +171,40 @@ export class UserMotifStore {
   }
 
   /** Brings a store an older release wrote to this build's layout, once: the
-   *  marker keeps a later launch from treating files written since as old. */
+   *  marker keeps a later launch from treating files written since as old.
+   *  Then removes the staging a crash left mid-write. Runs at launch, before
+   *  anything reads or writes the store. */
   upgrade(): void {
     const marker = path.join(this._root, FORMAT_FILE);
     let format = 0;
     try { format = Number(readFileSync(marker, "utf8").trim()) || 0; } catch { /* format 0 */ }
-    if (format >= STORE_FORMAT) return;
-    if (format < 1) this.removeLegacyTargets();
-    if (!this.versionLegacyPackages()) return;
-    try {
-      mkdirSync(this._root, { recursive: true });
-      writeFileSync(marker, String(STORE_FORMAT));
-    } catch { /* upgraded again at the next launch */ }
+    if (format < STORE_FORMAT) {
+      if (format < 1) this.removeLegacyTargets();
+      if (!this.versionLegacyPackages()) return;
+      try {
+        mkdirSync(this._root, { recursive: true });
+        writeFileSync(marker, String(STORE_FORMAT));
+      } catch { /* upgraded again at the next launch */ }
+    }
+    this.removeAbandonedStaging();
+  }
+
+  /** The staging folders of writes a crash interrupted: a version's in
+   *  `<id>/` (`addVersion`) and a proposal's in `.proposals/`
+   *  (`replacePackage`); no read lists them. Only in this build's layout:
+   *  before the upgrade, `<id>/` is an older release's package, and its
+   *  files are the author's. */
+  private removeAbandonedStaging(): void {
+    const remove = (dir: string, abandoned: (name: string) => boolean) => {
+      let names: string[];
+      try { names = readdirSync(dir); } catch { return; }
+      for (const name of names) {
+        if (!abandoned(name)) continue;
+        try { rmSync(path.join(dir, name), { recursive: true, force: true }); } catch { /* removed at a later launch */ }
+      }
+    };
+    for (const id of this.packageDirNames()) remove(path.join(this._root, id), name => name.startsWith(STAGE_PREFIX));
+    remove(path.join(this._root, PROPOSALS_DIR), name => PROPOSAL_STAGE.test(name));
   }
 
   /** Format 1 kept an installed Motif's one version at `<id>/`; it moves to
@@ -261,7 +289,7 @@ export class UserMotifStore {
     }
     mkdirSync(library, { recursive: true });
     if (existsSync(dir)) throw new Error(`Version ${version} of '${id}' already exists`);
-    const staging = path.join(library, `.stage-${randomUUID()}`);
+    const staging = path.join(library, STAGE_PREFIX + randomUUID());
     try {
       for (const file of files) {
         const dest = path.join(staging, ...file.path.split('/'));

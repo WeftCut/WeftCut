@@ -14,6 +14,7 @@ import {
   type CleanupMarker,
 } from './dataRootMigration'
 import type { Manifest } from '../shared/motifs/catalog'
+import { TRUST_FILE } from './motif/trust'
 
 // POSIX join so path math is deterministic in-memory (no platform separators).
 const join = (...parts: string[]) => parts.join('/')
@@ -186,6 +187,15 @@ describe('runCopy', () => {
 
     // createdPaths lets rollback undo the whole fresh new root.
     expect(createdPaths).toContain('/new')
+  })
+
+  it('carries the machine\'s Motif trust record with the library', () => {
+    const m = memFs()
+    seedOldRoot(m)
+    const record = JSON.stringify({ version: 1, revisions: { ['a'.repeat(64)]: [1, 'user'] } })
+    m.write(`/old/motifs/${TRUST_FILE}`, record)
+    runCopy('/old', '/new', m.fs, join)
+    expect(m.files.get(`/new/motifs/${TRUST_FILE}`)).toBe(record)
   })
 
   it('leaves the OLD root completely intact (source read-only)', () => {
