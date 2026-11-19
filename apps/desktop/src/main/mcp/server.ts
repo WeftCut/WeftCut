@@ -31,6 +31,7 @@ import { canonicalizeProps, MotifPropError, type Manifest } from '../../shared/m
 import { mediaPropProblem } from '../../shared/motifs/mediaProp.js'
 import { agentMotifRow, shapeMotifMcpResult } from './motifResult.js'
 import { composeMotifSheet } from './motifSheet.js'
+import { untrustedRefusal } from '../motif/motifTools.js'
 import { runHybrid } from '../state/hybrids.js'
 import { CLIP_SLICE_TOOLS, HEARD_SLICE_TOOLS, resolveClipSliceArgs, resolveHeardSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
 import { resolvePauseSubject } from '../state/pauseSubject.js'
@@ -733,8 +734,14 @@ async function dispatchTool(
     // floor and the props go through as sent.
     let entry: { manifest: Manifest; revision: string } | undefined
     if (tsHost) {
-      const read = tsHost.motifTool('read_motif', { motif_id: motifId, ...(a.group ? { group: a.group } : {}) }) as { manifest: Manifest | null; revision: string | null; diagnostic?: string } | undefined
+      const read = tsHost.motifTool('read_motif', { motif_id: motifId, ...(a.group ? { group: a.group } : {}) }) as { manifest: Manifest | null; revision: string | null; status?: string; diagnostic?: string } | undefined
       if (!read) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the project's and the library's ids`, data: { error: 'MotifNotFound', id: motifId } })
+      // Rendering runs its code: an untrusted Motif is refused before the
+      // capture gate would be.
+      if (read.status === 'untrusted' && read.revision) {
+        const refusal = untrustedRefusal(motifId, read.revision)
+        return toolErrorResult({ code: 'invalid_params', message: refusal.message, data: refusal.data })
+      }
       if (read.diagnostic || !read.manifest || !read.revision) return toolErrorResult({ code: 'invalid_params', message: read.diagnostic ?? `Motif '${motifId}' cannot render`, data: { error: 'MotifUnavailable', id: motifId } })
       if (a.expected_revision && a.expected_revision !== read.revision) return toolErrorResult({ code: 'invalid_params', message: `Motif revision conflict: the current revision is ${read.revision}; preview without expected_revision, or read it again`, data: { error: 'RevisionConflict', current_revision: read.revision } })
       entry = { manifest: read.manifest, revision: read.revision }
@@ -820,16 +827,18 @@ function historyLockedRefusal(err: McpToolErrorJson, tsHost: TsActorHost): McpTo
  *  recent history the panel keeps; `lock_reason` is the history lock. `project`
  *  is the project the user has open (null on the start screen), with the Recents
  *  list and default parent folder `open_project` / `create_project` draw on.
- *  `motifs` names the open project's Motifs that cannot render. The resource
- *  defs themselves live in `hostResources.ts`. */
+ *  `motifs` names the open project's Motifs that cannot render, an untrusted
+ *  one with the revision the user would trust. The resource defs themselves
+ *  live in `hostResources.ts`. */
 export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsActorHost, 'projectStatus' | 'unavailableMotifs'>>): Record<string, unknown> {
   const snap = host.agent.snapshot()
   const unavailable = host.unavailableMotifs?.() ?? []
   const motifs = (status: 'missing' | 'invalid') => unavailable.filter(m => m.status === status).map(({ motif_id, diagnostic }) => ({ motif_id, diagnostic }))
+  const untrusted = unavailable.filter(m => m.status === 'untrusted').map(({ motif_id, revision, diagnostic }) => ({ motif_id, revision: revision ?? null, diagnostic }))
   return {
     active: snap.session, sessions: snap.sessions.slice(-10), lock_reason: snap.lock_reason,
     ...(host.projectStatus ? host.projectStatus() : {}),
-    motifs: { missing: motifs('missing'), invalid: motifs('invalid') },
+    motifs: { missing: motifs('missing'), invalid: motifs('invalid'), untrusted },
   }
 }
 

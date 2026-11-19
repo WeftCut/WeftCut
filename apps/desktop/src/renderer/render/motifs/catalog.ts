@@ -52,7 +52,8 @@ export function motifCatalogRevision(): number {
 }
 
 /// Replaces the catalog with the open project's Motifs: `manifests` those
-/// that render, `missing` those whose folder is gone or makes no package.
+/// that render, `missing` those whose folder is gone, makes no package, or
+/// holds a revision not trusted on this machine.
 /// Idempotent — call it whenever the backend catalog changes, and with no
 /// arguments when no project is open.
 export function setProjectMotifs(manifests: MotifManifest[] = [], missing: UnavailableMotif[] = []): void {
@@ -68,7 +69,7 @@ export function getMotif(id: string): Motif | null {
 }
 
 /// Why project Motif `id` cannot render, when the project records it but its
-/// folder is missing or invalid; null for one that renders or one the catalog
+/// folder is missing, invalid or untrusted; null for one that renders or one the catalog
 /// has not heard of yet (a sync still in flight).
 export function motifUnavailable(id: string): UnavailableMotif | null {
   return unavailable.get(id) ?? null;

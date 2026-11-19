@@ -132,8 +132,10 @@ export const AUDIO_FX_CHANNELS: ReadonlySet<string> = new Set([
  *  (ADR 0046), the library card's `list_motif_versions` /
  *  `restore_motif_version` (ADR 0172) and `delete_library_motif`, and
  *  `update_project_motif`, the user's update of a project copy from the
- *  library. The renderer never calls `install_motif`, which proposes. */
-export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'update_project_motif'])
+ *  library, and the trust card's `motif_trust_summary` / `trust_motif`: only
+ *  the user trusts a Motif (spec § Trust). The renderer never calls
+ *  `install_motif`, which proposes. */
+export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'update_project_motif', 'motif_trust_summary', 'trust_motif'])
 
 /** Native read/compute handlers that receive their project state slice (a MediaItem
  *  or the full Project) as an injected call argument — the TS host forwards it

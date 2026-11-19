@@ -11,17 +11,12 @@ interface MotifProblemFacts {
   diagnostic?: string | undefined;
 }
 
-/** The lead alone, for a place with room for one short line (a card cover). */
-export function MotifProblemLead({ id, status }: Pick<MotifProblemFacts, "id" | "status">) {
-  const { t } = useTranslation();
-  return <>{t(`motif_picker.problem.${status}`, { id })}</>;
-}
-
 /** The lead, and under it an invalid package's error. */
 export function MotifProblem({ id, status, diagnostic }: MotifProblemFacts) {
+  const { t } = useTranslation();
   return (
     <p className="settings-error">
-      <MotifProblemLead id={id} status={status} />
+      {t(`motif_picker.problem.${status}`, { id })}
       {status === "invalid" && diagnostic && <span className="motif-problem-detail">{diagnostic}</span>}
     </p>
   );
