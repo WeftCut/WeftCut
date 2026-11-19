@@ -6,6 +6,7 @@
 
 mod backend;
 mod carrier;
+mod color;
 mod export_sw;
 mod media_time;
 #[cfg(windows)]

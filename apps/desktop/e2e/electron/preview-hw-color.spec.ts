@@ -4,28 +4,36 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, DECODE_ADDON, DECODE_COMPONENT_PRESENT } from './helpers/driver'
 import { hardwareGate, hardwareEnvironmentGate } from './helpers/hardwareGate'
+import { displayedColour } from '../fixtures/generate.mjs'
 
 // Saturated-chart color gate for the HARDWARE preview lanes — the resident
-// pixel-fidelity gate none of them otherwise has. Seven legs per lane, the full
+// pixel-fidelity gate none of them otherwise has. Ten legs per lane, the full
 // matrix a session must honor:
 //   709ltd / 601ltd / 709full / 601full  (H.264 charts, npm run fixtures)
 // plus the three untagged charts (SD BT.601, HD BT.709, 1280x544 BT.709),
-// which every other lane is held to as well (preview-sw-color, preview-lite-color,
-// color-conformance): a lane that reads an absent tag its own way fails
-// here. A matrix swap reads 10–30 8-bit steps on the saturated patches; a range
-// mix-up reads as a global contrast shift; both are far beyond PATCH_TOL.
+// which every other native lane is held to as well (preview-sw-color,
+// color-conformance's ffmpeg decode engine): a lane that reads an absent tag
+// its own way fails here; plus the charts in other primaries (BT.2020 SDR as
+// 8-bit H.264 and 10-bit HEVC, PAL SD), which a lane must show converted into
+// BT.709 primaries. Every leg expects `displayedColour` of the authored patch
+// (fixtures/generate.mjs) for the primaries the native lanes convert from
+// (`planeConversion`: declared BT.2020 or EBU; SMPTE C takes no step). A matrix swap
+// reads 10–30 8-bit steps on the saturated patches, a missing primaries
+// conversion up to 120; a range mix-up reads as a global contrast shift; all
+// are far beyond PATCH_TOL.
 //
 // WHAT IS UNDER TEST DIFFERS BY LANE FAMILY, and the difference is the reason
 // this file runs everywhere rather than on Windows alone.
 //
 //   d3d11va (shared texture, Windows) — the A′ color-sovereign path: native
 //   decodes on the GPU, converts NV12→RGBA with its OWN shader (constants
-//   derived from the same kr/kb source as Nv12Ingest / yuv10.ts), and shares
+//   held to the same golden as Nv12Ingest's, colourConversion.ts), and shares
 //   sRGB-passthrough RGBA that the preload's createImageBitmap copies
 //   byte-for-byte (proven by the poc rgba probe). Here the tags and the
-//   conversion are ONE act: `preview_gpu_open` is HANDED matrix/full_range by
-//   the renderer (backend.rs) and converts by them, so what this gate reads is
-//   whether that shader's constants are right.
+//   conversion are ONE act: `preview_gpu_open` is HANDED matrix, range and
+//   primaries by the renderer (backend.rs) and converts by them, so what this
+//   gate reads is whether that shader's constants are right. The lane is 8-bit
+//   only, so the 10-bit HEVC leg skips there.
 //
 //   videotoolbox / nvdec / vaapi (copy-back) — no bespoke shader: the lane
 //   copies back into NV12 / I420P10 ship bytes (ADR 0029) that go through the
@@ -56,32 +64,44 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
 const MANIFEST_SD = path.resolve(MEDIA_DIR, 'color_manifest_720x480.json')
+const MANIFEST_PAL = path.resolve(MEDIA_DIR, 'color_manifest_720x576.json')
 
 type Canvas = { width: number; height: number; fpsNum: number; fpsDen: number }
 const CANVAS: Canvas = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
 const CANVAS_SD: Canvas = { width: 720, height: 480, fpsNum: 30, fpsDen: 1 }
 const SEEK_US = 500_000
 
-/// A leg's chart, the manifest its patches come from, and the composition it
-/// is placed 1:1 in.
+/// A leg's chart, the manifest its patches come from, the composition it is
+/// placed 1:1 in, the primaries the native lanes convert it from, and its
+/// codec as the hardware evidence names it.
 interface ChartLeg {
   fixture: string
   manifest: string
   canvas: Canvas
+  primaries: 'bt709' | 'bt470bg' | 'bt2020'
+  codec: 'h264' | 'hevc10'
 }
 
-const taggedLeg = (enc: string): ChartLeg =>
-  ({ fixture: path.resolve(MEDIA_DIR, `test_1080p_color_${enc}.mp4`), manifest: MANIFEST, canvas: CANVAS })
-const UNTAGGED_LEGS: readonly { title: string; slug: string; leg: ChartLeg }[] = [
+const taggedLeg = (enc: string): ChartLeg => ({
+  fixture: path.resolve(MEDIA_DIR, `test_1080p_color_${enc}.mp4`), manifest: MANIFEST, canvas: CANVAS,
+  primaries: 'bt709', codec: 'h264',
+})
+const NAMED_LEGS: readonly { title: string; slug: string; leg: ChartLeg }[] = [
   {
     title: 'untagged SD chart previews as BT.601',
     slug: 'untagged-sd',
-    leg: { fixture: path.resolve(MEDIA_DIR, 'test_480p_color_601ltd_untagged.mp4'), manifest: MANIFEST_SD, canvas: CANVAS_SD },
+    leg: {
+      fixture: path.resolve(MEDIA_DIR, 'test_480p_color_601ltd_untagged.mp4'), manifest: MANIFEST_SD, canvas: CANVAS_SD,
+      primaries: 'bt709', codec: 'h264',
+    },
   },
   {
     title: 'untagged HD chart previews as BT.709',
     slug: 'untagged-hd',
-    leg: { fixture: path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_untagged.mp4'), manifest: MANIFEST, canvas: CANVAS },
+    leg: {
+      fixture: path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_untagged.mp4'), manifest: MANIFEST, canvas: CANVAS,
+      primaries: 'bt709', codec: 'h264',
+    },
   },
   {
     title: 'untagged cropped HD chart (1280x544) previews as BT.709',
@@ -90,6 +110,32 @@ const UNTAGGED_LEGS: readonly { title: string; slug: string; leg: ChartLeg }[] =
       fixture: path.resolve(MEDIA_DIR, 'test_1280x544_color_709ltd_untagged.mp4'),
       manifest: path.resolve(MEDIA_DIR, 'color_manifest_1280x544.json'),
       canvas: { width: 1280, height: 544, fpsNum: 30, fpsDen: 1 },
+      primaries: 'bt709', codec: 'h264',
+    },
+  },
+  {
+    title: 'BT.2020 SDR H.264 chart previews converted into BT.709 primaries',
+    slug: '2020-h264',
+    leg: {
+      fixture: path.resolve(MEDIA_DIR, 'test_1080p_color_2020_h264.mp4'), manifest: MANIFEST, canvas: CANVAS,
+      primaries: 'bt2020', codec: 'h264',
+    },
+  },
+  {
+    title: 'BT.2020 SDR 10-bit HEVC chart previews converted into BT.709 primaries',
+    slug: '2020-hevc10',
+    leg: {
+      fixture: path.resolve(MEDIA_DIR, 'test_1080p_color_2020_hevc10.mp4'), manifest: MANIFEST, canvas: CANVAS,
+      primaries: 'bt2020', codec: 'hevc10',
+    },
+  },
+  {
+    title: 'PAL SD chart previews converted from EBU into BT.709 primaries',
+    slug: 'pal',
+    leg: {
+      fixture: path.resolve(MEDIA_DIR, 'test_576p_color_pal.mp4'), manifest: MANIFEST_PAL,
+      canvas: { width: 720, height: 576, fpsNum: 30, fpsDen: 1 },
+      primaries: 'bt470bg', codec: 'h264',
     },
   },
 ]
@@ -184,7 +230,7 @@ async function runChartLeg(label: string, leg: ChartLeg, lane: HwLane): Promise<
   page.on('pageerror', (e) => consoleLines.push(`[pageerror] ${String(e)}`))
   let toggledOn = false
   try {
-    await hardwareEnvironmentGate(app, page, lane, 'h264')
+    await hardwareEnvironmentGate(app, page, lane, leg.codec)
     await newProject(page, {
       parentFolder: PROJECT_PARENT,
       name: `${label}-${Date.now()}`,
@@ -238,7 +284,7 @@ async function runChartLeg(label: string, leg: ChartLeg, lane: HwLane): Promise<
     )
     const probe = (await handle.jsonValue()) as { sourceKind: string; hwLane: string | null }
 
-    const evidence = await hardwareGate(page, layerId, lane, 'h264')
+    const evidence = await hardwareGate(page, layerId, lane, leg.codec)
     expect(probe.sourceKind).toBe('native-gpu')
 
     // Sample every patch center off the LIVE composited canvas (absolute
@@ -253,13 +299,14 @@ async function runChartLeg(label: string, leg: ChartLeg, lane: HwLane): Promise<
         [cx, cy] as const,
       )) as { r: number; g: number; b: number }
       const got: [number, number, number] = [s.r, s.g, s.b]
+      const expected = displayedColour(patch.rgb, leg.primaries) as [number, number, number]
       const maxErr = Math.max(
-        Math.abs(got[0] - patch.rgb[0]),
-        Math.abs(got[1] - patch.rgb[1]),
-        Math.abs(got[2] - patch.rgb[2]),
+        Math.abs(got[0] - expected[0]),
+        Math.abs(got[1] - expected[1]),
+        Math.abs(got[2] - expected[2]),
       )
       worst = Math.max(worst, maxErr)
-      if (maxErr > PATCH_TOL) offenders.push({ id: patch.id, expected: patch.rgb, got, maxErr })
+      if (maxErr > PATCH_TOL) offenders.push({ id: patch.id, expected, got, maxErr })
     }
     // eslint-disable-next-line no-console
     console.log(`[preview-hw-color] ${label}: worst patch-center error ${worst} (tol ${PATCH_TOL})`)
@@ -267,7 +314,7 @@ async function runChartLeg(label: string, leg: ChartLeg, lane: HwLane): Promise<
     // eslint-disable-next-line no-console
     if (errs.length) console.log(`[preview-hw-color] ${label} renderer errors during run:\n` + errs.join('\n'))
     expect(offenders, JSON.stringify(offenders)).toHaveLength(0)
-    await hardwareGate(page, layerId, lane, 'h264', evidence)
+    await hardwareGate(page, layerId, lane, leg.codec, evidence)
   } finally {
     if (toggledOn) {
       await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'auto' } }).catch(() => {})
@@ -285,7 +332,7 @@ test.describe('preview hardware-lane saturated-chart color gate (Electron)', () 
         await runChartLeg(`phc-${lane}-${enc}`, taggedLeg(enc), lane)
       })
     }
-    for (const { title, slug, leg } of UNTAGGED_LEGS) {
+    for (const { title, slug, leg } of NAMED_LEGS) {
       test(`${title} through the ${lane} ${transportWord(lane)} lane @serial`, async () => {
         await runChartLeg(`phc-${lane}-${slug}`, leg, lane)
       })

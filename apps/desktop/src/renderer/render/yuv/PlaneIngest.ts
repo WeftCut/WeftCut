@@ -12,7 +12,8 @@ import {
   BufferImageSource, Mesh, MeshGeometry, Shader, type RenderTexture, type Texture,
 } from "pixi.js";
 import type { Renderer } from "pixi.js";
-import { coefForMatrix, inverseCoef } from "../tenbit/yuv10";
+import { planeConversion, type ColourStamp } from "../decoder/ffprobeColorSpace";
+import { DISPLAY_GAMMA, coefForMatrix, columnMajor, inverseCoef, primariesToBt709 } from "./colourConversion";
 import { unbindingRenderTexture } from "../unbindOnDestroy";
 
 /// What the engine reads from a frame; each lane's frame type adds its plane
@@ -20,7 +21,7 @@ import { unbindingRenderTexture } from "../unbindOnDestroy";
 export interface PlaneFrame {
   readonly width: number;
   readonly height: number;
-  readonly colorSpace: VideoColorSpaceInit | null;
+  readonly colorSpace: ColourStamp | null;
 }
 
 export interface IngestPlane<F> {
@@ -60,18 +61,29 @@ export interface IngestLayout<F> {
   readonly target: "rgba8unorm" | "rgba16float";
 }
 
-/// The conversion uniforms for one frame: matrix from the stamped
-/// `colorSpace` (BT.709 when untagged, see `coefForMatrix`), range from its
-/// `fullRange` flag (limited unless it says full).
+export interface ConversionUniforms {
+  coef: [number, number, number, number];
+  scale: [number, number];
+  yOffset: number;
+  /// Source primaries -> BT.709 in linear light, column-major; `null` for
+  /// BT.709 primaries, whose frames run the shader variant without the step.
+  gamut: Float32Array | null;
+}
+
+/// The conversion uniforms for one frame, as the rule converts its stamped
+/// `colorSpace` (`planeConversion`).
 export function conversionUniforms(
   layout: IngestLayout<unknown>,
-  colorSpace: VideoColorSpaceInit | null | undefined,
-): { coef: [number, number, number, number]; scale: [number, number]; yOffset: number } {
-  const range = colorSpace?.fullRange === true ? layout.full : layout.limited;
+  colorSpace: ColourStamp | null | undefined,
+): ConversionUniforms {
+  const conversion = planeConversion(colorSpace);
+  const range = conversion.fullRange ? layout.full : layout.limited;
+  const toBt709 = primariesToBt709(conversion.primaries);
   return {
-    coef: inverseCoef(coefForMatrix(colorSpace?.matrix)),
+    coef: inverseCoef(coefForMatrix(conversion.matrix)),
     scale: [range.yScale, range.cScale],
     yOffset: range.yOffset,
+    gamut: toBt709 && columnMajor(toBt709),
   };
 }
 
@@ -96,7 +108,23 @@ void main() {
   vUV = aUV;
 }`;
 
-function glFragment(layout: IngestLayout<unknown>): string {
+// The primaries step (the `gamut` variants only): R'G'B' to linear light by
+// the display transfer, into BT.709 primaries, clipped per channel, and back.
+// `displayRgb` (colourConversion.ts) is its CPU reference and the d3d11va
+// HLSL (decode crate, color.rs) its twin. A frame in BT.709 primaries runs the
+// variant without it, so the common path pays nothing.
+const GAMMA = shaderFloat(DISPLAY_GAMMA);
+const GL_GAMUT = `uniform mat3 uGamut;
+vec3 toBt709(vec3 rgb) {
+  vec3 lin = pow(clamp(rgb, 0.0, 1.0), vec3(${GAMMA}));
+  return pow(clamp(uGamut * lin, 0.0, 1.0), vec3(1.0 / ${GAMMA}));
+}`;
+const WGSL_GAMUT = /* wgsl */ `fn toBt709(rgb: vec3<f32>) -> vec3<f32> {
+  let lin = pow(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(${GAMMA}));
+  return pow(clamp(yuv.uGamut * lin, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / ${GAMMA}));
+}`;
+
+function glFragment(layout: IngestLayout<unknown>, gamut: boolean): string {
   return `#version 300 es
 precision highp float;
 in vec2 vUV;
@@ -105,6 +133,7 @@ ${layout.planes.map((p) => `uniform sampler2D ${p.name};`).join("\n")}
 uniform vec4 uCoef;   // crR, cbG, crG, cbB
 uniform vec2 uScale;  // y scale, c scale
 uniform float uYOff;
+${gamut ? GL_GAMUT : ""}
 ${layout.glslCodes}
 void main() {
   vec3 k = yuvCodes(vUV);
@@ -114,7 +143,7 @@ void main() {
     y + uCoef.x * c.y,
     y - uCoef.z * c.y - uCoef.y * c.x,
     y + uCoef.w * c.x);
-  finalColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
+  finalColor = vec4(clamp(${gamut ? "toBt709(rgb)" : "rgb"}, 0.0, 1.0), 1.0);
 }`;
 }
 
@@ -124,7 +153,7 @@ void main() {
 // matched to `resources` keys by name. Both backends apply the mesh-local
 // uTransformMatrix (identity for the root-rendered ingest mesh); dropping it
 // on one side would split the backends the day the mesh is transformed.
-function wgsl(layout: IngestLayout<unknown>): string {
+function wgsl(layout: IngestLayout<unknown>, gamut: boolean): string {
   const planeBindings = layout.planes.map((p, i) =>
     `@group(2) @binding(${2 * i}) var ${p.name}: texture_2d<f32>;
 @group(2) @binding(${2 * i + 1}) var ${p.name}Sampler: sampler;`).join("\n");
@@ -145,7 +174,7 @@ struct LocalUniforms {
 struct YuvUniforms {
   uCoef: vec4<f32>,
   uScale: vec2<f32>,
-  uYOff: f32,
+  uYOff: f32,${gamut ? "\n  uGamut: mat3x3<f32>," : ""}
 }
 
 @group(0) @binding(0) var<uniform> globalUniforms : GlobalUniforms;
@@ -174,7 +203,7 @@ fn mainVert(
 }
 
 ${layout.wgslCodes}
-
+${gamut ? `\n${WGSL_GAMUT}\n` : ""}
 @fragment
 fn mainFrag(
   @location(0) vUVIn: vec2<f32>,
@@ -186,12 +215,14 @@ fn mainFrag(
     y + yuv.uCoef.x * c.y,
     y - yuv.uCoef.z * c.y - yuv.uCoef.y * c.x,
     y + yuv.uCoef.w * c.x);
-  return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+  return vec4<f32>(clamp(${gamut ? "toBt709(rgb)" : "rgb"}, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }`;
 }
 
 interface ClipState<F> {
   w: number; h: number;
+  /// Built as the variant with the primaries step.
+  gamut: boolean;
   planes: BufferImageSource[];
   rt: RenderTexture;
   mesh: Mesh<MeshGeometry, Shader>;
@@ -213,8 +244,9 @@ function planeSource(
 
 export class PlaneIngest<F extends PlaneFrame> {
   private states = new Map<string, ClipState<F>>();
-  private readonly glFragment: string;
-  private readonly wgsl: string;
+  /// Shader sources per variant: [without, with] the primaries step.
+  private readonly glFragment: readonly [string, string];
+  private readonly wgsl: readonly [string, string];
 
   constructor(private renderer: Renderer, private layout: IngestLayout<F>) {
     // Plane rows are tightly packed, so not 4-aligned for w%4==2 sources
@@ -225,8 +257,8 @@ export class PlaneIngest<F extends PlaneFrame> {
     if ("gl" in renderer) {
       renderer.gl.pixelStorei(renderer.gl.UNPACK_ALIGNMENT, 1);
     }
-    this.glFragment = glFragment(layout);
-    this.wgsl = wgsl(layout);
+    this.glFragment = [glFragment(layout, false), glFragment(layout, true)];
+    this.wgsl = [wgsl(layout, false), wgsl(layout, true)];
   }
 
   /// Convert `f` (if not already current) and return the clip's texture in the
@@ -234,30 +266,30 @@ export class PlaneIngest<F extends PlaneFrame> {
   /// (callers must not destroy them).
   textureFor(key: string, f: F): Texture {
     let s = this.states.get(key);
-    if (s && (s.w !== f.width || s.h !== f.height)) {
+    if (s?.last === f) return s.rt;
+    const { coef, scale, yOffset, gamut } = conversionUniforms(this.layout, f.colorSpace);
+    if (s && (s.w !== f.width || s.h !== f.height || s.gamut !== (gamut !== null))) {
       this.release(key);
       s = undefined;
     }
     if (!s) {
-      s = this.build(f);
+      s = this.build(f, gamut !== null);
       this.states.set(key, s);
     }
-    if (s.last !== f) {
-      const { planes } = s;
-      this.layout.planes.forEach((p, i) => { planes[i]!.resource = p.bytes(f); });
-      for (const plane of planes) plane.update();
-      const { coef, scale, yOffset } = conversionUniforms(this.layout, f.colorSpace);
-      const u = s.mesh.shader!.resources.yuv.uniforms;
-      u.uCoef = new Float32Array(coef);
-      u.uScale = new Float32Array(scale);
-      u.uYOff = yOffset;
-      this.renderer.render({ container: s.mesh, target: s.rt });
-      s.last = f;
-    }
+    const { planes } = s;
+    this.layout.planes.forEach((p, i) => { planes[i]!.resource = p.bytes(f); });
+    for (const plane of planes) plane.update();
+    const u = s.mesh.shader!.resources.yuv.uniforms;
+    u.uCoef = new Float32Array(coef);
+    u.uScale = new Float32Array(scale);
+    u.uYOff = yOffset;
+    if (gamut) u.uGamut = gamut;
+    this.renderer.render({ container: s.mesh, target: s.rt });
+    s.last = f;
     return s.rt;
   }
 
-  private build(f: F): ClipState<F> {
+  private build(f: F, gamut: boolean): ClipState<F> {
     const w = f.width, h = f.height;
     const planes = this.layout.planes.map((p) => {
       const [pw, ph] = planeSize(p, w, h);
@@ -275,21 +307,25 @@ export class PlaneIngest<F extends PlaneFrame> {
       resources[`${p.name}Sampler`] = planes[i]!.style;
     });
     const initial = conversionUniforms(this.layout, null);
+    // Key order is the WGSL struct's field order: Pixi lays the uniform
+    // buffer out from it.
     resources.yuv = {
       uCoef: { value: new Float32Array(initial.coef), type: "vec4<f32>" },
       uScale: { value: new Float32Array(initial.scale), type: "vec2<f32>" },
       uYOff: { value: initial.yOffset, type: "f32" },
+      ...(gamut ? { uGamut: { value: new Float32Array(9), type: "mat3x3<f32>" } } : {}),
     };
+    const variant = gamut ? 1 : 0;
     const shader = Shader.from({
-      gl: { vertex: GL_VERT, fragment: this.glFragment },
+      gl: { vertex: GL_VERT, fragment: this.glFragment[variant] },
       gpu: {
-        vertex: { entryPoint: "mainVert", source: this.wgsl },
-        fragment: { entryPoint: "mainFrag", source: this.wgsl },
+        vertex: { entryPoint: "mainVert", source: this.wgsl[variant] },
+        fragment: { entryPoint: "mainFrag", source: this.wgsl[variant] },
       },
       resources,
     });
     const mesh = new Mesh<MeshGeometry, Shader>({ geometry, shader });
-    return { w, h, planes, rt, mesh, last: null };
+    return { w, h, gamut, planes, rt, mesh, last: null };
   }
 
   release(key: string): void {

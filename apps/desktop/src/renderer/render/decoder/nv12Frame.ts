@@ -6,6 +6,8 @@
 // which selects the matrix from `colorSpace`. WebCodecs-DECODED frames are
 // unaffected and never take this type. Policy: ADR 0032.
 
+import type { ColourStamp } from "./ffprobeColorSpace";
+
 export interface NativeNv12Frame {
   readonly kind: "nv12";
   readonly width: number;
@@ -14,7 +16,7 @@ export interface NativeNv12Frame {
   /// (stride width, height/2 rows).
   readonly data: Uint8Array;
   readonly uvOffset: number;
-  readonly colorSpace: VideoColorSpaceInit | null;
+  readonly colorSpace: ColourStamp | null;
   readonly timestamp: number;
   readonly duration: number | null;
   /// Called when the frame store lets the frame go, like `VideoFrame.close()`,
@@ -38,7 +40,7 @@ export function nv12FrameFromBytes(init: {
   height: number;
   timestamp: number;
   duration: number | null;
-  colorSpace: VideoColorSpaceInit | null;
+  colorSpace: ColourStamp | null;
 }): NativeNv12Frame {
   const { data, width, height, timestamp, duration, colorSpace } = init;
   const ySize = width * height;

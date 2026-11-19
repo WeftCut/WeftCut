@@ -34,6 +34,7 @@ use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use super::convert::ConvertPass;
 use super::decoder::{StreamFrame, VideoStream};
 use crate::carrier::{DecodeMsg, SessionCtx, SessionRuntime, SessionShared, Sink};
+use crate::color::Conversion;
 use crate::recover::LockExt;
 
 /// Cap on retained timing samples per metric. A 30s throughput window at native's
@@ -992,15 +993,13 @@ unsafe fn convert_frame_into_slot(
 /// session's NV12→RGBA conversion pass. Runs on the session thread (all
 /// COM/ffmpeg objects stay here).
 ///
-/// `matrix`/`full_range` are the stream's renderer-derived color tags: they
-/// select the conversion constants baked into this session's shader, so the
-/// shared texture is already working-space RGBA and the import side tags it
-/// sRGB-passthrough unconditionally.
+/// `conversion` is the renderer's decision for this source, baked into this
+/// session's shader, so the shared texture is already working-space RGBA and
+/// the import side tags it sRGB-passthrough unconditionally.
 fn init_session(
     path: &str,
     pool_size: u32,
-    matrix: &str,
-    full_range: bool,
+    conversion: &Conversion,
     timing: Arc<Mutex<TimingAccum>>,
 ) -> Result<SessionState, String> {
     let stream = VideoStream::open(path)?;
@@ -1027,7 +1026,7 @@ fn init_session(
 
         let slot_textures: Vec<ID3D11Texture2D> =
             pool.iter().map(|s| s.texture().clone()).collect();
-        let convert = ConvertPass::new(&device, width, height, matrix, full_range, &slot_textures)?;
+        let convert = ConvertPass::new(&device, width, height, conversion, &slot_textures)?;
 
         let free = vec![true; pool.len()];
         // Computed before the struct literal (like `free` above): `pool` is moved
@@ -1176,16 +1175,14 @@ impl PreviewGpuSessions {
 
     /// Open `path` for GPU preview with every message going to `sink`: spawn
     /// its decode thread, build the pool + conversion pass, and hand back the
-    /// slot handles + dimensions once the thread reports ready. `matrix` /
-    /// `full_range` are the stream's renderer-derived color tags (they pick
-    /// the conversion constants — see `convert::coef_for_matrix`).
+    /// slot handles + dimensions once the thread reports ready. `conversion`
+    /// is what the session's shader does to every frame (`crate::color`).
     pub fn open(
         &self,
         session_id: &str,
         path: &str,
         pool_size: u32,
-        matrix: &str,
-        full_range: bool,
+        conversion: Conversion,
         sink: Sink,
     ) -> Result<OpenInfo, String> {
         let timing = Arc::new(Mutex::new(TimingAccum::default()));
@@ -1195,10 +1192,9 @@ impl PreviewGpuSessions {
         });
         let thread_shared = Arc::clone(&shared);
         let path = path.to_string();
-        let matrix = matrix.to_string();
         let pool_size = pool_size.max(1);
         self.runtime.open(session_id, sink, shared, move |ctx, rx| {
-            let state = init_session(&path, pool_size, &matrix, full_range, timing)?;
+            let state = init_session(&path, pool_size, &conversion, timing)?;
             let slot_handles = state.slot_handles();
             thread_shared.pool_slot_bytes.store(
                 state.width as u64 * state.height as u64 * 4 * slot_handles.len() as u64,
@@ -1619,7 +1615,8 @@ mod tests {
             }
             log2.lock().unwrap().push(msg);
         });
-        match sessions.open(id, H264, pool, "bt709", false, sink) {
+        let conversion = Conversion::parse("bt709", false, "bt709").unwrap();
+        match sessions.open(id, H264, pool, conversion, sink) {
             Ok(info) => Some((info, log)),
             Err(e) => {
                 eprintln!("skipping: no d3d11va session on this host ({e})");

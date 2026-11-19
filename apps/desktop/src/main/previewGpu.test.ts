@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { sharedTexture, type WebContents } from 'electron'
-import type { DecodeMsg, NativeDecode } from '@weftcut/native-decode'
+import type { DecodeMsg, GpuConversionInit, NativeDecode } from '@weftcut/native-decode'
 import { MIB, hydratePerformanceSettings } from '../shared/performance-settings'
 import { HW_BUDGET_EXCEEDED, HW_BUDGET_RESERVATION_MISMATCH, type PreviewGpuColorSpace } from '../shared/ipc'
 import type { CarrierPort } from './frameCarrier/decodeSessionHost'
@@ -22,7 +22,7 @@ const imports: { release: ReturnType<typeof vi.fn>; allReleased: () => void }[] 
 function fakeBackend(width = 3840, height = 2160) {
   const sinks = new Map<string, (err: Error | null, msg: DecodeMsg) => void>()
   const backend = {
-    previewGpuOpen: vi.fn((id: string, _path: string, size: number, _matrix: string, _full: boolean, onMsg: (err: Error | null, msg: DecodeMsg) => void) => {
+    previewGpuOpen: vi.fn((id: string, _path: string, size: number, _conversion: GpuConversionInit, onMsg: (err: Error | null, msg: DecodeMsg) => void) => {
       sinks.set(id, onMsg)
       return { width, height, slots: Array.from({ length: size }, () => ({ handle: Buffer.alloc(8) })) }
     }),
@@ -90,6 +90,15 @@ describe('GPU preview sessions', () => {
       expect(textureInfo.pixelFormat).toBe('rgba')
       expect(textureInfo.colorSpace).toEqual({ primaries: 'bt709', transfer: 'srgb', matrix: 'rgb', range: 'full' })
     }
+    port.consumerCloses()
+  })
+
+  it("opens native with the renderer's conversion: matrix, range and primaries", async () => {
+    const { backend, native } = fakeBackend()
+    const port = fakePort()
+    const wide: PreviewGpuColorSpace = { primaries: 'bt2020', transfer: 'bt709', matrix: 'bt2020-ncl', range: 'full' }
+    await openPreviewGpu(native, fakeOwner().contents, port.port, request('wide', { colorSpace: wide }))
+    expect(backend.previewGpuOpen.mock.calls[0]![3]).toEqual({ matrix: 'bt2020-ncl', fullRange: true, primaries: 'bt2020' })
     port.consumerCloses()
   })
 

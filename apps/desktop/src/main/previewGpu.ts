@@ -130,10 +130,11 @@ export async function openPreviewGpu(
     },
     open: onMsg => {
       const frame = owner.mainFrame
-      // The source's resolved colour goes to native, which converts NV12 to
-      // RGBA with its own shader (constants pinned to the conformance goldens);
-      // Chromium never sees the YUV.
-      const info = backend.previewGpuOpen(sessionId, path, poolSize, colorSpace.matrix, colorSpace.range === 'full', (err, msg) => {
+      // The renderer's conversion of the source goes to native, which converts
+      // NV12 to RGBA with its own shader (constants held to the renderer's by
+      // one golden); Chromium never sees the YUV.
+      const conversion = { matrix: colorSpace.matrix, fullRange: colorSpace.range === 'full', primaries: colorSpace.primaries }
+      const info = backend.previewGpuOpen(sessionId, path, poolSize, conversion, (err, msg) => {
         // Only a message the addon could not hand over arrives as `err`. A
         // lost slot comes back through native's lease reclaim, so the session
         // stays whole.
