@@ -384,11 +384,12 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   // timeline being left.
   useEffect(() => registerRevealCollapse(() => setRevealedTrackId(null)), []);
 
-  // "New Motif" auto-places the new Motif (MotifPicker.onNewPlaced) and
-  // should land the user on its property panel with the layer visible. The
-  // owner track is only knowable from the refreshed summary (the layer sits
-  // on a just-created, role-null Overlay track the A/B Roll filter hides), so the
-  // select + reveal is deferred here until the summary contains the layer.
+  // A layer the Motif picker places ("New Motif" or "Add to timeline",
+  // MotifPicker.onPlaced) should land the user on its property panel with the
+  // layer visible. The owner track is only knowable from the refreshed summary
+  // (an auto-created layer sits on a role-null Overlay track the A/B Roll
+  // filter hides), so the select + reveal is deferred here until the summary
+  // contains the layer.
   const [pendingRevealLayerId, setPendingRevealLayerId] = useState<string | null>(null);
   useEffect(() => {
     if (pendingRevealLayerId === null) return;
@@ -1350,7 +1351,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         <MotifPicker
           onClose={() => setMotifPickerOpen(false)}
           onAdded={settle}
-          onNewPlaced={setPendingRevealLayerId}
+          onPlaced={setPendingRevealLayerId}
           currentTimeUs={focusedPlayheadUs()}
           compositionId={comp?.id ?? null}
           tracks={comp?.tracks ?? []}

@@ -30,10 +30,13 @@ const BUILTIN_DIR = path.resolve(__dirname, '../../shared/motifs/builtin')
 
 let root: string
 let resolver: MotifResolver
+/** Revisions this machine does not trust; every other one is trusted. */
+let untrusted: Set<string>
 beforeEach(() => {
   handler = null
   root = mkdtempSync(path.join(tmpdir(), 'motif-protocol-'))
-  resolver = new MotifResolver(new UserMotifStore(path.join(root, 'library')), builtinMotifs(BUILTIN_DIR))
+  untrusted = new Set()
+  resolver = new MotifResolver(new UserMotifStore(path.join(root, 'library')), builtinMotifs(BUILTIN_DIR), { trusted: revision => !untrusted.has(revision) })
   resolver.setProject(new ProjectMotifStore(path.join(root, 'Film')))
   registerMotifProtocol(resolver)
 })
@@ -156,6 +159,15 @@ describe('what a host serves', () => {
     projectMotif('broken', { 'manifest.json': '{ not json', 'art.svg': 'x' })
     expect((await serve('broken', 'index.html')).status).toBe(404)
     expect((await serve('broken', 'art.svg')).status).toBe(404)
+  })
+
+  it('serves nothing of a Motif not trusted on this machine, its parameter page included, until it is', async () => {
+    projectMotif('received', { 'params.html': '<html>p</html>', 'art.svg': 'x' })
+    const revision = resolver.resolve('received').revision!
+    untrusted.add(revision)
+    for (const file of ['index.html', 'params.html', 'art.svg']) expect((await serve('received', file)).status, file).toBe(404)
+    untrusted.delete(revision)
+    for (const file of ['index.html', 'params.html', 'art.svg']) expect((await serve('received', file)).status, file).toBe(200)
   })
 })
 

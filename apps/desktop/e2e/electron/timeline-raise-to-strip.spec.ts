@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { importAndPlaceMedia, invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } from './helpers/driver'
+import { importAndPlaceMedia, launchApp, newProject, tmpDir, waitForHook, rootSummary } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // A still image is ready the moment it is imported — no proxy job, so nothing

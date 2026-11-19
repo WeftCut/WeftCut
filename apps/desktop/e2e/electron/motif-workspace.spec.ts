@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { PNG } from 'pngjs';
 import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver';
+import { trustMotif } from './helpers/motif';
 
 /** A package whose page paints the colour named in its color.txt. */
 function writePackage(directory: string, name: string, color: string): void {
@@ -52,6 +53,10 @@ test('MCP project Motifs: folder copies and edits, binary round-trip, revision c
         const made = await call('create_motif', { source: { kind: 'directory', path: directory } });
         expect(made.motif_id).toBe('tinted');
         expect(path.dirname(made.path)).toBe(path.join(await invokeCmd<string>(page, 'workspace_dir'), 'Motifs'));
+        // Its bytes were not made here: nothing renders it until the user trusts it (ADR 0174).
+        const untrusted = await client.callTool({ name: 'preview_motif', arguments: { motif_id: made.motif_id, local_t_s: [0], width: 64 } });
+        expect(untrusted.structuredContent).toMatchObject({ error: 'MotifUntrusted', id: made.motif_id });
+        await trustMotif(page, made.motif_id);
         expect((await preview(made.motif_id)).color).toEqual([255, 0, 0, 255]);
         writeFileSync(path.join(directory, 'color.txt'), 'black');
         expect((await preview(made.motif_id)).color, 'the copy does not follow its source folder').toEqual([255, 0, 0, 255]);
@@ -95,6 +100,7 @@ test('MCP project Motifs: folder copies and edits, binary round-trip, revision c
         await call('export_motif', { motif_id: libraryId, group: 'library', path: zip });
         const copied = await call('create_motif', { source: { kind: 'zip', path: zip } });
         expect(copied.motif_id).not.toBe(made.motif_id);
+        // This library's bytes are trusted under whichever id the copy takes.
         expect((await preview(copied.motif_id)).color).toEqual([0, 0, 255, 255]);
 
         // A broken folder is read with its diagnostic and refuses to render;

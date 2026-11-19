@@ -35,6 +35,7 @@ const ALL_CHANNELS: readonly string[] = [
   'list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif',
   'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal',
   'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'update_project_motif',
+  'motif_trust_summary', 'trust_motif',
   // pure native (no project actor)
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
@@ -266,7 +267,7 @@ describe('routeChannel', () => {
     }
   })
   it('routes motif authoring/read/install/project-copy channels to the motif route', () => {
-    for (const ch of ['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'update_project_motif'])
+    for (const ch of ['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'update_project_motif', 'motif_trust_summary', 'trust_motif'])
       expect(routeChannel(ch).kind, ch).toBe('motif')
   })
   it('never routes a category-A state mutation to rust', () => {

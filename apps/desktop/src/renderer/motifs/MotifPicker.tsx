@@ -2,7 +2,7 @@
 // groups (spec § Project Motifs, "Panel"). Placing a library Motif copies it
 // into the project in the same undo step; there is no separate "add to
 // project". A project row says what it needs (an update, edits not in the
-// library, a broken folder) and offers it; library rows keep placing, ZIP
+// library, a broken folder, the user's Trust) and offers it; library rows keep placing, ZIP
 // export, version history and the trash. An agent's proposals sit on top.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -12,7 +12,9 @@ import { MotifProposalList, useMotifProposals } from './MotifProposalCard';
 import { MotifVersionHistory } from './MotifVersionHistory';
 import { useSaveToLibrary } from './SaveToLibrary';
 import { MotifProblem } from './MotifProblem';
-import { matchRows, previewMotif, projectCopyOf, rowKey, rowName, type MotifRow } from './motifRows';
+import { TrustCard } from './TrustCard';
+import { takeMotifsPanelRow } from './openMotifsPanel';
+import { matchRows, previewMotif, projectCopyOf, rowKey, rowName, rowRenders, type MotifRow } from './motifRows';
 import { listen } from "@/bridge/events";
 import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
@@ -47,11 +49,12 @@ import { AppIcon } from "@/components/AppIcon";
 interface Props {
   onClose: () => void;
   onAdded: () => Promise<void>;
-  /// Fired after "New Motif" auto-places the new project Motif at the
-  /// playhead. The App selects the layer and reveals its (role-null,
-  /// AB-hidden) auto-created overlay track, landing the user straight in the
-  /// property panel's source editor (docs/motifs.md canvas-context editing).
-  onNewPlaced: (layerId: string) => void;
+  /// Fired after the picker places a layer, from "New Motif" or "Add to
+  /// timeline". The App selects the layer and reveals its track: an
+  /// auto-created overlay track has no role, so A/B Roll hides it until
+  /// revealed. "New Motif" lands the user in the property panel's source
+  /// editor this way (docs/motifs.md canvas-context editing).
+  onPlaced: (layerId: string) => void;
   /// The composition the picker is adding to — the timeline that holds the
   /// keyboard, resolved by the App when the dialog opens. The picker's tracks,
   /// canvas and clock are all read off it, so the layer has to be committed to
@@ -82,7 +85,7 @@ const AUTO_OVERLAY_SENTINEL = "__auto_overlay__";
 export function MotifPicker({
   onClose,
   onAdded,
-  onNewPlaced,
+  onPlaced,
   compositionId,
   currentTimeUs,
   tracks,
@@ -119,7 +122,7 @@ export function MotifPicker({
         setCatalog(next);
         const rows: MotifRow[] = [...next.project, ...next.library];
         setSelectedKey((prev) => rows.some((r) => rowKey(r) === prev) ? prev
-          : rowKey(rows.find((r) => r.motif) ?? rows[0] ?? { group: "library", id: "" }));
+          : rowKey(rows.find(rowRenders) ?? rows[0] ?? { group: "library", id: "" }));
       },
       (e) => {
         if (aliveRef.current && generation === reloadGeneration.current) setError(refusalText(e));
@@ -128,6 +131,10 @@ export function MotifPicker({
   };
   useEffect(() => {
     aliveRef.current = true;
+    // Opened on a row by a surface outside the panel: that row is selected,
+    // and the first catalog keeps it.
+    const requested = takeMotifsPanelRow();
+    if (requested) setSelectedKey(requested);
     reload();
     let un: (() => void) | undefined;
     let cleaned = false;
@@ -151,6 +158,7 @@ export function MotifPicker({
     () => catalog && [...catalog.project, ...catalog.library].find((r) => rowKey(r) === selectedKey) || null,
     [catalog, selectedKey],
   );
+  const selectedPreview = selected && previewMotif(selected);
 
   const videoTracks = useMemo(
     () => tracks.filter((tr) => tr.kind === "Video"),
@@ -191,7 +199,7 @@ export function MotifPicker({
     // select + reveal, and close the picker.
     const layerId = await addMotifIn({ compositionId, motifId: id, tStartUs: currentTimeUs });
     await placed();
-    onNewPlaced(layerId);
+    onPlaced(layerId);
     onClose();
   });
 
@@ -322,11 +330,11 @@ export function MotifPicker({
             </div>
 
             <div className="motif-picker-form">
-              {selected?.motif ? (
+              {selectedPreview && selected?.motif ? (
                 <MotifForm
                   key={rowKey(selected)}
                   motif={selected.motif}
-                  preview={previewMotif(selected)!}
+                  preview={selectedPreview}
                   fromLibrary={selected.group === "library"}
                   currentTimeUs={currentTimeUs}
                   tracks={videoTracks}
@@ -337,7 +345,7 @@ export function MotifPicker({
                   onSubmit={async ({ tStartUs, props, trackId }) => {
                     setError(null);
                     try {
-                      await addMotifIn({
+                      const layerId = await addMotifIn({
                         compositionId,
                         motifId: selected.id,
                         ...(selected.group === "library" ? { fromLibrary: true } : {}),
@@ -346,12 +354,16 @@ export function MotifPicker({
                         trackId,
                       });
                       await placed();
+                      onPlaced(layerId);
                       onClose();
                     } catch (e) {
                       setError(refusalText(e));
                     }
                   }}
                 />
+              ) : selected?.group === "project" && selected.status === "untrusted" ? (
+                // Keyed by revision: files changed under the card are read again.
+                <TrustCard key={`${rowKey(selected)}:${selected.revision}`} motifId={selected.id} />
               ) : selected?.group === "project" ? (
                 <div className="motif-picker-unavailable">
                   <h3>{t("motif_picker.unavailable_title", { name: rowName(selected) })}</h3>

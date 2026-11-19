@@ -59,6 +59,7 @@ import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/bak
 import { MotifGpuTransport } from './motif/gpuTransport.js'
 import { spawnMotifWatcher, watchProjectMotifs, type MotifWatcher, type ProjectMotifWatcher } from './motif/watcher.js'
 import { MotifResolver } from './motif/resolver.js'
+import { libraryRevisions, MotifTrust, TRUST_FILE } from './motif/trust.js'
 import { ProjectMotifStore, type MotifState } from './motif/projectStore.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitWithEditor } from './windows.js'
@@ -844,9 +845,15 @@ app.whenReady().then(async () => {
   const motifBuiltinDir = builtinAssetDir()
   // Built-in Motif sources, loaded once (manifest, page and files).
   const motifBuiltins = builtinMotifs(motifBuiltinDir)
+  // Which project Motif revisions may run here (spec § Trust): every revision
+  // a project store sees is judged as it is seen, and the resolver serves no
+  // other.
+  const motifTrust = new MotifTrust(path.join(dataRoot.motifsDir, TRUST_FILE), () => libraryRevisions(motifStore, motifBuiltins))
+  app.once('will-quit', () => motifTrust.flush())
   // What every `motif://` host serves; its project follows the open workspace
   // (`setMotifProject`).
-  const motifResolver = new MotifResolver(motifStore, motifBuiltins)
+  const motifResolver = new MotifResolver(motifStore, motifBuiltins, motifTrust)
+  motifResolver.onRevisionSeen((_id, revision, cause, base) => motifTrust.seen(revision, cause, base))
   let motifProjectDir: string | null = null
   /** A project Motif's folder changed on disk: a new revision of one the
    *  project records is a recorded edit; anything else is its status alone. */
@@ -1201,6 +1208,7 @@ app.whenReady().then(async () => {
     workspaceDir: () => wsCache,
     emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
     motifResolver,
+    motifTrust,
     rewatchProjectMotif: (id) => projectMotifWatcher?.forget(id),
     motifStore,
     motifBuiltins,
@@ -1248,6 +1256,7 @@ app.whenReady().then(async () => {
   // temporary uploads (up to 512 MiB) under `.transfers/`. Nothing reads it.
   fs.rm(path.join(motifStore.root(), '.transfers'), { recursive: true, force: true }, () => {})
   motifWatcher = spawnMotifWatcher(dataRoot.motifsDir, () => {
+    motifTrust.libraryChanged()
     emitToRenderer('motifs:changed', {})
   })
 

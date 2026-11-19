@@ -1,16 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
 import { createActor, type ActorHandle } from '../state/actor'
 import { seededGen } from '../state/ids'
 import { blankProject, eachLayer } from '../state/model'
 import { MotifBackups } from './backups'
-import { normalize } from './motifPackage'
+import { newLineage } from './lineage'
+import { declaredPackage, normalize } from './motifPackage'
 import { FILE_EDITS, ProjectMotifRecords, projectMotifAccess } from './projectRecords'
 import { libraryPackage, libraryPackageOfLineage, ProjectMotifStore, type RevisionCause } from './projectStore'
 import { UserMotifStore } from './store'
+import { MotifResolver } from './resolver'
+import { FOUND_KEPT, MotifTrust } from './trust'
 
 let root: string
 let library: UserMotifStore
@@ -72,6 +76,8 @@ const entries = () => actor.snapshot().motifs
 const historyLen = () => actor.historyStatus().len
 const lastOp = () => actor.historyView(1).ops[0]!
 const backups = () => new MotifBackups(projectDir)
+/** A revision no folder holds, standing for one more folder found at an open. */
+const decoy = (n: number) => createHash('sha256').update(`decoy ${n}`).digest('hex')
 
 describe('placing a library Motif', () => {
   it('copies its folder in, records it with the layer, and one undo leaves the folder untracked', () => {
@@ -101,8 +107,8 @@ describe('a Motif edited on disk', () => {
     for (let i = 0; i < 4; i++) edit('lower', `edit ${i}`)
     // The watcher tells a burst once its quiet window passes; told again, it
     // finds the revision recorded.
-    records.folderChanged('lower', project.status('lower'))
-    records.folderChanged('lower', project.status('lower'))
+    records.folderChanged('lower', project.observe('lower'))
+    records.folderChanged('lower', project.observe('lower'))
     expect(historyLen()).toBe(len + 1)
     expect(lastOp().actor).toEqual(FILE_EDITS)
     const revision = project.status('lower').revision!
@@ -115,7 +121,7 @@ describe('a Motif edited on disk', () => {
     place('lower')
     const original = pageOf('lower')
     const edited = edit('lower', 'edited')
-    records.folderChanged('lower', project.status('lower'))
+    records.folderChanged('lower', project.observe('lower'))
     actor.dispatch('undo', {})
     expect(pageOf('lower')).toBe(original)
     expect(project.status('lower').revision).toBe(entries().lower!.revision)
@@ -131,7 +137,7 @@ describe('a Motif edited on disk', () => {
     // Mid-rename: the page is gone for a moment.
     renameSync(path.join(folder('lower'), 'index.html'), path.join(folder('lower'), 'index.old'))
     expect(project.status('lower').status).toBe('invalid')
-    records.folderChanged('lower', project.status('lower'))
+    records.folderChanged('lower', project.observe('lower'))
     expect(historyLen()).toBe(len)
     actor.dispatch('undo', {})
     expect(existsSync(path.join(folder('lower'), 'index.old'))).toBe(true)
@@ -144,7 +150,7 @@ describe('a Motif edited on disk', () => {
     actor.dispatch('undo', {})
     const len = historyLen()
     edit('lower', 'untracked')
-    records.folderChanged('lower', project.status('lower'))
+    records.folderChanged('lower', project.observe('lower'))
     expect(historyLen()).toBe(len)
   })
 })
@@ -175,7 +181,7 @@ describe('opening a project', () => {
     place('lower')
     const kept = entries().lower!.revision!
     edit('lower', 'edited')
-    records.folderChanged('lower', project.status('lower'))
+    records.folderChanged('lower', project.observe('lower'))
     const edited = entries().lower!.revision!
     actor.dispatch('undo', {})
     // The table is back at `kept`; the edit's backup is history's alone, and
@@ -193,8 +199,7 @@ describe('opening a project', () => {
     records.opened()
     expect(historyLen()).toBe(len + 1)
     expect(entries().lower!.revision).toBe(project.status('lower').revision)
-    // Found at the open, not edited here: Motif trust tells the two apart.
-    expect(seen.filter(([, , cause]) => cause === 'opened')).toEqual([['lower', entries().lower!.revision, 'opened']])
+    // Recorded, never heard as an edit made here: Motif trust tells the two apart.
     expect(seen.some(([, , cause]) => cause === 'edited-while-open')).toBe(false)
     expect(existsSync(folder('lower'))).toBe(true)
   })
@@ -205,7 +210,7 @@ describe('a move through history', () => {
     install('lower', 'v1')
     place('lower')
     edit('lower', 'recorded')
-    records.folderChanged('lower', project.status('lower'))
+    records.folderChanged('lower', project.observe('lower'))
     // Written after the last record, before the watcher told it.
     const unrecorded = edit('lower', 'not told yet')
     const revision = project.status('lower').revision!
@@ -224,7 +229,7 @@ describe('a move through history', () => {
     place('lower')
     place('card')
     edit('lower', 'edited')
-    records.folderChanged('lower', project.status('lower'))
+    records.folderChanged('lower', project.observe('lower'))
     actor.dispatch('undo', {})
     // An agent writing the undone revision again lands on the state the
     // watcher last told: unless forgotten, that write would go unrecorded.
@@ -240,9 +245,9 @@ describe('a move through history', () => {
     const card = pageOf('card'), lower = pageOf('lower')
     const placedCard = entries().card!.revision!
     edit('card', 'edited')
-    records.folderChanged('card', project.status('card'))
+    records.folderChanged('card', project.observe('card'))
     edit('lower', 'edited')
-    records.folderChanged('lower', project.status('lower'))
+    records.folderChanged('lower', project.observe('lower'))
     // The card's placed revision can no longer be read back.
     writeFileSync(path.join(projectDir, 'Backups', 'motifs', 'card', `${placedCard}.json`), 'damaged')
     actor.dispatch('jump_to', { index: at })
@@ -259,7 +264,7 @@ describe('an edit the project refuses to record', () => {
     const len = historyLen()
     edit('lower', 'during export')
     busy = true
-    records.folderChanged('lower', project.status('lower'))
+    records.folderChanged('lower', project.observe('lower'))
     expect(historyLen()).toBe(len)
     expect(rewatched).toContain('lower')
     busy = false
@@ -346,8 +351,298 @@ describe('an id Object.prototype answers', () => {
     place('lower')
     cpSync(folder('lower'), folder('constructor'), { recursive: true })
     const len = historyLen()
-    records.folderChanged('constructor', project.status('constructor'))
+    records.folderChanged('constructor', project.observe('constructor'))
     expect(historyLen()).toBe(len)
     expect(Object.keys(entries())).toEqual(['lower'])
+  })
+})
+
+describe('Motif trust across an open', () => {
+  /** The machine's trust record and the resolver hearing the open project,
+   *  as the app wires them; `reopen` makes the project folder the open one
+   *  again, as a project open does before its records settle. */
+  function trusting() {
+    const trust = new MotifTrust(path.join(root, 'trust.json'), () => [])
+    const resolver = new MotifResolver(library, [], trust)
+    resolver.onRevisionSeen((_id, revision, cause, base) => trust.seen(revision, cause, base))
+    const reopen = () => {
+      project = new ProjectMotifStore(projectDir)
+      resolver.setProject(project)
+    }
+    reopen()
+    return { trust, reopen, resolver }
+  }
+  afterEach(() => { trusted?.flush(); trusted = null })
+  let trusted: MotifTrust | null = null
+
+  it('never trusts an edit made while the project was closed', () => {
+    const { trust, reopen } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    expect(trust.trusted(entries().lower!.revision!)).toBe(true)
+    edit('lower', 'while closed')
+    reopen()
+    records.opened()
+    expect(entries().lower!.revision).toBe(project.status('lower').revision)
+    expect(trust.trusted(entries().lower!.revision!)).toBe(false)
+  })
+
+  it('never trusts it when it is heard as an edit before the open settles, and recorded late', () => {
+    const { trust, reopen } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    const placed = entries().lower!.revision!
+    edit('lower', 'while closed')
+    const closedEdit = project.status('lower').revision!
+    reopen()
+    // The watcher tells the folder while the open still refuses writes: it
+    // waits for `retry`, which hears it as an edit made from the trusted
+    // revision the table records.
+    busy = true
+    records.folderChanged('lower', project.observe('lower'))
+    expect(entries().lower!.revision).toBe(placed)
+    busy = false
+    records.retry()
+    expect(entries().lower!.revision).toBe(closedEdit)
+    expect(trust.trusted(closedEdit)).toBe(false)
+    // An edit made from it while open stays untrusted too.
+    edit('lower', 'while open')
+    records.folderChanged('lower', project.observe('lower'))
+    expect(entries().lower!.revision).toBe(project.status('lower').revision)
+    expect(trust.trusted(entries().lower!.revision!)).toBe(false)
+  })
+
+  it('trusts an edit on disk made while the project is open, from a trusted revision', () => {
+    const { trust } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    records.opened()
+    edit('lower', 'while open')
+    records.folderChanged('lower', project.observe('lower'))
+    expect(entries().lower!.revision).toBe(project.status('lower').revision)
+    expect(trust.trusted(entries().lower!.revision!)).toBe(true)
+  })
+
+  it('trusts an edit on disk made while the project is open when it is read, before the watcher hears it', () => {
+    const { trust, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    records.opened()
+    edit('lower', 'while open')
+    const written = project.status('lower').revision!
+    expect(resolver.resolve('lower')).toMatchObject({ status: 'ok', revision: written })
+    expect(trust.trusted(written)).toBe(true)
+  })
+
+  it('keeps an edit made while the project was closed untrusted when it is read before the open records it', () => {
+    const { trust, reopen, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    edit('lower', 'while closed')
+    reopen()
+    // The table still records the trusted placed revision.
+    expect(resolver.resolve('lower').status).toBe('untrusted')
+    records.opened()
+    expect(resolver.resolve('lower').status).toBe('untrusted')
+  })
+
+  it('keeps an edit made while open from an untrusted revision untrusted when it is read', () => {
+    const { trust, reopen, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    edit('lower', 'while closed')
+    reopen()
+    records.opened()
+    edit('lower', 'while open')
+    expect(resolver.resolve('lower').status).toBe('untrusted')
+    expect(trust.trusted(project.status('lower').revision!)).toBe(false)
+  })
+
+  it('trusts a folder first written while the project is open when it is read: it was made here', () => {
+    const { trust, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    records.opened()
+    mkdirSync(folder('stray'), { recursive: true })
+    edit('stray', 'arrived while open')
+    expect(resolver.resolve('stray').status).toBe('ok')
+  })
+
+  it('keeps a folder found under Motifs/ at the open untrusted when it is adopted, however many others were found', () => {
+    mkdirSync(folder('found'), { recursive: true })
+    edit('found', 'from another machine')
+    const { trust } = trusting(); trusted = trust
+    // As many other folders found at the open as the found set keeps.
+    for (let n = 0; n < FOUND_KEPT; n++) trust.seen(decoy(n), 'opened', null)
+    records.opened()
+    const adopted = project.create({ kind: 'directory', path: folder('found') }, entries())
+    expect(adopted.entry.revision).toBe(project.status('found').revision)
+    expect(trust.trusted(adopted.entry.revision!)).toBe(false)
+  })
+
+  it('adopts a folder first written under Motifs/ while the project is open as trusted: it was made here', () => {
+    const { trust } = trusting(); trusted = trust
+    records.opened()
+    mkdirSync(folder('written'), { recursive: true })
+    edit('written', 'arrived while open')
+    const adopted = project.create({ kind: 'directory', path: folder('written') }, entries())
+    expect(trust.trusted(adopted.entry.revision!)).toBe(true)
+  })
+
+  it('keeps a copy or move of a folder found untrusted at the open untrusted, whatever it is named', () => {
+    mkdirSync(folder('received'), { recursive: true })
+    edit('received', 'from another machine')
+    mkdirSync(folder('Evil'), { recursive: true })
+    edit('Evil', 'from another machine')
+    const { trust, resolver } = trusting(); trusted = trust
+    records.opened()
+    renameSync(folder('Evil'), folder('evil'))
+    expect(resolver.resolve('evil').status).toBe('untrusted')
+    cpSync(folder('received'), folder('received-2'), { recursive: true })
+    expect(resolver.resolve('received-2').status).toBe('untrusted')
+    // Moved again, the copy is still the bytes found.
+    renameSync(folder('received-2'), folder('received-3'))
+    expect(resolver.resolve('received-3').status).toBe('untrusted')
+    expect(trust.trusted(project.status('received-3').revision!)).toBe(false)
+  })
+
+  it('trusts a new folder, a copy of a trusted one, and a copy that differs by one byte when first seen', () => {
+    mkdirSync(folder('received'), { recursive: true })
+    edit('received', 'from another machine')
+    const { trust, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    records.opened()
+    mkdirSync(folder('fresh'), { recursive: true })
+    edit('fresh', 'written while open')
+    expect(resolver.resolve('fresh').status).toBe('ok')
+    cpSync(folder('lower'), folder('lower-2'), { recursive: true })
+    expect(resolver.resolve('lower-2').status).toBe('ok')
+    // Accepted: a local writer that changes a copy before the app sees it
+    // makes new bytes here, as an agent copying text it read does (ADR 0174).
+    cpSync(folder('received'), folder('tweaked'), { recursive: true })
+    const page = path.join(folder('tweaked'), 'index.html')
+    writeFileSync(page, readFileSync(page, 'utf8').replace('from another machine', 'from another machinf'))
+    expect(resolver.resolve('tweaked').status).toBe('ok')
+  })
+
+  it('judges a folder found at the open, removed and written again, from what this session saw in it', () => {
+    mkdirSync(folder('found'), { recursive: true })
+    edit('found', 'from another machine')
+    const { trust } = trusting(); trusted = trust
+    records.opened()
+    rmSync(folder('found'), { recursive: true })
+    mkdirSync(folder('found'))
+    edit('found', 'written while open')
+    const adopted = project.create({ kind: 'directory', path: folder('found') }, entries())
+    expect(trust.trusted(adopted.entry.revision!)).toBe(false)
+  })
+
+  it('keeps a folder untrusted that was there at the open without making a package, once it makes one', () => {
+    mkdirSync(folder('found'), { recursive: true })
+    writeFileSync(path.join(folder('found'), 'index.html'), 'no manifest yet')
+    const { trust, resolver } = trusting(); trusted = trust
+    records.opened()
+    edit('found', 'manifest added while open')
+    expect(resolver.resolve('found').status).toBe('untrusted')
+    expect(trust.trusted(project.status('found').revision!)).toBe(false)
+  })
+
+  it('puts back a backup the received project planted for a folder the open did not find as found, never as made here', () => {
+    // The received table records 'ghost', its folder gone, its revision
+    // backed up.
+    mkdirSync(folder('ghost'), { recursive: true })
+    edit('ghost', 'from another machine')
+    const ghost = project.status('ghost').revision!
+    expect(actor.dispatch('set_project_motif', { motif_id: 'ghost', uid: newLineage(), revision: ghost, from: null }).ok).toBe(true)
+    expect(backups().has('ghost', ghost)).toBe(true)
+    rmSync(folder('ghost'), { recursive: true })
+    const { trust, resolver } = trusting(); trusted = trust
+    records.opened()
+    install('lower', 'v1')
+    place('lower')
+    actor.dispatch('undo', {})
+    expect(project.status('ghost').revision).toBe(ghost)
+    expect(resolver.resolve('ghost').status).toBe('untrusted')
+    expect(trust.trusted(ghost)).toBe(false)
+  })
+
+  it('keeps every revision found at the open untrusted when a later write brings it back, however many were found', () => {
+    const { trust, reopen, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    const placed = entries().lower!.revision!
+    const received = edit('lower', 'while closed')
+    const closedEdit = project.status('lower').revision!
+    reopen()
+    for (let n = 0; n < FOUND_KEPT; n++) trust.seen(decoy(n), 'opened', null)
+    records.opened()
+    expect(entries().lower!.revision).toBe(closedEdit)
+    actor.dispatch('undo', {})
+    expect(project.status('lower').revision).toBe(placed)
+    // A sync tool writes the received bytes back while the project is open.
+    writeFileSync(path.join(folder('lower'), 'index.html'), received)
+    expect(resolver.resolve('lower').status).toBe('untrusted')
+    expect(trust.trusted(closedEdit)).toBe(false)
+  })
+
+  it('puts a recorded revision back as found: trusted only when it was before, whatever the folder held', () => {
+    mkdirSync(folder('card'), { recursive: true })
+    edit('card', 'from another machine')
+    const { trust, resolver } = trusting(); trusted = trust
+    expect(actor.dispatch('set_project_motif', { motif_id: 'card', uid: newLineage(), revision: project.status('card').revision, from: null }).ok).toBe(true)
+    records.opened()
+    // Edits made from the untrusted revision stay untrusted; the user then
+    // trusts the last one.
+    edit('card', 'first edit')
+    records.folderChanged('card', project.observe('card'))
+    const first = entries().card!.revision!
+    edit('card', 'second edit')
+    records.folderChanged('card', project.observe('card'))
+    const second = entries().card!.revision!
+    expect(trust.trusted(first) || trust.trusted(second)).toBe(false)
+    trust.trustNow(second)
+    // Undo puts the first edit back into a folder holding trusted bytes.
+    actor.dispatch('undo', {})
+    expect(project.status('card').revision).toBe(first)
+    expect(resolver.resolve('card').status).toBe('untrusted')
+    expect(trust.trusted(first)).toBe(false)
+    actor.dispatch('redo', {})
+    expect(project.status('card').revision).toBe(second)
+    expect(resolver.resolve('card').status).toBe('ok')
+  })
+
+  it('trusts an edit made while the project is open of a folder found trusted at the open', () => {
+    const { trust, reopen, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    reopen()
+    records.opened()
+    edit('lower', 'while open')
+    const written = project.status('lower').revision!
+    expect(resolver.resolve('lower')).toMatchObject({ status: 'ok', revision: written })
+    expect(trust.trusted(written)).toBe(true)
+  })
+
+  it('never puts back a backup whose files make another revision than it names, nor trusts them', () => {
+    const { trust, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    const placed = entries().lower!.revision!
+    records.opened()
+    edit('lower', 'while open')
+    records.folderChanged('lower', project.observe('lower'))
+    // A received project's Backups/ maps the placed revision to other bytes.
+    const planted = Buffer.from(composeMotifHtml(manifest('lower'), '<html><head></head><body><script>motif.define({frame(t){ /* planted */ }})</script></body></html>'))
+    const blob = createHash('sha256').update(planted).digest('hex')
+    const plantedRevision = declaredPackage([{ path: 'index.html', bytes: planted }], 'lower').revision
+    writeFileSync(path.join(projectDir, 'Backups', 'motifs', '.blobs', blob), planted)
+    writeFileSync(path.join(projectDir, 'Backups', 'motifs', 'lower', `${placed}.json`), JSON.stringify({ files: { 'index.html': blob } }))
+    actor.dispatch('undo', {})
+    expect(resolver.resolve('lower').status).not.toBe('missing')
+    records.folderChanged('lower', project.observe('lower'))
+    expect(pageOf('lower')).not.toContain('planted')
+    expect(trust.trusted(plantedRevision)).toBe(false)
+    expect(warned.some(m => m.includes("Motif 'lower' could not be put back"))).toBe(true)
   })
 })
