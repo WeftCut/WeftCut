@@ -106,6 +106,33 @@ Order matters: release swap chain and textures on a live device, then destroy
 it, before the next Application exists (`render/webgpuDevice.ts`, used by the
 Preview host and the export worker). Clean on Electron 42 and 43.
 
+## A copy into a lost WebGPU device crashes the renderer once the GPU process is back (Chromium 152)
+
+After a GPU-process restart, `GPUQueue.copyExternalImageToTexture` on a device
+lost with the old process is a null dereference on the renderer main thread
+(`WebGpuSharedImageWrapperCache::AcquireCachedWrapper`), whenever that device
+copied in the 2–4 s before the loss. Its cache still holds those copies'
+wrappers, which report no shared image once their context is gone, and the
+lookup reads the image's size unchecked. The same call before the restart
+returns early, and a device created after it starts with an empty cache.
+
+Pixi keeps drawing on the lost device until its restore hands it a new one,
+and a frame bound in that window (`VideoClipSprite`'s snapshot upload) lands on
+the old queue. Windows, RTX 3050, Electron 44.11.3, `chrome://gpucrash` with a
+1080p clip in the preview:
+
+| GPU process crashed while | Standard, d3d11va | Lite | Standard, software lane |
+| --- | --- | --- | --- |
+| paused | 15 of 120 died | 6 of 24 | 0 of 24 |
+| playing | 40 of 40 | not run | not run |
+
+The software lane's frames reach the GPU as buffers (`writeTexture`), not
+through this copy. Every death traced was an upload on the lost device between
+the restart and Pixi's new device; no survivor made one.
+`dropCopiesOnceLost` (`render/webgpuDevice.ts`) drops the copy on a lost
+device, which executes nothing anyway. The two builds alternated, 40 runs each:
+with it 0 died paused and 0 playing, without it 5 and 40.
+
 ## macOS menu accelerators do not preempt the renderer
 
 Electron 42.4.1, macOS (Apple silicon), 2026-07-30; a real `Cmd+C` through
