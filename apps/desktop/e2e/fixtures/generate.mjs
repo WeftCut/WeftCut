@@ -102,6 +102,21 @@ const COLOR_ENCODINGS = {
   },
 }
 
+/// The untagged charts: one per side of the absent-tag rule's 720-line split
+/// (`resolveSourceColor`), each converted with the matrix that side resolves to,
+/// so a lane that reads the absence differently shows it on the saturated
+/// patches.
+const UNTAGGED_COLOR = {
+  sd: { width: 720, height: 480, matrix: 'smpte170m', name: 'test_480p_color_601ltd_untagged.mp4' },
+  hd: { width: WIDTH, height: HEIGHT, matrix: 'bt709', name: 'test_1080p_color_709ltd_untagged.mp4' },
+}
+
+/// `scale` stamps its output matrix and range on the frame and libx264 writes
+/// them into the VUI, so the tags are reset after the conversion. No colour
+/// flag on the command line and no `write_colr` keep the stream and the
+/// container free of them too.
+const UNTAG_FILTER = 'setparams=range=unknown:color_primaries=unknown:color_trc=unknown:colorspace=unknown'
+
 const GRADIENT_FILTER = "format=yuv420p10le,geq=lum='(X/(W-1))*1023':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
 const COLOR_TAGS = [
   '-colorspace', 'bt709',
@@ -116,6 +131,7 @@ export function outputName({
   seconds,
   audio,
   color,
+  colorUntagged,
   colorProres,
   colorProresEnc,
   gradient,
@@ -145,6 +161,7 @@ export function outputName({
   }
   if (audioTimingLong) return 'test_audio_timing_long_125s.mkv'
   if (color) return `test_1080p_color_${color}.mp4`
+  if (colorUntagged) return untaggedColorOf(colorUntagged).name
   if (colorProres) return `test_1080p_color_${colorProresEnc ?? '709ltd'}_prores.mov`
   if (gradient) return 'test_1080p_gradient10.mp4'
   if (gradientH264) return 'test_1080p_gradient10_h264.mp4'
@@ -292,10 +309,20 @@ const REAL_IO = {
   log: (message) => console.log(message),
 }
 
+/// The 1080p chart keeps the unsuffixed names every colour gate reads; any other
+/// size carries its dimensions so charts of two sizes never share a file.
 function writeColorChart(io, outputDir, width, height) {
-  const patches = io.writeChartPng(outputDir, 'color_chart.png', width, height)
-  io.writeManifest(outputDir, 'color_manifest.json', width, height, patches)
-  return 'color_chart.png'
+  const suffix = width === WIDTH && height === HEIGHT ? '' : `_${width}x${height}`
+  const chart = `color_chart${suffix}.png`
+  const patches = io.writeChartPng(outputDir, chart, width, height)
+  io.writeManifest(outputDir, `color_manifest${suffix}.json`, width, height, patches)
+  return chart
+}
+
+function untaggedColorOf(size) {
+  const shape = UNTAGGED_COLOR[size]
+  if (!shape) throw new Error(`unknown --color-untagged ${JSON.stringify(size)} (sd|hd)`)
+  return shape
 }
 
 /// Run ffmpeg without a command shell. Keeping every argument separate is what
@@ -610,6 +637,21 @@ function generateColor(entry, outputDir, run, io) {
   io.log(`Done: ${output}`)
 }
 
+function generateColorUntagged(entry, outputDir, run, io) {
+  const { width, height, matrix, name } = untaggedColorOf(entry.colorUntagged)
+  const chart = writeColorChart(io, outputDir, width, height)
+  const filter = `format=rgb24,scale=out_color_matrix=${matrix}:out_range=tv,format=yuv420p,${UNTAG_FILTER}`
+  const args = [
+    '-y', '-loop', '1', '-i', chart, '-t', '1', '-r', '30',
+    '-vf', filter, '-c:v', 'libx264', '-crf', '18', '-preset', 'medium',
+    '-an', name,
+  ]
+
+  io.log(`Generating ${name} (${width}x${height} chart, ${matrix} limited, untagged)`)
+  run(args, { cwd: outputDir })
+  io.log(`Done: ${name}`)
+}
+
 function generateColorProres(entry, outputDir, run, io) {
   const encoding = entry.colorProresEnc ?? '709ltd'
   const matrix = encoding === '709ltd'
@@ -906,6 +948,7 @@ export function generateFixture(entry, {
   if (entry.audioTimingLong) return generateLongAudioTiming(outputDir, ffmpeg, io)
   if (entry.noisySpeech) return generateNoisySpeech(outputDir, ffmpeg, io)
   if (entry.color) return generateColor(entry, outputDir, ffmpeg, io)
+  if (entry.colorUntagged) return generateColorUntagged(entry, outputDir, ffmpeg, io)
   if (entry.colorProres) return generateColorProres(entry, outputDir, ffmpeg, io)
   if (entry.h264Interframe) return generateH264Interframe(outputDir, ffmpeg, io)
   if (entry.shotCuts) return generateShotCuts(outputDir, ffmpeg, io)
@@ -980,6 +1023,7 @@ const VALUE_FLAGS = new Map([
   ['--aformat', ['aformat', String]],
   ['--pts-offset-ms', ['ptsOffsetMs', Number]],
   ['--color', ['color', String]],
+  ['--color-untagged', ['colorUntagged', String]],
   ['--color-prores-enc', ['colorProresEnc', String]],
 ])
 
@@ -1050,6 +1094,7 @@ Generate one deterministic fixture in the current directory.
   --audio-timing-long
   --noisy-speech
   --color 709ltd|601ltd|709full|601full
+  --color-untagged sd|hd
   --color-prores [--color-prores-enc 709ltd|601ltd]
   --gradient | --gradient-h264 | --gradient-h264-bf
   --gradient-av1 | --gradient-h264-4k

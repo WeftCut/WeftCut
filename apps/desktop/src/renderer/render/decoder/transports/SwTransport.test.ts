@@ -10,6 +10,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { isNativeNv12Frame, type NativeNv12Frame } from "../nv12Frame";
 import { isTenBitFrame, type TenBitFrame } from "../tenBitFrame";
 import { SwTransport } from "./SwTransport";
+import { resolveSourceColor } from "../ffprobeColorSpace";
+
+const HD = resolveSourceColor({ height: 1080 });
 
 interface FakePreviewSwApi {
   open: ReturnType<typeof vi.fn>;
@@ -26,7 +29,7 @@ function installApi(): { api: FakePreviewSwApi; emit: (f: unknown) => void } {
     requestFrameAt: vi.fn(() => {}),
     consume: vi.fn(),
     close: vi.fn(() => {}),
-    onFrame: vi.fn((cb: (f: unknown) => void) => { onFrameCb = cb; return () => {}; }),
+    onFrame: vi.fn((_streamId: string, cb: (f: unknown) => void) => { onFrameCb = cb; return () => {}; }),
   };
   (window as unknown as { api: { previewSw: FakePreviewSwApi } }).api = { previewSw: api };
   return { api, emit: (f) => onFrameCb!(f) };
@@ -42,7 +45,7 @@ describe("SwTransport", () => {
     const { api, emit } = installApi();
     const t = new SwTransport();
     const got = vi.fn(); t.onFrame(got);
-    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    await t.open({ streamId: "s1", path: "C:/x.mov", sourceColor: HD });
     t.requestFrameAt(500_000); t.requestFrameAt(0);
     const f = { streamId: "s1", data: new Uint8Array(6), width: 2, height: 2,
       ptsUs: 0, durUs: 33_333, requestId: 2, receipt: 1 };
@@ -59,10 +62,19 @@ describe("SwTransport", () => {
     t.dispose(); emit({ ...f, receipt: 6 });
     expect(api.consume).toHaveBeenCalledTimes(4);
   });
+  // The bridge copies a frame's bytes into the page once per callback it
+  // calls, so each transport must ask for its own stream's frames only.
+  it("subscribes to its own stream's frames", async () => {
+    const { api } = installApi();
+    const t = new SwTransport();
+    await t.open({ streamId: "s-own", path: "C:/x.mov", sourceColor: HD });
+    expect(api.onFrame.mock.calls.map(([streamId]) => streamId)).toEqual(["s-own"]);
+    t.dispose();
+  });
   it("keeps frames from an earlier forward refill, but discards them after a cache flush", async () => {
     const { api, emit } = installApi(); const t = new SwTransport();
     const got = vi.fn(); t.onFrame(got);
-    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    await t.open({ streamId: "s1", path: "C:/x.mov", sourceColor: HD });
     t.requestFrameAt(0); t.requestFrameAt(33_333);
     expect(api.requestFrameAt.mock.calls.map(([a]) => a.requestId)).toEqual([1, 1]);
     const f = { streamId: "s1", data: new Uint8Array(6), width: 2, height: 2,
@@ -77,7 +89,7 @@ describe("SwTransport", () => {
     const t = new SwTransport();
     const got: Array<{ frame: unknown; ptsUs: number; durUs: number }> = [];
     t.onFrame((frame, ptsUs, durUs) => got.push({ frame, ptsUs, durUs }));
-    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    await t.open({ streamId: "s1", path: "C:/x.mov", sourceColor: HD });
     const nv12 = new Uint8Array(2 * 2 + 2); // 2x2 NV12 = 4 Y + 2 UV
     emit({ streamId: "s2", data: nv12, width: 2, height: 2, ptsUs: 5, durUs: 33 });
     emit({ streamId: "s1", data: nv12, width: 2, height: 2, ptsUs: 15, durUs: 33 });
@@ -94,34 +106,29 @@ describe("SwTransport", () => {
     t.dispose();
   });
 
-  it("stamps the open-time sourceColor on frames, defaulting bt709/limited", async () => {
+  it("stamps the open-time sourceColor on every frame, whatever it is", async () => {
+    // An untagged SD source's colour: the lane must carry it, not a default
+    // of its own.
+    const sd = resolveSourceColor({ height: 480 });
     const { emit } = installApi();
     const t = new SwTransport();
     const frames: NativeNv12Frame[] = [];
     t.onFrame((frame) => frames.push(frame as NativeNv12Frame));
-    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    await t.open({ streamId: "s1", path: "C:/x.mp4", sourceColor: sd });
     emit({ streamId: "s1", data: new Uint8Array(6), width: 2, height: 2, ptsUs: 0, durUs: 33 });
-    expect(frames[0]!.colorSpace).toEqual({
-      primaries: "bt709",
-      transfer: "bt709",
-      matrix: "bt709",
-      fullRange: false,
-    });
+    emit({ streamId: "s1", data: new Uint8Array(6), width: 2, height: 2, ptsUs: 33, durUs: 33 });
+    expect(frames.map((f) => f.colorSpace)).toEqual([sd, sd]);
     t.dispose();
 
-    // A 601-tagged source keeps its matrix — the ingest must not over-correct.
     const second = installApi();
-    const t601 = new SwTransport();
-    const frames601: NativeNv12Frame[] = [];
-    t601.onFrame((frame) => frames601.push(frame as NativeNv12Frame));
-    await t601.open({
-      streamId: "s1",
-      path: "C:/y.mov",
-      sourceColor: { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m", fullRange: false },
-    });
+    const tFull = new SwTransport();
+    const fullFrames: NativeNv12Frame[] = [];
+    tFull.onFrame((frame) => fullFrames.push(frame as NativeNv12Frame));
+    const full = resolveSourceColor({ height: 1080, color_matrix: "bt709", color_range: "pc" });
+    await tFull.open({ streamId: "s1", path: "C:/y.mp4", sourceColor: full });
     second.emit({ streamId: "s1", data: new Uint8Array(6), width: 2, height: 2, ptsUs: 0, durUs: 33 });
-    expect(frames601[0]!.colorSpace?.matrix).toBe("smpte170m");
-    t601.dispose();
+    expect(fullFrames[0]!.colorSpace).toEqual(full);
+    tFull.dispose();
   });
 
   // I420P10 frames (issue #10) — the 10-bit VideoToolbox-lane
@@ -133,7 +140,7 @@ describe("SwTransport", () => {
     const t = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "I420P10");
     const got: TenBitFrame[] = [];
     t.onFrame((frame) => got.push(frame as TenBitFrame));
-    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov", sourceColor: HD });
     // 2x2 I420P10 = u16LE Y (4 samples) + U + V (1 sample each) = 12 bytes.
     const p10 = new Uint8Array(2 * 2 * 3);
     emit({ streamId: "s1", format: "I420P10", data: p10, width: 2, height: 2, ptsUs: 42, durUs: 33 });
@@ -145,8 +152,8 @@ describe("SwTransport", () => {
     expect(f.uOffset).toBe(8);
     expect(f.vOffset).toBe(10);
     expect(f.timestamp).toBe(42);
-    // Open-time sourceColor default rides p10 frames too (bt709/limited).
-    expect(f.colorSpace?.matrix).toBe("bt709");
+    // The open-time sourceColor rides p10 frames too.
+    expect(f.colorSpace).toEqual(HD);
     t.dispose();
   });
 
@@ -155,7 +162,7 @@ describe("SwTransport", () => {
     const t = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "I420P10");
     const got: unknown[] = [];
     t.onFrame((frame) => got.push(frame));
-    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov", sourceColor: HD });
     emit({ streamId: "s1", format: "NV12", data: new Uint8Array(6), width: 2, height: 2, ptsUs: 0, durUs: 33 });
     expect(got).toHaveLength(1);
     expect(isNativeNv12Frame(got[0])).toBe(true);
@@ -168,7 +175,7 @@ describe("SwTransport", () => {
     const t = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "I420P10");
     const got: number[] = [];
     t.onFrame((_f, ptsUs) => got.push(ptsUs));
-    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov", sourceColor: HD });
     // 2x2 expects 12 bytes; 11 is a Rust-emitter/adapter layout drift.
     emit({ streamId: "s1", format: "I420P10", data: new Uint8Array(11), width: 2, height: 2, ptsUs: 0, durUs: 33 });
     expect(got).toEqual([]);
@@ -182,7 +189,7 @@ describe("SwTransport", () => {
     const t = new SwTransport();
     const got: number[] = [];
     t.onFrame((_f, ptsUs) => got.push(ptsUs));
-    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    await t.open({ streamId: "s1", path: "C:/x.mov", sourceColor: HD });
     emit({ streamId: "s1", data: new Uint8Array(5), width: 2, height: 2, ptsUs: 0, durUs: 33 }); // 6 expected
     expect(got).toEqual([]);
     expect(warn).toHaveBeenCalled();
@@ -194,7 +201,7 @@ describe("SwTransport", () => {
     // Linux VAAPI copy-back: decode on the GPU, frames still ship NV12 over this
     // same transport — the accel rides through on open().
     const t = new SwTransport({ lane: "vaapi", device: "/dev/dri/renderD128" });
-    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov", sourceColor: HD });
     expect(api.open).toHaveBeenCalledWith({
       streamId: "s1",
       path: "/tmp/x.mov",
@@ -207,7 +214,7 @@ describe("SwTransport", () => {
   it("forwards an NVDEC accel with a null device", async () => {
     const { api } = installApi();
     const t = new SwTransport({ lane: "nvdec", device: null });
-    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov", sourceColor: HD });
     expect(api.open).toHaveBeenCalledWith({
       streamId: "s1",
       path: "/tmp/x.mov",
@@ -220,7 +227,7 @@ describe("SwTransport", () => {
   it("forwards a VideoToolbox accel with a null device (macOS, issue #10)", async () => {
     const { api } = installApi();
     const t = new SwTransport({ lane: "videotoolbox", device: null });
-    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov", sourceColor: HD });
     expect(api.open).toHaveBeenCalledWith({
       streamId: "s1",
       path: "/tmp/x.mov",
@@ -233,7 +240,7 @@ describe("SwTransport", () => {
   it("forwards no lane/device on the software path (no accel)", async () => {
     const { api } = installApi();
     const t = new SwTransport();
-    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    await t.open({ streamId: "s1", path: "C:/x.mov", sourceColor: HD });
     // Exact-match: the conditional spread must leave no lane/device keys behind.
     expect(api.open).toHaveBeenCalledWith({ streamId: "s1", path: "C:/x.mov" });
     t.dispose();
@@ -242,7 +249,7 @@ describe("SwTransport", () => {
   it("forwards outFormat only for an I420P10 session; NV12/absent stays today's payload", async () => {
     const { api } = installApi();
     const t = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "I420P10");
-    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov", sourceColor: HD });
     expect(api.open).toHaveBeenCalledWith({
       streamId: "s1",
       path: "/tmp/x.mov",
@@ -256,7 +263,7 @@ describe("SwTransport", () => {
     // the 8-bit open must stay byte-identical to today's.
     const second = installApi();
     const t8 = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "NV12");
-    await t8.open({ streamId: "s2", path: "/tmp/y.mp4" });
+    await t8.open({ streamId: "s2", path: "/tmp/y.mp4", sourceColor: HD });
     expect(second.api.open).toHaveBeenCalledWith({
       streamId: "s2",
       path: "/tmp/y.mp4",
@@ -269,7 +276,7 @@ describe("SwTransport", () => {
   it("forwards a playback-resolution divisor into the native open call", async () => {
     const { api } = installApi();
     const t = new SwTransport(undefined, 2);
-    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    await t.open({ streamId: "s1", path: "C:/x.mov", sourceColor: HD });
     expect(api.open).toHaveBeenCalledWith({ streamId: "s1", path: "C:/x.mov", scaleDiv: 2 });
     t.dispose();
 
@@ -277,7 +284,7 @@ describe("SwTransport", () => {
     // same IPC and wants the divisor just as much.
     const hw = installApi();
     const t4 = new SwTransport({ lane: "nvdec", device: null }, 4);
-    await t4.open({ streamId: "s2", path: "/tmp/x.mov" });
+    await t4.open({ streamId: "s2", path: "/tmp/x.mov", sourceColor: HD });
     expect(hw.api.open).toHaveBeenCalledWith({
       streamId: "s2",
       path: "/tmp/x.mov",
@@ -293,7 +300,7 @@ describe("SwTransport", () => {
     // the wire default, and full resolution has to stay the untouched path.
     const { api } = installApi();
     const t = new SwTransport(undefined, 1);
-    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    await t.open({ streamId: "s1", path: "C:/x.mov", sourceColor: HD });
     expect(api.open).toHaveBeenCalledWith({ streamId: "s1", path: "C:/x.mov" });
     t.dispose();
   });
@@ -301,7 +308,7 @@ describe("SwTransport", () => {
   it("forwards a reduced output cadence only for an explicit spill profile", async () => {
     const { api } = installApi();
     const spilled = new SwTransport(undefined, 4, 2);
-    await spilled.open({ streamId: "spill", path: "C:/4k.mp4" });
+    await spilled.open({ streamId: "spill", path: "C:/4k.mp4", sourceColor: HD });
     expect(api.open).toHaveBeenCalledWith({
       streamId: "spill",
       path: "C:/4k.mp4",
@@ -312,7 +319,7 @@ describe("SwTransport", () => {
 
     const ordinary = installApi();
     const fullCadence = new SwTransport(undefined, 4, 1);
-    await fullCadence.open({ streamId: "ordinary", path: "C:/4k.mp4" });
+    await fullCadence.open({ streamId: "ordinary", path: "C:/4k.mp4", sourceColor: HD });
     expect(ordinary.api.open).toHaveBeenCalledWith({
       streamId: "ordinary",
       path: "C:/4k.mp4",
@@ -332,7 +339,7 @@ describe("SwTransport", () => {
     const t = new SwTransport();
     const errors: string[] = [];
     t.onError((r) => errors.push(r));
-    await expect(t.open({ streamId: "s1", path: "C:/x.mov" })).rejects.toThrow("boom");
+    await expect(t.open({ streamId: "s1", path: "C:/x.mov", sourceColor: HD })).rejects.toThrow("boom");
     expect(errors).toEqual([]);
   });
 });

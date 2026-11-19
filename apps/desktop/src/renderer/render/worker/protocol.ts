@@ -9,6 +9,7 @@
 // worker after `done` to release its heap.
 
 import type { ExportTransportFormat } from "../exportDecodeRouting";
+import type { SourceColor } from "../decoder/ffprobeColorSpace";
 import type { MotifFramePacket } from "./motifStream";
 import type { SinkPixFmt } from "../../../shared/export-resources";
 
@@ -47,13 +48,12 @@ export interface ExportProjectSnapshot {
   /// normalized to content time; export decoders add this offset when seeking
   /// packets and subtract it when storing decoded frames.
   mediaStartPtsUs: Record<string, number | null>;
-  /// `media_id → source color tags`, one entry per media whose ffprobe tags
-  /// mapped (undefined only for untagged / unmapped sources). Applies to the
-  /// ORIGINAL and proxy decodes alike — a proxy preserves the source
-  /// colorimetry. A plain serializable object (postMessage-safe). The Worker
-  /// passes it into each `SourceHandle` so the decode carries its real
-  /// matrix/range — see `withDefaultColorSpace`.
-  mediaColor: Record<string, VideoColorSpaceInit | undefined>;
+  /// `media_id → resolved colour` (`resolveSourceColor`), one complete entry
+  /// per media. Applies to the ORIGINAL and proxy decodes alike — a proxy
+  /// preserves the source colorimetry. A plain serializable object
+  /// (postMessage-safe). The Worker passes it into each `SourceHandle` so
+  /// every export lane decodes with the colour preview uses.
+  mediaColor: Record<string, SourceColor>;
   /// `media_id → absolute ORIGINAL file path`, resolved on the main thread for
   /// media the export routes through the native decode session. The napi
   /// `exportSwOpen` opens a filesystem path (not a `weftcut-media://` asset

@@ -24,7 +24,7 @@ import { motifLayersToBake } from "../exportBake";
 import { MotifFrameProducer } from "./motifStream";
 import { acquireExportResources } from '../resourceClient';
 import { exportFrameCount } from "./frameGrid";
-import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
+import { resolveSourceColor, type SourceColor } from "../decoder/ffprobeColorSpace";
 import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
 import { tenBitExportCapable } from "../exportSettings";
 import type { SinkPixFmt } from "../../../shared/export-resources";
@@ -135,15 +135,14 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const originalAssetUrls: Record<string, string> = {};
   const mediaDims: Record<string, { width: number | null; height: number | null }> = {};
   const mediaStartPtsUs: Record<string, number | null> = {};
-  // Per-media source color, applied to WHATEVER the export decodes — the
-  // original trivially carries its own ffprobe tags, and a proxy PRESERVES the
-  // source's colorimetry (the recipe never converts matrix/range, and since
-  // PROXY_FORMAT_VERSION 7 asserts the source tags + a colr atom outright).
-  // mediabunny's own container tag still outranks this per-field in
-  // `withDefaultColorSpace`, so a self-describing proxy reads its colr and an
-  // older colr-less one falls back to these source tags instead of the
-  // bt709/limited resolution default that misread full-range/601 proxies.
-  const mediaColor: Record<string, VideoColorSpaceInit | undefined> = {};
+  // Per-media resolved colour, applied to WHATEVER the export decodes — the
+  // original trivially, and a proxy PRESERVES the source's colorimetry (the
+  // recipe never converts matrix/range, and since PROXY_FORMAT_VERSION 7
+  // asserts the source tags + a colr atom outright). mediabunny's own
+  // container tag still outranks this per-field in `withDefaultColorSpace`,
+  // so a self-describing proxy reads its colr and an older colr-less one
+  // falls back to the source's colour.
+  const mediaColor: Record<string, SourceColor> = {};
   const routes = init.decodeRouting?.routes ?? {};
   for (const m of init.mediaById.values()) {
     const exportPath = resolveDecode(m).exportPath;
@@ -161,7 +160,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     originalAssetUrls[m.id] = convertFileSrc(m.path);
     mediaDims[m.id] = { width: m.width, height: m.height };
     mediaStartPtsUs[m.id] = m.video_start_pts_us ?? m.start_pts_us ?? null;
-    mediaColor[m.id] = ffprobeColorToWebCodecs(m);
+    mediaColor[m.id] = resolveSourceColor(m);
   }
 
   // ── Native export-decode routing ───────────────────────────────────────────

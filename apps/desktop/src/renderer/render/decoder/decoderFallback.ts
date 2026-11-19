@@ -12,7 +12,7 @@
 //      LogBus warning and signal the caller to null + lazy-rebuild
 //      the decoder.
 //
-// Anything else is informational — log only.
+// Anything else is `log-only`: this module picks no recovery for it.
 
 export type DecodeErrorAction =
   | { kind: "downgrade-to-software" }

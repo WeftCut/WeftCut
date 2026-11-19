@@ -14,6 +14,7 @@
 import type { ExportColorDiag } from "../decoder/ExportDecoderPool";
 import { ExportFrameStore } from "../decoder/ExportDecoderPool";
 import { nv12FrameFromBytes, type NativeNv12Frame } from "../decoder/nv12Frame";
+import type { SourceColor } from "../decoder/ffprobeColorSpace";
 import type { ExportDecodeSession, SourceHandleInit } from "../decoder/session";
 import { tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 import type { ExportTransportFormat } from "../exportDecodeRouting";
@@ -25,25 +26,6 @@ import type { NativeDecodeFrameMsg } from "./protocol";
 /// sufficient (one handle = one session for its lifetime).
 let seq = 0;
 
-/// Build the `VideoColorSpaceInit` stamped on every frame from the source's
-/// already-mapped `sourceColor` (WebCodecs enums, derived at export start via
-/// `ffprobeColorToWebCodecs`), falling back to bt709/limited — the same posture
-/// as the preview native path (`SwTransport.colorSpaceFor`).
-///
-/// LANDMINE: must NOT read the per-frame `colorMatrix`/`colorTransfer`/… tags.
-/// Those are raw FFmpeg `.name()` strings (e.g. `bt2020nc`, `smpte2084`,
-/// `arib-std-b67`), not valid WebCodecs enum members (`bt2020-ncl`, `pq`,
-/// `hlg`) — they would fork the app's single color model, and the ingest
-/// shaders' `coefForMatrix` matches WebCodecs enum members only.
-function colorSpaceFromSource(sourceColor: VideoColorSpaceInit | undefined): VideoColorSpaceInit {
-  return {
-    primaries: sourceColor?.primaries ?? "bt709",
-    transfer: sourceColor?.transfer ?? "bt709",
-    matrix: sourceColor?.matrix ?? "bt709",
-    fullRange: sourceColor?.fullRange ?? false,
-  };
-}
-
 export class NativeExportSourceHandle implements ExportDecodeSession {
   readonly mediaId: string;
   readonly ring: ExportFrameStore;
@@ -52,9 +34,15 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   private readonly sourcePath: string;
   private readonly outFormat: ExportTransportFormat;
   private readonly creditWindow: number;
-  /// ColorSpace stamped on every pushed frame — fixed per handle
-  /// (one handle = one source), see `colorSpaceFromSource`.
-  private readonly frameColorSpace: VideoColorSpaceInit;
+  /// The colour stamped on every pushed frame: the source's resolved colour,
+  /// fixed per handle (one handle = one source).
+  ///
+  /// LANDMINE: never the per-frame `colorMatrix`/`colorTransfer`/… tags. Those
+  /// are raw FFmpeg `.name()` strings (e.g. `bt2020nc`, `smpte2084`,
+  /// `arib-std-b67`), not WebCodecs enum members (`bt2020-ncl`, `pq`, `hlg`):
+  /// they would fork the app's single colour model, and the ingest shaders'
+  /// `coefForMatrix` matches WebCodecs enum members only.
+  private readonly frameColorSpace: SourceColor;
   /// `aUs` of the previous `decodeRange`; `aUs < lastRangeAUs` is a backward
   /// clip-reuse jump — the only case that must reset the ring's EOS clamp.
   private lastRangeAUs = Number.NEGATIVE_INFINITY;
@@ -83,10 +71,10 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.sourcePath = ne.sourcePath;
     this.outFormat = ne.outFormat;
     this.creditWindow = ne.creditWindow;
-    this.frameColorSpace = colorSpaceFromSource(init.sourceColor);
+    this.frameColorSpace = init.sourceColor;
     // Unique, realm-safe, stable for this handle's lifetime.
     this.sessionId = `nd-${seq++}-${init.mediaId}-${init.handleKey ?? init.mediaId}`;
-    this.ring = new ExportFrameStore();
+    this.ring = new ExportFrameStore(() => this.reconcileCredits());
     this.relay = relay;
     this.relay.register(this.sessionId, {
       onFrame: (f) => this.onFrame(f),
@@ -126,7 +114,6 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     // release them (and their credits) before the Rust session re-seeks.
     if (aUs < this.lastRangeAUs) {
       this.ring.flush();
-      this.reconcileCredits();
       this.ring.clearEosDrain();
     }
     this.lastRangeAUs = aUs;
@@ -135,15 +122,20 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
 
   evictBefore(cutoffUs: number): void {
     this.ring.evictBefore(cutoffUs);
-    this.reconcileCredits();
   }
 
   /// Return one credit per frame that has LEFT the ring by ANY path (evict, the
-  /// ring's push/waitForPts `freeBehindWaiters`, or EOS flush) and not yet been
-  /// credited: `framesPushed - ring.size()` = frames that have departed. This
-  /// keeps the total in flight (Rust-buffered + relay + resident-in-ring) ≤
-  /// creditWindow so memory is bounded, and never accrues a deficit that would
-  /// starve the producer. Called after every push and every evictBefore.
+  /// ring's push/waitForPts `freeBehindWaiters`, or a backward-jump flush) and
+  /// not yet been credited: `framesPushed - ring.size()` = frames that have
+  /// departed. This keeps the total in flight (Rust-buffered + relay +
+  /// resident-in-ring) ≤ creditWindow so memory is bounded, and never accrues a
+  /// deficit that would starve the producer. Runs as the ring's shrink callback,
+  /// so every departure path credits at the moment it frees.
+  ///
+  /// LANDMINE: a frame freed by a parking `waitForPts` must credit right there.
+  /// The producer may already be parked with its window full, and the export
+  /// loop's next evict runs only after that wait resolves: deferring the credit
+  /// to the next push or evict deadlocks the export.
   private reconcileCredits(): void {
     if (this._disposed) return;
     const owed = this.framesPushed - this.ring.size() - this.creditsReturned;
@@ -199,10 +191,8 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
       };
     }
     // Frames arrive source-normalized; push with the frame's own ptsUs.
+    this.countPushed();
     this.ring.push(nv12, frame.ptsUs);
-    this.framesPushed++;
-    this.dispatchedTotal++;
-    this.reconcileCredits();
   }
 
   /// The I420P10 lane: wrap the transferred bytes as a `TenBitFrame` — ZERO-COPY,
@@ -234,10 +224,16 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
         frameFormat: "I420P10",
       };
     }
+    this.countPushed();
     this.ring.push(tenBit, frame.ptsUs);
+  }
+
+  /// Counted BEFORE `ring.push`: the push may free frames behind a waiter, and
+  /// that shrink's reconcile must already see this frame as pushed, or one
+  /// departed frame's credit is withheld until the next shrink.
+  private countPushed(): void {
     this.framesPushed++;
     this.dispatchedTotal++;
-    this.reconcileCredits();
   }
 
   /// Ordered range completion is a presentation-finality proof: every frame

@@ -12,6 +12,7 @@ import { NativeExportSourceHandle } from "./nativeExportSource";
 import type { NativeDecodeRelayClient, NativeDecodeSink } from "./nativeDecodeRelay";
 import type { NativeDecodeFrameMsg } from "./protocol";
 import type { SourceHandleInit } from "../decoder/session";
+import { resolveSourceColor, type SourceColor } from "../decoder/ffprobeColorSpace";
 import { isNativeNv12Frame, nv12FrameFromBytes, type NativeNv12Frame } from "../decoder/nv12Frame";
 import { isTenBitFrame, tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 
@@ -62,9 +63,13 @@ class FakeRelay {
 const W = 4;
 const H = 2;
 const DUR = 33_333;
+const CREDIT_WINDOW = 6;
+
+const HD = resolveSourceColor({ height: 1080 });
+const BT470BG_FULL = resolveSourceColor({ height: 1080, color_matrix: "bt470bg", color_range: "pc" });
 
 function makeHandle(
-  sourceColor?: VideoColorSpaceInit,
+  sourceColor: SourceColor = HD,
   outFormat: "NV12" | "I420P10" = "NV12",
 ): {
   handle: NativeExportSourceHandle;
@@ -76,8 +81,8 @@ function makeHandle(
     mediaId: "m0",
     handleKey: "m0#0",
     proxyAssetUrl: "weftcut-media://ignored",
-    nativeExport: { sourcePath: "C:/orig/tiny.mov", outFormat, creditWindow: 6 },
-    ...(sourceColor ? { sourceColor } : {}),
+    nativeExport: { sourcePath: "C:/orig/tiny.mov", outFormat, creditWindow: CREDIT_WINDOW },
+    sourceColor,
   };
   const handle = new NativeExportSourceHandle(init, relay as unknown as NativeDecodeRelayClient);
   return { handle, relay };
@@ -160,8 +165,7 @@ describe("NativeExportSourceHandle", () => {
     // Park a waiter far ahead: freeBehindWaiters drops frame 0 (below the
     // waiter, keeping its lower neighbour) WITHOUT going through evictBefore.
     const waiting = handle.ring.waitForPts(100 * DUR);
-    // A later frame satisfies the waiter (strictly-later PTS) and the next
-    // onFrame reconcile credits the frame freeBehindWaiters removed.
+    // A later frame satisfies the waiter (strictly-later PTS).
     sink.onFrame(frameMsg(101 * DUR));
     await waiting;
     // Invariant: credits returned == frames that have left the ring. Never a
@@ -172,13 +176,49 @@ describe("NativeExportSourceHandle", () => {
     expect(inFlight).toBe(handle.ring.size());
   });
 
+  it("credits frames a parking waiter frees without waiting for another push or evict", async () => {
+    // The producer filled its window before the consumer parked (several source
+    // frames per output step), so it is parked with no credit. The frames the
+    // parking waiter frees are its only way to resume: no push can arrive and
+    // the loop's next evict runs only after this wait resolves.
+    const { handle, relay } = makeHandle();
+    await handle.decodeRange(0, 100 * DUR);
+    const sink = relay.sink!;
+    for (let i = 0; i < CREDIT_WINDOW; i++) sink.onFrame(frameMsg(i * DUR));
+    expect(relay.totalCredits()).toBe(0);
+
+    const waiting = handle.ring.waitForPts((CREDIT_WINDOW + 1) * DUR);
+    expect(handle.ring.size()).toBeLessThan(CREDIT_WINDOW);
+    expect(relay.totalCredits(), "one credit per frame the waiter freed").toBe(
+      CREDIT_WINDOW - handle.ring.size(),
+    );
+
+    // Later departures are credited once more each, never the freed ones again.
+    sink.onFrame(frameMsg((CREDIT_WINDOW + 2) * DUR));
+    await waiting;
+    handle.evictBefore((CREDIT_WINDOW + 2) * DUR);
+    expect(relay.totalCredits(), "each departed frame credited exactly once").toBe(
+      CREDIT_WINDOW + 1 - handle.ring.size(),
+    );
+  });
+
+  it("credits a frame a push frees behind a parked waiter in that same push", async () => {
+    const { handle, relay } = makeHandle();
+    await handle.decodeRange(0, 100 * DUR);
+    const sink = relay.sink!;
+    void handle.ring.waitForPts(100 * DUR);
+    sink.onFrame(frameMsg(0));
+    sink.onFrame(frameMsg(DUR)); // frees frame 0 behind the waiter
+    expect(relay.totalCredits(), "one credit per frame the push freed").toBe(
+      2 - handle.ring.size(),
+    );
+  });
+
   it("stamps frames with the mapped sourceColor, never the raw ffmpeg tag names", async () => {
     // Per-frame tags are raw FFmpeg `.name()` strings (bt2020nc/smpte2084/…),
     // NOT WebCodecs enum members — the ingest shaders' coefForMatrix matches
-    // WebCodecs enums only. The handle must stamp the already-mapped
-    // `init.sourceColor` with the bt709/limited fallback, mirroring the
-    // preview native path (SwTransport.colorSpaceFor).
-    const { handle, relay } = makeHandle({ matrix: "bt470bg", fullRange: true });
+    // WebCodecs enums only. The handle must stamp `init.sourceColor`.
+    const { handle, relay } = makeHandle(BT470BG_FULL);
     await handle.ensureReady();
     relay.sink!.onFrame({
       ...frameMsg(0),
@@ -187,7 +227,7 @@ describe("NativeExportSourceHandle", () => {
       colorTransfer: "smpte2084",
       colorRange: "tv",
     });
-    expect(handle.firstFrameDiag?.configColor).toEqual({
+    expect(handle.firstFrameDiag?.configColor).toMatchObject({
       matrix: "bt470bg",
       primaries: "bt709",
       transfer: "bt709",
@@ -195,16 +235,18 @@ describe("NativeExportSourceHandle", () => {
     });
   });
 
-  it("falls back to bt709/limited when the source has no mapped color", async () => {
-    const { handle, relay } = makeHandle();
+  it("stamps the colour it was given on an untagged SD source, not a default of its own", async () => {
+    const { handle, relay } = makeHandle(resolveSourceColor({ height: 480 }));
     await handle.ensureReady();
     relay.sink!.onFrame(frameMsg(0));
-    expect(handle.firstFrameDiag?.configColor).toEqual({
-      matrix: "bt709",
-      primaries: "bt709",
-      transfer: "bt709",
+    const nv = handle.ring.frameAt(0) as NativeNv12Frame;
+    expect(nv.colorSpace).toMatchObject({
+      matrix: "smpte170m",
+      primaries: "smpte170m",
+      transfer: "smpte170m",
       fullRange: false,
     });
+    expect(handle.firstFrameDiag?.configColor).toEqual(nv.colorSpace);
   });
 
   it("a backward decodeRange deactivates the ring's EOS clamp", async () => {
@@ -330,7 +372,7 @@ describe("tenBitFrameFromBytes", () => {
 
 describe("NativeExportSourceHandle — I420P10 lane", () => {
   it("pushes a zero-copy TenBitFrame (no VideoFrame round-trip) with the stamped color", async () => {
-    const { handle, relay } = makeHandle({ matrix: "bt470bg", fullRange: true }, "I420P10");
+    const { handle, relay } = makeHandle(BT470BG_FULL, "I420P10");
     await handle.ensureReady();
     const bytes = new ArrayBuffer(P10_BYTES);
     relay.sink!.onFrame(p10Msg(0, bytes));
@@ -347,8 +389,8 @@ describe("NativeExportSourceHandle — I420P10 lane", () => {
     expect(tb.data.buffer).toBe(bytes);
     expect(tb.timestamp).toBe(0);
     expect(tb.duration).toBe(DUR);
-    // Same mapped-sourceColor stamp as the NV12 branch (bt709/limited fallback).
-    expect(tb.colorSpace).toEqual({
+    // Same sourceColor stamp as the NV12 branch.
+    expect(tb.colorSpace).toMatchObject({
       matrix: "bt470bg",
       primaries: "bt709",
       transfer: "bt709",
@@ -358,7 +400,7 @@ describe("NativeExportSourceHandle — I420P10 lane", () => {
   });
 
   it("returns credits for 10-bit frames on evict exactly like NV12", async () => {
-    const { handle, relay } = makeHandle(undefined, "I420P10");
+    const { handle, relay } = makeHandle(HD, "I420P10");
     await handle.ensureReady();
     const sink = relay.sink!;
     for (let i = 0; i < 4; i++) sink.onFrame(p10Msg(i * DUR));
@@ -369,14 +411,14 @@ describe("NativeExportSourceHandle — I420P10 lane", () => {
   });
 
   it("fails the ring loudly on a byteLength that doesn't match the layout", async () => {
-    const { handle, relay } = makeHandle(undefined, "I420P10");
+    const { handle, relay } = makeHandle(HD, "I420P10");
     await handle.ensureReady();
     relay.sink!.onFrame(p10Msg(0, new ArrayBuffer(P10_BYTES - 2)));
     await expect(handle.ring.waitForPts(0)).rejects.toThrow(/I420P10/);
   });
 
   it("fails the ring when a frame's format contradicts the session's outFormat", async () => {
-    const { handle, relay } = makeHandle(undefined, "NV12");
+    const { handle, relay } = makeHandle(HD, "NV12");
     await handle.ensureReady();
     relay.sink!.onFrame(p10Msg(0)); // I420P10 frame into an NV12 session
     await expect(handle.ring.waitForPts(0)).rejects.toThrow(/I420P10/);
@@ -444,7 +486,7 @@ describe("NativeExportSourceHandle — NV12 lane", () => {
     expect(nv.data.buffer).toBe(bytes);
     expect(nv.timestamp).toBe(0);
     expect(nv.duration).toBe(DUR);
-    expect(nv.colorSpace).toEqual({
+    expect(nv.colorSpace).toMatchObject({
       matrix: "bt709",
       primaries: "bt709",
       transfer: "bt709",
@@ -460,6 +502,7 @@ describe("NativeExportSourceHandle — NV12 lane", () => {
       primaries: "smpte170m",
       transfer: "smpte170m",
       fullRange: false,
+      matrixAssumed: false,
     });
     await handle.ensureReady();
     relay.sink!.onFrame(frameMsg(0));

@@ -42,13 +42,10 @@ export interface HandoffTimingSummary {
   barrierP50: number;
   barrierP95: number;
   barrierMax: number;
-  /// The barrier split into its two phases — the rasterize and the CPU read.
-  /// They are reported apart because the readback's 2D context is created with
-  /// `willReadFrequently: true`, hinting a CPU-backed canvas: `drawImage` of a
-  /// GPU-backed bitmap may ALREADY be the GPU→CPU readback, leaving
-  /// `getImageData` nearly free. The total cannot tell that apart from the
-  /// reverse, and the two suggest opposite fixes. Under the GPU-flush barrier
-  /// the whole cost lands in draw; with no barrier both are 0.
+  /// The barrier split into its two phases — the draw or submit, and the CPU
+  /// read. Under the readback barrier the draw is the wait for the GPU copy
+  /// (shared/readCompletion.ts); under the GPU-flush barrier the whole cost
+  /// lands in draw; with no barrier both are 0.
   barrierDrawP50: number;
   barrierReadP50: number;
   /// Which barrier the preload actually RAN, as opposed to the one the run was

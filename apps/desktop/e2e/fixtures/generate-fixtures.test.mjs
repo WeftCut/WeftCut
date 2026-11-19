@@ -354,6 +354,82 @@ test('the imageset and colour entries claim more than they are named for', () =>
     'color_manifest.json',
     'test_1080p_color_601full.mp4',
   ])
+  assert.deepEqual(recipeOf({ colorUntagged: 'sd' }).files, [
+    'color_chart_720x480.png',
+    'color_manifest_720x480.json',
+    'test_480p_color_601ltd_untagged.mp4',
+  ])
+  assert.deepEqual(recipeOf({ colorUntagged: 'hd' }).files, [
+    'color_chart.png',
+    'color_manifest.json',
+    'test_1080p_color_709ltd_untagged.mp4',
+  ])
+})
+
+test('the untagged colour charts carry no colour tag and decode as the matrix they state', async (t) => {
+  if (!ffmpegOnPath()) {
+    t.skip('no ffmpeg on PATH, so the fixture cannot be produced either')
+    return
+  }
+  const parent = mkdtempSync(path.join(tmpdir(), 'weftcut fixture untagged '))
+  const outputDir = path.join(parent, 'media with spaces')
+  const shapes = [
+    { entry: { colorUntagged: 'sd' }, manifest: 'color_manifest_720x480.json', stated: 'smpte170m', other: 'bt709' },
+    { entry: { colorUntagged: 'hd' }, manifest: 'color_manifest.json', stated: 'bt709', other: 'smpte170m' },
+  ]
+
+  try {
+    await withCapturedLogs(() => ensureFixtures(outputDir, { matrix: shapes.map(({ entry }) => entry) }))
+
+    for (const { entry, manifest, stated, other } of shapes) {
+      const name = outputName(entry)
+      const media = path.join(outputDir, name)
+      const probe = spawnSync('ffprobe', [
+        '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=color_space,color_range,color_primaries,color_transfer',
+        '-of', 'json', media,
+      ], { encoding: 'utf8' })
+      assert.equal(probe.status, 0, `ffprobe failed:\n${probe.stderr}`)
+      const stream = JSON.parse(probe.stdout).streams[0]
+      for (const field of ['color_space', 'color_range', 'color_primaries', 'color_transfer']) {
+        assert.ok(
+          stream[field] === undefined || stream[field] === 'unknown',
+          `${name}: ${field} is ${stream[field]}, expected no tag`,
+        )
+      }
+      // mediabunny reads the container's colr atom, ffprobe the VUI: both
+      // must be empty for the source to be untagged on every lane.
+      assert.ok(!readFileSync(media).includes('colr'), `${name} carries a colr atom`)
+
+      // The chart was converted with the stated matrix: decoding with it
+      // reproduces the authored patches more closely than the other matrix.
+      const { width, height, patches } = JSON.parse(readFileSync(path.join(outputDir, manifest), 'utf8'))
+      const worst = (matrix) => {
+        const rgb = spawnSync('ffmpeg', [
+          '-hide_banner', '-loglevel', 'error', '-i', media, '-frames:v', '1',
+          '-vf', `scale=in_color_matrix=${matrix}:in_range=tv`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-',
+        ], { maxBuffer: 1 << 26 })
+        assert.equal(rgb.status, 0, `ffmpeg failed:\n${rgb.stderr}`)
+        assert.equal(rgb.stdout.length, width * height * 3)
+        let max = 0
+        for (const patch of patches) {
+          const x = patch.x + Math.floor(patch.w / 2)
+          const y = patch.y + Math.floor(patch.h / 2)
+          const at = (y * width + x) * 3
+          for (let c = 0; c < 3; c += 1) max = Math.max(max, Math.abs(rgb.stdout[at + c] - patch.rgb[c]))
+        }
+        return max
+      }
+      const statedErr = worst(stated)
+      const otherErr = worst(other)
+      assert.ok(
+        statedErr < otherErr,
+        `${name}: decoding as ${stated} is off by ${statedErr}, as ${other} by ${otherErr}`,
+      )
+    }
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
 })
 
 test('recipeOf is stable across calls and moves when a recipe argument does', () => {

@@ -76,7 +76,7 @@ import { subscribeTransformOverrides } from "./transformOverrides";
 import { subscribeMotifCatalog } from "./motifs/catalog";
 import { subscribeMotifPreview } from "./motifs/previewOverlay";
 import { Compositor, type ResolvedRendererSource } from "./Compositor";
-import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
+import { resolveSourceColor, type SourceColor } from "./decoder/ffprobeColorSpace";
 import { PerfTelemetryBridge } from "./PerfHUD";
 import { PlaybackEngine } from "./PlaybackEngine";
 import { UnsupportedClipCard } from "./UnsupportedClipCard";
@@ -443,9 +443,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         if (!m) return null;
         return convertFileSrc(m.path);
       };
-      const sourceColor = (mediaId: string): VideoColorSpaceInit | undefined => {
+      const sourceColor = (mediaId: string): SourceColor | undefined => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
-        return m ? ffprobeColorToWebCodecs(m) : undefined;
+        return m ? resolveSourceColor(m) : undefined;
       };
       const lookupMedia = (mediaId: string): MediaSummary | undefined =>
         useProjectStore.getState().mediaById.get(mediaId);

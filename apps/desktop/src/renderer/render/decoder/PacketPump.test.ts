@@ -618,4 +618,30 @@ describe("PacketPump", () => {
     await tick();
     expect(sink.getKeyCalls.length).toBe(2); // re-sought a key; cursor was NOT resurrected
   });
+
+  it("a decoder that closes during an await is not given the awaited packet", async () => {
+    // The platform closes a failing codec before its error callback runs, so
+    // the continuation can find it closed with the generation unchanged.
+    const sink = new GatedSink();
+    const ring = new FakeRing();
+    const dec = makeFakeDecoder();
+    const decodeWhileOpen = dec.decode.bind(dec);
+    const offeredWhileClosed: EncodedVideoChunk[] = [];
+    dec.decode = (chunk) => {
+      if (dec.state !== "configured") {
+        offeredWhileClosed.push(chunk);
+        throw new Error("InvalidStateError: decode on a closed codec");
+      }
+      decodeWhileOpen(chunk);
+    };
+    const pump = new PacketPump({ decoder: dec, packetSink: sink, ring });
+
+    pump.requestFrameAt(0);
+    await tick(); // key decoded, awaiting getNextPacket
+    (dec as { state: CodecState }).state = "closed";
+    sink.release(makePacket(0.1));
+    await tick();
+
+    expect(offeredWhileClosed).toEqual([]);
+  });
 });

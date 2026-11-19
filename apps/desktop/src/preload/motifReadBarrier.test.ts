@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MotifReadBarrier, completeMotifReadOnGpu } from './motifReadBarrier'
+import { MotifReadBarrier } from './motifReadBarrier'
 
 const bitmap = () => ({ close: vi.fn() }) as unknown as ImageBitmap
 class FakeWorker {
@@ -93,14 +93,6 @@ describe('Motif shared-texture read barrier', () => {
     // A CPU-backed canvas, or an unset hint, makes the 1x1 draw read the whole frame back.
     expect(sources[0]).toContain("getContext('2d', {willReadFrequently: false})")
     expect(sources[0]).toContain('drawImage(bitmap, 0, 0, 1, 1, 0, 0, 1, 1)')
-
-    const options: unknown[] = []
-    const ctx = { drawImage: vi.fn(), getImageData: vi.fn() }
-    vi.stubGlobal('OffscreenCanvas', class { getContext(_: string, o: unknown) { options.push(o); return ctx } })
-    const frame = bitmap()
-    expect(completeMotifReadOnGpu(frame)).toBe(true)
-    expect(options).toEqual([{ willReadFrequently: false }])
-    expect(ctx.drawImage).toHaveBeenCalledWith(frame, 0, 0, 1, 1, 0, 0, 1, 1)
-    expect(ctx.getImageData).toHaveBeenCalledWith(0, 0, 1, 1)
+    expect(sources[0]).toContain('getImageData(0, 0, 1, 1)')
   })
 })

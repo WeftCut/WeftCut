@@ -82,16 +82,43 @@ pub(crate) unsafe fn acquire_sync(mutex: &IDXGIKeyedMutex, what: &str) -> anyhow
     }
 }
 
+/// Key 0 of a keyed mutex this thread acquired. `release` gives it back and
+/// reports the error; `Drop` gives it back if `release` never ran, so a body
+/// that panics does not leave the texture locked for the other process.
+struct HeldKey<'a> {
+    mutex: &'a IDXGIKeyedMutex,
+    held: bool,
+}
+
+impl HeldKey<'_> {
+    unsafe fn release(mut self) -> windows::core::Result<()> {
+        self.held = false;
+        self.mutex.ReleaseSync(0)
+    }
+}
+
+impl Drop for HeldKey<'_> {
+    fn drop(&mut self) {
+        if self.held {
+            // SAFETY: `held` means this thread's acquisition is still open; the
+            // borrow keeps the COM object alive.
+            let _ = unsafe { self.mutex.ReleaseSync(0) };
+        }
+    }
+}
+
 /// Runs `body` holding key 0 of `mutex`, and always releases it after the
-/// acquisition. The body's error wins over a release error.
+/// acquisition, also when `body` panics. The body's error wins over a release
+/// error.
 pub(crate) unsafe fn with_key<T>(
     mutex: &IDXGIKeyedMutex,
     what: &str,
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     acquire_sync(mutex, what)?;
+    let key = HeldKey { mutex, held: true };
     let result = body();
-    let release = mutex.ReleaseSync(0);
+    let release = key.release();
     let value = result?;
     release.map_err(device)?;
     Ok(value)

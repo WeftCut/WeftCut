@@ -40,6 +40,7 @@
 import type { HwBarrierMode } from "../../../../shared/ipc";
 import type { FenceHandoffStats } from "./handoffTimings";
 import { webgpuDeviceOf } from "../../webgpuDevice";
+import { createReadCompletionProof } from "../../../../shared/readCompletion";
 
 /// One in-flight completion probe over one delivered bitmap.
 export interface SlotFenceProbe {
@@ -91,29 +92,13 @@ type StreamStats = {
   waits: number[];
 };
 
-/// CPU-readback fallback: rasterize 1px of the bitmap and read it back, which
-/// blocks until Chromium materializes the `createImageBitmap` copy. Correct but
-/// synchronous (~20ms of renderer thread per frame per session). Reached only
-/// when no device is registered, so that a missing device degrades to SLOW
-/// rather than to INCORRECT.
+/// Readback fallback: synchronous on the renderer thread, once per frame per
+/// session. Reached only when no device is registered, so that a missing device
+/// degrades to SLOW rather than to INCORRECT.
 ///
 /// Null = not even a 2D context, so nothing ran. Reported as `none`, which is an
 /// alarm and not a cost.
-let cpuBarrierCtx: OffscreenCanvasRenderingContext2D | null | undefined;
-function forceReadCompleteOnCpu(bmp: ImageBitmap): { drawMs: number; readMs: number } | null {
-  if (cpuBarrierCtx === undefined) {
-    cpuBarrierCtx =
-      typeof OffscreenCanvas === "undefined"
-        ? null
-        : new OffscreenCanvas(1, 1).getContext("2d", { willReadFrequently: true });
-  }
-  if (!cpuBarrierCtx) return null;
-  const tDraw = performance.now();
-  cpuBarrierCtx.drawImage(bmp, 0, 0, 1, 1);
-  const tRead = performance.now();
-  cpuBarrierCtx.getImageData(0, 0, 1, 1);
-  return { drawMs: tRead - tDraw, readMs: performance.now() - tRead };
-}
+const forceReadCompleteOnCpu = createReadCompletionProof();
 
 export class SlotFenceQueue {
   private backend: SlotFenceBackend | null = null;

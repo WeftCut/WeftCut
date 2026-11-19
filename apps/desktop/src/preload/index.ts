@@ -1,7 +1,9 @@
 import { contextBridge, ipcRenderer, sharedTexture, webUtils } from 'electron'
 import type { SharedTextureImported } from 'electron'
 import { installMotifFrames } from './motifFrames'
-import { MotifReadBarrier, completeMotifReadOnGpu } from './motifReadBarrier'
+import { MotifReadBarrier } from './motifReadBarrier'
+import { createPreviewSwFrames } from './previewSwFrames'
+import { createReadCompletionProof, type ReadCompletionCost } from '../shared/readCompletion'
 import { readLayoutThemeArgument } from '../shared/layout-theme'
 import { readMotifTuningArgument } from '../shared/motifs/tuning'
 import type {
@@ -39,6 +41,9 @@ import type { MenuProjection } from '../shared/menu'
 import type { UpdateDownloadResult, UpdateRestartResult, UpdateResume, UpdateStatus } from '../shared/updates'
 
 type Listener = (payload: unknown) => void
+
+const previewSwFrames = createPreviewSwFrames()
+ipcRenderer.on('previewSw:frame', (_e, frame: PreviewSwFrameMsg) => previewSwFrames.dispatch(frame))
 
 // The contextBridge surface — the COMPLETE set of things the (untrusted)
 // renderer can ask the main process to do. Grouped, named methods rather than a
@@ -303,10 +308,8 @@ const api: WeftcutApi = {
     close(args: { streamId: string }): void {
       ipcRenderer.send('previewSw:close', args)
     },
-    onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void {
-      const h = (_e: unknown, f: PreviewSwFrameMsg) => cb(f)
-      ipcRenderer.on('previewSw:frame', h)
-      return () => { ipcRenderer.removeListener('previewSw:frame', h) }
+    onFrame(streamId: string, cb: (f: PreviewSwFrameMsg) => void): () => void {
+      return previewSwFrames.subscribe(streamId, cb)
     },
   },
 
@@ -542,12 +545,10 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
 // (observed: decoded index = expected + pool_size). The ring self-sorts by PTS,
 // so this surfaces as out-of-order playback, not tearing.
 //
-// Fix: before acking, rasterize a 1px sample of the bitmap. `getImageData`
-// forces Chromium to materialize the createImageBitmap copy — a GPU dependency
-// it must block on — which cannot resolve until the source-texture read has
-// landed. Once this returns, the read is done, so the slot is safe to recycle.
-// One reused 1×1 canvas; the readback is a pipeline flush, not a frame-sized
-// transfer.
+// Fix: before acking, draw one source pixel of the bitmap and read it back
+// (shared/readCompletion.ts). That cannot return until the createImageBitmap
+// copy, and so the source-texture read, has landed. Once it returns, the read
+// is done, so the slot is safe to recycle.
 //
 // This readback is correct but NOT free: it is synchronous renderer-thread time
 // once per delivered frame PER SESSION, which is why `HwBarrierMode` exists — a
@@ -570,33 +571,18 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
 // `fence` and `rendererFence` split them — same hard completion signal, off the
 // critical path.
 
-/// What one barrier cost, split by phase. Reported per frame so the readback's
-/// two halves can be told apart: the 2D context is created with
-/// `willReadFrequently: true`, which hints a CPU-BACKED canvas, so `drawImage`
-/// of a GPU-backed bitmap may ALREADY be the GPU→CPU readback and `getImageData`
-/// nearly free. A single total cannot distinguish that from the reverse, and
-/// attributing the cost to the wrong call sends any fix in the wrong direction.
+/// What one barrier cost, split by phase: the draw or submit, and the CPU read.
 /// `readMs` is 0 for barriers that have no CPU-read phase.
 ///
 /// A null cost means the barrier could not run at all (no context). Every
 /// barrier reports that rather than a zero cost, because "ran and was free" and
 /// "never ran" are the two readings the experiment must never confuse.
-type BarrierCost = { drawMs: number; readMs: number }
+type BarrierCost = ReadCompletionCost
 
-let readBarrierCtx: OffscreenCanvasRenderingContext2D | null | undefined
-function forceSharedTextureReadComplete(bmp: ImageBitmap): BarrierCost | null {
-  if (readBarrierCtx === undefined) {
-    readBarrierCtx = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true })
-  }
-  if (!readBarrierCtx) return null // no 2D context available — barrier unavailable
-  const tDraw = performance.now()
-  readBarrierCtx.drawImage(bmp, 0, 0, 1, 1)
-  const tRead = performance.now()
-  readBarrierCtx.getImageData(0, 0, 1, 1)
-  return { drawMs: tRead - tDraw, readMs: performance.now() - tRead }
-}
+/// The `readback` barrier, and the Motif barrier when its worker cannot start.
+const forceSharedTextureReadComplete = createReadCompletionProof()
 
-const motifReadBarrier = new MotifReadBarrier(completeMotifReadOnGpu)
+const motifReadBarrier = new MotifReadBarrier(bitmap => forceSharedTextureReadComplete(bitmap) !== null)
 installMotifFrames(key => importedByKey.get(`${key}:0`), bitmap => motifReadBarrier.complete(bitmap))
 
 // The one WebGL2 context both GPU-side barriers share. One 1×1 context and ONE
@@ -654,11 +640,8 @@ function forceSharedTextureReadCompleteOnGpu(bmp: ImageBitmap): BarrierCost | nu
 /// to complete — the synchronous barrier back again by another name.
 const FENCE_DEADLINE_MS = 2 * (1000 / 60)
 
-/// Wall-clock budget for that forced wait. Sized at the ~20ms the synchronous
-/// readback barrier costs, so the worst case this mechanism degrades to is
-/// "behaves like the barrier it replaced" — which was the safety argument for
-/// adopting an unknown-risk mechanism, and is still the bound on how bad a
-/// pathological session can get.
+/// Wall-clock budget for that forced wait: the bound on how bad a pathological
+/// session can get.
 const FENCE_FORCED_WAIT_BUDGET_MS = 20
 
 /// A delivered frame whose slot is not acked yet, waiting on `sync`. Acking out

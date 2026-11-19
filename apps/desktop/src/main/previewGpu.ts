@@ -214,15 +214,15 @@ async function doOpenPreviewGpu(
     // the configured label to check the observed one against): an invoke reply is
     // a separate channel, and it loses to frameReady once 2+ sessions are opening.
     win.webContents.send('evt:previewGpu:barrier', { streamId, mode: HW_BARRIER_MODE })
-    // A′ color sovereignty: the SOURCE color tags go to native, which converts
-    // NV12→RGBA with its own shader (constants pinned to the conformance
-    // goldens). Chromium never sees the YUV. `derived`/`invalid` ranges fall
-    // to limited — the same fail-closed default the WebCodecs lane uses.
+    // A′ color sovereignty: the source's resolved colour (the renderer's
+    // `resolveSourceColor`, complete) goes to native, which converts NV12→RGBA
+    // with its own shader (constants pinned to the conformance goldens).
+    // Chromium never sees the YUV.
     const info = backend.previewGpuOpen(
       streamId,
       path,
       poolSize,
-      colorSpace.matrix ?? 'bt709',
+      colorSpace.matrix,
       colorSpace.range === 'full',
     )
     nativeOpened = true

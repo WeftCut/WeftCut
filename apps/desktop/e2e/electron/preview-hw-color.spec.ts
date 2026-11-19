@@ -6,10 +6,13 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, DECODE_A
 import { hardwareGate, hardwareEnvironmentGate } from './helpers/hardwareGate'
 
 // Saturated-chart color gate for the HARDWARE preview lanes — the resident
-// pixel-fidelity gate none of them otherwise has. Four legs per lane, the full
+// pixel-fidelity gate none of them otherwise has. Six legs per lane, the full
 // matrix a session must honor:
 //   709ltd / 601ltd / 709full / 601full  (H.264 charts, npm run fixtures)
-// A matrix swap reads 10–30 8-bit steps on the saturated patches; a range
+// plus the two untagged charts (SD BT.601, HD BT.709), which every other lane
+// is held to as well (preview-sw-color, preview-lite-color,
+// color-conformance): a lane that reads an absent tag its own way fails
+// here. A matrix swap reads 10–30 8-bit steps on the saturated patches; a range
 // mix-up reads as a global contrast shift; both are far beyond PATCH_TOL.
 //
 // WHAT IS UNDER TEST DIFFERS BY LANE FAMILY, and the difference is the reason
@@ -52,9 +55,35 @@ import { hardwareGate, hardwareEnvironmentGate } from './helpers/hardwareGate'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
+const MANIFEST_SD = path.resolve(MEDIA_DIR, 'color_manifest_720x480.json')
 
-const CANVAS = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
+type Canvas = { width: number; height: number; fpsNum: number; fpsDen: number }
+const CANVAS: Canvas = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
+const CANVAS_SD: Canvas = { width: 720, height: 480, fpsNum: 30, fpsDen: 1 }
 const SEEK_US = 500_000
+
+/// A leg's chart, the manifest its patches come from, and the composition it
+/// is placed 1:1 in.
+interface ChartLeg {
+  fixture: string
+  manifest: string
+  canvas: Canvas
+}
+
+const taggedLeg = (enc: string): ChartLeg =>
+  ({ fixture: path.resolve(MEDIA_DIR, `test_1080p_color_${enc}.mp4`), manifest: MANIFEST, canvas: CANVAS })
+const UNTAGGED_LEGS: readonly { title: string; slug: string; leg: ChartLeg }[] = [
+  {
+    title: 'untagged SD chart previews as BT.601',
+    slug: 'untagged-sd',
+    leg: { fixture: path.resolve(MEDIA_DIR, 'test_480p_color_601ltd_untagged.mp4'), manifest: MANIFEST_SD, canvas: CANVAS_SD },
+  },
+  {
+    title: 'untagged HD chart previews as BT.709',
+    slug: 'untagged-hd',
+    leg: { fixture: path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_untagged.mp4'), manifest: MANIFEST, canvas: CANVAS },
+  },
+]
 
 // The component probe is platform-generic (DECODE_ADDON resolves the addon
 // filename per OS), and it is kept as its OWN condition rather than ANDed into
@@ -123,17 +152,19 @@ interface PatchOffender {
   maxErr: number
 }
 
-async function runChartLeg(label: string, fixture: string, lane: HwLane): Promise<void> {
+async function runChartLeg(label: string, leg: ChartLeg, lane: HwLane): Promise<void> {
+  const { fixture, canvas } = leg
   expect(existsSync(fixture), `${label} chart fixture missing: ${fixture}`).toBe(true)
-  expect(existsSync(MANIFEST), `color manifest missing: ${MANIFEST}`).toBe(true)
+  expect(existsSync(leg.manifest), `color manifest missing: ${leg.manifest}`).toBe(true)
   test.setTimeout(240_000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-hw-color-proj-')
-  const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as {
+  const manifest = JSON.parse(readFileSync(leg.manifest, 'utf8')) as {
     width: number
     height: number
     patches: ManifestPatch[]
   }
-  expect(manifest.width).toBe(CANVAS.width) // 1:1 chart→composition mapping
+  expect(manifest.width).toBe(canvas.width) // 1:1 chart→composition mapping
+  expect(manifest.height).toBe(canvas.height)
 
   // Pin the resolver to this leg's lane only (+ software fallback). Where the
   // lane can't engage, the evidence gate distinguishes affirmative absence
@@ -148,7 +179,7 @@ async function runChartLeg(label: string, fixture: string, lane: HwLane): Promis
     await newProject(page, {
       parentFolder: PROJECT_PARENT,
       name: `${label}-${Date.now()}`,
-      canvas: CANVAS,
+      canvas,
     })
 
     // Pin the ffmpeg engine BEFORE placing the layer (engine resolution reads
@@ -242,7 +273,12 @@ test.describe('preview hardware-lane saturated-chart color gate (Electron)', () 
   for (const lane of LANES) {
     for (const enc of ['709ltd', '601ltd', '709full', '601full'] as const) {
       test(`${enc} chart previews correctly through the ${lane} ${transportWord(lane)} lane @serial`, async () => {
-        await runChartLeg(`phc-${lane}-${enc}`, path.resolve(MEDIA_DIR, `test_1080p_color_${enc}.mp4`), lane)
+        await runChartLeg(`phc-${lane}-${enc}`, taggedLeg(enc), lane)
+      })
+    }
+    for (const { title, slug, leg } of UNTAGGED_LEGS) {
+      test(`${title} through the ${lane} ${transportWord(lane)} lane @serial`, async () => {
+        await runChartLeg(`phc-${lane}-${slug}`, leg, lane)
       })
     }
   }

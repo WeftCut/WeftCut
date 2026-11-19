@@ -5,6 +5,7 @@ import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import type { DecoderPool } from "./decoder/session";
 import { summaryFixture } from "../testing/summaryFixture";
+import { resolveSourceColor } from "./decoder/ffprobeColorSpace";
 
 // The Dock-presentation gate (owned by previewPresentation.ts) at the
 // Compositor level: a hidden Preview keeps the owner clock ticking but freezes
@@ -78,7 +79,7 @@ describe("Compositor presentation gate", () => {
       height: 1080,
       mode: "preview",
       originalAssetUrl: () => null,
-      sourceColor: () => undefined,
+      sourceColor: () => resolveSourceColor({ height: 1080 }),
       mediaById: () => undefined,
       pool: { dispose: vi.fn() } as unknown as DecoderPool,
     });

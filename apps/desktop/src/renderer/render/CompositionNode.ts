@@ -47,6 +47,7 @@ import {
 } from "./resolveView";
 import { SourceHandle } from "./decoder/SourceDecoderPool";
 import type { DecodeSession, DecoderPool } from "./decoder/session";
+import type { SourceColor } from "./decoder/ffprobeColorSpace";
 import type { HandoffTimingSummary } from "./decoder/transports/handoffTimings";
 import { FfmpegSource } from "./decoder/FfmpegSource";
 import { markFfmpegUnusable } from "./decoder/ffmpegCapability";
@@ -275,7 +276,7 @@ export interface CompositionNodeHost {
   resolveSource(mediaId: string): ResolvedRendererSource | null;
   proxyAssetUrl(mediaId: string): string | null;
   originalAssetUrl(mediaId: string): string | null;
-  sourceColor(mediaId: string): VideoColorSpaceInit | undefined;
+  sourceColor(mediaId: string): SourceColor | undefined;
   mediaById(mediaId: string): MediaSummary | undefined;
   motifFrames(key: string): InjectedMotifFrames | undefined;
   /// The divisor preview reads stored Motif frames at (Playback Resolution).
@@ -1187,9 +1188,14 @@ export class CompositionNode {
       // The next resolution (probe settling / proxy landing) will retry.
       return null;
     }
-    // Color tags apply to ANY decode target for this media — a proxy
+    // Color applies to ANY decode target for this media — a proxy
     // preserves the source's colorimetry (see `CompositorInit.sourceColor`).
     const sourceColor = host.sourceColor(mediaId);
+    if (!sourceColor) {
+      // eslint-disable-next-line no-console
+      console.warn(`[weftcut/pixi] no colour for media ${mediaId} (clip ${key})`);
+      return null;
+    }
     const m = host.mediaById(mediaId);
     const sourceStartPtsUs = m?.video_start_pts_us ?? m?.start_pts_us ?? null;
     // Swap/revival identity (engine + source + decode target). Non-null: the
@@ -1320,6 +1326,7 @@ export class CompositionNode {
     // even though the handle is acquired under the synthetic `swapMediaId`
     // (a proxy preserves source color — `CompositorInit.sourceColor`).
     const sourceColor = this.host.sourceColor(clip.mediaId);
+    if (!sourceColor) return;
     const m = this.host.mediaById(clip.mediaId);
     const sourceStartPtsUs = m?.video_start_pts_us ?? m?.start_pts_us ?? null;
     const handle = this.host.pool.acquire({

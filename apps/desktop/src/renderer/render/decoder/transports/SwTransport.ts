@@ -21,6 +21,7 @@
 // which owns exactly one `DecodeTransport` at a time and sets the ring's
 // eviction anchor itself (see `requestFrameAt` below).
 import type { PreviewSwFrameMsg } from "../../../../shared/ipc";
+import type { SourceColor } from "../ffprobeColorSpace";
 import { nv12FrameFromBytes } from "../nv12Frame";
 import { tenBitFrameFromBytes } from "../tenBitFrame";
 import type { DecodeTransport, DecodeTransportOpen, TransportFrame } from "./DecodeTransport";
@@ -30,8 +31,15 @@ export class SwTransport implements DecodeTransport {
   /// `previewSw` call and every frame message this transport should accept.
   private streamId = "";
 
-  /// Source ffprobe color tags, for `colorSpaceFor`.
-  private sourceColor: VideoColorSpaceInit | undefined;
+  /// The colour stamped on every frame: the source's resolved colour from
+  /// `open()`, which installs the frame listener only after setting it.
+  ///
+  /// LANDMINE: never the per-frame `f.color*` tags. Those are raw FFmpeg
+  /// `.name()` strings (e.g. `bt2020nc`, `smpte2084`, `arib-std-b67`), not
+  /// WebCodecs enum members (`bt2020-ncl`, `pq`, `hlg`): they would fork the
+  /// app's single colour model and, for a wide-gamut/HDR source, throw inside
+  /// `new VideoFrame` (silently dropping the frame).
+  private colorSpace!: SourceColor;
 
   private unsub: (() => void) | null = null;
 
@@ -83,11 +91,11 @@ export class SwTransport implements DecodeTransport {
   /// it: an `onError` as well would hand one failure to two recovery paths.
   async open(o: DecodeTransportOpen): Promise<void> {
     this.streamId = o.streamId;
-    this.sourceColor = o.sourceColor;
+    this.colorSpace = o.sourceColor;
     // Subscribe BEFORE open() — frames can start flowing as soon as the
     // native decode thread is up, so a listener attached after open() could
     // miss an early frame.
-    this.unsub = window.api.previewSw.onFrame((f) => this.handleFrame(f));
+    this.unsub = window.api.previewSw.onFrame(this.streamId, (f) => this.handleFrame(f));
     await window.api.previewSw.open({
       streamId: this.streamId,
       path: o.path,
@@ -132,7 +140,7 @@ export class SwTransport implements DecodeTransport {
         height: f.height,
         timestamp: f.ptsUs,
         duration: f.durUs,
-        colorSpace: this.colorSpaceFor(),
+        colorSpace: this.colorSpace,
       };
       frame = f.format === "I420P10" ? tenBitFrameFromBytes(init) : nv12FrameFromBytes(init);
     } catch (e) {
@@ -144,28 +152,6 @@ export class SwTransport implements DecodeTransport {
     // `media_time::ticks_to_source_us`, matching DecodeClock's truncation
     // contract) — no further offset needed before handing it to the caller.
     this.frameCb?.(frame, f.ptsUs, f.durUs);
-  }
-
-  /// Build a `VideoColorSpaceInit` from the source's already-mapped
-  /// `sourceColor` (WebCodecs `VideoColorSpaceInit`, derived at open time via
-  /// `ffprobeColorToWebCodecs`), falling back to bt709/limited — the same HD
-  /// default the WebCodecs path lands on.
-  ///
-  /// Deliberately does NOT read the per-frame `f.color*` tags: those are raw
-  /// FFmpeg `.name()` strings (e.g. `bt2020nc`, `smpte2084`, `arib-std-b67`),
-  /// not valid WebCodecs enum members (`bt2020-ncl`, `pq`, `hlg`) — casting
-  /// them straight into a `VideoColorSpaceInit` would fork the app's single
-  /// color model and, for a wide-gamut/HDR source, throw inside `new
-  /// VideoFrame` (silently dropping the frame). Every other decode path
-  /// derives colorSpace from the mapped `sourceColor` only.
-  private colorSpaceFor(): VideoColorSpaceInit {
-    const sc = this.sourceColor;
-    return {
-      primaries: sc?.primaries ?? "bt709",
-      transfer: sc?.transfer ?? "bt709",
-      matrix: sc?.matrix ?? "bt709",
-      fullRange: sc?.fullRange ?? false,
-    };
   }
 
   onFrame(cb: (frame: TransportFrame, ptsUs: number, durUs: number) => void): void {
