@@ -126,6 +126,13 @@ export function resolveSourceColor(media: SourceColorProbe): SourceColor {
   };
 }
 
+/// Whether an ffprobe transfer tag is an HDR one: PQ (`smpte2084`) or HLG
+/// (`arib-std-b67`). No decode lane converts HDR itself; export decode routing
+/// sends such a source to one engine (`exportDecodeRouting.ts`).
+export function isHdrTransfer(transfer: string | null | undefined): boolean {
+  return transfer === "smpte2084" || transfer === "arib-std-b67";
+}
+
 /// The YCbCr an RGB-coded source's frames become in WeftCut's own native
 /// decode: BT.709, limited range.
 const RGB_PLANE_COLOR = { matrix: "bt709", fullRange: false } as const;
