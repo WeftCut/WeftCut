@@ -15,10 +15,21 @@ test('only a Linux x64 host builds against the sysroot', () => {
 test('C, C++ and ar are routed to the cross toolchain under the per-triple names', () => {
   const { args, env } = linuxSysroot({}, { platform: 'linux', arch: 'x64' })
   assert.equal(args, '--use-napi-cross --target x86_64-unknown-linux-gnu')
-  assert.deepEqual(Object.keys(env).sort(), ['AR_x86_64_unknown_linux_gnu', 'CC_x86_64_unknown_linux_gnu', 'CXX_x86_64_unknown_linux_gnu'])
+  const tools = ['AR_x86_64_unknown_linux_gnu', 'CC_x86_64_unknown_linux_gnu', 'CXX_x86_64_unknown_linux_gnu']
+  assert.deepEqual(Object.keys(env).sort(), [...tools, 'LZMA_API_STATIC'])
   const toolchains = join(homedir(), '.napi-rs', 'cross-toolchain')
-  for (const value of Object.values(env)) assert.ok(value.startsWith(toolchains), value)
+  for (const name of tools) assert.ok(env[name].startsWith(toolchains), env[name])
   assert.match(env.CC_x86_64_unknown_linux_gnu, /x86_64-unknown-linux-gnu-gcc$/)
+})
+
+// lzma-sys links the build machine's liblzma when pkg-config finds one, which
+// puts a host library directory on the cross link line.
+test('the cross build compiles liblzma itself instead of linking the host one', () => {
+  const { env } = linuxSysroot({}, { platform: 'linux', arch: 'x64' })
+  assert.equal(env.LZMA_API_STATIC, '1')
+  const chosen = linuxSysroot({ LZMA_API_STATIC: '0' }, { platform: 'linux', arch: 'x64' })
+  assert.equal(chosen.env.LZMA_API_STATIC, undefined, 'a value the caller set is left alone')
+  assert.deepEqual(linuxSysroot({ WEFTCUT_NATIVE_BUILD: '1' }, { platform: 'linux', arch: 'x64' }).env, {})
 })
 
 test('a compiler the caller already chose is left alone', () => {
