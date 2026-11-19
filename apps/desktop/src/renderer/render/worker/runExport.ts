@@ -26,8 +26,7 @@ import { MotifFrameProducer } from "./motifStream";
 import { acquireExportResources } from '../resourceClient';
 import { exportFrameCount } from "./frameGrid";
 import { resolveSourceColor, type SourceColor } from "../decoder/ffprobeColorSpace";
-import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
-import { tenBitExportCapable } from "../exportSettings";
+import { hwExportDecodeAllowed, takesTenBitLane, type ExportDecodeRouting } from "../exportDecodeRouting";
 import type { SinkPixFmt } from "../../../shared/export-resources";
 import type {
   ExportEvent,
@@ -261,14 +260,13 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // Keep load failures handled even if subsequent synchronous setup throws.
   workerReady.catch(() => {});
 
-  // 5. Build the tenBitMedia map: sources whose originals Chromium/Electron can decode
-  // to I420P10 (H.264 Hi10P + AV1 10-bit — `tenBitExportCapable`). Only
-  // populated on the 10-bit path; the Worker uses this to route those
-  // sources through the 10-bit lane.
+  // 5. Build the tenBitMedia map: the sources the 10-bit lane decodes
+  // (`takesTenBitLane`). Only populated on the 10-bit path; the Worker uses
+  // this to route those sources through the 10-bit lane.
   const tenBitMedia: Record<string, boolean> = {};
   if (init.bitDepth === 10) {
     for (const m of init.mediaById.values()) {
-      if (m.kind === "Video" && tenBitExportCapable(m)) {
+      if (takesTenBitLane(m)) {
         tenBitMedia[m.id] = true;
       }
     }

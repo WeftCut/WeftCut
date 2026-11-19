@@ -101,6 +101,34 @@ Two lanes need help to show that colour:
   label. An RGB frame it converts into the plane colour it was opened with;
   left to itself swscale would use BT.601 at full range.
 
+## HDR sources
+
+No lane of the app converts HDR (a PQ `smpte2084` or HLG `arib-std-b67`
+transfer): the rule above maps neither that transfer nor the BT.2020 matrix,
+and every export is tagged SDR BT.709. The two export decode engines
+therefore disagree on an HDR source, by up to 137 per 8-bit channel on the PQ
+and HLG charts (measured on macOS):
+
+- through the WebCodecs engine, Chromium tone-maps each frame to SDR in the
+  2D-canvas snapshot ([`render.md`](render.md#frame-upload-the-snapshot-rule)):
+  a viewable picture;
+- through the native engine, the code values pass through BT.709
+  coefficients into the SDR-tagged file: not.
+
+As a temporary policy, until the app converts HDR itself, export decode
+routing sends an HDR source to the WebCodecs engine under every decode-engine
+setting whenever its Decode Route is not `native-sw` (`hdrTakesWebCodecs`,
+`exportDecodeRouting.ts`). A `native-sw` HDR source (ProRes, DNxHR) keeps its
+setting's route, so its export still depends on the setting: native under
+`auto` and `ffmpeg`, its Export master under `webcodecs`.
+
+The same policy keeps an HDR source off the 10-bit lane (`takesTenBitLane`).
+That lane decodes a 10-bit H.264 or AV1 original into planes for the owned
+ingest, which would pass the code values through; instead a 10-bit export
+reads the Export master like an 8-bit one and is tone-mapped the same way, so
+the result does not depend on the bit depth either. The export resource plan
+asks the same predicate, so it sizes the decode the Worker runs.
+
 ## Proxies
 
 Both proxy recipes (`jobs/proxy.rs`, `jobs/quick_proxy.rs`) keep a YCbCr
