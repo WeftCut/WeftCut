@@ -50,7 +50,11 @@ export function installMotifFrames(
         let importMs: number | undefined
         if (frame?.kind === 'texture') {
           const start = performance.now()
-          bitmap = await finishRead(await readTexture(frame.key))
+          // Held in `bitmap` before the barrier takes it: a barrier that throws
+          // leaves it to the `finally` to close (closing a bitmap the barrier
+          // already transferred away does nothing).
+          bitmap = await readTexture(frame.key)
+          bitmap = await finishRead(bitmap)
           importMs = performance.now() - start
         } else if (frame?.kind === 'pixels') {
           const rgba = new Uint8ClampedArray(frame.bytes.buffer as ArrayBuffer, frame.bytes.byteOffset, frame.bytes.byteLength)

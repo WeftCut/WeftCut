@@ -216,6 +216,57 @@ describe("SourceHandle after an unclassified decoder error", () => {
       h.dispose();
     }
   });
+
+  /// Plays the late part of the clip, then seeks back to its start, where the
+  /// decoder outputs no further than `failsAfterUs` before it fails.
+  async function seekBackThenFail(h: SourceHandle, failsAfterUs: number): Promise<void> {
+    await h.requestFrameAt(1_800_000);
+    await settle();
+    FakeVideoDecoder.outputsUpToUs = failsAfterUs;
+    await h.requestFrameAt(0);
+    await settle();
+    FakeVideoDecoder.instances[0]!.fail("Decoding error.");
+  }
+
+  it("after a backward seek, rebuilds again for an error that follows progress since the seek", async () => {
+    const h = makeHandle();
+    try {
+      await seekBackThenFail(h, 300_000);
+      // The rebuilt decoder gets further than the failed one did after the
+      // seek, though not as far as the clip was played before it.
+      FakeVideoDecoder.outputsUpToUs = 600_000;
+      await h.requestFrameAt(300_000);
+      await settle();
+      expect(FakeVideoDecoder.instances).toHaveLength(2);
+      FakeVideoDecoder.instances[1]!.fail("Decoding error.");
+      await h.requestFrameAt(300_000);
+      await settle();
+
+      expect(FakeVideoDecoder.instances, "an independent error is rebuilt too").toHaveLength(3);
+      expect(warnings().filter((m) => m.includes("video decoder stopped"))).toEqual([]);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("after a backward seek, still stops a rebuilt decoder that fails where the last one did", async () => {
+    const h = makeHandle();
+    try {
+      await seekBackThenFail(h, 300_000);
+      await h.requestFrameAt(300_000);
+      await settle();
+      expect(FakeVideoDecoder.instances).toHaveLength(2);
+      expect(FakeVideoDecoder.instances[1]!.decoded.length, "the rebuilt decoder decoded again").toBeGreaterThan(0);
+      FakeVideoDecoder.instances[1]!.fail("Decoding error.");
+      await h.requestFrameAt(300_000);
+      await settle();
+
+      expect(FakeVideoDecoder.instances).toHaveLength(2);
+      expect(warnings().filter((m) => m.includes("video decoder stopped"))).toHaveLength(1);
+    } finally {
+      h.dispose();
+    }
+  });
 });
 
 // A hardware decoder converts a stream that declares no matrix as BT.709,

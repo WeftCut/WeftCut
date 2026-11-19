@@ -53,7 +53,12 @@ natively decoded frames to the export compositor (routing:
    (`src/main/exportDecode.ts`) reserves the decoder's memory and opens the
    `export_sw` session, through the admission every byte pipeline shares
    (`main/frameCarrier/decodeSessionAdmission.ts`: one session per id, the
-   reservation released once, a refused session leaves nothing). The other
+   reservation released once, a refused session leaves nothing). Main's end
+   of the port is created inside the admission, after the id and the
+   reservation are held: an open that throws first (a stale finalization
+   token) leaves no port behind, so a retry under the same id opens. The
+   preload refuses an id it already holds before creating anything, and a
+   failed open undoes only what that open created. The other
    end reaches the page as a window message tagged with its session id
    (`renderer/ipc/decodeSession.ts`), and the page transfers it to the Worker
    in `nd:openResult`. No page code handles a frame or a per-frame message.

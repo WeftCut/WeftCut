@@ -70,7 +70,12 @@ a `CustomSource` over `weftcut-media://` HTTP Range requests (see
   on the next request. `decoderFallback.ts` handles hardware failures: a
   zero-output first-frame error reconfigures the decoder with
   `prefer-software`, and `Codec reclaimed due to inactivity` closes the
-  decoder and rebuilds it lazily.
+  decoder and rebuilds it lazily. Any other error closes the decoder too; the
+  next request rebuilds it from a key packet. The rebuilt decoder must output
+  past the point the failed one reached since it was built or a seek last
+  reset it, or the handle stops asking: a packet that fails every time is not
+  rebuilt at decode rate, and an error after a backward seek is judged by the
+  progress made since that seek, not by how far the clip was ever played.
 - **Demand plan.** Before any acquire or prewarm, the Compositor publishes one
   priority epoch (`previewDecodePriority.ts`). It covers every active video
   clip and every clip at the nearest boundary within 1 s
@@ -191,13 +196,18 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   bitmap is delivered immediately, and the page's slot fence decides the
   release: it copies one pixel on Pixi's WebGPU queue, awaits
   `onSubmittedWorkDone`, then posts `release` (`slotFenceQueue.ts`). That is
-  the lane's one read-completion strategy; with no WebGPU device it falls back
-  to the one-pixel proof (`shared/readCompletion.ts`), and a frame whose read
-  nothing could prove is not shown and fails the transport
-  ([measurement](notes/slot-read-completion-2026-11-18.md)). The release does
-  not depend on painting, and the page never releases on elapsed time. Each
-  slot goes back exactly once: after its fence, at once when its read failed,
-  and never after dispose, whose close reclaims it. Native reclaims a slot
+  the lane's one read-completion strategy; with no live WebGPU device (none
+  yet, a WebGL preview, or one lost and not yet replaced by Pixi's restore) it
+  falls back to the one-pixel proof (`shared/readCompletion.ts`), and a frame
+  whose read nothing could prove is not shown and fails the transport
+  ([measurement](notes/slot-read-completion-2026-11-18.md)). A lost device runs
+  no copy, so a fence still pending when its device is lost proves nothing,
+  whether Chromium then rejects it or reports the work done: its slot is not
+  released and the transport fails, and `FfmpegSource` falls back to software.
+  The release does not depend on painting, and the page never releases on
+  elapsed time. Each slot goes back at most once: after its fence or proof,
+  at once when its read failed, and never when nothing proved its read or
+  after dispose: the session's close reclaims those. Native reclaims a slot
   left unreleased for 3 s (`LEASE_TIMEOUT`, `preview_gpu/session.rs`) with a
   generation bump: a wedged consumer costs one possibly-torn frame instead of
   a stalled session, and its late release fails the generation check (a

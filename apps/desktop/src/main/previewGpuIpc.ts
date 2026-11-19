@@ -10,7 +10,7 @@ import { ipcCarrierPort } from './frameCarrier/ipcCarrierPort'
 
 export function installPreviewGpuIpc(backend: () => NativeDecode): void {
   ipcMain.handle('previewGpu:open', (event, a: PreviewGpuRequest) =>
-    openPreviewGpu(backend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), a))
+    openPreviewGpu(backend(), event.sender, ipcCarrierPort, a))
   ipcMain.handle('previewGpu:budget', () => hwBudget())
   ipcMain.handle('previewGpu:takeTimings', (_e, a: { streamId: string }) => takeTimingsPreviewGpu(backend(), a.streamId))
   ipcMain.handle('previewGpu:takeMainTimings', () => takeMainTimings())

@@ -8,8 +8,8 @@
 import type { WebContents } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
 import type { PreviewDecodeCommand, PreviewDecodeOpenInfo, PreviewDecodeOptions } from '../shared/frameCarrier/wire'
-import { admitDecodeSession } from './frameCarrier/decodeSessionAdmission'
-import { parseRelease, type CarrierPort } from './frameCarrier/decodeSessionHost'
+import { admitDecodeSession, type ConnectCarrier } from './frameCarrier/decodeSessionAdmission'
+import { parseRelease } from './frameCarrier/decodeSessionHost'
 import { reserveDecoderResources } from './resources'
 
 export interface PreviewDecodeRequest {
@@ -18,18 +18,19 @@ export interface PreviewDecodeRequest {
   options: PreviewDecodeOptions
 }
 
-/** Opens a session served on `port` until its consumer closes it or `owner`'s
- * document goes away. Frames flow only after the first `request` command. */
+/** Opens a session served on the port `connect` creates, until its consumer
+ * closes it or `owner`'s document goes away. Frames flow only after the first
+ * `request` command. */
 export function openPreviewDecode(
   backend: NativeDecode,
   owner: WebContents,
-  port: CarrierPort,
+  connect: ConnectCarrier,
   request: PreviewDecodeRequest,
 ): PreviewDecodeOpenInfo {
   const { sessionId, path, options } = request
   return admitDecodeSession({
     sessionId,
-    port,
+    connect,
     owner,
     reserve: () => reserveDecoderResources(path),
     open: onMsg => backend.previewDecodeOpen(sessionId, path, options, (err, msg) => {

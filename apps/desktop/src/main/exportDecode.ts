@@ -4,11 +4,12 @@
 // maps a session onto the addon's export calls and names the decoder memory it
 // reserves; admission is frameCarrier/decodeSessionAdmission.ts.
 
-import type { WebContents } from 'electron'
+import type { IpcMain, WebContents } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
 import type { ExportDecodeCommand, ExportDecodeOpenInfo } from '../shared/frameCarrier/wire'
-import { admitDecodeSession } from './frameCarrier/decodeSessionAdmission'
-import { parseRelease, type CarrierPort } from './frameCarrier/decodeSessionHost'
+import { admitDecodeSession, type ConnectCarrier } from './frameCarrier/decodeSessionAdmission'
+import { parseRelease } from './frameCarrier/decodeSessionHost'
+import { ipcCarrierPort } from './frameCarrier/ipcCarrierPort'
 import { reserveDecoderResources } from './resources'
 
 export interface ExportDecodeRequest {
@@ -21,18 +22,39 @@ export interface ExportDecodeRequest {
   finalizationId?: number | undefined
 }
 
-/** Opens a session served on `port` until its consumer closes it or `owner`'s
- * document goes away. Messages flow only after the first `range` command. */
+/** What an export Worker's preload sends to open a session. */
+export interface ExportDecodeOpenArgs extends Omit<ExportDecodeRequest, 'finalizationId'> {
+  finalizationToken?: string
+}
+
+/** Registers `exportDecode:open`. `resolveFinalization` maps the export's
+ * token to its finalization and throws when the token is stale; the session's
+ * port exists only once it is admitted, so that throw leaves none behind. */
+export function installExportDecodeIpc(
+  ipc: Pick<IpcMain, 'handle'>,
+  backend: () => NativeDecode,
+  resolveFinalization: (senderId: number, token: unknown) => number | undefined,
+): void {
+  ipc.handle('exportDecode:open', (event, a: ExportDecodeOpenArgs) =>
+    openExportDecode(backend(), event.sender, ipcCarrierPort, {
+      sessionId: a.sessionId, path: a.path, outFormat: a.outFormat, window: a.window,
+      finalizationId: resolveFinalization(event.sender.id, a.finalizationToken),
+    }))
+}
+
+/** Opens a session served on the port `connect` creates, until its consumer
+ * closes it or `owner`'s document goes away. Messages flow only after the
+ * first `range` command. */
 export function openExportDecode(
   backend: NativeDecode,
   owner: WebContents,
-  port: CarrierPort,
+  connect: ConnectCarrier,
   request: ExportDecodeRequest,
 ): ExportDecodeOpenInfo {
   const { sessionId, path, outFormat, window, finalizationId } = request
   return admitDecodeSession({
     sessionId,
-    port,
+    connect,
     owner,
     reserve: () => reserveDecoderResources(path, finalizationId),
     open: onMsg => backend.exportDecodeOpen(sessionId, path, outFormat, window, (err, msg) => {

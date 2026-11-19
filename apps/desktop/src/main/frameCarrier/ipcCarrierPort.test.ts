@@ -90,6 +90,18 @@ describe('ipcCarrierPort', () => {
     port.close()
   })
 
+  // The preload ended its side before asking, and may already hold the id
+  // again for its next open: an end by id would cut that one.
+  it('sends no end back for a close the preload asked for', () => {
+    const ipc = installedIpc()
+    const { contents, sent } = fakeContents()
+    const port = ipcCarrierPort(contents, 'asked-a')
+    port.on('close', () => port.close())
+    ipc.close(contents, 'asked-a')
+    expect(sent).toEqual([])
+    ipcCarrierPort(contents, 'asked-a').close()
+  })
+
   it('refuses a second port for a live session and leaves the first serving', () => {
     const command = installed()
     const { contents } = fakeContents()
