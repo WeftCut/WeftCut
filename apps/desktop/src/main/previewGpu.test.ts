@@ -97,7 +97,7 @@ describe('GPU preview sessions', () => {
     const { backend, native } = fakeBackend()
     const port = fakePort()
     const wide: PreviewGpuColorSpace = { primaries: 'bt2020', transfer: 'bt709', matrix: 'bt2020-ncl', range: 'full' }
-    await openPreviewGpu(native, fakeOwner().contents, port.port, request('wide', { colorSpace: wide }))
+    await openPreviewGpu(native, fakeOwner().contents, () => port.port, request('wide', { colorSpace: wide }))
     expect(backend.previewGpuOpen.mock.calls[0]![3]).toEqual({ matrix: 'bt2020-ncl', fullRange: true, primaries: 'bt2020' })
     port.consumerCloses()
   })
