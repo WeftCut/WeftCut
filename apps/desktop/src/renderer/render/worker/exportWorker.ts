@@ -436,7 +436,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           // Native export-decode routing: when this media is in the
           // `nativeDecode` table AND its original path resolved, mark the acquire
           // so the pool builds a `NativeExportSourceHandle` (decode the ORIGINAL
-          // via the napi session over the frame relay). Membership only — the
+          // in a native session over its own port). Membership only — the
           // resolver on the main thread owns the policy.
           const routeNative = req.nativeDecode?.mediaIds.includes(g.mediaId) === true;
           const nativeOriginalPath = routeNative ? req.project.originalFilePaths[g.mediaId] : undefined;
@@ -445,23 +445,25 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
             ? {
                 sourcePath: nativeOriginalPath,
                 outFormat: req.nativeDecode.outFormat,
-                creditWindow: req.nativeDecode.creditWindow ?? 6,
+                window: req.nativeDecode.window ?? 6,
               }
             : undefined;
           // Only the WebCodecs path needs an asset URL. A native-routed
           // blind-spot source may have NO proxy at all (it skips the pre-export
           // full-proxy wait); the native handle never reads proxyAssetUrl.
           if (!url && !nativeExport) return;
+          // The media's resolved colour, for original AND proxy decodes (a
+          // proxy preserves the source colorimetry; its own colr tag outranks
+          // this per-field in withDefaultColorSpace).
+          const sourceColor = req.project.mediaColor[g.mediaId];
+          if (!sourceColor) throw new Error(`Internal: no colour for media ${g.mediaId} in the export snapshot.`);
           const handle = exportPool.acquire({
             layerId: g.clips[0]!.layerId,
             mediaId: g.mediaId,
             handleKey: g.key,
             exportFrameWindow: req.frameWindows?.[g.mediaId],
             proxyAssetUrl: url ?? "",
-            // The source's real color tags, for original AND proxy decodes (a
-            // proxy preserves the source colorimetry; its own colr tag outranks
-            // this per-field in withDefaultColorSpace).
-            sourceColor: req.project.mediaColor[g.mediaId],
+            sourceColor,
             sourceStartPtsUs: req.project.mediaStartPtsUs[g.mediaId] ?? null,
             ...(tenBitSource ? { tenBitLane: true, preferSoftware: true } : {}),
             // The WebCodecs export lane composites each decoded VideoFrame via a

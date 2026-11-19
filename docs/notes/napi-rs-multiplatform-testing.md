@@ -28,7 +28,7 @@ Layering:
   vanish, so `lib.rs` allows `dead_code` under this feature only (item-level
   `#[expect(dead_code)]` must sit on the outermost dead item).
 - `@weftcut/native-decode`: `["napi/noop"]` only. It holds
-  `ThreadsafeFunction<ExportSwMsg>` in non-test code; `napi-derive/noop`
+  `ThreadsafeFunction<DecodeMsg>` in non-test code; `napi-derive/noop`
   deletes the derived `ToNapiValue` the bound needs (33 compile errors).
 
 Rule for a new addon crate: start with `["napi/noop"]`; add

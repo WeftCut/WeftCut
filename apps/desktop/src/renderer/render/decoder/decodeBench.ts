@@ -10,6 +10,7 @@ import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { FfmpegSource } from "./FfmpegSource";
 import type { FfmpegLane } from "./decodeEngine";
 import { isNativeNv12Frame } from "./nv12Frame";
+import { resolveSourceColor } from "./ffprobeColorSpace";
 import { percentile } from "../../../shared/msStats";
 export { percentile } from "../../../shared/msStats";
 
@@ -149,14 +150,13 @@ export interface OrderCheckResult {
   /// budget (a genuine dropped/undelivered frame — distinct from a mispairing).
   missing: number;
   mismatches: OrderCheckMismatch[];
-  /// The read-completion barrier this session actually RAN (`HwBarrierMode`, or
-  /// `'mixed'`), null off the hardware lane. Reported because a barcode check
-  /// passes under EVERY correct barrier: a run whose configured variant silently
-  /// fell back to another one is green and proves nothing about the variant it
-  /// was launched for. The caller compares this against what it pinned. Null off
-  /// the shared-texture transport, `native-copyback` included — the copy-back
-  /// lanes ship bytes and have no read-completion barrier to observe.
-  barrierApplied?: string | null;
+  /// Frames whose read completion fell back to the one-pixel proof instead of
+  /// the slot fence (`proofFallbacks` in handoffTimings.ts), null when the run
+  /// read no slot. Reported because a barcode check passes under the proof just
+  /// as well: a run that never reached the fence is green and proves nothing
+  /// about it. Null off the shared-texture transport, `native-copyback`
+  /// included — the copy-back lanes ship bytes and have no slot to complete.
+  readCompletionProofs?: number | null;
   /// The lane this run RESOLVED to ("hardware"/"software") and WHICH hardware
   /// lane it was (`nvdec`|`vaapi`|`d3d11va`|`videotoolbox`; null on software).
   /// `native` forces its lane, so these are informational there — but
@@ -211,6 +211,7 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
     const h = pool.acquire({
       layerId: "order-0",
       mediaId: `order:${sourcePath}`,
+      sourceColor: resolveSourceColor({ width, height }),
       proxyAssetUrl: url,
       ...(strategy === "native"
         ? {
@@ -318,9 +319,9 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
       missing,
       mismatches,
       // `in`, because the pool's return union includes the WebCodecs handle,
-      // which has no preload stage and therefore no barrier to report.
-      barrierApplied:
-        "handoffTimings" in h ? (h.handoffTimings()?.barrierModeObserved ?? null) : null,
+      // which reads no slot and therefore has no read completion to report.
+      readCompletionProofs:
+        "handoffTimings" in h ? (h.handoffTimings()?.proofFallbacks ?? null) : null,
     };
   } catch (e) {
     return { strategy, poolSize, checked, missing, mismatches, error: String(e) };
@@ -332,14 +333,13 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
 // ── Concurrent frame-CONTENT-order check (N hardware sessions at once) ───────
 // `decodeBenchOrderCheck` above drives ONE session, and a single session is not
 // the case we ship: production runs up to the fixture-specific count admitted
-// by both live currencies, and the barrier's safety margin is not a constant
-// across that. The synchronous readback barrier measures ~19ms of drain at one
-// session but ~5ms at three — the sessions share one flush, so per-session
-// slack COLLAPSES as
-// sessions are added, and any barrier whose correctness depends on how deep the
-// GPU command queue is when it submits (the deferred-ack fence path especially)
-// can pass alone and reorder in company. A reorder that only appears at three
-// sessions would clear every other gate in this repo.
+// by both live currencies, and read completion's safety margin is not a
+// constant across that: the sessions share one GPU command queue, so
+// per-session slack collapses as sessions are added, and a read completion
+// whose correctness depends on how deep that queue is when it submits (the
+// deferred slot fence especially) can pass alone and reorder in company. A
+// reorder that only appears at three sessions would clear every other gate in
+// this repo.
 //
 // Every session is checked independently and reported separately: one merged
 // count would let three sessions' worth of passes bury a single session's
@@ -375,10 +375,9 @@ export interface ConcurrentOrderSessionResult {
   /// A capacity finding, NOT a pass: `checked` will be short and the caller must
   /// treat that as a result to report, never as a bar to lower.
   timedOut: boolean;
-  /// The barrier this session actually RAN — see `OrderCheckResult`. Per session,
-  /// because the fallback is per stream: one session missing its latch while the
-  /// others got theirs is exactly the drift this reports.
-  barrierApplied?: string | null;
+  /// Proof fallbacks of this session — see `OrderCheckResult`. Per session,
+  /// because the fallback is per frame of each stream.
+  readCompletionProofs?: number | null;
   error?: string;
 }
 
@@ -393,14 +392,11 @@ export interface ConcurrentOrderCheckResult {
 /// Open `sessions` hardware-lane sources on the SAME fixture and verify the
 /// barcode↔PTS pairing on every one of them (see the block comment above).
 ///
-/// Opens are sequential, drives are CONCURRENT. Sequential opens are not a
-/// concession: main chains every `previewGpu:open` through one promise
-/// (`openPreviewGpu`'s `openChain`) precisely so the preload's positional
-/// slot-announce FIFO can pair imports safely, so concurrent opens would be
-/// serialised there anyway — doing it here just keeps "which session failed to
-/// open" unambiguous. The concurrency that matters is the drive: N read loops
-/// interleaved on one thread, contending one GPU command queue, which is what
-/// builds the queue depth a single-session run never reaches.
+/// Opens are sequential, drives are CONCURRENT. Sequential opens keep "which
+/// session failed to open" unambiguous. The concurrency that matters is the
+/// drive: N read loops interleaved on one thread, contending one GPU command
+/// queue, which is what builds the queue depth a single-session run never
+/// reaches.
 export async function decodeBenchConcurrentOrderCheck(
   args: ConcurrentOrderCheckArgs,
 ): Promise<ConcurrentOrderCheckResult> {
@@ -440,6 +436,7 @@ export async function decodeBenchConcurrentOrderCheck(
       const h = pool.acquire({
         layerId: `concurrent-order-${i}`,
         mediaId: `concurrent-order:${i}:${sourcePath}`,
+        sourceColor: resolveSourceColor({ width, height }),
         proxyAssetUrl: url,
         engine: "ffmpeg" as const,
         forceLane: "hardware" as const,
@@ -538,7 +535,7 @@ export async function decodeBenchConcurrentOrderCheck(
         out.checked++;
         if (decodedIdx !== n) out.mismatches.push({ ptsUs: pts, expectedIdx: n, decodedIdx });
       }
-      out.barrierApplied = h.handoffTimings?.()?.barrierModeObserved ?? null;
+      out.readCompletionProofs = h.handoffTimings?.()?.proofFallbacks ?? null;
     };
 
     // The whole point: all N read loops in flight at once. `allSettled` so one
@@ -594,6 +591,7 @@ export async function decodeBenchBudgetProbe(args: {
       const h = pool.acquire({
         layerId: `budget-${i}`,
         mediaId: `budget:${i}:${args.sourcePath}`,
+        sourceColor: resolveSourceColor({ width: args.width, height: args.height }),
         proxyAssetUrl: url,
         engine: "ffmpeg",
         forceLane: "hardware",
@@ -681,6 +679,7 @@ export async function decodeBenchHwFallbackProbe(args: HwFallbackProbeArgs): Pro
       const h = pool.acquire({
         layerId: `hwfallback-${i}`,
         mediaId: `hwfallback:${i}:${args.sourcePath}`,
+        sourceColor: resolveSourceColor({ width: args.width, height: args.height }),
         proxyAssetUrl: url,
         engine: "ffmpeg",
         sourcePath: args.sourcePath,
@@ -926,6 +925,7 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
     const mkInit = (layerId: string) => ({
       layerId,
       mediaId: `bench:${args.sourcePath}`,
+      sourceColor: resolveSourceColor({ width: args.width ?? null, height: args.height ?? null }),
       // Unused by the ffmpeg engine (it decodes `sourcePath` directly) but
       // still passed — `proxyAssetUrl` is required by `SourceHandleInit`.
       proxyAssetUrl: url,

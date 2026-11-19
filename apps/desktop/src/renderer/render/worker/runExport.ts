@@ -11,6 +11,7 @@
 
 import { convertFileSrc } from "@/bridge/ipc";
 import { openVideoSinkPort } from "../../ipc";
+import { openDecodeSession } from "../../ipc/decodeSession";
 import { loadBundledFontBytes, resolveFontsForFamilies } from "../fonts/registry";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
@@ -24,9 +25,8 @@ import { motifLayersToBake } from "../exportBake";
 import { MotifFrameProducer } from "./motifStream";
 import { acquireExportResources } from '../resourceClient';
 import { exportFrameCount } from "./frameGrid";
-import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
-import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
-import { tenBitExportCapable } from "../exportSettings";
+import { resolveSourceColor, type SourceColor } from "../decoder/ffprobeColorSpace";
+import { hwExportDecodeAllowed, takesTenBitLane, type ExportDecodeRouting } from "../exportDecodeRouting";
 import type { SinkPixFmt } from "../../../shared/export-resources";
 import type {
   ExportEvent,
@@ -135,15 +135,14 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const originalAssetUrls: Record<string, string> = {};
   const mediaDims: Record<string, { width: number | null; height: number | null }> = {};
   const mediaStartPtsUs: Record<string, number | null> = {};
-  // Per-media source color, applied to WHATEVER the export decodes — the
-  // original trivially carries its own ffprobe tags, and a proxy PRESERVES the
-  // source's colorimetry (the recipe never converts matrix/range, and since
-  // PROXY_FORMAT_VERSION 7 asserts the source tags + a colr atom outright).
-  // mediabunny's own container tag still outranks this per-field in
-  // `withDefaultColorSpace`, so a self-describing proxy reads its colr and an
-  // older colr-less one falls back to these source tags instead of the
-  // bt709/limited resolution default that misread full-range/601 proxies.
-  const mediaColor: Record<string, VideoColorSpaceInit | undefined> = {};
+  // Per-media resolved colour, applied to WHATEVER the export decodes — the
+  // original trivially, and a YCbCr source's proxy PRESERVES its colorimetry
+  // (the recipe never converts its matrix/range, and since full-proxy
+  // version 7 asserts the source tags + a colr atom outright). mediabunny's own
+  // container tag still outranks this per-field in `withDefaultColorSpace`,
+  // so a self-describing proxy reads its colr and an older colr-less one
+  // falls back to the source's colour.
+  const mediaColor: Record<string, SourceColor> = {};
   const routes = init.decodeRouting?.routes ?? {};
   for (const m of init.mediaById.values()) {
     const exportPath = resolveDecode(m).exportPath;
@@ -161,7 +160,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     originalAssetUrls[m.id] = convertFileSrc(m.path);
     mediaDims[m.id] = { width: m.width, height: m.height };
     mediaStartPtsUs[m.id] = m.video_start_pts_us ?? m.start_pts_us ?? null;
-    mediaColor[m.id] = ffprobeColorToWebCodecs(m);
+    mediaColor[m.id] = resolveSourceColor(m);
   }
 
   // ── Native export-decode routing ───────────────────────────────────────────
@@ -261,14 +260,13 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // Keep load failures handled even if subsequent synchronous setup throws.
   workerReady.catch(() => {});
 
-  // 5. Build the tenBitMedia map: sources whose originals Chromium/Electron can decode
-  // to I420P10 (H.264 Hi10P + AV1 10-bit — `tenBitExportCapable`). Only
-  // populated on the 10-bit path; the Worker uses this to route those
-  // sources through the 10-bit lane.
+  // 5. Build the tenBitMedia map: the sources the 10-bit lane decodes
+  // (`takesTenBitLane`). Only populated on the 10-bit path; the Worker uses
+  // this to route those sources through the 10-bit lane.
   const tenBitMedia: Record<string, boolean> = {};
   if (init.bitDepth === 10) {
     for (const m of init.mediaById.values()) {
-      if (m.kind === "Video" && tenBitExportCapable(m)) {
+      if (takesTenBitLane(m)) {
         tenBitMedia[m.id] = true;
       }
     }
@@ -302,7 +300,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
           nativeDecode: {
             mediaIds: nativeDecodeMediaIds,
             outFormat: init.decodeRouting.outFormat,
-            creditWindow: 6,
+            window: 6,
           },
         }
       : {}),
@@ -325,86 +323,17 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         [...new Set(Object.values(packet.frames).map(frame => frame.bitmap))]),
       fail: error => { cleanup(); reject(error); },
     }) : null;
-    // ── Native export-decode relay ───────────────────────────────────────────
-    // The renderer main thread is a PURE relay between the export Worker's
-    // `NativeExportSourceHandle` and the main-process `NativeDecode` session:
-    // tagged `ExportSwMsg`s (frames AND rangeEnd/ended/error) arrive on the ONE
-    // ordered `exportSw:msg` channel and are posted to the Worker synchronously
-    // in arrival order — never split control onto a second subscription;
-    // ordering is the contract (see `ExportSwMsg` in shared/ipc). The reverse
-    // commands (nd:open / nd:decodeRange / nd:returnCredit / nd:close) arrive
-    // in `worker.onmessage` below. Unsubscribed in `cleanup()` so the listener
-    // doesn't leak across exports.
-    const offMsg = window.api.exportSw.onMsg((m) => {
-      switch (m.kind) {
-        case "frame": {
-          const f = m.frame;
-          // The one main→renderer copy already happened (structured-clone to a
-          // Uint8Array); hand its ArrayBuffer to the Worker zero-copy via
-          // transfer.
-          const u8 = f.data;
-          const ab = (u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength
-            ? u8.buffer
-            : u8.slice().buffer) as ArrayBuffer;
-          // Optional color tags via conditional spread — `exactOptionalPropertyTypes`
-          // forbids writing `undefined` into an exact-optional `string` field.
-          worker.postMessage(
-            {
-              type: "nd:frame",
-              frame: {
-                sessionId: f.sessionId,
-                ptsUs: f.ptsUs,
-                durUs: f.durUs,
-                width: f.width,
-                height: f.height,
-                format: f.format,
-                ...(f.colorMatrix !== undefined ? { colorMatrix: f.colorMatrix } : {}),
-                ...(f.colorRange !== undefined ? { colorRange: f.colorRange } : {}),
-                ...(f.colorPrimaries !== undefined ? { colorPrimaries: f.colorPrimaries } : {}),
-                ...(f.colorTransfer !== undefined ? { colorTransfer: f.colorTransfer } : {}),
-                data: ab,
-              },
-            } satisfies ExportRequest,
-            [ab],
-          );
-          return;
-        }
-        case "rangeEnd":
-          worker.postMessage({
-            type: "nd:rangeEnd",
-            sessionId: m.sessionId,
-            aUs: m.aUs,
-            bUs: m.bUs,
-          } satisfies ExportRequest);
-          return;
-        case "ended":
-          worker.postMessage({
-            type: "nd:ended",
-            sessionId: m.sessionId,
-          } satisfies ExportRequest);
-          return;
-        case "error":
-          worker.postMessage({
-            type: "nd:error",
-            sessionId: m.sessionId,
-            message: m.message,
-          } satisfies ExportRequest);
-          return;
-      }
-    });
-
+    const decodeSessions = new Set<string>();
     const cleanup = () => {
       if (disposed) return;
       disposed = true;
       resourceWaits.abort();
       motifProducer?.dispose();
       init.signal?.removeEventListener("abort", onAbort);
-      offMsg();
-      // A terminated Worker may never flush its per-session `nd:close` (on cancel
-      // it is torn down before draining; on success it posts `done` before its
-      // pool disposes), so reap any still-open native sessions on the main side
-      // here — on every terminal path — or the native decode threads leak.
-      if (nativeDecodeMediaIds.length > 0) window.api.exportSw.closeAll();
+      // A handle closes its own native decode session when it is disposed, but
+      // a Worker terminated here may never get to: end every session this
+      // export opened (a no-op for one already closed), so none outlives it.
+      for (const sessionId of decodeSessions) window.api.exportDecode.close({ sessionId });
       worker.terminate();
       sender?.terminate();
       for (const release of workerResources.values()) release();
@@ -478,37 +407,38 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         cleanup();
         reject(new Error(ev.message));
       } else if (ev.type === "nd:open") {
-        // Native export-decode: open the main-process session and reply with
-        // the correlated result. Any open failure surfaces to the Worker's
-        // handle (`ensureReady` rejects → the export aborts).
-        window.api.exportSw
-          .open({
-            sessionId: ev.sessionId,
-            path: ev.path,
-            outFormat: ev.outFormat,
-            creditWindow: ev.creditWindow,
-            finalizationToken: init.finalizationToken,
-          })
-          .then((info) => {
-            worker.postMessage({
-              type: "nd:openResult",
-              reqId: ev.reqId,
-              ok: true,
-              info,
-            } satisfies ExportRequest);
-          })
-          .catch((err: unknown) => {
+        // Native export-decode: open the session in main and hand its port to
+        // the Worker, which talks to the session directly from then on. An
+        // open failure reaches the Worker's handle (`ensureReady` rejects →
+        // the export aborts).
+        decodeSessions.add(ev.sessionId);
+        openDecodeSession(ev.sessionId, () => window.api.exportDecode.open({
+          sessionId: ev.sessionId,
+          path: ev.path,
+          outFormat: ev.outFormat,
+          window: ev.window,
+          color: ev.color,
+          finalizationToken: init.finalizationToken,
+        })).then(
+          ({ info, port }) => {
+            // The export ended while this open was in flight, so its cleanup
+            // could not reach the session yet.
+            if (disposed) { port.close(); window.api.exportDecode.close({ sessionId: ev.sessionId }); return; }
+            worker.postMessage({ type: "nd:openResult", reqId: ev.reqId, ok: true, info, port } satisfies ExportRequest, [port]);
+          },
+          (err: unknown) => {
+            if (disposed) return;
             worker.postMessage({
               type: "nd:openResult",
               reqId: ev.reqId,
               ok: false,
               error: err instanceof Error ? err.message : String(err),
             } satisfies ExportRequest);
-          });
-      } else if (ev.type === "nd:decodeRange") {
-        window.api.exportSw.decodeRange({ sessionId: ev.sessionId, aUs: ev.aUs, bUs: ev.bUs });
-      } else if (ev.type === "nd:returnCredit") {
-        window.api.exportSw.returnCredit({ sessionId: ev.sessionId, credits: ev.credits });
+          },
+        );
+      } else if (ev.type === "nd:close") {
+        window.api.exportDecode.close({ sessionId: ev.sessionId });
+        decodeSessions.delete(ev.sessionId);
       } else if (ev.type === 'resource:acquire') {
         void acquireExportResources(ev.memoryMiB, ev.threads, init.finalizationToken, resourceWaits.signal).then(release => {
           if (disposed) { release(); return; }
@@ -519,8 +449,6 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         });
       } else if (ev.type === 'resource:release') {
         workerResources.get(ev.id)?.(); workerResources.delete(ev.id);
-      } else if (ev.type === "nd:close") {
-        window.api.exportSw.close({ sessionId: ev.sessionId });
       }
     };
   });

@@ -106,6 +106,98 @@ pub struct VideoStreamMeta {
     pub color_transfer: Option<String>,
 }
 
+impl VideoStreamMeta {
+    /// Whether a picture of this size that declares no colour reads as HD
+    /// (BT.709) or SD (SMPTE 170M). An unknown size reads as HD. The renderer's
+    /// `undeclaredIsHd` is the same rule for the decode lanes; both are held to
+    /// `undeclaredColourGolden.fixture.json`.
+    pub fn undeclared_is_hd(width: u32, height: u32) -> bool {
+        width == 0 || height == 0 || width >= 1280 || height > 576
+    }
+
+    /// The YCbCr matrix an ffmpeg conversion must be told for this source and
+    /// its proxies, or `None` when ffmpeg reads the right one off the frame: the
+    /// stream declares it, or the picture is RGB and has none.
+    pub fn undeclared_matrix(&self) -> Option<&'static str> {
+        if self.color_matrix.is_some() || self.is_rgb() {
+            return None;
+        }
+        Some(if Self::undeclared_is_hd(self.width, self.height) {
+            "bt709"
+        } else {
+            "smpte170m"
+        })
+    }
+
+    /// Whether the picture is RGB-coded: its samples are RGB, not YCbCr.
+    pub fn is_rgb(&self) -> bool {
+        Self::is_rgb_pix_fmt(&self.pix_fmt)
+    }
+
+    /// ffmpeg's RGB pixel formats, packed (`rgb24`, `bgra`, `x2rgb10le`),
+    /// planar (`gbrp`) and palettised. The renderer's `isRgbCoded` is the same
+    /// test for the decode lanes; both are held to
+    /// `undeclaredColourGolden.fixture.json`.
+    pub fn is_rgb_pix_fmt(f: &str) -> bool {
+        f.contains("rgb") || f.contains("bgr") || f.starts_with("gbr") || f == "pal8"
+    }
+}
+
+/// Which proxy recipe a source takes. Each recipe has its own versions, which
+/// are part of a proxy's cache file name, so changing one recipe re-encodes that recipe's proxies and no others.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProxyRecipe {
+    /// The proxy keeps the source's YCbCr matrix and range.
+    Ycbcr,
+    /// An RGB-coded source, converted into the YCbCr its proxy declares
+    /// (`jobs::proxy::RGB_PROXY_COLOR`).
+    Rgb,
+}
+
+impl ProxyRecipe {
+    /// The full proxy's version. Bump a recipe's whenever its ffmpeg args
+    /// change in a way that affects playback, scrub or colour: the master's
+    /// cache name carries the version (`CacheLayout::proxy`), so an older
+    /// master is never adopted and the job re-encodes it.
+    ///
+    /// Format: export master, source-resolution H.264 capped at 2160p, High
+    /// profile, `-bf 0` (PTS=DTS), short fixed GOP, the colour tags asserted
+    /// with `+write_colr` so mediabunny reads a `colr` atom. See ADR 0011,
+    /// 0014 and docs/preview.md §Proxies. Rgb 8: the conversion to
+    /// `RGB_PROXY_COLOR` with tags to match.
+    pub const fn full_version(self) -> u32 {
+        match self {
+            Self::Ycbcr => 7,
+            Self::Rgb => 8,
+        }
+    }
+
+    /// The quick proxy's version, bumped by the same rule. Recipe: 720p cap,
+    /// short scrub GOP (docs/preview.md §Proxies), colour tags and `colr` as
+    /// for the full proxy. Rgb 5: the conversion to `RGB_PROXY_COLOR`.
+    pub const fn quick_version(self) -> u32 {
+        match self {
+            Self::Ycbcr => 4,
+            Self::Rgb => 5,
+        }
+    }
+}
+
+impl MediaItem {
+    pub fn proxy_recipe(&self) -> ProxyRecipe {
+        if self
+            .metadata
+            .video
+            .as_ref()
+            .is_some_and(VideoStreamMeta::is_rgb)
+        {
+            ProxyRecipe::Rgb
+        } else {
+            ProxyRecipe::Ycbcr
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioStreamMeta {
     pub sample_rate: u32,

@@ -1,10 +1,9 @@
 // Pure main-side per-frame coordination timing for decode-bench signal
 // attribution. The MAIN process sees both ends of the renderer round-trip — it
-// dispatches `frameReady` and receives `consumeAck` — so it times that round-trip
-// in its OWN clock, with no cross-process clock sync. No `electron` import, so this
-// is unit-testable (see vitest.config.ts note); the electron wiring lives in
-// previewGpu.ts / index.ts. Accumulator is a relay singleton — the bench runs one
-// native session at a time (serial).
+// passes on a session's `slot` message and receives its `release` — so it times
+// that round-trip in its OWN clock, with no cross-process clock sync. No
+// `electron` import, so this is unit-testable (see vitest.config.ts note); the
+// session wiring lives in previewGpu.ts. One accumulator for every session.
 import { msSummary } from '../shared/msStats'
 import type { PreviewGpuTimingSummary } from '../shared/ipc'
 
@@ -17,14 +16,14 @@ let rtSamplesMs: number[] = []
 
 const key = (streamId: string, slot: number): string => `${streamId}:${slot}`
 
-/// Stamp the moment main dispatched a frame to the renderer (just before send).
+/// Stamp the moment main passed a `slot` message on to the renderer.
 export function recordFrameReadySent(streamId: string, slot: number, nowMs: number): void {
   pendingSendMs.set(key(streamId, slot), nowMs)
 }
 
-/// On the matching consumeAck, record the renderer round-trip (main->renderer->main)
-/// and clear the pending stamp. 1:1 by (streamId, slot); an ack with no prior send
-/// records nothing.
+/// On the matching `release`, record the renderer round-trip (main->renderer->main)
+/// and clear the pending stamp. 1:1 by (streamId, slot); a release with no prior
+/// send records nothing.
 export function recordConsumeAck(streamId: string, slot: number, nowMs: number): void {
   const k = key(streamId, slot)
   const sent = pendingSendMs.get(k)

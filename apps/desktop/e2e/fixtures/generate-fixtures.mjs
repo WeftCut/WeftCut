@@ -52,6 +52,27 @@ export const MATRIX = [
   { color: "601ltd" },
   { color: "709full" },
   { color: "601full" },
+  // the chart with NO colour tag in stream or container, one each side of the
+  // absent-tag rule's SD/HD split (720x480 BT.601, 1080p BT.709) and a cropped
+  // HD picture that is HD by its width alone (1280x544 BT.709), all limited —
+  // every preview lane and both export decode engines must agree on it
+  // (preview-sw-color, preview-hw-color, preview-lite-color, color-conformance)
+  { colorUntagged: "sd" },
+  { colorUntagged: "hd" },
+  { colorUntagged: "wide" },
+  // the chart stored as RGB samples: libx264rgb H.264 (gbrp, tagged gbr) and
+  // QuickTime Animation (rgb24, untagged) — every lane that decodes it and both
+  // export decode engines must show its RGB (preview-sw-color,
+  // preview-lite-color, color-conformance)
+  { colorRgb: "h264" },
+  { colorRgb: "qtrle" },
+  // the chart tagged with primaries other than BT.709: BT.2020 SDR as 8-bit
+  // H.264 and 10-bit HEVC, and PAL SD (EBU primaries) — the native lanes must
+  // show it converted into BT.709 primaries (preview-sw-color,
+  // preview-hw-color, color-conformance's ffmpeg decode engine)
+  { colorGamut: "2020-h264" },
+  { colorGamut: "2020-hevc10" },
+  { colorGamut: "pal" },
   // the 709ltd chart as color-tagged 10-bit ProRes 422 HQ — the export
   // decode-engine ProRes fidelity gate (export-prores-fidelity.spec.ts)
   { colorProres: true },

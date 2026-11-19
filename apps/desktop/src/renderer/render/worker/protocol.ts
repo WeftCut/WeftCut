@@ -9,8 +9,10 @@
 // worker after `done` to release its heap.
 
 import type { ExportTransportFormat } from "../exportDecodeRouting";
+import type { SourceColor } from "../decoder/ffprobeColorSpace";
 import type { MotifFramePacket } from "./motifStream";
 import type { SinkPixFmt } from "../../../shared/export-resources";
+import type { ExportDecodeOpenInfo, PlaneColor } from "../../../shared/frameCarrier/wire";
 
 /// Snapshot of project state needed to render the export. The Worker
 /// receives this as a structured-clone of the live `ProjectSummary`,
@@ -47,54 +49,19 @@ export interface ExportProjectSnapshot {
   /// normalized to content time; export decoders add this offset when seeking
   /// packets and subtract it when storing decoded frames.
   mediaStartPtsUs: Record<string, number | null>;
-  /// `media_id → source color tags`, one entry per media whose ffprobe tags
-  /// mapped (undefined only for untagged / unmapped sources). Applies to the
-  /// ORIGINAL and proxy decodes alike — a proxy preserves the source
-  /// colorimetry. A plain serializable object (postMessage-safe). The Worker
-  /// passes it into each `SourceHandle` so the decode carries its real
-  /// matrix/range — see `withDefaultColorSpace`.
-  mediaColor: Record<string, VideoColorSpaceInit | undefined>;
+  /// `media_id → resolved colour` (`resolveSourceColor`), one complete entry
+  /// per media. Applies to the ORIGINAL and proxy decodes alike — a proxy
+  /// preserves the source colorimetry. A plain serializable object
+  /// (postMessage-safe). The Worker passes it into each `SourceHandle` so
+  /// every export lane decodes with the colour preview uses.
+  mediaColor: Record<string, SourceColor>;
   /// `media_id → absolute ORIGINAL file path`, resolved on the main thread for
   /// media the export routes through the native decode session. The napi
-  /// `exportSwOpen` opens a filesystem path (not a `weftcut-media://` asset
+  /// `exportDecodeOpen` opens a filesystem path (not a `weftcut-media://` asset
   /// URL), and the Worker can't resolve one itself — so the main thread
   /// pre-resolves it here, exactly as it pre-resolves the asset URLs above.
   /// Present only for native-routed media (see `ExportRequest.nativeDecode`).
   originalFilePaths: Record<string, string>;
-}
-
-/// One native-decoded frame handed from the renderer-main relay to the export
-/// Worker's `NativeExportSourceHandle`. Same fields as the IPC `ExportSwFrameMsg`
-/// but `data` is an `ArrayBuffer` TRANSFERRED (zero-copy) rather than a
-/// structured-cloned `Uint8Array` — the worker wraps it in a `NativeNv12Frame`
-/// (NV12) or a `TenBitFrame` (I420P10) per `format` and pushes it into the
-/// ring; both convert in the Compositor's GL ingest shaders, never through
-/// `new VideoFrame` (why: see nv12Frame.ts).
-/// The handle cross-checks `format` against its session's `outFormat`.
-export interface NativeDecodeFrameMsg {
-  sessionId: string;
-  ptsUs: number;
-  durUs: number;
-  width: number;
-  height: number;
-  format: ExportTransportFormat;
-  colorMatrix?: string;
-  colorRange?: string;
-  colorPrimaries?: string;
-  colorTransfer?: string;
-  data: ArrayBuffer;
-}
-
-/// Reply to a `nd:open` command (renderer-main → worker). Mirrors the napi
-/// `ExportSwOpenInfoJs`. Inlined here to keep `protocol.ts` dependency-free.
-export interface NativeDecodeOpenInfo {
-  width: number;
-  height: number;
-  colorMatrix?: string;
-  colorRange?: string;
-  colorPrimaries?: string;
-  colorTransfer?: string;
-  startPtsUs: number;
 }
 
 export type ExportRequest =
@@ -153,15 +120,15 @@ export type ExportRequest =
       /// The routing table's native slice (population rule + rationale in
       /// exportDecodeRouting.ts). `mediaIds` route through the native
       /// `NativeExportSourceHandle` (decode the ORIGINAL via the napi session
-      /// over the frame relay) instead of the in-worker WebCodecs path;
+      /// over its own port) instead of the in-worker WebCodecs path;
       /// `outFormat` is those frames' CPU transport format. The Worker stays
-      /// policy-free: it just tests membership at acquire time. `creditWindow`
-      /// sizes the native flow-control window (frames in flight); absent ⇒
+      /// policy-free: it just tests membership at acquire time. `window`
+      /// bounds the frames each native session has in flight; absent ⇒
       /// engine default.
       nativeDecode?: {
         mediaIds: string[];
         outFormat: ExportTransportFormat;
-        creditWindow?: number;
+        window?: number;
       };
       /// Bundled font bytes (family → ArrayBuffer), FontFace-loaded into the
       /// Worker's `self.fonts` before renderer init so burned-in Text/captions
@@ -173,25 +140,13 @@ export type ExportRequest =
   /// Backpressure ack: the main thread finished writing the most recent
   /// `chunk` to disk; the worker's WritableStream may release the next write.
   | { type: "chunk-ack" }
-  //
-  // ── Native-decode relay: renderer-main → Worker ──────────────────────────
-  // The reverse of the encode chunk channel. The renderer main thread relays
-  // frames + control signals from the main-process `NativeDecode` session into
-  // the Worker's `NativeExportSourceHandle`, keyed by `sessionId`.
-  //
-  /// Reply to a prior `nd:open` (correlated by `reqId`). `ok:false` carries the
-  /// napi open failure (unsupported format / undecodable source).
-  | { type: "nd:openResult"; reqId: number; ok: true; info: NativeDecodeOpenInfo }
-  | { type: "nd:openResult"; reqId: number; ok: false; error: string }
-  /// One decoded frame (NV12 or I420P10 per `frame.format`); `frame.data` is
-  /// transferred (see the transfer list on the renderer-main `postMessage`).
-  | { type: "nd:frame"; frame: NativeDecodeFrameMsg }
-  /// The in-flight `decodeRange` delivered every frame in `[aUs, bUs]`.
-  | { type: "nd:rangeEnd"; sessionId: string; aUs: number; bUs: number }
-  /// End of stream: the session flushed its final GOP; no more frames ever.
-  | { type: "nd:ended"; sessionId: string }
-  /// A native session error (mid-decode failure); the handle fails its ring.
-  | { type: "nd:error"; sessionId: string; message: string };
+  /// Reply to a prior `nd:open` (correlated by `reqId`). `port` is the
+  /// session's own port (transferred): its frames and control come down it,
+  /// `range` / `release` go up, and closing it closes the session.
+  /// `ok:false` carries the open failure (unsupported format, undecodable
+  /// source).
+  | { type: "nd:openResult"; reqId: number; ok: true; info: ExportDecodeOpenInfo; port: MessagePort }
+  | { type: "nd:openResult"; reqId: number; ok: false; error: string };
 
 /// Aggregate export-perf counters, posted with `done`. Used by the E2E
 /// harness to measure decode efficiency (e.g. the long-GOP re-seek redundancy:
@@ -238,14 +193,10 @@ export type ExportEvent =
   /// `perf` carries aggregate decode/timing counters for the E2E harness.
   | { type: "done"; perf?: ExportPerf }
   | { type: "error"; message: string }
-  //
-  // ── Native-decode relay: Worker → renderer-main ──────────────────────────
-  // Commands from the Worker's `NativeExportSourceHandle` down to the
-  // main-process `NativeDecode` session (the renderer main thread forwards each
-  // to `window.api.exportSw.*`). `nd:open` expects a matching `nd:openResult`
-  // (`ExportRequest`) correlated by `reqId`; the rest are fire-and-forget.
-  //
-  | { type: "nd:open"; reqId: number; sessionId: string; path: string; outFormat: ExportTransportFormat; creditWindow: number }
-  | { type: "nd:decodeRange"; sessionId: string; aUs: number; bUs: number }
-  | { type: "nd:returnCredit"; sessionId: string; credits: number }
+  /// Asks the page to open a native export decode session; answered by
+  /// `nd:openResult` with the same `reqId`. No frame and no per-frame message
+  /// of the session passes the page.
+  | { type: "nd:open"; reqId: number; sessionId: string; path: string; outFormat: ExportTransportFormat; window: number; color: PlaneColor }
+  /// Asks the page to end a session. It travels where `nd:open` travels, so a
+  /// close reaches main before any open the Worker asks for after it.
   | { type: "nd:close"; sessionId: string };

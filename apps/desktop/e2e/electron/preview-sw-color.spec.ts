@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook, DECODE_ADDON, DECODE_COMPONENT_PRESENT } from './helpers/driver'
+import { displayedColour } from '../fixtures/generate.mjs'
 
 // Saturated-chart color gate for the native software-decode PREVIEW lane
 // (policy ADR 0032). The preview twin of export-prores-fidelity's Gate A: a
@@ -21,10 +22,31 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForH
 // defect into tens of 8-bit steps. Never treat a natural-content SSIM floor
 // as evidence of matrix correctness (ADR 0032).
 //
-// Two legs:
+// Every leg expects the chart as the lane shows it: decoded with its matrix
+// and range, then converted from its declared BT.2020 or EBU primaries into
+// BT.709 (`displayedColour`, fixtures/generate.mjs). Any other chart is shown
+// as authored: SMPTE C primaries, declared or assumed, take no primaries step
+// (`planeConversion`).
+//
+// Legs:
 //   A. bt709-tagged chart — renders WITHOUT the 601 tint.
 //   B. smpte170m-tagged chart — still selects BT.601 (no over-correction:
 //      a fix that hard-codes 709 would pass leg A and fail this one).
+//   C. untagged H.264 charts, SD, HD and a cropped HD picture (1280x544) —
+//      the lane reads the absent tag the way every other lane does
+//      (`resolveSourceColor`): BT.601 for SD, BT.709 for HD, where 1280 wide
+//      is HD at any height. preview-hw-color, preview-lite-color and
+//      color-conformance hold the other lanes to the same patches.
+//   D. full-range H.264 charts (709full/601full, the ones preview-hw-color
+//      reads) — the lane keeps full-range levels end to end.
+//   E. RGB-coded charts (libx264rgb tagged gbr, QuickTime Animation untagged)
+//      — the pack converts the RGB samples into the YCbCr colour the ingest
+//      reads them with (`nativePlaneColor`). No hardware decoder takes these,
+//      so the hardware lanes run them here, in software.
+//   F. charts tagged with wide or PAL primaries: BT.2020 SDR (8-bit H.264,
+//      10-bit HEVC; the BT.2020 matrix) and PAL SD (EBU primaries) — shown
+//      converted into BT.709 primaries, a lime patch 120 steps from its
+//      unconverted value.
 // Same run requirements as preview-sw-conformance.spec.ts: a
 // VITE_WEFTCUT_E2E=1 build and the built native-decode component.
 
@@ -33,8 +55,15 @@ const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../
 const CHART_709 = path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_prores.mov')
 const CHART_601 = path.resolve(MEDIA_DIR, 'test_1080p_color_601ltd_prores.mov')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
+const MANIFEST_SD = path.resolve(MEDIA_DIR, 'color_manifest_720x480.json')
+const MANIFEST_WIDE = path.resolve(MEDIA_DIR, 'color_manifest_1280x544.json')
+const MANIFEST_PAL = path.resolve(MEDIA_DIR, 'color_manifest_720x576.json')
 
-const CANVAS = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
+type Canvas = { width: number; height: number; fpsNum: number; fpsDen: number }
+const CANVAS: Canvas = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
+const CANVAS_SD: Canvas = { width: 720, height: 480, fpsNum: 30, fpsDen: 1 }
+const CANVAS_WIDE: Canvas = { width: 1280, height: 544, fpsNum: 30, fpsDen: 1 }
+const CANVAS_PAL: Canvas = { width: 720, height: 576, fpsNum: 30, fpsDen: 1 }
 const SEEK_US = 500_000 // mid-chart; the chart is static, any decoded frame shows it
 
 // Component presence (same level-0 probe as export-prores-fidelity.spec.ts):
@@ -47,8 +76,8 @@ const COMPONENT_PRESENT = DECODE_COMPONENT_PRESENT
 // chart gate (COLOR_APP_MAX): the chain pays the ProRes master's 10-bit→8-bit
 // requantization, the NV12 transport's 4:2:2→4:2:0 chroma resample, and the
 // ingest's RGBA8 round-trip (≈1–2 steps each on flat patch centers). The
-// failure this guards — a wrong matrix in the preview convert — reads as
-// 10–30 steps on the saturated patches.
+// failures this guards — a wrong matrix in the preview convert, a missing
+// primaries conversion — read as 10–120 steps on the saturated patches.
 const PATCH_TOL = 8
 
 interface ManifestPatch {
@@ -67,17 +96,32 @@ interface PatchOffender {
   maxErr: number
 }
 
-async function runChartLeg(label: string, fixture: string): Promise<void> {
+/// Where a leg's chart lives and how it is laid out. `nativeSwRoute`: the
+/// chart is WebCodecs-blind (ProRes), so import routes it `native-sw`; any
+/// other chart reaches the software lane through the engine and lane pins alone.
+/// `primaries`: what the native lanes convert the chart from
+/// (`planeConversion`): its declared BT.2020 or EBU primaries, else BT.709.
+interface ChartLeg {
+  fixture: string
+  manifest: string
+  canvas: Canvas
+  nativeSwRoute: boolean
+  primaries: 'bt709' | 'bt470bg' | 'bt2020'
+}
+
+async function runChartLeg(label: string, leg: ChartLeg): Promise<void> {
+  const { fixture, canvas } = leg
   test.skip(!existsSync(fixture), `${label} chart fixture not found at ${fixture} (npm run fixtures)`)
-  test.skip(!existsSync(MANIFEST), `color manifest not found at ${MANIFEST} (npm run fixtures)`)
+  test.skip(!existsSync(leg.manifest), `color manifest not found at ${leg.manifest} (npm run fixtures)`)
   test.setTimeout(240_000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-color-proj-')
-  const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as {
+  const manifest = JSON.parse(readFileSync(leg.manifest, 'utf8')) as {
     width: number
     height: number
     patches: ManifestPatch[]
   }
-  expect(manifest.width).toBe(CANVAS.width) // 1:1 chart→composition mapping
+  expect(manifest.width).toBe(canvas.width) // 1:1 chart→composition mapping
+  expect(manifest.height).toBe(canvas.height)
 
   // Pin the resolver to the software lane: ProRes is videotoolbox-eligible, so
   // on a ProRes-engine Mac this spec's clip would otherwise ride the HW lane
@@ -93,7 +137,7 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
     await newProject(page, {
       parentFolder: PROJECT_PARENT,
       name: `${label}-${Date.now()}`,
-      canvas: CANVAS,
+      canvas,
     })
 
     // Pin the ffmpeg engine BEFORE placing the layer (engine resolution reads
@@ -107,12 +151,14 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
     const { mediaId, layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: fixture })
     expect(kind).toBe('Video')
 
-    await waitForHook(page, 'mediaDecodeRouteKind')
-    await page.waitForFunction(
-      (id) => (window as unknown as { __weftcutTest: { mediaDecodeRouteKind(m: string): string | null } }).__weftcutTest.mediaDecodeRouteKind(id) === 'native-sw',
-      mediaId,
-      { timeout: 90_000, polling: 500 },
-    )
+    if (leg.nativeSwRoute) {
+      await waitForHook(page, 'mediaDecodeRouteKind')
+      await page.waitForFunction(
+        (id) => (window as unknown as { __weftcutTest: { mediaDecodeRouteKind(m: string): string | null } }).__weftcutTest.mediaDecodeRouteKind(id) === 'native-sw',
+        mediaId,
+        { timeout: 90_000, polling: 500 },
+      )
+    }
     await page.waitForFunction(
       () => {
         try {
@@ -160,13 +206,14 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
         [cx, cy] as const,
       )) as { r: number; g: number; b: number }
       const got: [number, number, number] = [s.r, s.g, s.b]
+      const expected = displayedColour(patch.rgb, leg.primaries) as [number, number, number]
       const maxErr = Math.max(
-        Math.abs(got[0] - patch.rgb[0]),
-        Math.abs(got[1] - patch.rgb[1]),
-        Math.abs(got[2] - patch.rgb[2]),
+        Math.abs(got[0] - expected[0]),
+        Math.abs(got[1] - expected[1]),
+        Math.abs(got[2] - expected[2]),
       )
       worst = Math.max(worst, maxErr)
-      if (maxErr > PATCH_TOL) offenders.push({ id: patch.id, expected: patch.rgb, got, maxErr })
+      if (maxErr > PATCH_TOL) offenders.push({ id: patch.id, expected, got, maxErr })
     }
     // eslint-disable-next-line no-console
     console.log(`[preview-sw-color] ${label}: worst patch-center error ${worst} (tol ${PATCH_TOL})`)
@@ -188,11 +235,55 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
 test.describe('preview native-SW saturated-chart color gate (Electron)', () => {
   test.skip(!COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native SW sessions`)
 
+  const prores = (fixture: string, primaries: ChartLeg['primaries']): ChartLeg =>
+    ({ fixture, manifest: MANIFEST, canvas: CANVAS, nativeSwRoute: true, primaries })
+  const pinned = (name: string, manifest: string, canvas: Canvas, primaries: ChartLeg['primaries']): ChartLeg =>
+    ({ fixture: path.resolve(MEDIA_DIR, name), manifest, canvas, nativeSwRoute: false, primaries })
+
   test('bt709-tagged ProRes chart previews without the BT.601 tint', async () => {
-    await runChartLeg('psc-709', CHART_709)
+    await runChartLeg('psc-709', prores(CHART_709, 'bt709'))
   })
 
   test('smpte170m-tagged ProRes chart still selects BT.601 (no over-correction)', async () => {
-    await runChartLeg('psc-601', CHART_601)
+    await runChartLeg('psc-601', prores(CHART_601, 'bt709'))
+  })
+
+  test('untagged SD H.264 chart previews as BT.601 on the software lane', async () => {
+    await runChartLeg('psc-untagged-sd', pinned('test_480p_color_601ltd_untagged.mp4', MANIFEST_SD, CANVAS_SD, 'bt709'))
+  })
+
+  test('untagged HD H.264 chart previews as BT.709 on the software lane', async () => {
+    await runChartLeg('psc-untagged-hd', pinned('test_1080p_color_709ltd_untagged.mp4', MANIFEST, CANVAS, 'bt709'))
+  })
+
+  test('untagged cropped HD H.264 chart (1280x544) previews as BT.709 on the software lane', async () => {
+    await runChartLeg('psc-untagged-wide', pinned('test_1280x544_color_709ltd_untagged.mp4', MANIFEST_WIDE, CANVAS_WIDE, 'bt709'))
+  })
+
+  test('gbr-tagged RGB H.264 chart previews as its RGB on the software lane', async () => {
+    await runChartLeg('psc-rgb-h264', pinned('test_1080p_color_rgb_h264.mp4', MANIFEST, CANVAS, 'bt709'))
+  })
+
+  test('untagged QuickTime Animation RGB chart previews as its RGB on the software lane', async () => {
+    await runChartLeg('psc-rgb-qtrle', pinned('test_1080p_color_rgb_qtrle.mov', MANIFEST, CANVAS, 'bt709'))
+  })
+
+  for (const enc of ['709full', '601full'] as const) {
+    test(`${enc} H.264 chart keeps full-range levels on the software lane`, async () => {
+      await runChartLeg(`psc-${enc}`, pinned(`test_1080p_color_${enc}.mp4`, MANIFEST, CANVAS, 'bt709'))
+    })
+  }
+
+  for (const [slug, chart, file] of [
+    ['2020-h264', 'BT.2020 SDR H.264', 'test_1080p_color_2020_h264.mp4'],
+    ['2020-hevc10', 'BT.2020 SDR 10-bit HEVC', 'test_1080p_color_2020_hevc10.mp4'],
+  ] as const) {
+    test(`${chart} chart previews converted into BT.709 primaries on the software lane`, async () => {
+      await runChartLeg(`psc-${slug}`, pinned(file, MANIFEST, CANVAS, 'bt2020'))
+    })
+  }
+
+  test('PAL SD H.264 chart previews converted from EBU into BT.709 primaries on the software lane', async () => {
+    await runChartLeg('psc-pal', pinned('test_576p_color_pal.mp4', MANIFEST_PAL, CANVAS_PAL, 'bt470bg'))
   })
 })

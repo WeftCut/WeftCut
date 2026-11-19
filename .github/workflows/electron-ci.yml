@@ -1158,7 +1158,7 @@ jobs:
           # Its test-noop is ONLY napi/noop, NOT
           # napi-derive/noop (see decode/Cargo.toml) — enough to resolve the
           # standalone binary's napi_* symbols while keeping the ToNapiValue
-          # derives its ThreadsafeFunction<ExportSwMsg> params require.
+          # derives its ThreadsafeFunction<DecodeMsg> params require.
           if [ "$RUNNER_OS" = "Windows" ]; then
             FFMPEG_DIR="$(cygpath -m "$PWD")/resources/ffmpeg-lgpl/win" \
             LIBCLANG_PATH="C:\\Program Files\\LLVM\\bin" \

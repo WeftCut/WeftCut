@@ -1,6 +1,6 @@
 // Deterministic media-fixture producer. This is intentionally dependency-free:
 // Node writes the small source charts/manifests and ffmpeg produces the media.
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -102,6 +102,96 @@ const COLOR_ENCODINGS = {
   },
 }
 
+/// The untagged charts: one per side of the absent-tag rule's SD/HD split
+/// (`undeclaredIsHd`), and a cropped HD picture that is HD by its width alone
+/// (`wide`), each converted with the matrix its size resolves to, so a lane
+/// that reads the absence differently shows it on the saturated patches.
+const UNTAGGED_COLOR = {
+  sd: { width: 720, height: 480, matrix: 'smpte170m', name: 'test_480p_color_601ltd_untagged.mp4' },
+  hd: { width: WIDTH, height: HEIGHT, matrix: 'bt709', name: 'test_1080p_color_709ltd_untagged.mp4' },
+  wide: { width: 1280, height: 544, matrix: 'bt709', name: 'test_1280x544_color_709ltd_untagged.mp4' },
+}
+
+/// The RGB-coded charts: the 1080p chart stored as RGB samples, so there is
+/// no YCbCr matrix to read and every lane converts the picture itself. `h264`
+/// is libx264rgb (High 4:4:4 Predictive, decoded as `gbrp`), whose encoder tags
+/// it `gbr`, full range; `qtrle` is QuickTime Animation (`rgb24`), which
+/// carries no colour tag.
+const RGB_COLOR = {
+  h264: { encoder: ['-c:v', 'libx264rgb', '-crf', '18', '-preset', 'medium'], name: 'test_1080p_color_rgb_h264.mp4' },
+  qtrle: { encoder: ['-c:v', 'qtrle'], name: 'test_1080p_color_rgb_qtrle.mov' },
+}
+
+/// The charts whose source declares primaries other than BT.709, so a lane
+/// that converts correctly shows them in BT.709 primaries
+/// (`displayedColour`): BT.2020 SDR as 8-bit H.264 and as 10-bit HEVC Main10,
+/// and a PAL SD chart (EBU primaries, BT.601 matrix). Each is converted with
+/// its own matrix (`scaleMatrix`, swscale's name for it) and carries its tags
+/// in the stream.
+const GAMUT_COLOR = {
+  '2020-h264': {
+    width: WIDTH, height: HEIGHT, scaleMatrix: 'bt2020', pixFmt: 'yuv420p',
+    tags: { colorspace: 'bt2020nc', primaries: 'bt2020', trc: 'bt2020-10' },
+    encoder: ['-c:v', 'libx264', '-crf', '18', '-preset', 'medium'],
+    name: 'test_1080p_color_2020_h264.mp4',
+  },
+  '2020-hevc10': {
+    width: WIDTH, height: HEIGHT, scaleMatrix: 'bt2020', pixFmt: 'yuv420p10le',
+    tags: { colorspace: 'bt2020nc', primaries: 'bt2020', trc: 'bt2020-10' },
+    encoder: [
+      '-c:v', 'libx265', '-crf', '18', '-tag:v', 'hvc1',
+      '-x265-params', 'profile=main10:colorprim=bt2020:transfer=bt2020-10:colormatrix=bt2020nc:range=limited:log-level=error',
+    ],
+    name: 'test_1080p_color_2020_hevc10.mp4',
+  },
+  pal: {
+    width: 720, height: 576, scaleMatrix: 'bt470', pixFmt: 'yuv420p',
+    tags: { colorspace: 'bt470bg', primaries: 'bt470bg', trc: 'smpte170m' },
+    encoder: ['-c:v', 'libx264', '-crf', '18', '-preset', 'medium'],
+    name: 'test_576p_color_pal.mp4',
+  },
+}
+
+/// The owned conversion's matrices, shared with the app's TS and Rust code,
+/// which are held to the same file.
+const COLOUR_GOLDEN = JSON.parse(readFileSync(
+  fileURLToPath(new URL('../../src/renderer/render/yuv/colourConversionGolden.fixture.json', import.meta.url)),
+  'utf8',
+))
+
+/// The colour a lane that converts correctly shows for 8-bit R'G'B' `rgb` of a
+/// source whose primaries are `primaries` (WebCodecs name): converted into
+/// BT.709 primaries in linear light, the display transfer a pure 2.4 power
+/// both ways (BT.1886), clipped per channel, rounded to 8 bits. The definition
+/// the app implements (`render/yuv/colourConversion.ts`); BT.709 primaries are
+/// shown as they are. An HDR source is not converted and has no entry here.
+export function displayedColour(rgb, primaries) {
+  const entry = COLOUR_GOLDEN.primaries.find((p) => p.primaries === primaries)
+  if (!entry) throw new Error(`no conversion from primaries ${JSON.stringify(primaries)}`)
+  if (entry.toBt709 === null) return [...rgb]
+  const gamma = COLOUR_GOLDEN.displayGamma
+  const linear = rgb.map((v) => (Math.min(255, Math.max(0, v)) / 255) ** gamma)
+  return entry.toBt709.map((row) => {
+    const v = row[0] * linear[0] + row[1] * linear[1] + row[2] * linear[2]
+    return Math.round(Math.min(1, Math.max(0, v)) ** (1 / gamma) * 255)
+  })
+}
+
+/// `scale` stamps its output matrix and range on the frame and libx264 writes
+/// them into the VUI, so the tags are reset after the conversion. No colour
+/// flag on the command line and no `write_colr` keep the stream and the
+/// container free of them too.
+const UNTAG_FILTER = 'setparams=range=unknown:color_primaries=unknown:color_trc=unknown:colorspace=unknown'
+
+/// The frames' colour tags, which the encoder writes into the VUI and the
+/// container. LANDMINE: ffmpeg 8 takes them from the frames, not from
+/// `-color_primaries`/`-color_trc` on the command line: without this a chart
+/// converted from an untagged PNG carries its matrix and range but no
+/// primaries or transfer.
+function tagFilter({ colorspace, primaries, trc, range }) {
+  return `setparams=range=${range}:color_primaries=${primaries}:color_trc=${trc}:colorspace=${colorspace}`
+}
+
 const GRADIENT_FILTER = "format=yuv420p10le,geq=lum='(X/(W-1))*1023':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
 const COLOR_TAGS = [
   '-colorspace', 'bt709',
@@ -116,6 +206,9 @@ export function outputName({
   seconds,
   audio,
   color,
+  colorUntagged,
+  colorRgb,
+  colorGamut,
   colorProres,
   colorProresEnc,
   gradient,
@@ -145,6 +238,9 @@ export function outputName({
   }
   if (audioTimingLong) return 'test_audio_timing_long_125s.mkv'
   if (color) return `test_1080p_color_${color}.mp4`
+  if (colorUntagged) return untaggedColorOf(colorUntagged).name
+  if (colorRgb) return rgbColorOf(colorRgb).name
+  if (colorGamut) return gamutColorOf(colorGamut).name
   if (colorProres) return `test_1080p_color_${colorProresEnc ?? '709ltd'}_prores.mov`
   if (gradient) return 'test_1080p_gradient10.mp4'
   if (gradientH264) return 'test_1080p_gradient10_h264.mp4'
@@ -292,10 +388,32 @@ const REAL_IO = {
   log: (message) => console.log(message),
 }
 
+/// The 1080p chart keeps the unsuffixed names every colour gate reads; any other
+/// size carries its dimensions so charts of two sizes never share a file.
 function writeColorChart(io, outputDir, width, height) {
-  const patches = io.writeChartPng(outputDir, 'color_chart.png', width, height)
-  io.writeManifest(outputDir, 'color_manifest.json', width, height, patches)
-  return 'color_chart.png'
+  const suffix = width === WIDTH && height === HEIGHT ? '' : `_${width}x${height}`
+  const chart = `color_chart${suffix}.png`
+  const patches = io.writeChartPng(outputDir, chart, width, height)
+  io.writeManifest(outputDir, `color_manifest${suffix}.json`, width, height, patches)
+  return chart
+}
+
+function untaggedColorOf(size) {
+  const shape = UNTAGGED_COLOR[size]
+  if (!shape) throw new Error(`unknown --color-untagged ${JSON.stringify(size)} (sd|hd|wide)`)
+  return shape
+}
+
+function gamutColorOf(chart) {
+  const shape = GAMUT_COLOR[chart]
+  if (!shape) throw new Error(`unknown --color-gamut ${JSON.stringify(chart)} (2020-h264|2020-hevc10|pal)`)
+  return shape
+}
+
+function rgbColorOf(codec) {
+  const shape = RGB_COLOR[codec]
+  if (!shape) throw new Error(`unknown --color-rgb ${JSON.stringify(codec)} (h264|qtrle)`)
+  return shape
 }
 
 /// Run ffmpeg without a command shell. Keeping every argument separate is what
@@ -594,7 +712,8 @@ function generateColor(entry, outputDir, run, io) {
   }
   const chart = writeColorChart(io, outputDir, WIDTH, HEIGHT)
   const output = outputName(entry)
-  const filter = `format=rgb24,scale=out_color_matrix=${encoding.matrix}:out_range=${encoding.outputRange},format=yuv420p`
+  const tags = { colorspace: encoding.matrix, primaries: encoding.primaries, trc: encoding.transfer, range: encoding.range }
+  const filter = `format=rgb24,scale=out_color_matrix=${encoding.matrix}:out_range=${encoding.outputRange},format=yuv420p,${tagFilter(tags)}`
   const args = [
     '-y', '-loop', '1', '-i', chart, '-t', '1', '-r', '30',
     '-vf', filter, '-c:v', 'libx264', '-crf', '18', '-preset', 'medium',
@@ -610,6 +729,54 @@ function generateColor(entry, outputDir, run, io) {
   io.log(`Done: ${output}`)
 }
 
+function generateColorUntagged(entry, outputDir, run, io) {
+  const { width, height, matrix, name } = untaggedColorOf(entry.colorUntagged)
+  const chart = writeColorChart(io, outputDir, width, height)
+  const filter = `format=rgb24,scale=out_color_matrix=${matrix}:out_range=tv,format=yuv420p,${UNTAG_FILTER}`
+  const args = [
+    '-y', '-loop', '1', '-i', chart, '-t', '1', '-r', '30',
+    '-vf', filter, '-c:v', 'libx264', '-crf', '18', '-preset', 'medium',
+    '-an', name,
+  ]
+
+  io.log(`Generating ${name} (${width}x${height} chart, ${matrix} limited, untagged)`)
+  run(args, { cwd: outputDir })
+  io.log(`Done: ${name}`)
+}
+
+function generateColorRgb(entry, outputDir, run, io) {
+  const { encoder, name } = rgbColorOf(entry.colorRgb)
+  const chart = writeColorChart(io, outputDir, WIDTH, HEIGHT)
+  const args = [
+    '-y', '-loop', '1', '-i', chart, '-t', '1', '-r', '30',
+    '-vf', 'format=rgb24', ...encoder,
+    '-an', name,
+  ]
+
+  io.log(`Generating ${name} (chart as RGB samples, ${entry.colorRgb})`)
+  run(args, { cwd: outputDir })
+  io.log(`Done: ${name}`)
+}
+
+function generateColorGamut(entry, outputDir, run, io) {
+  const { width, height, scaleMatrix, pixFmt, tags, encoder, name } = gamutColorOf(entry.colorGamut)
+  const chart = writeColorChart(io, outputDir, width, height)
+  const filter = `format=rgb24,scale=out_color_matrix=${scaleMatrix}:out_range=tv,format=${pixFmt},${tagFilter({ ...tags, range: 'tv' })}`
+  const args = [
+    '-y', '-loop', '1', '-i', chart, '-t', '1', '-r', '30',
+    '-vf', filter, ...encoder,
+    '-colorspace', tags.colorspace,
+    '-color_primaries', tags.primaries,
+    '-color_trc', tags.trc,
+    '-color_range', 'tv',
+    '-an', name,
+  ]
+
+  io.log(`Generating ${name} (${width}x${height} chart, ${tags.colorspace}/${tags.primaries}, ${pixFmt})`)
+  run(args, { cwd: outputDir })
+  io.log(`Done: ${name}`)
+}
+
 function generateColorProres(entry, outputDir, run, io) {
   const encoding = entry.colorProresEnc ?? '709ltd'
   const matrix = encoding === '709ltd'
@@ -622,7 +789,8 @@ function generateColorProres(entry, outputDir, run, io) {
   }
   const chart = writeColorChart(io, outputDir, WIDTH, HEIGHT)
   const output = outputName({ ...entry, colorProresEnc: encoding })
-  const filter = `format=rgb24,scale=out_color_matrix=${matrix}:out_range=tv,format=yuv422p10le`
+  const tags = { colorspace: matrix, primaries: matrix, trc: matrix, range: 'tv' }
+  const filter = `format=rgb24,scale=out_color_matrix=${matrix}:out_range=tv,format=yuv422p10le,${tagFilter(tags)}`
   const args = [
     '-y', '-loop', '1', '-i', chart, '-t', '1', '-r', '30',
     '-vf', filter, '-c:v', 'prores_ks', '-profile:v', '3', '-vendor', 'apl0',
@@ -906,6 +1074,9 @@ export function generateFixture(entry, {
   if (entry.audioTimingLong) return generateLongAudioTiming(outputDir, ffmpeg, io)
   if (entry.noisySpeech) return generateNoisySpeech(outputDir, ffmpeg, io)
   if (entry.color) return generateColor(entry, outputDir, ffmpeg, io)
+  if (entry.colorUntagged) return generateColorUntagged(entry, outputDir, ffmpeg, io)
+  if (entry.colorRgb) return generateColorRgb(entry, outputDir, ffmpeg, io)
+  if (entry.colorGamut) return generateColorGamut(entry, outputDir, ffmpeg, io)
   if (entry.colorProres) return generateColorProres(entry, outputDir, ffmpeg, io)
   if (entry.h264Interframe) return generateH264Interframe(outputDir, ffmpeg, io)
   if (entry.shotCuts) return generateShotCuts(outputDir, ffmpeg, io)
@@ -980,6 +1151,9 @@ const VALUE_FLAGS = new Map([
   ['--aformat', ['aformat', String]],
   ['--pts-offset-ms', ['ptsOffsetMs', Number]],
   ['--color', ['color', String]],
+  ['--color-untagged', ['colorUntagged', String]],
+  ['--color-rgb', ['colorRgb', String]],
+  ['--color-gamut', ['colorGamut', String]],
   ['--color-prores-enc', ['colorProresEnc', String]],
 ])
 
@@ -1050,6 +1224,9 @@ Generate one deterministic fixture in the current directory.
   --audio-timing-long
   --noisy-speech
   --color 709ltd|601ltd|709full|601full
+  --color-untagged sd|hd|wide
+  --color-rgb h264|qtrle
+  --color-gamut 2020-h264|2020-hevc10|pal
   --color-prores [--color-prores-enc 709ltd|601ltd]
   --gradient | --gradient-h264 | --gradient-h264-bf
   --gradient-av1 | --gradient-h264-4k

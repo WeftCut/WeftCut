@@ -4,29 +4,35 @@ import {
   SlotFenceQueue,
   type SlotFenceBackend,
   type SlotFenceProbe,
+  type SlotFenceState,
 } from "./slotFenceQueue";
 
 /// A probe whose completion the test drives. `signal()` is what a real backend's
-/// `onSubmittedWorkDone` does; a probe left un-signalled models stalled GPU work
-/// that must retain ownership until stream teardown.
+/// `onSubmittedWorkDone` does, with its wake-up; `set()` settles the probe
+/// without one. A probe left pending models stalled GPU work that must retain
+/// ownership until stream teardown.
+type ControlledProbe = { signal: () => void; set: (to: SlotFenceState) => void; disposed: boolean };
 function controllableBackend(): {
   backend: SlotFenceBackend;
-  probes: { signal: () => void; disposed: boolean }[];
+  probes: ControlledProbe[];
 } {
-  const probes: { signal: () => void; disposed: boolean }[] = [];
+  const probes: ControlledProbe[] = [];
   const backend: SlotFenceBackend = {
     submit(_bmp, onSignal) {
-      let done = false;
-      const entry = {
+      let state: SlotFenceState = "pending";
+      const entry: ControlledProbe = {
         signal: () => {
-          done = true;
+          state = "complete";
           onSignal();
+        },
+        set: (to) => {
+          state = to;
         },
         disposed: false,
       };
       probes.push(entry);
       const probe: SlotFenceProbe = {
-        signalled: () => done,
+        state: () => state,
         dispose: () => {
           entry.disposed = true;
         },
@@ -43,7 +49,7 @@ describe("SlotFenceQueue", () => {
   it("reports live stalled-slot age even when no more frames arrive", () => {
     const now = vi.spyOn(performance, "now").mockReturnValue(100);
     const q = new SlotFenceQueue(); const { backend, probes } = controllableBackend();
-    q.setBackend(backend); q.submit("s", 0, fakeBitmap(), vi.fn());
+    q.setBackend(backend); q.submit("s", 0, fakeBitmap(), vi.fn(), vi.fn());
     now.mockReturnValue(190);
     expect(q.turnover("s")).toEqual({ pending: 1, oldestMs: 90, completed: 0, waitP95Ms: null });
     probes[0]!.signal();
@@ -56,8 +62,8 @@ describe("SlotFenceQueue", () => {
     q.setBackend(backend);
     const ack = vi.fn();
 
-    const r = q.submit("s1", 0, fakeBitmap(), ack);
-    expect(r.applied).toBe("rendererFence");
+    const r = q.submit("s1", 0, fakeBitmap(), ack, vi.fn());
+    expect(r.applied).toBe("fence");
     // Deferred, not synchronous — the whole point of the mode.
     expect(ack).not.toHaveBeenCalled();
     expect(q.pendingCount()).toBe(1);
@@ -84,7 +90,7 @@ describe("SlotFenceQueue", () => {
     const acks: number[] = [];
 
     for (let slot = 0; slot < 3; slot++) {
-      q.submit("s1", slot, fakeBitmap(), () => acks.push(slot));
+      q.submit("s1", slot, fakeBitmap(), () => acks.push(slot), vi.fn());
     }
     for (const p of probes) p.signal();
     // Drained repeatedly: an already-acked entry must not ack a second time.
@@ -103,8 +109,8 @@ describe("SlotFenceQueue", () => {
     const { backend, probes } = controllableBackend();
     q.setBackend(backend);
     const acks: number[] = [];
-    q.submit("s1", 0, fakeBitmap(), () => acks.push(0));
-    q.submit("s1", 1, fakeBitmap(), () => acks.push(1));
+    q.submit("s1", 0, fakeBitmap(), () => acks.push(0), vi.fn());
+    q.submit("s1", 1, fakeBitmap(), () => acks.push(1), vi.fn());
 
     probes[1]!.signal();
     q.drain();
@@ -126,7 +132,7 @@ describe("SlotFenceQueue", () => {
     q.setBackend(backend);
     const ack = vi.fn();
 
-    q.submit("s1", 0, fakeBitmap(), ack);
+    q.submit("s1", 0, fakeBitmap(), ack, vi.fn());
     now.mockReturnValue(1_000);
     q.drain();
     const forcedWaits = q.stats("s1")?.forcedWaits;
@@ -148,7 +154,7 @@ describe("SlotFenceQueue", () => {
     const q = new SlotFenceQueue();
     const { backend, probes } = controllableBackend();
     q.setBackend(backend);
-    q.submit("s1", 0, fakeBitmap(), vi.fn());
+    q.submit("s1", 0, fakeBitmap(), vi.fn(), vi.fn());
     probes[0]!.signal();
     q.drain();
     expect(q.stats("s1")?.forcedWaits).toBe(0);
@@ -161,7 +167,7 @@ describe("SlotFenceQueue", () => {
       submit: () => {
         const ownSlot = slot++;
         return {
-          signalled: () => true,
+          state: () => "complete",
           dispose: () => {
             if (ownSlot === 1) throw new Error("device already lost");
           },
@@ -169,8 +175,8 @@ describe("SlotFenceQueue", () => {
       },
     });
     const acks: number[] = [];
-    q.submit("s1", 0, fakeBitmap(), () => acks.push(0));
-    q.submit("s1", 1, fakeBitmap(), () => acks.push(1));
+    q.submit("s1", 0, fakeBitmap(), () => acks.push(0), vi.fn());
+    q.submit("s1", 1, fakeBitmap(), () => acks.push(1), vi.fn());
 
     expect(() => q.drain()).not.toThrow();
     expect(acks.sort()).toEqual([0, 1]);
@@ -185,17 +191,17 @@ describe("SlotFenceQueue", () => {
       submit: () => {
         const ownSlot = slot++;
         return {
-          signalled: () => {
+          state: () => {
             if (ownSlot === 0) throw new Error("device query failed");
-            return true;
+            return "complete";
           },
           dispose: () => disposed.push(ownSlot),
         };
       },
     });
     const acks: number[] = [];
-    q.submit("s1", 0, fakeBitmap(), () => acks.push(0));
-    q.submit("s1", 1, fakeBitmap(), () => acks.push(1));
+    q.submit("s1", 0, fakeBitmap(), () => acks.push(0), vi.fn());
+    q.submit("s1", 1, fakeBitmap(), () => acks.push(1), vi.fn());
 
     expect(() => q.drain()).not.toThrow();
     expect(acks).toEqual([1]);
@@ -209,12 +215,12 @@ describe("SlotFenceQueue", () => {
 
   it("continues releasing completed slots when one ack callback throws", () => {
     const q = new SlotFenceQueue();
-    q.setBackend({ submit: () => ({ signalled: () => true, dispose: () => {} }) });
+    q.setBackend({ submit: () => ({ state: () => "complete", dispose: () => {} }) });
     const acked: number[] = [];
-    q.submit("s1", 0, fakeBitmap(), () => acked.push(0));
+    q.submit("s1", 0, fakeBitmap(), () => acked.push(0), vi.fn());
     q.submit("s1", 1, fakeBitmap(), () => {
       throw new Error("port failed");
-    });
+    }, vi.fn());
 
     expect(() => q.drain()).not.toThrow();
     expect(acked).toEqual([0]);
@@ -229,8 +235,8 @@ describe("SlotFenceQueue", () => {
     const { backend, probes } = controllableBackend();
     q.setBackend(backend);
     const ack = vi.fn();
-    q.submit("s1", 0, fakeBitmap(), ack);
-    q.submit("s1", 1, fakeBitmap(), ack);
+    q.submit("s1", 0, fakeBitmap(), ack, vi.fn());
+    q.submit("s1", 1, fakeBitmap(), ack, vi.fn());
 
     q.dropFor("s1");
     expect(ack).not.toHaveBeenCalled();
@@ -252,7 +258,7 @@ describe("SlotFenceQueue", () => {
       submit: () => {
         const ownSlot = slot++;
         return {
-          signalled: () => false,
+          state: () => "pending",
           dispose: () => {
             disposed.push(ownSlot);
             if (ownSlot === 1) throw new Error("device already lost");
@@ -261,13 +267,41 @@ describe("SlotFenceQueue", () => {
       },
     });
     const ack = vi.fn();
-    q.submit("s1", 0, fakeBitmap(), ack);
-    q.submit("s1", 1, fakeBitmap(), ack);
+    q.submit("s1", 0, fakeBitmap(), ack, vi.fn());
+    q.submit("s1", 1, fakeBitmap(), ack, vi.fn());
 
     expect(() => q.dropFor("s1")).not.toThrow();
     expect(disposed.sort()).toEqual([0, 1]);
     expect(q.pendingCount()).toBe(0);
     expect(ack).not.toHaveBeenCalled();
+  });
+
+  // A probe whose device was lost first proves nothing. Its slot must stay
+  // native's; its owner closes the stream, and that close may come from inside
+  // the drain without stranding another stream's completed slot.
+  it("never releases an unproven slot, and tells its owner after releasing the proven ones", () => {
+    const q = new SlotFenceQueue();
+    const { backend, probes } = controllableBackend();
+    q.setBackend(backend);
+    const log: string[] = [];
+    q.submit("s1", 0, fakeBitmap(), () => log.push("release s1/0"), () => {
+      log.push("unproven s1/0");
+      q.dropFor("s1");
+    });
+    q.submit("s1", 1, fakeBitmap(), () => log.push("release s1/1"), () => log.push("unproven s1/1"));
+    q.submit("s2", 0, fakeBitmap(), () => log.push("release s2/0"), () => log.push("unproven s2/0"));
+
+    // Both settle before the queue looks: one drain pass sees both.
+    probes[0]!.set("unproven");
+    probes[2]!.set("complete");
+    q.drain();
+
+    expect(log).toEqual(["release s2/0", "unproven s1/0"]);
+    expect(probes[0]!.disposed).toBe(true);
+    expect(q.pendingCount(), "the owner's close dropped its other slot").toBe(0);
+    probes[1]!.signal();
+    q.drain();
+    expect(log).not.toContain("release s1/1");
   });
 
   it("drops only the named stream", () => {
@@ -276,8 +310,8 @@ describe("SlotFenceQueue", () => {
     q.setBackend(backend);
     const a = vi.fn();
     const b = vi.fn();
-    q.submit("s1", 0, fakeBitmap(), a);
-    q.submit("s2", 0, fakeBitmap(), b);
+    q.submit("s1", 0, fakeBitmap(), a, vi.fn());
+    q.submit("s2", 0, fakeBitmap(), b, vi.fn());
 
     q.dropFor("s1");
     probes[1]!.signal();
@@ -294,7 +328,7 @@ describe("SlotFenceQueue", () => {
     const { backend, probes } = controllableBackend();
     q.setBackend(backend);
     const ack = vi.fn();
-    q.submit("s1", 0, fakeBitmap(), ack);
+    q.submit("s1", 0, fakeBitmap(), ack, vi.fn());
     probes[0]!.signal();
 
     await new Promise((r) => setTimeout(r, 0));
@@ -309,18 +343,38 @@ describe("SlotFenceQueue", () => {
   it("reports failure without releasing an unproven read when no device is registered", () => {
     const q = new SlotFenceQueue();
     const ack = vi.fn();
-    const r = q.submit("s1", 0, fakeBitmap(), ack);
-    expect(r.applied).not.toBe("rendererFence");
+    const r = q.submit("s1", 0, fakeBitmap(), ack, vi.fn());
+    expect(r.applied).not.toBe("fence");
     expect(ack).not.toHaveBeenCalled();
     expect(q.pendingCount()).toBe(0);
+  });
+
+  it("releases at once after the one-pixel proof when no device can take a fence", async () => {
+    vi.resetModules();
+    vi.stubGlobal("OffscreenCanvas", class {
+      getContext() {
+        return { drawImage: () => {}, getImageData: () => {} };
+      }
+    });
+    try {
+      const { SlotFenceQueue: WithProof } = await import("./slotFenceQueue");
+      const q = new WithProof();
+      const ack = vi.fn();
+      const r = q.submit("s1", 0, fakeBitmap(), ack, vi.fn());
+      expect(r.applied).toBe("proof");
+      expect(ack).toHaveBeenCalledOnce();
+      expect(q.pendingCount()).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("falls back the same way when the device refuses the submit", () => {
     const q = new SlotFenceQueue();
     q.setBackend({ submit: () => null });
     const ack = vi.fn();
-    const r = q.submit("s1", 0, fakeBitmap(), ack);
-    expect(r.applied).not.toBe("rendererFence");
+    const r = q.submit("s1", 0, fakeBitmap(), ack, vi.fn());
+    expect(r.applied).not.toBe("fence");
     expect(ack).not.toHaveBeenCalled();
   });
 
@@ -341,7 +395,7 @@ describe("SlotFenceQueue", () => {
       close: vi.fn(),
     } as unknown as ImageBitmap;
 
-    expect(() => q.submit("s1", 0, detached, ack)).not.toThrow();
+    expect(() => q.submit("s1", 0, detached, ack, vi.fn())).not.toThrow();
     expect(ack).not.toHaveBeenCalled();
     expect(q.pendingCount()).toBe(0);
   });
@@ -355,8 +409,8 @@ describe("SlotFenceQueue", () => {
     q.setBackend(backend);
     expect(q.stats("s1")).toBeUndefined();
 
-    q.submit("s1", 0, fakeBitmap(), vi.fn());
-    q.submit("s1", 1, fakeBitmap(), vi.fn());
+    q.submit("s1", 0, fakeBitmap(), vi.fn(), vi.fn());
+    q.submit("s1", 1, fakeBitmap(), vi.fn(), vi.fn());
     expect(q.stats("s1")).toEqual({ pendingPeak: 2, forcedWaits: 0, forcedWaitMsTotal: 0 });
 
     probes[0]!.signal();
@@ -372,7 +426,7 @@ describe("SlotFenceQueue", () => {
     const q = new SlotFenceQueue({ mode: "unsafe-deadline", deadlineMs: 0 });
     const { backend } = controllableBackend();
     q.setBackend(backend);
-    q.submit("s1", 0, fakeBitmap(), vi.fn());
+    q.submit("s1", 0, fakeBitmap(), vi.fn(), vi.fn());
     q.drain();
     const s = q.stats("s1")!;
     expect(s.forcedWaits).toBe(1);

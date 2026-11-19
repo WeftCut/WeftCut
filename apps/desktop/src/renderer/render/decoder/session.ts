@@ -1,9 +1,10 @@
 // Neutral decode-contract module: the surface the Compositor composites
 // through (DecodeSession) plus the two role interfaces. Owns no
-// implementation — both imports below are `import type` (erased), so the
+// implementation — every import below is `import type` (erased), so the
 // session <-> ExportDecoderPool reference (ExportDecodeSession.ring) is not
 // a runtime cycle.
 import type { DecodedFrame } from "./decodedFrame";
+import type { SourceColor } from "./ffprobeColorSpace";
 import type { HandoffTimingSummary } from "./transports/handoffTimings";
 import type { ExportColorDiag, ExportFrameStore } from "./ExportDecoderPool";
 
@@ -27,16 +28,14 @@ export interface SourceHandleInit {
   /// `weftcut-media://` URL of the decode target the WebCodecs path opens —
   /// preview's resolved target, or the export master proxy in export mode.
   proxyAssetUrl: string;
-  /// Source color tags mapped from ffprobe (matrix/range/primaries/transfer),
-  /// applied to ANY decode target for this media — the original trivially,
-  /// and proxies too (a proxy preserves the source's colorimetry; the proxy
-  /// recipe asserts the tags outright). Threaded into
-  /// `withDefaultColorSpace` as the middle-priority layer (below the decode
-  /// target's own mediabunny colr tag, above the resolution default).
-  /// Undefined ⇒ untagged source ⇒ resolution default applies. The preview
-  /// pool carries it onto the shared `SourceMedia` (per-mediaId) so the once-
-  /// per-source config build at `SourceMedia.ensureReady` tags the decode.
-  sourceColor?: VideoColorSpaceInit | undefined;
+  /// The media's resolved colour (`resolveSourceColor`), applied to ANY decode
+  /// target for this media: the original trivially, and proxies too (a proxy
+  /// preserves the source's colorimetry; the proxy recipe asserts the tags
+  /// outright). The WebCodecs pools layer the decode target's own colr tag
+  /// over it (`withDefaultColorSpace`); the native lanes use it as is. The
+  /// preview pool carries it onto the shared `SourceMedia` (per-mediaId) so the
+  /// once-per-source config build at `SourceMedia.ensureReady` tags the decode.
+  sourceColor: SourceColor;
   /// Export-only: copy >8-bit decoder output to CPU planes (TenBitFrame)
   /// instead of holding VideoFrames. Implies the 10-bit export lane.
   tenBitLane?: boolean;
@@ -75,17 +74,17 @@ export interface SourceHandleInit {
   /// Bench-only lane pin, forwarded to `FfmpegSource`.
   forceLane?: import("./decodeEngine").FfmpegLane;
   /// Export-only: route this handle through the native `NativeExportSourceHandle`
-  /// (decode the ORIGINAL via the main-process napi `NativeDecode` session over
-  /// the frame relay) instead of WebCodecs on the proxy. When present the export
-  /// pool builds a `NativeExportSourceHandle`; the WebCodecs path never reads it.
+  /// (decode the ORIGINAL in a main-process native session over its own port)
+  /// instead of WebCodecs on the proxy. When present the export pool builds a
+  /// `NativeExportSourceHandle`; the WebCodecs path never reads it.
   /// `sourcePath` is the absolute ORIGINAL file path (the napi opens a filesystem
   /// path, not a `weftcut-media://` asset URL); `outFormat` is the CPU transport
-  /// format from the routing table (exportDecodeRouting.ts); `creditWindow`
-  /// sizes the in-flight flow-control window.
+  /// format from the routing table (exportDecodeRouting.ts); `window` bounds
+  /// the frames the session has in flight.
   nativeExport?: {
     sourcePath: string;
     outFormat: import("../exportDecodeRouting").ExportTransportFormat;
-    creditWindow: number;
+    window: number;
   };
 }
 
@@ -124,7 +123,8 @@ export interface FrameSelection {
 /// (export) satisfies them as documented no-ops (Null Object). The trailing
 /// members are honestly optional — an engine that cannot provide a value simply
 /// omits the method (WebCodecs has decodeQueueSize, FfmpegSource does not;
-/// onFatalError is FfmpegSource-only, WebCodecs self-heals internally).
+/// onFatalError is FfmpegSource-only: WebCodecs rebuilds its decoder after an
+/// error and reports nothing when it gives up).
 export interface PreviewDecodeDevice {
   kind: 'hardware' | 'software' | 'browser';
   backend: string;

@@ -1,21 +1,20 @@
 //! The D3D11 plumbing shared by Motif transport (`motif_gpu`, `motif_bake`) and
-//! the hardware probe (`gpu_hardware`): device creation, shared textures under
-//! their keyed mutex, the device-idle wait and the one worker thread a device
-//! lives on. Failures carry Motif error codes except from `create_device` (a
-//! plain `windows` error), `create_texture` and `NtHandle::from_buffer` (each
-//! says why).
+//! the hardware probe (`gpu_hardware`): device creation, textures opened from
+//! another device's handle, keyed-mutex access with Motif error codes, the
+//! device-idle wait and the one worker thread a device lives on. The shared
+//! texture, the keyed-mutex guard and the handle bytes are `weftcut_d3d`'s,
+//! which the decode addon uses too. Failures carry Motif error codes except
+//! from `create_device` (a plain `windows` error), `create_texture` and
+//! `NtHandle::from_buffer` (each says why).
 use crate::motif_error::{coded, to_napi, MotifCode};
 use napi::bindgen_prelude::Buffer;
 use std::sync::mpsc;
+use weftcut_d3d::{handle_from_bytes, AcquireError, KeyedMutexGuard};
 use windows::core::Interface;
 use windows::Win32::Foundation::{E_FAIL, HANDLE, HMODULE};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex;
-
-/// `IDXGIKeyedMutex::AcquireSync` returns this success code when the other
-/// side still holds the key after the wait.
-const WAIT_TIMEOUT: i32 = 0x102;
 
 /// The longest a Motif GPU path waits for a keyed mutex. A protocol deadline,
 /// like those in `MOTIF_DEADLINES` (`src/shared/motifs/tuning.ts`).
@@ -61,37 +60,27 @@ pub(crate) unsafe fn create_texture(
     texture.ok_or_else(|| anyhow::anyhow!("CreateTexture2D returned no texture"))
 }
 
-/// Takes `mutex` with key 0, waiting at most `ACQUIRE_SYNC_TIMEOUT_MS`. A
-/// timeout is transient: the other side still holds the key.
-pub(crate) unsafe fn acquire_sync(mutex: &IDXGIKeyedMutex, what: &str) -> anyhow::Result<()> {
-    let hr = (Interface::vtable(mutex).AcquireSync)(
-        Interface::as_raw(mutex),
-        0,
-        ACQUIRE_SYNC_TIMEOUT_MS,
-    );
-    match hr.0 {
-        0 => Ok(()),
-        WAIT_TIMEOUT => Err(coded(
-            MotifCode::Transient,
-            anyhow::anyhow!("{what} mutex still held"),
-        )),
-        _ => Err(coded(
-            MotifCode::Device,
-            anyhow::anyhow!("{what} mutex unavailable: {hr:?}"),
-        )),
-    }
-}
-
-/// Runs `body` holding key 0 of `mutex`, and always releases it after the
-/// acquisition. The body's error wins over a release error.
+/// Runs `body` holding key 0 of `mutex`, waiting at most
+/// `ACQUIRE_SYNC_TIMEOUT_MS` for it, and always releases it after the
+/// acquisition, also when `body` panics. A timeout is transient: the other side
+/// still holds the key. The body's error wins over a release error.
 pub(crate) unsafe fn with_key<T>(
     mutex: &IDXGIKeyedMutex,
     what: &str,
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    acquire_sync(mutex, what)?;
+    let key = KeyedMutexGuard::acquire(mutex, 0, ACQUIRE_SYNC_TIMEOUT_MS).map_err(|e| match e {
+        AcquireError::Timeout => coded(
+            MotifCode::Transient,
+            anyhow::anyhow!("{what} mutex still held"),
+        ),
+        AcquireError::Abandoned | AcquireError::Failed(_) => coded(
+            MotifCode::Device,
+            anyhow::anyhow!("{what} mutex unavailable: {e}"),
+        ),
+    })?;
     let result = body();
-    let release = mutex.ReleaseSync(0);
+    let release = key.release();
     let value = result?;
     release.map_err(device)?;
     Ok(value)
@@ -121,19 +110,18 @@ pub(crate) unsafe fn wait_idle(
     }
 }
 
-/// An NT handle to a texture another device shares, as JS passes it: the
-/// handle's value in 8 little-endian bytes.
+/// An NT handle to a texture another device shares, as JS passes it
+/// (`weftcut_d3d::handle_from_bytes`). Kept as its value, so a job carrying it
+/// can move to a device worker.
 #[derive(Clone, Copy)]
 pub(crate) struct NtHandle(usize);
 
 impl NtHandle {
     /// A buffer of another length is the caller's error, so it stays untagged.
     pub(crate) fn from_buffer(handle: &Buffer) -> napi::Result<Self> {
-        let bits: [u8; 8] = handle
-            .as_ref()
-            .try_into()
-            .map_err(|_| napi::Error::from_reason("Invalid texture handle"))?;
-        Ok(Self(u64::from_le_bytes(bits) as usize))
+        let handle = handle_from_bytes(handle.as_ref())
+            .ok_or_else(|| napi::Error::from_reason("Invalid texture handle"))?;
+        Ok(Self(handle.0 as usize))
     }
 }
 

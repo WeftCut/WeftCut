@@ -1,10 +1,10 @@
 import { MIB, performanceSettings, sharedResourceAllocationEnabled } from "../../shared/performance-settings";
-import { sharedTexture, type SharedTextureImported, type WebContents } from 'electron'
+import type { SharedTextureImported, WebContents } from 'electron'
 import type { MotifOsrFrame } from './offscreenFrames.js'
 import { randomUUID } from 'node:crypto'
 import { asMotifCapacity, MotifError, motifErrorCode, motifSuperseded } from '../../shared/motifs/errors'
 import { isResourceCapacityError } from '../../shared/resource-policy'
-import { withSharedTextureQueue } from '../sharedTextureQueue.js'
+import { importAndSend } from '../frameCarrier/sharedTextureImport.js'
 import { gpuBufferBudget, type GpuBufferBudget, type GpuBufferLease } from '../gpuBufferBudget.js'
 import { MOTIF_TEXTURE_LANE_RESET, type MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
 import { fitsMotifTexture } from '../../shared/motifs/limits.js'
@@ -256,8 +256,8 @@ export class MotifGpuTransport {
           await this.waitForBudget(deadline)
         }
         if (!s) {
-          // Reserve before awaiting the global import queue: another lane must
-          // account for allocations whose import has not completed yet.
+          // Reserve before the import: another lane must account for
+          // allocations whose import has not completed yet.
           this.allocatedBytes += bytes
           this.allocatedSessions++
           const releaseBudget = (): void => {
@@ -267,43 +267,39 @@ export class MotifGpuTransport {
             this.budgetStalled = false
             this.budgetChanged()
           }
-          s = await withSharedTextureQueue(async () => {
-            try { assertOpen() } catch (error) { releaseBudget(); throw error }
-            let pool: MotifPool
-            try { pool = this.createPool(use === 'upload' ? { use, width, height } : { use, width, height, format }) }
-            catch (error) {
-              releaseBudget()
-              // Native `oversize` is this size's; only the device is the lane's.
-              if (motifErrorCode(error) === 'device') this.turnLaneOff(owner, generation)
-              throw error
-            }
-            const key = `motif-${randomUUID()}`
-            let imported: SharedTextureImported | undefined
-            try {
-              imported = sharedTexture.importSharedTexture({
-                textureInfo: {
-                  codedSize: { width, height }, pixelFormat: format,
-                  colorSpace: { primaries: 'bt709', transfer: 'srgb', matrix: 'rgb', range: 'full' },
-                  handle: { ntHandle: pool.handle() },
-                },
-                allReferencesReleased: () => { try { pool.close() } finally { releaseBudget() } },
-              })
-              owner.send('evt:previewGpu:slot', { streamId: key, slot: 0 })
-              await sharedTexture.sendSharedTexture({ frame: owner.mainFrame, importedSharedTexture: imported })
-              assertOpen()
-              return { finalizationId, owner, key, width, height, pool, imported, busy: true }
-            } catch (error) {
-              const code = motifErrorCode(error)
-              const failed = code !== 'closed' && code !== 'superseded'
-              if (failed) this.turnLaneOff(owner, generation)
-              this.notifyRetired(owner, key)
-              if (imported) imported.release()
-              else { try { pool.close() } finally { releaseBudget() } }
-              throw failed && code === undefined
-                ? new MotifError('device', `Motif shared texture import failed: ${String((error as Error | undefined)?.message ?? error)}`, { cause: error })
-                : error
-            }
-          })
+          try { assertOpen() } catch (error) { releaseBudget(); throw error }
+          let pool: MotifPool
+          try { pool = this.createPool(use === 'upload' ? { use, width, height } : { use, width, height, format }) }
+          catch (error) {
+            releaseBudget()
+            // Native `oversize` is this size's; only the device is the lane's.
+            if (motifErrorCode(error) === 'device') this.turnLaneOff(owner, generation)
+            throw error
+          }
+          const key = `motif-${randomUUID()}`
+          const releasePool = (): void => { try { pool.close() } finally { releaseBudget() } }
+          // Once `importAndSend` has it, `releasePool` runs exactly once on
+          // every path, at the latest through Electron's last release.
+          let handedOver = false
+          let imported: SharedTextureImported | undefined
+          try {
+            const frame = owner.mainFrame
+            const texture = { handle: pool.handle(), width, height, format }
+            handedOver = true
+            imported = await importAndSend(frame, texture, { key, slot: 0 }, releasePool)
+            assertOpen()
+            s = { finalizationId, owner, key, width, height, pool, imported, busy: true }
+          } catch (error) {
+            const code = motifErrorCode(error)
+            const failed = code !== 'closed' && code !== 'superseded'
+            if (failed) this.turnLaneOff(owner, generation)
+            this.notifyRetired(owner, key)
+            if (imported) imported.release()
+            else if (!handedOver) releasePool()
+            throw failed && code === undefined
+              ? new MotifError('device', `Motif shared texture import failed: ${String((error as Error | undefined)?.message ?? error)}`, { cause: error })
+              : error
+          }
           this.sessions.set(address, s)
         }
       }

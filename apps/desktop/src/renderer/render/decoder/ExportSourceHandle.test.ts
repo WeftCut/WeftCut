@@ -9,8 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SourceHandleInit } from "./session";
 import { ExportDecoderPool, ExportSourceHandle } from "./ExportDecoderPool";
 import { openMediaInput } from "./mediaInput";
+import { resolveSourceColor } from "./ffprobeColorSpace";
 
 vi.mock("./mediaInput", () => ({ openMediaInput: vi.fn() }));
+
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 interface FakePacket {
   timestamp: number; // seconds — mediabunny's EncodedPacket unit
@@ -106,6 +109,7 @@ function makeHandle(extra?: Partial<SourceHandleInit>): ExportSourceHandle {
     layerId: "layer-1",
     mediaId: "media-1",
     proxyAssetUrl: "weftcut-media://localhost/test.mp4",
+    sourceColor: HD,
     ...extra,
   };
   return new ExportSourceHandle(init);
@@ -267,7 +271,7 @@ describe("ExportSourceHandle EOS tail", () => {
       for (let i = 0; i < 4; i++) {
         const key = `phase-${i % 2}`;
         pool.retainOnly(new Set([key]));
-        const handle = pool.acquire({ layerId: `clip-${i}`, mediaId: 'media-1', handleKey: key, proxyAssetUrl: 'weftcut-media://localhost/test.mp4' });
+        const handle = pool.acquire({ layerId: `clip-${i}`, mediaId: 'media-1', handleKey: key, proxyAssetUrl: 'weftcut-media://localhost/test.mp4', sourceColor: HD });
         await expect(handle.decodeRange(0, 1)).resolves.toBeUndefined();
         expect(pool.handles.size).toBe(1);
       }
@@ -701,6 +705,23 @@ describe("ExportSourceHandle preferSoftware", () => {
         hardwareAcceleration: hardwareSupported ? "prefer-hardware" : "prefer-software",
       }));
       expect(FakeVideoDecoder.instances).toHaveLength(1);
+    } finally {
+      configure.mockRestore();
+      handle.dispose();
+    }
+  });
+
+  it.each([
+    ["an untagged SD source", resolveSourceColor({ width: 720, height: 480 }), "prefer-software"],
+    ["an untagged HD source", resolveSourceColor({ width: 1920, height: 1080 }), "prefer-hardware"],
+    ["a 601-tagged SD source", resolveSourceColor({ width: 720, height: 480, color_matrix: "smpte170m" }), "prefer-hardware"],
+  ] as const)("configures the decoder of %s as its colour needs", async (_name, sourceColor, lane) => {
+    sink = makeSink([pkt(0, "key")]);
+    const configure = vi.spyOn(FakeVideoDecoder.prototype, "configure");
+    const handle = makeHandle({ sourceColor });
+    try {
+      await handle.ensureReady();
+      expect(configure).toHaveBeenCalledWith(expect.objectContaining({ hardwareAcceleration: lane }));
     } finally {
       configure.mockRestore();
       handle.dispose();

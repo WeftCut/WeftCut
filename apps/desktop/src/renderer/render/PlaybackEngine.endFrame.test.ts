@@ -11,6 +11,7 @@ import { getMotif } from "./motifs/catalog";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
 import { sharedMotifFrameCache } from "./motifs/motifFrameSource";
 import { holdBuiltinMotifs } from "../testing/projectMotifs";
+import { resolveSourceColor } from "./decoder/ffprobeColorSpace";
 
 // The project these tests render holds the built-ins.
 holdBuiltinMotifs();
@@ -42,7 +43,7 @@ it("keeps the final Motif on stage across ticks before and after the end timer",
   audio.setProject(summary, ROOT_ID);
   const compositor = new Compositor({ app: { stage: new Container() } as unknown as Application,
     width: 1920, height: 1080, mode: "preview", originalAssetUrl: () => null,
-    sourceColor: () => undefined, mediaById: () => undefined,
+    sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }), mediaById: () => undefined,
     pool: { dispose: vi.fn() } as unknown as DecoderPool });
   compositor.setProject(summary);
   let tick!: () => void;

@@ -23,6 +23,7 @@ pub mod filmstrip;
 mod frame;
 pub mod hwaccel;
 pub mod import;
+mod jpeg;
 pub mod proxy;
 pub mod proxy_decision;
 pub mod quick_proxy;
@@ -250,7 +251,7 @@ fn cached_derivative(
         }
         JobKind::Waveform => waveform::cached_path(cache, media),
         JobKind::QuickProxy => {
-            let path = cache.quick_proxy(hash);
+            let path = cache.quick_proxy(hash, media.proxy_recipe());
             crate::cache::valid_mp4(&path).then_some(path)
         }
         JobKind::Proxy => proxy::cached_path(cache, media),
@@ -1261,6 +1262,7 @@ fn emit<T: Serialize>(events: &Arc<dyn EventSink>, event: &str, payload: &T) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::ProxyRecipe;
 
     #[test]
     fn derivatives_patch_serializes_tristate() {
@@ -1330,7 +1332,7 @@ mod tests {
 
         let hash = "healme";
         std::fs::write(
-            cache.proxy(hash),
+            cache.proxy(hash, ProxyRecipe::Ycbcr),
             include_bytes!("../../../fixtures/media/tiny.mp4"),
         )
         .unwrap();
@@ -1388,7 +1390,7 @@ mod tests {
             .unwrap()
             .get("full_proxy_landed")
             .unwrap();
-        assert_eq!(landed, &serde_json::json!(cache.proxy(hash)));
+        assert_eq!(landed, &serde_json::json!(cache.proxy(hash, ProxyRecipe::Ycbcr)));
 
         // No re-decision: nothing may carry a set_route reset.
         let recorded = sink.events.lock().unwrap().clone();
@@ -1485,7 +1487,7 @@ mod tests {
             )
             .unwrap();
         }
-        for path in [cache.quick_proxy(&hash), cache.proxy(&hash)] {
+        for path in [cache.quick_proxy(&hash, media.proxy_recipe()), cache.proxy(&hash, media.proxy_recipe())] {
             std::fs::write(path, include_bytes!("../../../fixtures/media/tiny.mp4")).unwrap();
         }
 
@@ -1494,10 +1496,10 @@ mod tests {
         assert_eq!(patch.thumbnails_dir, Some(cache.thumbnails(&hash)));
         assert_eq!(
             patch.quick_proxy_landed,
-            Some(Some(cache.quick_proxy(&hash)))
+            Some(Some(cache.quick_proxy(&hash, media.proxy_recipe())))
         );
         let landed = patch.full_proxy_landed.clone().flatten().expect("master");
-        assert_eq!(landed, cache.proxy(&hash));
+        assert_eq!(landed, cache.proxy(&hash, media.proxy_recipe()));
         // No audio stream: nothing to restore for the audio kinds.
         assert_eq!(patch.conform_path, None);
         assert_eq!(patch.waveform_path, None);
@@ -1519,7 +1521,7 @@ mod tests {
         cache.ensure_dirs().unwrap();
         let mut media = media_named(None, "/nonexistent/source.mp4");
         let hash = media.file_hash_blake3.clone();
-        for path in [cache.quick_proxy(&hash), cache.proxy(&hash)] {
+        for path in [cache.quick_proxy(&hash, media.proxy_recipe()), cache.proxy(&hash, media.proxy_recipe())] {
             std::fs::write(path, include_bytes!("../../../fixtures/media/tiny.mp4")).unwrap();
         }
         let bypass = cached_patch(&cache, &media);
@@ -1533,8 +1535,8 @@ mod tests {
         assert!(cached_patch(&cache, &media).full_proxy_landed.is_some());
         media.file_hash_blake3 = format!("pending-{}", media.id);
         for path in [
-            cache.quick_proxy(&media.file_hash_blake3),
-            cache.proxy(&media.file_hash_blake3),
+            cache.quick_proxy(&media.file_hash_blake3, media.proxy_recipe()),
+            cache.proxy(&media.file_hash_blake3, media.proxy_recipe()),
         ] {
             std::fs::write(path, include_bytes!("../../../fixtures/media/tiny.mp4")).unwrap();
         }
@@ -1561,12 +1563,12 @@ mod tests {
             .unwrap();
         }
         std::fs::write(
-            cache.quick_proxy(hash),
+            cache.quick_proxy(hash, ProxyRecipe::Ycbcr),
             include_bytes!("../../../fixtures/media/tiny.mp4"),
         )
         .unwrap();
         std::fs::write(
-            cache.proxy(hash),
+            cache.proxy(hash, ProxyRecipe::Ycbcr),
             include_bytes!("../../../fixtures/media/tiny.mp4"),
         )
         .unwrap();
@@ -1574,8 +1576,11 @@ mod tests {
         let events: Arc<dyn EventSink> = sink.clone();
         for (kind, path) in [
             (JobKind::Thumbnails, cache.thumbnails(hash)),
-            (JobKind::QuickProxy, cache.quick_proxy(hash)),
-            (JobKind::Proxy, cache.proxy(hash)),
+            (
+                JobKind::QuickProxy,
+                cache.quick_proxy(hash, ProxyRecipe::Ycbcr),
+            ),
+            (JobKind::Proxy, cache.proxy(hash, ProxyRecipe::Ycbcr)),
         ] {
             let result = run_derivative(&events, &cache, &media, kind, async {
                 panic!("a cache hit must never run the producer");

@@ -52,7 +52,9 @@ pub use layer::{
 };
 pub use link::{index_links, Link};
 pub use marker::Marker;
-pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};
+pub use media::{
+    AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, ProxyRecipe, VideoStreamMeta,
+};
 pub use project::{
     PauseReviewSettings, Project, ProjectMetadata, ProjectSettings, ProjectSettingsPatch,
     ShotReviewSettings, TrackFlagsPatch,

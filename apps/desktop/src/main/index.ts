@@ -92,9 +92,9 @@ import { createAudioFxBaker, exportWindowFromArgs, type AudioFxBaker } from './a
 import { createFxCacheLayout, createNodeAudioFxFs, fxCacheRoot } from './audioFx/fxPaths.js'
 import { fxWaveformKey } from '../shared/audioEffects/status.js'
 import { installPreviewGpuIpc } from './previewGpuIpc.js'
-import { recordFrameReadySent } from './previewGpuTiming.js'
-import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw, consumePreviewSw } from './previewSw.js'
-import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
+import { openPreviewDecode, type PreviewDecodeRequest } from './previewDecode.js'
+import { installExportDecodeIpc } from './exportDecode.js'
+import { installDecodeSessionIpc, ipcCarrierPort } from './frameCarrier/ipcCarrierPort.js'
 import { serveSinkPort } from './exportSinkPort.js'
 import { loadNativeDecode } from './native-decode.js'
 import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
@@ -797,21 +797,9 @@ app.whenReady().then(async () => {
   await backend.init()
   console.log('[main] backend init OK')
 
-  // Optional native-decode component (level-0 gate). Its events use the same
-  // {event, payload} envelope as the core backend; relay through evt:* so the
-  // preload's existing previewGpu listeners keep working unchanged.
-  const nd = loadNativeDecode((_err, json) => {
-    try {
-      const { event, payload } = JSON.parse(json) as { event: string; payload: unknown }
-      if (event === 'previewGpu:frameReady') {
-        const p = payload as { streamId: string; slot: number }
-        recordFrameReadySent(p.streamId, p.slot, performance.now())
-      }
-      emitToRenderer(event, payload)
-    } catch (e) {
-      console.warn('[main] native-decode event parse failed', e)
-    }
-  })
+  // Optional native-decode component (level-0 gate). Every session's messages
+  // go to the session's own port; the component emits no events.
+  const nd = loadNativeDecode()
   if (!nd.backend) {
     console.warn('[main] native-decode component unavailable:', nd.reason)
     startupNotices.push({ level: 'info', code: 'native_decode_unavailable' })
@@ -2225,16 +2213,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('backend:invokePublished', (event, request) =>
     tsHost!.published(() => invokeBackend(event, request)))
 
-  // Native GPU-decode preview (Windows). Session lifecycle + the persistent
-  // shared-texture handoff live in ./previewGpu; the per-frame
-  // frameReady/eof/error pokes reach the renderer already, via the Backend
-  // onEvent relay above (they fall through to `evt:previewGpu:*`). consumeAck is
-  // driven by the preload's per-frame loop AFTER createImageBitmap resolves (the
-  // ack-after-read contract) — never earlier, or native could reuse the slot
-  // mid-read (tearing / a dropped frame). Native's AcquireSync on a still-held
-  // slot now backstops this with a finite timeout (Error-poke + skip) rather
-  // than hanging, but the ack ordering still exists to avoid paying that cost.
-  installPreviewGpuIpc(ndBackend, () => mainWindow)
+  // Native GPU-decode preview (Windows): a decode session whose frames stay in
+  // shared-texture slots (./previewGpu). Its commands and close travel the
+  // decode-session channels installed below.
+  installPreviewGpuIpc(ndBackend)
   installPerformanceCalibration(dataRoot.cacheDir)
   // Complete GPU identity initializes lazily when diagnostics are requested;
   // basic info on macOS can contain only a vendor ID before GPU startup.
@@ -2356,64 +2338,13 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('decodeCap:probeHw', (_e, a: { path: string; classKey: string }) => resolveHardware(a))
 
-  // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
-  // WebCodecs-blind-format path). Frames flow out of band on the dedicated
-  // `previewSw:frame` channel (see ./previewSw), not through the generic
-  // `evt:*` EventSink relay above.
-  ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null; outFormat?: string | null }) => {
-    const win = BrowserWindow.fromWebContents(e.sender)
-    if (!win) throw new Error('previewSw:open — no window for sender')
-    return openPreviewSw(ndBackend(), win, a.streamId, a.path, a.lane ?? null, a.device ?? null, a.scaleDiv ?? null, a.cadenceDiv ?? null, a.outFormat ?? null)
-  })
-  ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number; requestId?: number }) => {
-    // napi can throw Err (e.g. an unknown/already-closed streamId from a renderer
-    // race) — this is a fire-and-forget .on listener, not .handle, so an uncaught
-    // throw here would be an uncaught exception in the main process. Swallow.
-    try { requestFrameAtPreviewSw(ndBackend(), a.streamId, a.targetUs, a.requestId) }
-    catch (e) { console.warn('[main] previewSw:requestFrameAt failed', e) }
-  })
-  ipcMain.on('previewSw:close', (_e, a: { streamId: string }) => {
-    try { closePreviewSw(ndBackend(), a.streamId) }
-    catch (e) { console.warn('[main] previewSw:close failed', e) }
-  })
-  ipcMain.on('previewSw:consume', (e, a: { streamId: string; receipt: number }) => {
-    try { consumePreviewSw(ndBackend(), e.sender.id, a.streamId, a.receipt) }
-    catch (e) { console.warn('[main] previewSw:consume failed', e) }
-  })
-
-  // Native SOFTWARE export-decode (blind-spot originals) — the EXPORT-side
-  // mirror of previewSw + the reverse of the encode chunk channel. Everything
-  // flows on the one dedicated `exportSw:msg` channel (see ./exportSw and
-  // `ExportSwMsg` in shared/ipc — never split it); nothing exportSw rides the
-  // generic `evt:*` relay.
-  ipcMain.handle('exportSw:open', (e, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; creditWindow: number }) => {
-    const win = BrowserWindow.fromWebContents(e.sender)
-    if (!win) throw new Error('exportSw:open — no window for sender')
-    return openExportSw(ndBackend(), win, a.sessionId, a.path, a.outFormat, a.creditWindow, resolveExportFinalization(e.sender.id, a.finalizationToken))
-  })
-  ipcMain.on('exportSw:decodeRange', (_e, a: { sessionId: string; aUs: number; bUs: number }) => {
-    // Fire-and-forget .on: napi can throw Err (unknown/already-closed sessionId
-    // from a renderer race), which as a .on listener would be an uncaught main
-    // exception. Swallow (matches previewSw:requestFrameAt).
-    try { decodeRangeExportSw(ndBackend(), a.sessionId, a.aUs, a.bUs) }
-    catch (e) { console.warn('[main] exportSw:decodeRange failed', e) }
-  })
-  ipcMain.on('exportSw:returnCredit', (_e, a: { sessionId: string; credits: number }) => {
-    try { returnCreditExportSw(ndBackend(), a.sessionId, a.credits) }
-    catch (e) { console.warn('[main] exportSw:returnCredit failed', e) }
-  })
-  ipcMain.on('exportSw:close', (_e, a: { sessionId: string }) => {
-    try { closeExportSw(ndBackend(), a.sessionId) }
-    catch (e) { console.warn('[main] exportSw:close failed', e) }
-  })
-  // Reap every still-open export session at export end (done / error / cancel).
-  // A Worker terminated mid-teardown may never send its per-session close, so
-  // the renderer signals main to close them directly — else the native decode
-  // threads leak. Idempotent; no-ops when nothing is open.
-  ipcMain.on('exportSw:closeAll', event => {
-    try { closeAllExportSw(ndBackend(), event.sender.id) }
-    catch (e) { console.warn('[main] exportSw:closeAll failed', e) }
-  })
+  // Native decode sessions, preview and export: each is served on a port the
+  // sender's preload holds, whose other end the page keeps (preview) or hands
+  // to the export Worker (docs/export-ipc-transport.md § Decode-in).
+  installDecodeSessionIpc(ipcMain)
+  ipcMain.handle('previewDecode:open', (event, a: PreviewDecodeRequest) =>
+    openPreviewDecode(ndBackend(), event.sender, ipcCarrierPort, a))
+  installExportDecodeIpc(ipcMain, ndBackend, resolveExportFinalization)
 
   // Secondary windows (Dev Performance Monitor etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options, layoutTheme, motifTuning))

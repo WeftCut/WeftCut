@@ -82,7 +82,7 @@ import {
   type SettingsCategory,
 } from "./settings/SettingsPanel";
 import { MotifPicker } from "./motifs/MotifPicker";
-import { tenBitExportCapable } from "./render/exportSettings";
+import { takesTenBitLane } from "./render/exportDecodeRouting";
 import { noticeLogMessage, useAppNotices, type NoticeSettingsPage } from "./notifications/appNotices";
 import type { SaveFailureActions } from "./components/SaveFailedPill";
 import { useDerivativeJobEvents } from "./state/derivativeJobsStore";
@@ -1304,9 +1304,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         <ExportSettingsDialog
           comp={rootCompositionOf(summary)}
           durationUs={rootCompositionOf(summary).duration_us}
-          hasTenBitSource={summary.media.some(
-            (m) => m.kind === "Video" && tenBitExportCapable(m),
-          )}
+          hasTenBitSource={summary.media.some(takesTenBitLane)}
           onCancel={() => setExportDialogOpen(false)}
           onConfirm={(settings, path, range, overwrite) => {
             void runExportWithSettings(settings, path, range, overwrite);

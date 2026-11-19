@@ -1,15 +1,17 @@
 // Export-side decode-engine resolution (the export mirror of
 // decoder/decodeEngine.ts; ADR 0033 + docs/render.md §Export source
 // resolution). PURE — a function of (setting × component availability ×
-// composite bit depth × per-media decode route); no store reads, no probes.
+// composite bit depth × per-media decode route and transfer); no store reads,
+// no probes.
 // Resolution runs ONCE, at export start, on the renderer main thread
 // (useExportFlow), BEFORE the readiness gate — native-routed media never enter
 // the probe / full-proxy machinery. The table then rides the init protocol
 // into the export Worker and nothing re-resolves mid-run.
 import type { MediaSummary } from "../ipc";
 import type { RendererOS } from "../platform";
+import { isHdrTransfer } from "./decoder/ffprobeColorSpace";
 import { resolveDecode } from "./decodeRoute";
-import type { ExportDecodeEngine } from "./exportSettings";
+import { tenBitExportCapable, type ExportDecodeEngine } from "./exportSettings";
 
 /// May the 8-bit WebCodecs EXPORT decode lane configure prefer-hardware on
 /// this OS? The lane otherwise pins prefer-software as the black-frame
@@ -30,9 +32,9 @@ export function hwExportDecodeAllowed(os: RendererOS): boolean {
   return os === "windows" || os === "mac";
 }
 
-/// CPU transport format for native-decoded frames crossing the relay. Follows
-/// the export's COMPOSITE bit depth (one export composites at one depth), not
-/// any per-source depth.
+/// CPU transport format for native-decoded frames crossing the session port.
+/// Follows the export's COMPOSITE bit depth (one export composites at one
+/// depth), not any per-source depth.
 export type ExportTransportFormat = "NV12" | "I420P10";
 
 export type ExportMediaRoute =
@@ -54,7 +56,7 @@ export interface ExportDecodeRouting {
 
 export type ExportRoutingMedia = Pick<
   MediaSummary,
-  "id" | "kind" | "path" | "decode_route"
+  "id" | "kind" | "path" | "decode_route" | "color_transfer"
 >;
 
 export interface ExportRoutingInputs {
@@ -87,12 +89,13 @@ function routeFor(
   setting: ExportDecodeEngine,
   nativeUsable: boolean,
 ): ExportMediaRoute {
+  if (hdrTakesWebCodecs(m)) return { engine: "webcodecs" };
   // `webcodecs` pin = today's behavior exactly: decodable originals decode
   // in-worker, blind spots via their full proxy (the readiness gate's
   // probe/wait machinery applies unchanged).
   if (setting === "webcodecs") return { engine: "webcodecs" };
   if (!nativeUsable || !m.path) return { engine: "webcodecs" };
-  // `ffmpeg` pin: EVERY source decodes native on its original, including
+  // `ffmpeg` pin: every other source decodes native on its original, including
   // routes WebCodecs could take. A source ffmpeg cannot open fails the export
   // at session open — the pin is an explicit fidelity promise, not a
   // preference with fallbacks.
@@ -109,6 +112,33 @@ function routeFor(
   return m.decode_route.route === "native-sw"
     ? { engine: "native", sourcePath: m.path }
     : { engine: "webcodecs" };
+}
+
+/// TEMPORARY POLICY, until the app converts HDR itself: an HDR source (PQ or
+/// HLG, `isHdrTransfer`) that the WebCodecs engine can decode takes it under
+/// every setting, so its export does not depend on the engine. The WebCodecs
+/// engine's output is Chromium's tone map to SDR, a viewable picture; the
+/// native engine passes the HDR code values through BT.709 coefficients into
+/// an SDR-tagged file, which is not. A `native-sw` source (WebCodecs-blind
+/// original) keeps the route its setting gives it. See docs/conformance.md
+/// § HDR sources.
+function hdrTakesWebCodecs(m: ExportRoutingMedia): boolean {
+  return isHdrTransfer(m.color_transfer) && m.decode_route.route !== "native-sw";
+}
+
+/// Whether a 10-bit export decodes this WebCodecs-routed source on the 10-bit
+/// lane: its ORIGINAL, copied out as I420P10 planes into the owned ingest
+/// (`tenBitExportCapable`). The export Worker's lane table and the resource
+/// plan both ask this, so the plan reserves what the Worker decodes.
+///
+/// TEMPORARY POLICY, the bit-depth half of `hdrTakesWebCodecs`: an HDR source
+/// stays off the lane and reads its Export master at both depths, so a 10-bit
+/// export is tone-mapped exactly as an 8-bit one; on the lane its code values
+/// would pass through untouched.
+export function takesTenBitLane(
+  m: Pick<MediaSummary, "kind" | "codec" | "pix_fmt" | "color_transfer">,
+): boolean {
+  return m.kind === "Video" && tenBitExportCapable(m) && !isHdrTransfer(m.color_transfer);
 }
 
 export interface RoutingSourceCounts {

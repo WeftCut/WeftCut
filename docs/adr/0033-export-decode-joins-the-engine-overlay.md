@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# Export decode joins the engine overlay; the native lane is a credit-windowed session that never falls back mid-export
+# Export decode joins the engine overlay; the native lane is a lease-windowed session that never falls back mid-export
 
 Date: 2026-08-05
 
@@ -28,21 +28,28 @@ Date: 2026-08-05
   that rides the Worker init; the Worker is policy-free and nothing re-resolves.
   `auto` routes only `native-sw` routes native; an `ffmpeg` pin routes every
   source native as a fidelity promise; a missing component degrades the pin to
-  `auto`.
+  `auto`. An HDR source (PQ or HLG) is the exception: when its route is not
+  `native-sw` it decodes through WebCodecs under every setting, because the
+  two engines disagree on it (Chromium tone-maps it to SDR, the native lane
+  passes its code values through as SDR) and only the first is a viewable
+  picture. This is a temporary policy that ends when the app converts HDR
+  itself; a `native-sw` HDR source keeps the setting's route.
 - **A dedicated session API** (`export_sw`: `open`, `decodeRange(a, b)`,
   `close`). Rust owns GOP walking, reorder and EOS drain, and emits the range in
   presentation order.
-- **Credit-window backpressure** (`DEFAULT_CREDIT_WINDOW` = 6). The producer
-  parks with no credits; the consumer returns one credit per frame that leaves
-  the export ring (consumed, evicted or freed). Credit returns bypass the
-  command channel.
-- **One ordered in-band channel.** Frames and control (`ExportSwMsg`:
-  `frame`/`rangeEnd`/`ended`/`error`) travel together, relayed verbatim.
-  `rangeEnd` is the presentation-finality proof that lets `ExportFrameStore`
+- **Lease-window backpressure** (`DEFAULT_CREDIT_WINDOW` = 6). Every frame
+  takes a lease before it is sent and the producer parks when the window is
+  full; the consumer hands a frame's lease back by id when that frame leaves
+  the export ring (consumed, evicted or freed), so a duplicate or stale return
+  cannot widen the window. Releases bypass the command channel.
+- **One ordered in-band channel.** Frames and control (`DecodeMsg`:
+  `bytes`/`mark`/`end`/`error`) travel together on one port per session, held
+  by the export Worker (`docs/export-ipc-transport.md`).
+  `mark` is the presentation-finality proof that lets `ExportFrameStore`
   settle a target left in a one-microsecond timestamp-conversion gap. `decodeRange` dispatch never awaits
-  `rangeEnd`, which would block credit returns and deadlock.
+  `mark`, which would block lease returns and deadlock.
 - **A backward range starts a new generation**: old frames, finality proof and
-  credits are released before the re-seek.
+  leases are released before the re-seek.
 - **Transport format follows the composite depth** (NV12 at 8-bit, I420P10 at
   10-bit, table-wide); frames convert in owned shaders (ADR 0032). The lane is
   software-only.
@@ -56,8 +63,13 @@ Date: 2026-08-05
   `nativeHandles ≥ 1` so a silent proxy fallback cannot pass.
 - A `webcodecs` pin preserves the pre-overlay behavior, including the
   full-proxy wait for blind spots.
-- One export opens one session per phase group; main keeps a registry so a
-  renderer crash cannot strand decode threads (`closeAllExportSw`).
+- Under every setting and at both bit depths a `proxied` HDR source exports
+  from its Export master, an 8-bit H.264 (an HDR source never takes the 10-bit
+  lane, `takesTenBitLane`). The export waits for that master like any
+  WebCodecs-routed source.
+- One export opens one session per phase group. A session ends on its
+  consumer's `close`, when the export that opened it ends, or when its document
+  goes away, so a renderer crash cannot strand decode threads.
 - 4:2:2 chroma halves before compositing (swscale to I420P10); a faithful
   ProRes 422 path needs a 4:2:2 transport format.
 - Not built: one same-engine session rebuild before abort, and an abort

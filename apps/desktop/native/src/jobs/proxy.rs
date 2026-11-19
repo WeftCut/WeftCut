@@ -18,7 +18,7 @@ use tokio::process::Command;
 
 use crate::cache::{cached_ok, claim_temp, discard_temp, promote_temp_retry, CacheLayout};
 use crate::jobs::hwaccel;
-use crate::state::MediaItem;
+use crate::state::{MediaItem, VideoStreamMeta};
 
 /// Maximum export-master height. Sources taller than this scale down (bounds
 /// the worst-case 8K encode); sources shorter stay native (no upscaling).
@@ -35,62 +35,82 @@ const PROXY_HEIGHT_CAP: u32 = 2160;
 /// Shared with the quick (scrub) proxy.
 pub const PROXY_GOP_FRAMES: u32 = 6;
 
-/// The proxies' `scale` filter: caps height at `cap` without upscaling. `-2`
+/// The proxies' video filter: one `scale` that caps height at `cap` without
+/// upscaling, and converts an RGB-coded source into `RGB_PROXY_COLOR`. `-2`
 /// evens only the width and yuv420p needs both even, so the height rounds down
 /// itself. Left odd it fails libx264; padded it adds a black row to every frame.
-pub(crate) fn scale_filter(cap: u32) -> String {
-    format!("scale=-2:'max(2,trunc(min(ih,{cap})/2)*2)'")
+///
+/// A YCbCr source is never converted: its proxy keeps its matrix and range.
+pub(crate) fn video_filter(media: &MediaItem, cap: u32) -> String {
+    let scale = format!("scale=-2:'max(2,trunc(min(ih,{cap})/2)*2)'");
+    if rgb_coded(media) {
+        let (matrix, range) = RGB_PROXY_COLOR;
+        format!("{scale}:out_color_matrix={matrix}:out_range={range}")
+    } else {
+        scale
+    }
 }
 
-/// Bump whenever the proxy ffmpeg args change in a way that affects playback,
-/// scrub, or color: the master's cache name carries the version
-/// (`CacheLayout::proxy`), so an older master is never adopted and the
-/// background job re-encodes it.
+/// The YCbCr matrix and range an RGB-coded source's proxies are converted
+/// into, and declare.
 ///
-/// Current format: export master, source-resolution H.264 capped at 2160p,
-/// High profile, `-bf 0` (PTS=DTS), short fixed GOP (`PROXY_GOP_FRAMES`), and
-/// source color tags asserted with `+write_colr` so mediabunny reads a `colr`
-/// atom. See ADR 0011, 0014 and
-/// docs/preview.md §Proxies.
-pub const PROXY_FORMAT_VERSION: u32 = crate::cache::FULL_PROXY_FORMAT_VERSION;
+/// LANDMINE: left to itself ffmpeg converts RGB to YCbCr with BT.601 and
+/// declares nothing, which the renderer then reads by the size rule; and an
+/// RGB source's own `gbr` tag on a YCbCr encode makes libx264 abort
+/// (`Unable to parse "colorspace" option value "gbr"`), so no proxy is made.
+const RGB_PROXY_COLOR: (&str, &str) = ("bt709", "tv");
 
-/// Output-side ffmpeg args asserting the SOURCE's ffprobe color tags on a
-/// proxy re-encode. The transcode preserves the source's actual colorimetry
-/// (the filter chain never converts matrix/range), but x264 records it only in
-/// the SPS VUI — and pure-container demuxers (mediabunny) read only the mp4
-/// `colr` atom, never the VUI. Asserting the tags explicitly (plus
-/// `+write_colr` on the muxer) emits that colr atom, so proxy decodes get the
-/// real matrix/range instead of falling back to the bt709/limited resolution
-/// default (the full-range/601 proxy misread the color-conformance gate
-/// caught). Only tags ffprobe actually reported are asserted; missing fields
-/// are left for ffmpeg to infer.
-pub fn source_color_args(media: &MediaItem) -> Vec<String> {
+fn rgb_coded(media: &MediaItem) -> bool {
+    media
+        .metadata
+        .video
+        .as_ref()
+        .is_some_and(VideoStreamMeta::is_rgb)
+}
+
+/// Output-side ffmpeg args asserting the colour of a proxy's pixels: the
+/// SOURCE's ffprobe tags for a YCbCr source (`video_filter` keeps its matrix
+/// and range), and `RGB_PROXY_COLOR` in place of an RGB-coded source's matrix
+/// and range. x264 records them only in the SPS VUI — and pure-container
+/// demuxers (mediabunny) read only the mp4 `colr` atom, never the VUI.
+/// Asserting the tags explicitly (plus `+write_colr` on the muxer) emits that
+/// colr atom, so proxy decodes get the real matrix/range instead of falling
+/// back to the source's resolved colour. Only tags ffprobe actually reported
+/// are asserted for a YCbCr source; missing fields are left for ffmpeg to
+/// infer.
+pub fn color_args(media: &MediaItem) -> Vec<String> {
     let Some(v) = media.metadata.video.as_ref() else {
         return Vec::new();
     };
+    let (matrix, range) = if v.is_rgb() {
+        let (matrix, range) = RGB_PROXY_COLOR;
+        (Some(matrix.to_string()), Some(range.to_string()))
+    } else {
+        (v.color_matrix.clone(), v.color_range.clone())
+    };
     let mut args = Vec::new();
-    let mut push = |flag: &str, val: &Option<String>| {
+    let mut push = |flag: &str, val: Option<String>| {
         if let Some(val) = val {
             args.push(flag.to_string());
-            args.push(val.clone());
+            args.push(val);
         }
     };
-    push("-colorspace", &v.color_matrix);
-    push("-color_primaries", &v.color_primaries);
-    push("-color_trc", &v.color_transfer);
-    push("-color_range", &v.color_range);
+    push("-colorspace", matrix);
+    push("-color_primaries", v.color_primaries.clone());
+    push("-color_trc", v.color_transfer.clone());
+    push("-color_range", range);
     args
 }
 
 pub(super) fn cached_path(cache: &CacheLayout, media: &MediaItem) -> Option<PathBuf> {
-    let path = cache.proxy(&media.file_hash_blake3);
+    let path = cache.proxy(&media.file_hash_blake3, media.proxy_recipe());
     crate::cache::valid_mp4(&path).then_some(path)
 }
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // Cache hit before the ffmpeg check: adopting an already-landed master
     // needs no encoder.
-    let dest = cache.proxy(&media.file_hash_blake3);
+    let dest = cache.proxy(&media.file_hash_blake3, media.proxy_recipe());
     if let Some(path) = cached_path(cache, media) {
         return Ok(path);
     }
@@ -106,10 +126,10 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // `avc1.640028` stream; `+faststart` puts the moov atom up front so the
     // renderer can parse before the write completes. Height-cap / GOP / `-bf 0`
     // rationale: see the constants above.
-    let scale_filter = scale_filter(PROXY_HEIGHT_CAP);
+    let video_filter = video_filter(media, PROXY_HEIGHT_CAP);
     let gop = PROXY_GOP_FRAMES.to_string();
     let input = media.path_abs.clone();
-    let color_args = source_color_args(media);
+    let color_args = color_args(media);
     let tmp = tmp.clone();
 
     let output = hwaccel::output_with_hw_decode_fallback_scoped(cache, "full proxy", |hw, cmd| {
@@ -119,7 +139,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         }
         cmd.arg("-i").arg(&input).args([
             "-vf",
-            &scale_filter,
+            &video_filter,
             "-c:v",
             "libx264",
             "-preset",
@@ -145,8 +165,8 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             "-f",
             "mp4",
         ]);
-        // Source color tags → VUI AND (with +write_colr) the mp4 colr atom;
-        // see `source_color_args`.
+        // Colour tags → VUI AND (with +write_colr) the mp4 colr atom; see
+        // `color_args`.
         cmd.args(&color_args);
         cmd.args(["-threads", &crate::resources::task_threads().to_string()])
             .arg(&tmp)
@@ -235,10 +255,10 @@ mod tests {
     }
 
     #[test]
-    fn source_color_args_full_range_source_asserts_all_tags() {
+    fn color_args_full_range_source_asserts_all_tags() {
         let m = video_with_color(Some("bt709"), Some("pc"), Some("bt709"), Some("bt709"));
         assert_eq!(
-            source_color_args(&m),
+            color_args(&m),
             vec![
                 "-colorspace",
                 "bt709",
@@ -253,18 +273,44 @@ mod tests {
     }
 
     #[test]
-    fn source_color_args_partial_tags_emit_only_known_flags() {
+    fn color_args_partial_tags_emit_only_known_flags() {
         // The ltd fixtures carry only a matrix; range/primaries/transfer are
         // unset and must be OMITTED (ffmpeg keeps its own inference) rather
         // than asserted wrong.
         let m = video_with_color(Some("smpte170m"), None, None, None);
-        assert_eq!(source_color_args(&m), vec!["-colorspace", "smpte170m"]);
+        assert_eq!(color_args(&m), vec!["-colorspace", "smpte170m"]);
     }
 
     #[test]
-    fn source_color_args_untagged_source_emits_nothing() {
+    fn color_args_untagged_source_emits_nothing() {
         let m = video_with_color(None, None, None, None);
-        assert!(source_color_args(&m).is_empty());
+        assert!(color_args(&m).is_empty());
+    }
+
+    /// `video_with_color`, RGB-coded.
+    fn rgb_video(pix_fmt: &str, matrix: Option<&str>, range: Option<&str>) -> MediaItem {
+        let mut m = video_with_color(matrix, range, None, None);
+        m.metadata.video.as_mut().unwrap().pix_fmt = pix_fmt.into();
+        m
+    }
+
+    #[test]
+    fn an_rgb_coded_source_is_converted_into_the_colour_its_proxy_declares() {
+        // Tagged `gbr` (libx264rgb) or untagged (QuickTime Animation), the
+        // proxy's pixels and tags name one YCbCr matrix and range, and never
+        // the source's `gbr`/`pc`.
+        let (matrix, range) = RGB_PROXY_COLOR;
+        for m in [
+            rgb_video("gbrp", Some("gbr"), Some("pc")),
+            rgb_video("rgb24", None, None),
+        ] {
+            let args = color_args(&m);
+            assert_eq!(args, vec!["-colorspace", matrix, "-color_range", range]);
+            assert!(video_filter(&m, PROXY_HEIGHT_CAP)
+                .ends_with(&format!(":out_color_matrix={matrix}:out_range={range}")));
+        }
+        let yuv = video_with_color(Some("bt709"), Some("pc"), None, None);
+        assert!(!video_filter(&yuv, PROXY_HEIGHT_CAP).contains("out_color_matrix"));
     }
 
     fn ffmpeg_available() -> bool {
@@ -530,7 +576,7 @@ mod tests {
         cache.ensure_dirs().unwrap();
 
         let hash = "preexist";
-        let dest = cache.proxy(hash);
+        let dest = cache.proxy(hash, crate::state::ProxyRecipe::Ycbcr);
         tokio::fs::create_dir_all(dest.parent().unwrap())
             .await
             .unwrap();
@@ -596,13 +642,13 @@ mod tests {
         assert_eq!(cached_path(&cache, &media), None);
 
         std::fs::write(
-            cache.proxy(&media.file_hash_blake3),
+            cache.proxy(&media.file_hash_blake3, media.proxy_recipe()),
             include_bytes!("../../../fixtures/media/tiny.mp4"),
         )
         .unwrap();
         assert_eq!(
             cached_path(&cache, &media),
-            Some(cache.proxy(&media.file_hash_blake3))
+            Some(cache.proxy(&media.file_hash_blake3, media.proxy_recipe()))
         );
     }
 
@@ -781,6 +827,115 @@ mod tests {
                 darkest > 200,
                 "{proxy:?}: bottom row reached luma {darkest}"
             );
+        }
+    }
+
+    /// The first frame's top-left pixel of `file` as RGB, through `scale`
+    /// (which may force how YCbCr is read).
+    async fn first_pixel(file: &std::path::Path, scale: &str) -> Vec<u8> {
+        let rgb = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-i"])
+            .arg(file)
+            .args(["-frames:v", "1", "-vf"])
+            .arg(format!("{scale},format=rgb24,crop=2:2"))
+            .args(["-f", "rawvideo", "-"])
+            .output()
+            .await
+            .expect("ffmpeg first pixel");
+        assert!(rgb.status.success(), "could not read {file:?}");
+        rgb.stdout[..3].to_vec()
+    }
+
+    /// The matrix and range a proxy declares (ffprobe's `color_space`,
+    /// `color_range`).
+    async fn declared_color(proxy: &std::path::Path) -> (String, String) {
+        let out = Command::new("ffprobe")
+            .args(["-v", "error", "-select_streams", "v:0"])
+            .args(["-show_entries", "stream=color_space,color_range"])
+            .args(["-of", "default=noprint_wrappers=1"])
+            .arg(proxy)
+            .output()
+            .await
+            .expect("ffprobe tags");
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        let tag = |key: &str| {
+            text.lines()
+                .find_map(|l| l.strip_prefix(key))
+                .unwrap_or_default()
+                .to_string()
+        };
+        (tag("color_space="), tag("color_range="))
+    }
+
+    /// An RGB-coded source, tagged `gbr` (libx264rgb) or untagged (QuickTime
+    /// Animation), gets both proxies, and each declares the colour its pixels
+    /// are in: read by its own tags, it shows the source's RGB.
+    #[tokio::test]
+    async fn an_rgb_coded_source_gets_proxies_whose_tags_match_their_pixels() {
+        if !ffmpeg_available() {
+            eprintln!("ffmpeg not on PATH — skipping RGB proxy test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().join("cache"));
+        cache.ensure_dirs().unwrap();
+        for (name, encoder, pix_fmt, matrix, range) in [
+            ("gbr.mp4", "libx264rgb", "gbrp", Some("gbr"), Some("pc")),
+            ("rle.mov", "qtrle", "rgb24", None, None),
+        ] {
+            let src = tmp.path().join(name);
+            let status = Command::new("ffmpeg")
+                .args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi"])
+                .args(["-i", "color=c=red:size=320x240:rate=30:duration=1"])
+                .args(["-vf", "format=rgb24", "-c:v", encoder])
+                .arg(&src)
+                .status()
+                .await
+                .expect("spawn ffmpeg");
+            assert!(status.success(), "{name} fixture");
+            let want = first_pixel(&src, "null").await;
+            let mut media = rgb_video(pix_fmt, matrix, range);
+            media.path_abs = src;
+            media.file_hash_blake3 = name.into();
+
+            let full = run(&cache, &media).await.expect("full proxy");
+            let quick = crate::jobs::quick_proxy::run(&cache, &media, None)
+                .await
+                .expect("quick proxy");
+            for proxy in [&full, &quick] {
+                let (space, range) = declared_color(proxy).await;
+                assert_eq!(
+                    (space.as_str(), range.as_str()),
+                    RGB_PROXY_COLOR,
+                    "{name} {proxy:?} declares its colour"
+                );
+                let matrix = if space == "smpte170m" {
+                    "bt601"
+                } else {
+                    &space
+                };
+                let got = first_pixel(
+                    proxy,
+                    &format!("scale=in_color_matrix={matrix}:in_range={range}"),
+                )
+                .await;
+                // A matrix mix-up is about 20 steps off on red.
+                let worst = got
+                    .iter()
+                    .zip(&want)
+                    .map(|(g, w)| g.abs_diff(*w))
+                    .max()
+                    .unwrap();
+                assert!(
+                    worst <= 3,
+                    "{name} {proxy:?}: read by its own tags as {got:?}, source {want:?}"
+                );
+                let bytes = tokio::fs::read(proxy).await.unwrap();
+                assert!(
+                    bytes.windows(4).any(|w| w == b"colr"),
+                    "{name} {proxy:?} has no colr atom"
+                );
+            }
         }
     }
 }

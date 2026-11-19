@@ -16,7 +16,8 @@
 
 import type { EncodedPacketSink } from "mediabunny";
 import { logEmit } from "../../ipc";
-import { withDefaultColorSpace } from "./colorSpaceDefault";
+import { decodesInSoftwareForColour, withDefaultColorSpace } from "./colorSpaceDefault";
+import type { SourceColor } from "./ffprobeColorSpace";
 import { DecodeClock } from "./decodeClock";
 import { FrameRing } from "./FrameRing";
 import { handleDecodeError } from "./decoderFallback";
@@ -39,11 +40,16 @@ const CAPACITY_RETRY_MS = 1_000;
 export class SourceMedia {
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
-  /// Source color tags (ffprobe-mapped), for original AND proxy decodes (a
-  /// proxy preserves the source's colorimetry). Threaded into
-  /// `withDefaultColorSpace` so 601/full-range sources preview with their
-  /// real matrix/range from either URL. Undefined ⇒ untagged source.
-  private readonly sourceColor: VideoColorSpaceInit | undefined;
+  /// The media's resolved colour, for original AND proxy decodes (a proxy
+  /// preserves the source's colorimetry). Threaded into
+  /// `withDefaultColorSpace` so 601/full-range/untagged sources preview with
+  /// the colour every other lane uses, from either URL.
+  private readonly sourceColor: SourceColor;
+  /// Every decoder of this media is built prefer-software
+  /// (`decodesInSoftwareForColour`).
+  get softwareForColour(): boolean {
+    return decodesInSoftwareForColour(this.sourceColor);
+  }
   private readonly knownStartPtsUs: number | null;
   private opened: OpenedMedia | null = null;
   private config: VideoDecoderConfig | null = null;
@@ -83,7 +89,7 @@ export class SourceMedia {
   constructor(
     mediaId: string,
     proxyAssetUrl: string,
-    sourceColor?: VideoColorSpaceInit | undefined,
+    sourceColor: SourceColor,
     sourceStartPtsUs?: number | null,
   ) {
     this.mediaId = mediaId;
@@ -115,12 +121,9 @@ export class SourceMedia {
       // normalized timestamps go negative, and lookbehind evicts every frame.
       const firstPacket = await opened.packetSink.getFirstPacket();
       this.clock = DecodeClock.fromFirstPacket(firstPacket, this.knownStartPtsUs ?? 0);
-      // Untagged sources get a resolution-keyed default matrix so preview decode
-      // matches the rest of the toolchain (see colorSpaceDefault) — and stays
-      // consistent with the export pool, which applies the same default.
-      // `sourceColor` carries the source's ffprobe tags as the middle-priority
-      // layer (below the decode target's own mediabunny colr tag, above the
-      // resolution default) for original AND proxy decodes alike.
+      // The decode target's own colr tag per field, else the media's
+      // resolved colour — the same colour the export pool and the native
+      // lanes decode this media with.
       this.config = withDefaultColorSpace(config, this.sourceColor);
       // eslint-disable-next-line no-console
       console.log(
@@ -175,9 +178,24 @@ export class SourceHandle {
   /// `compositeFrame` is never called).
   private onFirstFrameCb: (() => void) | null = null;
   private firedFirstFrame = false;
-  /// Total frames the decoder has emitted since the last reset.
-  /// Drives the first-frame software-fallback heuristic.
+  /// Frames this handle has pushed into its ring, across `flush()` and
+  /// decoder rebuilds; only `dispose` zeroes it. Drives the first-frame
+  /// software-fallback heuristic.
   private outputFrameCount = 0;
+  /// Outputs from the current `VideoDecoder` since it was built. Together
+  /// with `failurePtsUs`, the progress test of `rebuildAfterError`.
+  private outputsSinceBuild = 0;
+  /// Highest source PTS (µs) the current decoder has output since it was built
+  /// or a seek last reset it: how far its run got. Not the handle's highest
+  /// ever, which a backward seek leaves out of reach.
+  private runMaxPtsUs = Number.NEGATIVE_INFINITY;
+  /// `runMaxPtsUs` of the decoder that failed, at the last error rebuild;
+  /// cleared by the first output past it. Non-null means the rebuilt decoder
+  /// has not yet got further than the one that failed.
+  private failurePtsUs: number | null = null;
+  /// Set once a decoder failed without getting further than its predecessor.
+  /// The handle then builds no further decoder and ignores requests.
+  private failed = false;
   /// True once we've reconfigured with `hardwareAcceleration:
   /// 'prefer-software'`. Prevents repeated downgrade attempts when
   /// the software path also errors.
@@ -249,6 +267,7 @@ export class SourceHandle {
   /// `VideoDecoder` construction. Returns void (see the `DecodeSession`
   /// interface note — the value is unused by the Compositor).
   async ensureReady(): Promise<void> {
+    if (this.failed) return;
     if (this.ready && this.decoder) return;
     if (this.readyP) return this.readyP;
     this.readyP = this._doEnsureReady().catch(error => {
@@ -296,6 +315,9 @@ export class SourceHandle {
         // the GPU side; we pay a per-frame conversion but stop
         // holding the decoder's buffers across many ticks.
         const ptsUs = this.media.decodeClock.sourceUs(frame.timestamp);
+        this.outputsSinceBuild += 1;
+        if (ptsUs > this.runMaxPtsUs) this.runMaxPtsUs = ptsUs;
+        if (this.failurePtsUs !== null && ptsUs > this.failurePtsUs) this.failurePtsUs = null;
         const durationUs = frame.duration ?? 0;
         const epoch = this.conversionEpoch;
         this.conversionsInFlight += 1;
@@ -381,27 +403,32 @@ export class SourceHandle {
         const err = e instanceof Error ? e : new Error(String(e));
         // eslint-disable-next-line no-console
         console.error(`[weftcut/pixi] decoder ${this.mediaId} error:`, err.message);
+        const warn = (msg: string) => {
+          void logEmit({
+            level: "warn",
+            category: { kind: "Other", name: "Render" },
+            source: { kind: "System" },
+            message: msg,
+          });
+        };
         const action = handleDecodeError({
           err,
           outputFrameCount: this.outputFrameCount,
           alreadyDowngraded: this.downgraded,
           mediaId: this.mediaId,
-          log: (msg) => {
-            void logEmit({
-              level: "warn",
-              category: { kind: "Other", name: "Render" },
-              source: { kind: "System" },
-              message: msg,
-            });
-          },
+          log: warn,
         });
         if (action.kind === "downgrade-to-software") {
           this.downgradeToSoftware();
         } else if (action.kind === "inactivity-rebuild") {
           this.rebuildAfterInactivity();
+        } else {
+          this.rebuildAfterError(err, warn);
         }
       },
     });
+    this.outputsSinceBuild = 0;
+    this.runMaxPtsUs = Number.NEGATIVE_INFINITY;
     this.decoder = dec;
     this.decoder.configure(this.buildConfig());
     if (!this.pump) this.pump = new PacketPump(this.makePumpDeps());
@@ -421,6 +448,7 @@ export class SourceHandle {
           // `conversionEpoch`. Bumped here (the pump's seek path) as well as
           // in `flush()`, so both reset callers agree.
           handle.conversionEpoch += 1;
+          handle.runMaxPtsUs = Number.NEGATIVE_INFINITY;
           handle.decoder?.reset();
         },
         configure: () => {
@@ -453,7 +481,8 @@ export class SourceHandle {
     }
     return {
       ...this.config,
-      hardwareAcceleration: this.downgraded ? "prefer-software" : "prefer-hardware",
+      hardwareAcceleration:
+        this.downgraded || this.media.softwareForColour ? "prefer-software" : "prefer-hardware",
     };
   }
 
@@ -498,9 +527,32 @@ export class SourceHandle {
     this.nullForRebuild();
   }
 
+  /// Any other error: the codec is closed all the same, and keeping it leaves
+  /// the pump gated on a dead decoder with the clip frozen. A rebuilt decoder
+  /// must get further than the run of the one before it (`runMaxPtsUs`),
+  /// otherwise the handle stops: it restarts at the GOP's key, so a packet
+  /// that fails deterministically mid-GOP would otherwise be rebuilt at decode
+  /// rate. Imprecise on purpose: a second, unrelated error before the rebuilt
+  /// decoder gets past that point also stops the handle (until the pool's idle
+  /// sweep replaces it).
+  private rebuildAfterError(err: Error, warn: (msg: string) => void): void {
+    if (this.outputsSinceBuild > 0 && this.failurePtsUs === null) {
+      this.failurePtsUs = this.runMaxPtsUs;
+      warn(`video decoder rebuilt after an error (source ${this.mediaId}): ${err.message}`);
+    } else {
+      this.failed = true;
+      warn(
+        `video decoder stopped for layer ${this.layerId} (source ${this.mediaId}): ` +
+          `it failed again without getting further: ${err.message}`,
+      );
+    }
+    this.nullForRebuild();
+  }
+
   /// Nudge the decoder's lookahead toward `tUs`. Builds the pipeline lazily
   /// on first call, then delegates to the single-flight `PacketPump`.
   async requestFrameAt(tUs: number): Promise<void> {
+    if (this.failed) return;
     const version = ++this.requestVersion;
     if (!this.ready || !this.decoder) {
       if (performance.now() < this.capacityRetryAt) return;
@@ -556,6 +608,7 @@ export class SourceHandle {
   /// `ensureReady()`.
   flush(): void {
     this.conversionEpoch += 1;
+    this.runMaxPtsUs = Number.NEGATIVE_INFINITY;
     try {
       this.decoder?.reset();
     } catch {
@@ -586,6 +639,9 @@ export class SourceHandle {
     this.ready = false;
     this.onFirstFrameCb = null;
     this.outputFrameCount = 0;
+    this.outputsSinceBuild = 0;
+    this.runMaxPtsUs = Number.NEGATIVE_INFINITY;
+    this.failurePtsUs = null;
     this.downgraded = false;
     this._disposed = true;
   }
@@ -654,7 +710,7 @@ export class SourceDecoderPool {
         // Conditional spreads, not direct assignment — exactOptionalPropertyTypes
         // rejects an explicit `undefined` for `FfmpegSourceInit`'s optional
         // fields (same idiom `FfmpegSource.ts` itself uses).
-        ...(init.sourceColor !== undefined ? { sourceColor: init.sourceColor } : {}),
+        sourceColor: init.sourceColor,
         ...(init.codec !== undefined ? { codec: init.codec } : {}),
         ...(init.pixFmt !== undefined ? { pixFmt: init.pixFmt } : {}),
         ...(init.width !== undefined ? { width: init.width } : {}),
@@ -751,7 +807,7 @@ export class SourceDecoderPool {
   private acquireMedia(
     mediaId: string,
     proxyAssetUrl: string,
-    sourceColor?: VideoColorSpaceInit | undefined,
+    sourceColor: SourceColor,
     sourceStartPtsUs?: number | null,
   ): SourceMedia {
     let entry = this.medias.get(mediaId);

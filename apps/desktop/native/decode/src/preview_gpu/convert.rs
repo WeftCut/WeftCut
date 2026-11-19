@@ -10,9 +10,10 @@
 //! driver-defined, which can neither be pinned to the conformance goldens nor
 //! reproduced cross-machine.
 //!
-//! The coefficient + normalization math is the Rust twin of the renderer's
-//! `render/tenbit/yuv10.ts`; the whys live on the functions below.
+//! The shader and its constants live in `crate::color`, the platform-neutral
+//! twin of the renderer's `render/yuv/colourConversion.ts`.
 
+use crate::color::{Conversion, HLSL};
 use windows::core::{Interface, HRESULT, PCSTR};
 use windows::Win32::Graphics::Direct3D::Fxc::{D3DCompile, D3DCOMPILE_OPTIMIZATION_LEVEL3};
 use windows::Win32::Graphics::Direct3D::{
@@ -30,83 +31,6 @@ use windows::Win32::Graphics::Direct3D11::{
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT_NV12, DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_SAMPLE_DESC,
 };
-
-/// Kr/Kb of a YCbCr matrix (Kg = 1 − Kr − Kb). Twin of `yuv10.ts`'s `YuvCoef`.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct YuvCoef {
-    pub kr: f64,
-    pub kb: f64,
-}
-pub const BT709: YuvCoef = YuvCoef {
-    kr: 0.2126,
-    kb: 0.0722,
-};
-pub const BT601: YuvCoef = YuvCoef {
-    kr: 0.299,
-    kb: 0.114,
-};
-
-/// Matrix tag → coefficients. MUST stay the same selection rule as the
-/// renderer's `coefForMatrix` (yuv10.ts): smpte170m and bt470bg are both
-/// BT.601; everything else — including untagged — is BT.709, the app's
-/// working-space default. The tag string is the same one the renderer derives
-/// (`deriveColorSpace`).
-pub fn coef_for_matrix(matrix: &str) -> YuvCoef {
-    if matrix == "smpte170m" || matrix == "bt470bg" {
-        BT601
-    } else {
-        BT709
-    }
-}
-
-/// Derived shader coefficients `[crR, cbG, crG, cbB]` for YUV→RGB. Twin of
-/// `yuv10.ts`'s `inverseCoef` — same formulas, so both lanes' shaders agree
-/// to float precision.
-pub fn inverse_coef(c: YuvCoef) -> [f64; 4] {
-    let kg = 1.0 - c.kr - c.kb;
-    let cr_r = 2.0 * (1.0 - c.kr);
-    let cb_b = 2.0 * (1.0 - c.kb);
-    [cr_r, (c.kb * cb_b) / kg, (c.kr * cr_r) / kg, cb_b]
-}
-
-/// 8-bit normalization constants `(y_off, y_scale, c_scale)` — the same
-/// limited/full split `Nv12Ingest` applies (`uYOff`/`uScale`).
-pub fn norm_consts(full_range: bool) -> (f64, f64, f64) {
-    if full_range {
-        (0.0, 255.0, 255.0)
-    } else {
-        (16.0, 219.0, 224.0)
-    }
-}
-
-/// The conversion shader. RG order in the UV plane is U then V, so `.x` is Cb
-/// and `.y` is Cr — same as Nv12Ingest's `texture(uUV).rg`.
-const HLSL: &str = r#"
-Texture2D<float>  texY  : register(t0);
-Texture2D<float2> texUV : register(t1);
-SamplerState      samp  : register(s0);
-
-struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
-
-VSOut vs_main(uint vid : SV_VertexID) {
-    float2 clip[3] = { float2(-1.0, -3.0), float2(-1.0, 1.0), float2(3.0, 1.0) };
-    float2 uvs[3]  = { float2(0.0, 2.0),  float2(0.0, 0.0),  float2(2.0, 0.0)  };
-    VSOut o;
-    o.pos = float4(clip[vid], 0.0, 1.0);
-    o.uv  = uvs[vid];
-    return o;
-}
-
-float4 ps_main(VSOut i) : SV_TARGET {
-    float y = (texY.Sample(samp, i.uv).r * 255.0 - YOFF) / YSCALE;
-    float2 c = (texUV.Sample(samp, i.uv).rg * 255.0 - 128.0) / CSCALE;
-    float3 rgb = float3(
-        y + CRR * c.y,
-        y - CRG * c.y - CBG * c.x,
-        y + CBB * c.x);
-    return float4(saturate(rgb), 1.0);
-}
-"#;
 
 /// `S_FALSE` as `ID3D11DeviceContext::GetData` returns it for a
 /// still-in-flight query. Its sign bit is 0, so windows-rs's safe wrapper
@@ -181,30 +105,20 @@ pub struct ConvertPass {
 }
 
 impl ConvertPass {
-    /// Build the pass on `device` for a `width`×`height` stream whose color
-    /// tags are `matrix` (renderer-derived tag string) + `full_range`. `slots`
-    /// are the session's RGBA8 pool textures (RTVs are created here so the
-    /// per-frame path never allocates). Color tags are per-stream constants, so
-    /// they bake into the shader as `#define`s here: the per-frame cost is one
-    /// staging copy + one full-screen triangle, no constant-buffer updates.
+    /// Build the pass on `device` for a `width`×`height` stream converting by
+    /// `conversion`. `slots` are the session's RGBA8 pool textures (RTVs are
+    /// created here so the per-frame path never allocates). The conversion is
+    /// per-stream, so it bakes into the shader as `#define`s here: the
+    /// per-frame cost is one staging copy + one full-screen triangle, no
+    /// constant-buffer updates.
     pub fn new(
         device: &ID3D11Device,
         width: u32,
         height: u32,
-        matrix: &str,
-        full_range: bool,
+        conversion: &Conversion,
         slots: &[ID3D11Texture2D],
     ) -> Result<Self, String> {
-        let [cr_r, cb_g, cr_g, cb_b] = inverse_coef(coef_for_matrix(matrix));
-        let (y_off, y_scale, c_scale) = norm_consts(full_range);
-        // f64 → HLSL float literals. 10 significant decimals is beyond f32's
-        // round-trip precision, so the baked constant IS the f32 nearest to
-        // the f64 the TS twin computes.
-        let defines = format!(
-            "#define CRR {cr_r:.10}\n#define CBG {cb_g:.10}\n#define CRG {cr_g:.10}\n\
-             #define CBB {cb_b:.10}\n#define YOFF {y_off:.1}\n#define YSCALE {y_scale:.1}\n\
-             #define CSCALE {c_scale:.1}"
-        );
+        let defines = conversion.hlsl_defines();
 
         unsafe {
             let staging_desc = D3D11_TEXTURE2D_DESC {
@@ -475,44 +389,5 @@ impl ConvertPass {
             self.query_in_flight = true;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Golden coefficient sets for the four encodings — the same numbers the
-    /// renderer's `inverseCoef` produces. Guards drift between this Rust twin
-    /// and `yuv10.ts`.
-    #[test]
-    fn inverse_coef_matches_ts_twin() {
-        let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
-        let c709 = inverse_coef(BT709);
-        assert!(close(c709[0], 1.5748), "709 crR {}", c709[0]);
-        assert!(close(c709[1], 0.187_324_27), "709 cbG {}", c709[1]);
-        assert!(close(c709[2], 0.468_124_27), "709 crG {}", c709[2]);
-        assert!(close(c709[3], 1.8556), "709 cbB {}", c709[3]);
-        let c601 = inverse_coef(BT601);
-        assert!(close(c601[0], 1.402), "601 crR {}", c601[0]);
-        assert!(close(c601[1], 0.344_136_28), "601 cbG {}", c601[1]);
-        assert!(close(c601[2], 0.714_136_29), "601 crG {}", c601[2]);
-        assert!(close(c601[3], 1.772), "601 cbB {}", c601[3]);
-    }
-
-    #[test]
-    fn matrix_tag_selection_matches_ts_twin() {
-        assert_eq!(coef_for_matrix("smpte170m"), BT601);
-        assert_eq!(coef_for_matrix("bt470bg"), BT601);
-        assert_eq!(coef_for_matrix("bt709"), BT709);
-        // Untagged/unknown fall to the working-space default, like coefForMatrix.
-        assert_eq!(coef_for_matrix(""), BT709);
-        assert_eq!(coef_for_matrix("bt2020-ncl"), BT709);
-    }
-
-    #[test]
-    fn norm_consts_match_nv12_ingest() {
-        assert_eq!(norm_consts(false), (16.0, 219.0, 224.0));
-        assert_eq!(norm_consts(true), (0.0, 255.0, 255.0));
     }
 }

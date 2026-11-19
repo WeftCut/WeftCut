@@ -12,7 +12,8 @@
 import type { EncodedPacket } from "mediabunny";
 import type { DecoderPool, ExportDecodeSession, FrameStore, SourceHandleInit } from "./session";
 import { NativeExportSourceHandle } from "../worker/nativeExportSource";
-import { withDefaultColorSpace } from "./colorSpaceDefault";
+import { decodesInSoftwareForColour, withDefaultColorSpace } from "./colorSpaceDefault";
+import type { ColourStamp, SourceColor } from "./ffprobeColorSpace";
 import { DecodeClock } from "./decodeClock";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
@@ -47,10 +48,10 @@ interface RingEntry {
 export interface ExportColorDiag {
   mediaId: string;
   /// `config.colorSpace` handed to `decoder.configure` (post-withDefaultColorSpace).
-  configColor: VideoColorSpaceInit | null;
+  configColor: ColourStamp | null;
   /// `frame.colorSpace` the decoder stamped on its output (the real tag the
   /// downstream YUV→RGB conversion honors).
-  frameColor: VideoColorSpaceInit | null;
+  frameColor: ColourStamp | null;
   /// `frame.format` (NV12 / I420 / RGBA / …) — RGBA would mean the conversion
   /// already happened in the decoder.
   frameFormat: string | null;
@@ -363,10 +364,10 @@ export class ExportSourceHandle implements ExportDecodeSession {
   readonly bufferStats = { capacityFrames: EXPORT_FRAME_WINDOW, peakFrames: 0, waits: 0, waitMs: 0 };
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
-  /// Source color tags (ffprobe-mapped), for original AND proxy decode
-  /// targets (a proxy preserves the source's colorimetry). Threaded into
+  /// The media's resolved colour, for original AND proxy decode targets (a
+  /// proxy preserves the source's colorimetry). Threaded into
   /// `withDefaultColorSpace`; the target's own colr tag outranks per-field.
-  private readonly sourceColor: VideoColorSpaceInit | undefined;
+  private readonly sourceColor: SourceColor;
   private readonly knownStartPtsUs: number | null;
   private clock = DecodeClock.fromOrigin(0);
   /// Copy >8-bit decoder output to CPU planes (TenBitFrame) instead of
@@ -490,12 +491,8 @@ export class ExportSourceHandle implements ExportDecodeSession {
     const first = await opened.packetSink.getFirstPacket();
     if (this._disposed) return;
     this.clock = DecodeClock.fromFirstPacket(first, this.knownStartPtsUs ?? 0);
-    // Untagged sources get a resolution-keyed default matrix so Chromium/Electron's
-    // decode matches the rest of the toolchain (see colorSpaceDefault).
-    // `sourceColor` carries the source's ffprobe tags as the middle-priority
-    // layer (below the decode target's own mediabunny colr tag, above the
-    // resolution default) — for original AND proxy decodes alike (a proxy
-    // preserves the source's colorimetry).
+    // The decode target's own colr tag per field, else the media's resolved
+    // colour — the same colour preview and the native export lane use.
     this.config = withDefaultColorSpace(config, this.sourceColor);
     if (!this.releaseResources) {
       // Admitted dispatch window plus unchanged codec-private surfaces.
@@ -643,7 +640,10 @@ export class ExportSourceHandle implements ExportDecodeSession {
     }
     return {
       ...this.config,
-      hardwareAcceleration: this.downgraded || this.preferSoftware ? "prefer-software" : "prefer-hardware",
+      hardwareAcceleration:
+        this.downgraded || this.preferSoftware || decodesInSoftwareForColour(this.sourceColor)
+          ? "prefer-software"
+          : "prefer-hardware",
     };
   }
 
@@ -1077,7 +1077,7 @@ export class ExportDecoderPool implements DecoderPool {
     let h = this.handles.get(key);
     if (!h) {
       // `nativeExport` (export-only, set by the routed 6a acquire) selects the
-      // native session over the frame relay; otherwise the WebCodecs proxy path.
+      // native session over its own port; otherwise the WebCodecs proxy path.
       h = init.nativeExport ? new NativeExportSourceHandle(init) : new ExportSourceHandle(init);
       this.handles.set(key, h);
     }

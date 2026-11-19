@@ -198,9 +198,9 @@ export class PacketPump {
   /// Bumped by `invalidateCursor` (decoder rebuild) and `dispose` — the two
   /// things that interleave across the pump's awaits (the WebCodecs error
   /// callback fires as a queued event-loop task and runs
-  /// `SourceHandle.nullForRebuild → invalidateCursor()` on
-  /// software-downgrade / inactivity-rebuild). Every await captures the
-  /// generation before it and bails after it if it moved (or `_disposed`).
+  /// `SourceHandle.nullForRebuild → invalidateCursor()` on a decoder error).
+  /// Every await captures the generation before it and bails after it if it
+  /// moved (or `_disposed`).
   /// Without this guard, an in-flight getNextPacket continuation resurrects
   /// `cursor` to a delta packet after a rebuild nulled it, feeding the fresh
   /// decoder a delta → decode error → recovery never completes. NOT bumped
@@ -224,9 +224,8 @@ export class PacketPump {
   }
 
   /// Reposition: drop the cursor so the next pass cold-starts from a key.
-  /// `SourceHandle` calls this after rebuilding the `VideoDecoder`
-  /// (software-downgrade / inactivity-rebuild) — the fresh decoder must
-  /// start at a key packet, not mid-GOP.
+  /// `SourceHandle` calls this when a decoder error drops the `VideoDecoder`
+  /// — the fresh decoder must start at a key packet, not mid-GOP.
   invalidateCursor(): void {
     this.generation += 1; // bail any await that's in flight against the old decoder
     this.cursor = null;
@@ -365,6 +364,10 @@ export class PacketPump {
           // Same race guard: a rebuild/dispose during the await must not
           // resurrect `cursor` to a delta packet on the continuation.
           if (this.generation !== myGen || this._disposed) return;
+          // The platform closes a failing decoder before its error callback
+          // runs, so it can be closed here with the generation unchanged, and
+          // `decode` on a closed codec throws.
+          if (this.deps.decoder.state !== "configured") break;
           if (!next) {
             this.eosFlushOnce();
             break;

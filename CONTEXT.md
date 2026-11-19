@@ -113,6 +113,14 @@ The per-session memo of whether WebCodecs decoded a source's original, which
 the Decode engine still consults. Not the Capability cache.
 _Avoid_: decode memo, probe cache
 
+**Frame carrier**:
+How a decoded frame crosses from the main process to its consumer. There are
+two: *bytes* (an owned buffer the consumer hands back by lease) and *slots* (a
+pooled shared texture named by slot and generation, read and then released).
+Preview, export decode and Motif each keep their own driver and share the
+carriers. See ADR 0175.
+_Avoid_: lane (a decode lane picks the decoder, not the transport), channel, transport (unqualified)
+
 **Media actionability**:
 Whether a source can be placed now, given an available source and the current
 Decode engine resolution. Independent of copy and optimization progress. See [preview.md](docs/preview.md#actionability).

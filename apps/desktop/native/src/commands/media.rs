@@ -352,8 +352,11 @@ pub async fn get_filmstrip_tile(
     let hash = args.item.file_hash_blake3.clone();
     let path = filmstrip::extract_tile(
         &backend.cache.snapshot(),
-        &src,
-        src_tag,
+        filmstrip::TileSource {
+            path: &src,
+            tag: src_tag,
+            original: args.item.metadata.video.as_ref(),
+        },
         &hash,
         duration_us,
         args.lod,

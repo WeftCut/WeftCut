@@ -27,6 +27,7 @@ import type { CompositionSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { compositionOrRoot, EMPTY_COMPOSITION } from "../ipc/compositions";
 import { SourceDecoderPool } from "./decoder/SourceDecoderPool";
 import type { PreviewDecodeDevice } from './decoder/session';
+import type { SourceColor } from "./decoder/ffprobeColorSpace";
 import type { DecoderPool } from "./decoder/session";
 import {
   planPreviewDecodePriority,
@@ -171,14 +172,13 @@ export interface CompositorInit {
   /// May return the same URL as `proxyAssetUrl` for media kinds
   /// that don't get proxied (images, audio).
   originalAssetUrl: (mediaId: string) => string | null;
-  /// Resolver for a media item's ffprobe-derived source color tags
-  /// (matrix/range/primaries/transfer), mapped to WebCodecs. Applied to every
-  /// decode target for the media — the original trivially, and proxies too
-  /// (a proxy preserves the source's colorimetry; its own container tag still
-  /// outranks this per-field in `withDefaultColorSpace`) — so 601/full-range
-  /// sources render with their real color from either URL. Returns undefined
-  /// when nothing maps.
-  sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
+  /// Resolver for a media item's resolved colour (`resolveSourceColor`).
+  /// Applied to every decode target for the media — the original trivially,
+  /// and proxies too (a proxy preserves the source's colorimetry; its own
+  /// container tag still outranks this per-field in `withDefaultColorSpace`) —
+  /// so every lane decodes the media with the same colour. Undefined only for
+  /// a media id the host does not know, which leaves the clip unbuilt.
+  sourceColor: (mediaId: string) => SourceColor | undefined;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
   /// Optional decoder pool override. Defaults to a preview-tuned
@@ -228,7 +228,7 @@ export class Compositor {
   /// Undefined when the host doesn't wire it (export never does).
   private onUnsupported: ((unsupported: ReadonlySet<string>) => void) | undefined;
   private originalAssetUrl: (mediaId: string) => string | null;
-  private sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
+  private sourceColor: (mediaId: string) => SourceColor | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
   private compositionWidth = 1920;
   private compositionHeight = 1080;

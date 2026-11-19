@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { MediaSummary } from "../ipc";
+import { EXPORT_DECODE_ENGINES } from "./exportSettings";
 import {
   hwExportDecodeAllowed,
   proxyWaitScope,
   resolveExportDecodeRouting,
   routingSourceCounts,
+  takesTenBitLane,
   type ExportRoutingInputs,
 } from "./exportDecodeRouting";
 
@@ -156,6 +158,77 @@ describe("resolveExportDecodeRouting", () => {
   it("a video with no original path falls back to webcodecs", () => {
     const r = resolveExportDecodeRouting(base({ media: [vid("m1", "native-sw", { path: "" })] }));
     expect(r.routes["m1"]).toEqual({ engine: "webcodecs" });
+  });
+});
+
+// The temporary HDR policy (hdrTakesWebCodecs): an HDR source exports through
+// one decode engine whatever the setting says.
+describe("HDR sources take one export decode engine", () => {
+  const HDR = ["smpte2084", "arib-std-b67"];
+  const WEBCODECS_DECODABLE = ["bypass", "direct-export", "proxied"] as const;
+  const DEPTHS = [8, 10] as const;
+
+  it("an HDR source WebCodecs can decode takes the WebCodecs engine under every setting and depth", () => {
+    for (const setting of EXPORT_DECODE_ENGINES) for (const bitDepth of DEPTHS) {
+      for (const transfer of HDR) for (const route of WEBCODECS_DECODABLE) {
+        const r = resolveExportDecodeRouting(
+          base({ setting, bitDepth, media: [vid("h", route, { color_transfer: transfer })] }),
+        );
+        expect(r.routes["h"], `${transfer} ${route} under ${setting} at ${bitDepth}-bit`)
+          .toEqual({ engine: "webcodecs" });
+      }
+    }
+  });
+
+  it("an HDR source WebCodecs cannot decode keeps the route an SDR one gets", () => {
+    for (const setting of EXPORT_DECODE_ENGINES) for (const bitDepth of DEPTHS) {
+      for (const componentAvailable of [true, false]) for (const transfer of HDR) {
+        const path = "C:\\media\\clip.mov";
+        const hdr = vid("h", "native-sw", { path, color_transfer: transfer });
+        const sdr = vid("s", "native-sw", { path, color_transfer: "bt709" });
+        const r = resolveExportDecodeRouting(
+          base({ setting, bitDepth, componentAvailable, media: [hdr, sdr] }),
+        );
+        expect(r.routes["h"], `${transfer} under ${setting}`).toEqual(r.routes["s"]);
+      }
+    }
+  });
+
+  it("an SDR source is not affected: the ffmpeg pin still decodes it native", () => {
+    for (const transfer of ["bt709", "smpte170m", "bt2020-10", null]) {
+      for (const route of WEBCODECS_DECODABLE) {
+        const r = resolveExportDecodeRouting(
+          base({ setting: "ffmpeg", media: [vid("s", route, { color_transfer: transfer })] }),
+        );
+        expect(r.routes["s"], `${transfer} ${route}`).toEqual({
+          engine: "native",
+          sourcePath: "C:\\media\\s.mov",
+        });
+      }
+    }
+  });
+});
+
+// The bit-depth half of the temporary HDR policy: the 10-bit lane would pass an
+// HDR source's code values through, so an HDR source never takes it.
+describe("takesTenBitLane", () => {
+  const TEN_BIT_CAPABLE = [
+    { codec: "h264", pix_fmt: "yuv420p10le" },
+    { codec: "av1", pix_fmt: "yuv420p10le" },
+  ];
+
+  it("an HDR source that could take the 10-bit lane does not", () => {
+    for (const shape of TEN_BIT_CAPABLE) for (const transfer of ["smpte2084", "arib-std-b67"]) {
+      const m = vid("h", "proxied", { ...shape, color_transfer: transfer });
+      expect(takesTenBitLane(m), `${shape.codec} ${transfer}`).toBe(false);
+    }
+  });
+
+  it("an SDR 10-bit H.264 or AV1 source still takes it", () => {
+    for (const shape of TEN_BIT_CAPABLE) for (const transfer of ["bt709", "bt2020-10", null]) {
+      const m = vid("s", "proxied", { ...shape, color_transfer: transfer });
+      expect(takesTenBitLane(m), `${shape.codec} ${transfer}`).toBe(true);
+    }
   });
 });
 

@@ -1,46 +1,53 @@
-// Main-process manager for native GPU-decode preview sessions. Owns the
-// PERSISTENT shared-texture imports: each pool slot is importSharedTexture'd +
-// sendSharedTexture'd EXACTLY ONCE at open, then kept alive for the whole
-// session so the underlying D3D11 RGBA textures stay reusable. Per-frame
-// traffic is only frameReady/consumeAck pokes — never a per-frame import/send.
+// Native GPU preview sessions (Windows d3d11va): the hardware lane that keeps
+// decoded frames on the GPU. Each session is a decode session like the byte
+// lanes' (frameCarrier/decodeSessionHost.ts): its `slot`, `end` and `error`
+// messages reach only its own port, and `request` and `release` come up it.
+// What is particular to slots lives here: the GPU admission a session
+// reserves, and handing the pool's textures to the owner's document once, at
+// open (frameCarrier/sharedTextureImport.ts). docs/preview.md § The Standard
+// engine.
 //
-// Why persistent, not per-frame: per-frame sendSharedTexture is IPC-bound —
-// a benchmark built on it reports IPC latency as "native throughput".
+// The pool is imported and sent once and kept for the whole session; a frame
+// is only a `slot` message naming which texture holds it. A per-frame import
+// and send would be bound by IPC, and a benchmark built on it would report IPC
+// latency as decode throughput.
 //
-// Windows-only: the addon's previewGpu* methods throw "preview-gpu not built"
-// elsewhere. This module never inspects the platform — it just delegates; the
-// selection gate upstream decides when a GPU session is even opened.
-import { sharedTexture } from 'electron'
-import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
+// Windows-only: the addon's `previewGpu*` methods throw "preview-gpu not built"
+// elsewhere; the lane selection upstream decides when a session is opened.
+import type { SharedTextureImported, WebContents } from 'electron'
 import type { NativeDecode, PreviewGpuAdapter } from '@weftcut/native-decode'
 import {
   HW_BUDGET_EXCEEDED,
   HW_BUDGET_RESERVATION_MISMATCH,
-  type HwBarrierMode,
   type PreviewGpuBudgetSnapshot,
+  type PreviewGpuColorSpace,
+  type PreviewGpuOpenReply,
   type PreviewGpuTimingReport,
 } from '../shared/ipc'
-import { clearMainPendingFor } from './previewGpuTiming.js'
-import { withSharedTextureQueue } from './sharedTextureQueue.js'
+import type { PreviewGpuCommand } from '../shared/frameCarrier/wire'
+import { clearMainPendingFor, recordConsumeAck, recordFrameReadySent } from './previewGpuTiming.js'
 import { gpuBufferBudget, retainGpuBufferLease } from './gpuBufferBudget.js'
 import { performanceSettings } from '../shared/performance-settings.js'
 import { reserveResources } from './resources.js'
-import {
-  createPreviewGpuBudget,
-  type PreviewGpuBudgetLease,
-} from './previewGpuBudget.js'
+import { createPreviewGpuBudget } from './previewGpuBudget.js'
+import { admitDecodeSession, type ConnectCarrier } from './frameCarrier/decodeSessionAdmission.js'
+import { importAndSend } from './frameCarrier/sharedTextureImport.js'
+
+export interface PreviewGpuRequest {
+  sessionId: string
+  path: string
+  poolSize: number
+  /** The source's resolved colour: native converts NV12 to RGBA with it. */
+  colorSpace: PreviewGpuColorSpace
+  /** Renderer-probed coded dimensions, reserved before native allocates. */
+  codedWidth: number
+  codedHeight: number
+}
 
 interface GpuSession {
-  // One imported texture per pool slot, indexed by the slot number the native
-  // side names in frameReady{slot}. Held for the session's lifetime and NEVER
-  // released mid-session — releasing would tear down the shared textures the
-  // decode thread keeps writing into. Released only in closePreviewGpu.
-  imported: SharedTextureImported[]
   width: number
   height: number
-  budgetLease: PreviewGpuBudgetLease
-  bufferLifetime: ReturnType<typeof retainGpuBufferLease>
-  releaseDecoder: () => void
+  slots: number
   adapter: PreviewGpuAdapter | null
 }
 
@@ -51,64 +58,11 @@ export function previewGpuDevices(): Array<{ streamId: string; adapter: PreviewG
   return [...sessions].map(([streamId, session]) => ({ streamId, adapter: session.adapter }))
 }
 
-/// The import tag for every A′ slot texture: the native conversion shader
-/// already produced working-space RGBA, so the browser must treat the bytes
-/// as plain sRGB and do NO color math of its own. This constant + the native
-/// shader constants together ARE the color contract; the source's real tags
-/// travel to native via `previewGpuOpen(matrix, fullRange)` instead.
-const SRGB_PASSTHROUGH: ColorSpace = {
-  primaries: 'bt709',
-  transfer: 'srgb',
-  matrix: 'rgb',
-  range: 'full',
-}
-
-/// One admission authority for every open/close. It greedily reserves coded
-/// pixel AREA (not pixel-rate), a hard session slot and shared-buffer bytes
-/// before native allocation. The module owns validation, rollback and idempotent lease
-/// release; callers never recompute policy.
+/// One admission authority for every open and close. It greedily reserves
+/// coded pixel AREA (not pixel rate), a hard session slot and shared-buffer
+/// bytes before native allocation. The budget owns validation and idempotent
+/// lease release; callers never recompute policy.
 const previewGpuBudget = createPreviewGpuBudget(performanceSettings, gpuBufferBudget)
-
-/// Best-effort GPU-reference teardown: one broken Electron import must not
-/// prevent the remaining imports from releasing. Admission release is owned by
-/// each caller's surrounding `finally`, so this helper never touches the lease.
-function releaseImports(
-  imported: readonly SharedTextureImported[],
-  streamId: string,
-  phase: 'rollback' | 'close',
-): void {
-  for (const imp of imported) {
-    try {
-      imp.release()
-    } catch (releaseErr) {
-      console.warn(`[main] previewGpu ${phase} import release failed for ${streamId}`, releaseErr)
-    }
-  }
-}
-
-/// Barrier strategy applied before a slot is acked, read ONCE from
-/// `WEFTCUT_HW_BARRIER` and reported on every open reply (see `HwBarrierMode`
-/// for what each mode does, and note that under `rendererFence` the barrier runs
-/// in the RENDERER, not the preload). Main owns the decision rather than either
-/// of them so one process reads the environment and every session agrees on the
-/// answer.
-///
-/// Silent defaulting is deliberate: a typo'd mode must degrade to a mode that
-/// ORDERS CORRECTLY, so the fall-through can only ever be one of the deferred
-/// fences or `readback`, never the reordering `none`/`gpuflush`.
-const HW_BARRIER_MODES: readonly HwBarrierMode[] = [
-  'readback',
-  'fence',
-  'gpuflush',
-  'none',
-  'rendererFence',
-]
-const HW_BARRIER_DEFAULT: HwBarrierMode = 'rendererFence'
-const HW_BARRIER_MODE: HwBarrierMode = HW_BARRIER_MODES.includes(
-  (process.env.WEFTCUT_HW_BARRIER ?? '') as HwBarrierMode,
-)
-  ? (process.env.WEFTCUT_HW_BARRIER as HwBarrierMode)
-  : HW_BARRIER_DEFAULT
 
 /// Live HW-session count (for the renderer's budget-aware resolution + tests).
 export function hwSessionCount(): number {
@@ -120,242 +74,149 @@ export function hwSessionCount(): number {
 /// currency, whose reference is 30fps by default or 60fps after an accepted
 /// benchmark. Shared-buffer bytes also constrain admission.
 ///
-/// A sample is a point in time, not a promise: the count falls asynchronously
-/// (a renderer teardown fires `previewGpu:close` without awaiting it), so
-/// `used < max` at read time does not guarantee the next open succeeds.
+/// A sample is a point in time, not a promise: a session another document
+/// closes may still hold its lease when the sample is taken, so `used < max`
+/// at read time does not guarantee the next open succeeds.
 ///
-/// `slotVram` is computed HERE from the live session records (the admission
-/// snapshot covers active imports): Σ w×h×4×slots over open sessions. The shared
-/// buffer budget separately retains credits for retired imports and Motif pools.
+/// `slotVram` is computed HERE from the live session records: Σ w×h×4×slots
+/// over open sessions. The shared buffer budget separately retains credits for
+/// retired imports and Motif pools.
 export function hwBudget(): PreviewGpuBudgetSnapshot {
   let usedBytes = 0
-  for (const s of sessions.values()) usedBytes += s.width * s.height * 4 * s.imported.length
+  for (const s of sessions.values()) usedBytes += s.width * s.height * 4 * s.slots
   return { ...previewGpuBudget.snapshot(), slotVram: { usedBytes, bytesPerPixel: 4 } }
 }
 
-/// Tail of the open-serialisation chain. `openPreviewGpu` awaits inside its
-/// per-slot announce→import→send loop, so two concurrent `previewGpu:open`
-/// invokes would interleave their loops — and the preload pairs receiver
-/// callbacks to announces through ONE positional FIFO queue, so interleaved
-/// opens mis-key each other's slot textures (wrong pixels, or a slot with no
-/// import at all). Chaining every open through here keeps at most one loop
-/// in flight. Cheap: opens are rare (once per session) and short.
-
-/// Open a native GPU-decode session and hand its whole shared-texture pool to
-/// the renderer up front. For each slot we announce the slot index, import the
-/// shared handle, and transfer it to the renderer's main frame — in that order,
-/// because the preload pairs each incoming receiver callback to a slot by the
-/// FIFO order of the `previewGpu:slot` announces, and each announce must be
-/// enqueued renderer-side before its sendSharedTexture makes the receiver fire.
-export function openPreviewGpu(
+/** Opens a session served on the port `connect` creates, until its consumer
+ * closes it or `owner`'s document goes away, and hands the pool's textures to
+ * `owner`'s document.
+ * Resolves once every texture has arrived there, so a slot message can never
+ * name a texture the preload does not hold yet; slots fill only after the
+ * first `request`. Rejects with `HW_BUDGET_EXCEEDED` when admission is full. */
+export async function openPreviewGpu(
   backend: NativeDecode,
-  win: BrowserWindow,
-  streamId: string,
-  path: string,
-  poolSize: number,
-  colorSpace: ColorSpace,
-  codedWidth: number,
-  codedHeight: number,
-): Promise<{ width: number; height: number; poolSize: number; barrierMode: HwBarrierMode }> {
-  // Serialise: run after whatever open is already in flight, succeeded or not
-  // (hence the `.catch`, so one failed open doesn't poison the chain).
-  return withSharedTextureQueue(() =>
-      doOpenPreviewGpu(
-        backend,
-        win,
-        streamId,
-        path,
-        poolSize,
-        colorSpace,
-        codedWidth,
-        codedHeight,
-      ),
-    )
-}
-
-async function doOpenPreviewGpu(
-  backend: NativeDecode,
-  win: BrowserWindow,
-  streamId: string,
-  path: string,
-  poolSize: number,
-  colorSpace: ColorSpace,
-  codedWidth: number,
-  codedHeight: number,
-): Promise<{ width: number; height: number; poolSize: number; barrierMode: HwBarrierMode }> {
-  // Reserve FIRST — before the barrier latch and before any native allocation.
-  // Invalid/missing dimensions fail closed in the same transient capacity class:
-  // a stale probe must never let main under-count decode load.
-  const budgetLease = previewGpuBudget.reserve(streamId, {
-    width: codedWidth,
-    height: codedHeight,
-  }, poolSize)
-  if (!budgetLease) throw new Error(HW_BUDGET_EXCEEDED)
-  const bufferLifetime = retainGpuBufferLease(gpuBufferBudget, budgetLease.bufferLease)
-  let releaseDecoder = () => {}
-  const imported: SharedTextureImported[] = []
-  let nativeOpened = false
-  try {
-    releaseDecoder = reserveResources(0, 64 + codedWidth * codedHeight * 24 / 1048576)
-    // Latch the barrier mode in the preload. WHERE THIS SITS IS THE CONTRACT:
-    // after the budget gate (a refused open must not latch a stream that will
-    // never produce a frame) and before `previewGpuOpen` (which starts the decode
-    // thread — the first thing that can emit a frameReady poke).
-    //
-    // `evt:previewGpu:barrier` and `evt:previewGpu:frameReady` are the SAME
-    // ordered webContents channel, so sending here — before the producer exists —
-    // is what guarantees the preload has the mode before any frame of this stream
-    // arrives. Move this below the native open and the race silently returns: an
-    // early frame finds no latch, stamps the preload's unlatched fallback, later
-    // frames stamp the configured mode, and the session reports two applied modes.
-    // That reads as an INVALID bench cell, not a slow one.
-    //
-    // The open reply can't carry this job (though it still carries the value, as
-    // the configured label to check the observed one against): an invoke reply is
-    // a separate channel, and it loses to frameReady once 2+ sessions are opening.
-    win.webContents.send('evt:previewGpu:barrier', { streamId, mode: HW_BARRIER_MODE })
-    // A′ color sovereignty: the SOURCE color tags go to native, which converts
-    // NV12→RGBA with its own shader (constants pinned to the conformance
-    // goldens). Chromium never sees the YUV. `derived`/`invalid` ranges fall
-    // to limited — the same fail-closed default the WebCodecs lane uses.
-    const info = backend.previewGpuOpen(
-      streamId,
-      path,
-      poolSize,
-      colorSpace.matrix ?? 'bt709',
-      colorSpace.range === 'full',
-    )
-    nativeOpened = true
-    if (info.width !== codedWidth || info.height !== codedHeight) {
-      throw new Error(
-        `${HW_BUDGET_RESERVATION_MISMATCH}: reserved ${codedWidth}x${codedHeight}, native opened ${info.width}x${info.height}`,
-      )
-    }
-    for (let k = 0; k < info.slots.length; k++) {
-      // Slot-correlation announce FIRST (see fn doc): the preload pushes this onto
-      // its announce queue and pairs the NEXT receiver callback to slot k.
-      win.webContents.send('evt:previewGpu:slot', { streamId, slot: k })
-      const releaseReference = bufferLifetime.reference()
-      let imp: SharedTextureImported
+  owner: WebContents,
+  connect: ConnectCarrier,
+  request: PreviewGpuRequest,
+): Promise<PreviewGpuOpenReply> {
+  const { sessionId, path, poolSize, colorSpace, codedWidth, codedHeight } = request
+  let buffers!: ReturnType<typeof retainGpuBufferLease>
+  const imports: Promise<SharedTextureImported>[] = []
+  let sent: Promise<unknown> = Promise.resolve()
+  const session = admitDecodeSession({
+    sessionId,
+    connect,
+    owner,
+    // Invalid or missing dimensions fail closed in the same transient capacity
+    // class: a stale probe must never let main under-count decode load.
+    reserve: () => {
+      const lease = previewGpuBudget.reserve(sessionId, { width: codedWidth, height: codedHeight }, poolSize)
+      if (!lease) throw new Error(HW_BUDGET_EXCEEDED)
+      const lifetime = retainGpuBufferLease(gpuBufferBudget, lease.bufferLease)
+      buffers = lifetime
+      let releaseDecoder = () => {}
+      // A failed step of the release must not stop the next: a single leak
+      // here holds capacity for the rest of the app session.
+      const release = () => {
+        try { previewGpuBudget.release(lease, true) }
+        finally {
+          try { lifetime.retire() }
+          finally { releaseDecoder() }
+        }
+      }
+      try { releaseDecoder = reserveResources(0, 64 + codedWidth * codedHeight * 24 / 1048576) }
+      catch (error) { release(); throw error }
+      return release
+    },
+    open: onMsg => {
+      const frame = owner.mainFrame
+      // The renderer's conversion of the source goes to native, which converts
+      // NV12 to RGBA with its own shader (constants held to the renderer's by
+      // one golden); Chromium never sees the YUV.
+      const conversion = { matrix: colorSpace.matrix, fullRange: colorSpace.range === 'full', primaries: colorSpace.primaries }
+      const info = backend.previewGpuOpen(sessionId, path, poolSize, conversion, (err, msg) => {
+        // Only a message the addon could not hand over arrives as `err`. A
+        // lost slot comes back through native's lease reclaim, so the session
+        // stays whole.
+        if (err) { console.warn(`[main] previewGpu ${sessionId}: message lost`, err); return }
+        if (msg.kind === 'slot') recordFrameReadySent(sessionId, msg.slot, performance.now())
+        onMsg(msg)
+      })
+      // The host closes only a session whose open returned, so a failure from
+      // here on has to undo the native open itself.
       try {
-        imp = sharedTexture.importSharedTexture({
-          textureInfo: {
-            codedSize: { width: info.width, height: info.height },
-            visibleRect: { x: 0, y: 0, width: info.width, height: info.height },
-            // The slots are native-converted RGBA (A′): import as 'rgba' tagged
-            // sRGB passthrough, NOT the source's colorSpace — the color math
-            // already happened in the native shader, and this tag is what makes
-            // the preload's createImageBitmap a pure byte copy (byte-exact on
-            // both geometries). Chromium gets no YUV to convert.
-            pixelFormat: 'rgba',
-            colorSpace: SRGB_PASSTHROUGH,
-            timestamp: 0,
-            // info.slots[k].handle is the LE bytes of the slot texture's NT handle.
-            handle: { ntHandle: info.slots[k].handle },
-          },
-          allReferencesReleased: releaseReference,
-        })
+        if (info.width !== codedWidth || info.height !== codedHeight) {
+          throw new Error(
+            `${HW_BUDGET_RESERVATION_MISMATCH}: reserved ${codedWidth}x${codedHeight}, native opened ${info.width}x${info.height}`,
+          )
+        }
+        for (const [slot, { handle }] of info.slots.entries()) {
+          // Imported as RGBA tagged sRGB passthrough, never the source's colour:
+          // the colour math already happened in the native shader.
+          imports.push(importAndSend(frame, { handle, width: info.width, height: info.height, format: 'rgba' },
+            { key: sessionId, slot }, buffers.reference()))
+        }
       } catch (error) {
-        releaseReference()
+        try { backend.previewGpuClose(sessionId) }
+        catch (closeErr) { console.warn(`[main] previewGpu rollback close failed for ${sessionId}`, closeErr) }
+        for (const imported of imports) void imported.then(releaseImport, () => {})
         throw error
       }
-      // Track the import the instant it exists (importSharedTexture holds a GPU
-      // reference from the moment it returns, per Electron docs) — BEFORE the
-      // fallible send below, so the catch's release loop covers this slot too
-      // if sendSharedTexture throws.
-      imported.push(imp)
-      // sendSharedTexture has its own internal timeout (~1000ms) and can reject.
-      await sharedTexture.sendSharedTexture({ frame: win.webContents.mainFrame, importedSharedTexture: imp })
-    }
-    sessions.set(streamId, {
-      imported,
-      width: info.width,
-      height: info.height,
-      budgetLease,
-      bufferLifetime,
-      releaseDecoder,
-      adapter: info.adapter ?? null,
-    })
-    return {
-      width: info.width,
-      height: info.height,
-      poolSize: info.slots.length,
-      barrierMode: HW_BARRIER_MODE,
-    }
-  } catch (err) {
-    // Partial-open failure: slots 0..k-1 are already imported, but we haven't
-    // reached `sessions.set` yet, so a later close() would find no session and
-    // leak both those imports and the native session `previewGpuOpen` already
-    // created. Release what succeeded and drop the orphaned native session
-    // ourselves, then rethrow so the ipc caller sees the open failure.
-    if (nativeOpened) {
-      try {
-        backend.previewGpuClose(streamId)
-      } catch (closeErr) {
-        console.warn(`[main] previewGpu rollback close failed for ${streamId}`, closeErr)
+      sent = Promise.all(imports)
+      sessions.set(sessionId, { width: info.width, height: info.height, slots: info.slots.length, adapter: info.adapter ?? null })
+      return info
+    },
+    parse: gpuCommand,
+    command: cmd => {
+      if (cmd.type === 'request') {
+        // `targetUs` is source microseconds; the addon takes it as f64 (napi
+        // has no ergonomic i64 parameter) and casts it down.
+        backend.previewGpuRequestFrameAt(sessionId, cmd.targetUs, cmd.requestId)
+        return
       }
-    }
-    try {
-      releaseImports(imported, streamId, 'rollback')
-    } finally {
-      // A texture release may itself fail. Admission must still roll back or a
-      // single partial open can permanently leak capacity.
-      previewGpuBudget.release(budgetLease, true)
-      bufferLifetime.retire()
-      releaseDecoder()
-    }
-    throw err
+      recordConsumeAck(sessionId, cmd.slot, performance.now())
+      backend.previewGpuRelease(sessionId, cmd.slot, cmd.gen)
+    },
+    // Native first: its close stops the decode thread, so no slot is written
+    // after main's imports go. The admission lease is released after this.
+    close: () => {
+      clearMainPendingFor(sessionId)
+      sessions.delete(sessionId)
+      try { backend.previewGpuClose(sessionId) }
+      finally {
+        // A failed send released its own import; one still sending is
+        // released once it settles.
+        for (const imported of imports) void imported.then(releaseImport, () => {})
+      }
+    },
+  })
+  try { await sent }
+  catch (error) {
+    session.close()
+    throw error
   }
+  return { width: session.info.width, height: session.info.height, poolSize: session.info.slots.length }
 }
 
-/// Move the session's decode anchor. targetUs is source microseconds; the addon
-/// takes it as f64 (napi has no ergonomic i64 param) and casts down internally.
-export function requestFrameAtPreviewGpu(backend: NativeDecode, streamId: string, targetUs: number): void {
-  backend.previewGpuRequestFrameAt(streamId, targetUs)
+/// Best-effort GPU-reference teardown: one broken Electron import must not
+/// prevent the others from releasing.
+function releaseImport(imported: SharedTextureImported): void {
+  try { imported.release() }
+  catch (error) { console.warn('[main] previewGpu import release failed', error) }
 }
 
-/// Release a slot back to the native pool. Called by the preload's per-frame
-/// loop AFTER createImageBitmap resolves (the ack-after-read contract) — never
-/// before, or the native side could overwrite the slot mid-read. `gen` echoes
-/// the frameReady's fill generation (fencing token); native drops a mismatch.
-export function consumeAckPreviewGpu(backend: NativeDecode, streamId: string, slot: number, gen: number): void {
-  backend.previewGpuConsumeAck(streamId, slot, gen)
+function gpuCommand(data: Record<string, unknown>): PreviewGpuCommand | null {
+  if (data.type === 'request' && Number.isFinite(data.targetUs) && isU32(data.requestId))
+    return { type: 'request', targetUs: data.targetUs as number, requestId: data.requestId as number }
+  if (data.type === 'release' && isU32(data.slot) && isU32(data.gen))
+    return { type: 'release', slot: data.slot as number, gen: data.gen as number }
+  return null
 }
+
+const isU32 = (n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 0xffff_ffff
 
 /// Drain a session's per-frame timing samples. Delegates straight to the addon;
 /// the registry drains its accumulator and returns the ms summaries.
-export function takeTimingsPreviewGpu(backend: NativeDecode, streamId: string): PreviewGpuTimingReport {
-  return backend.previewGpuTakeTimings(streamId)
-}
-
-/// Tear down a session. Close the native side FIRST (it signals + joins the
-/// decode thread, so no frame can be mid-read afterward), THEN drop our
-/// persistent imports and forget the session.
-///
-/// Idempotent no-op when there is no live session: the open-catch above already
-/// calls backend.previewGpuClose on a partial-open failure (without ever calling
-/// sessions.set), so an ordinary dispose()->close() that follows would otherwise
-/// call the native close a SECOND time on an unknown/already-closed stream —
-/// which the native registry may reject. Gate on sessions.has() so a caller can
-/// always call close() exactly once per open() attempt, succeeded or not.
-export function closePreviewGpu(backend: NativeDecode, streamId: string): void {
-  // Drop any un-acked send stamps for this stream so a frame in flight at
-  // teardown can't leak a pending-map entry (decode-bench signal attribution).
-  clearMainPendingFor(streamId)
-  const session = sessions.get(streamId)
-  if (!session) return
-  // Remove first so duplicate/re-entrant close is a no-op. The lease itself is
-  // identity-checked too, so no stale close can release a newer same-id open.
-  sessions.delete(streamId)
-  try {
-    backend.previewGpuClose(streamId)
-  } finally {
-    try {
-      releaseImports(session.imported, streamId, 'close')
-    } finally {
-      previewGpuBudget.release(session.budgetLease, true)
-      session.bufferLifetime.retire()
-      session.releaseDecoder()
-    }
-  }
+export function takeTimingsPreviewGpu(backend: NativeDecode, sessionId: string): PreviewGpuTimingReport {
+  return backend.previewGpuTakeTimings(sessionId)
 }

@@ -70,7 +70,12 @@ a `CustomSource` over `weftcut-media://` HTTP Range requests (see
   on the next request. `decoderFallback.ts` handles hardware failures: a
   zero-output first-frame error reconfigures the decoder with
   `prefer-software`, and `Codec reclaimed due to inactivity` closes the
-  decoder and rebuilds it lazily.
+  decoder and rebuilds it lazily. Any other error closes the decoder too; the
+  next request rebuilds it from a key packet. The rebuilt decoder must output
+  past the point the failed one reached since it was built or a seek last
+  reset it, or the handle stops asking: a packet that fails every time is not
+  rebuilt at decode rate, and an error after a backward seek is judged by the
+  progress made since that seek, not by how far the clip was ever played.
 - **Demand plan.** Before any acquire or prewarm, the Compositor publishes one
   priority epoch (`previewDecodePriority.ts`). It covers every active video
   clip and every clip at the nearest boundary within 1 s
@@ -167,31 +172,94 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   d3d11va decodes forward, then hangs on a backward seek). It narrows the
   formats that get probed and never overrides a negative probe.
 - **`GpuTransport` (d3d11va).** A pooled shared D3D11 texture reaches the
-  compositor with no pixel bytes crossing IPC. The preload builds an
-  `ImageBitmap` from the slot and forwards it over a MessagePort.
-- **A slot is recycled only after the GPU read completes. Delivery does not
-  wait.** ffmpeg overwrites an acked slot on its own D3D11 device, and Chromium
-  cannot track that cross-device dependency. If the ack comes too early, a
-  later frame's pixels arrive tagged with an earlier PTS. So the bitmap is
-  delivered immediately. The renderer copies one pixel on Pixi's WebGPU queue,
-  awaits `onSubmittedWorkDone`, then acks (`slotFenceQueue.ts`; default
-  `HwBarrierMode` `rendererFence`). A WebGL2 `fenceSync` was rejected: it needs
-  a busy flush-and-poll loop, which cost ~2 s per 20 s on one 1080p track and
-  failed at 4K. The ack does not depend on painting, and the renderer never
-  acks on elapsed time. Native reclaims a slot left un-acked for 3 s
-  (`LEASE_TIMEOUT`, `preview_gpu/session.rs`) with a generation bump: a wedged
-  consumer costs one possibly-torn frame instead of a stalled session, and its
-  late ack fails the generation check (a routine non-zero `lease_timeouts` counter means the
-  consumer is stalling). `preview-gpu-order.spec.ts` checks the ordering with
-  per-frame barcodes, on one session and on three concurrent sessions
-  (Windows), and on the copy-back lanes with one session.
+  compositor with no pixel bytes crossing IPC. Each `preview_gpu` session is a
+  decode session under the same host as the byte lanes
+  ([ADR 0175](adr/0175-frames-cross-processes-on-two-carriers.md)): `previewGpu:open`
+  reserves the GPU admission (sessions, coded pixel area, shared-buffer bytes)
+  and the decoder's memory, opens the session, and hands the pool's textures
+  to the requesting document once, each sent with its tag `{key: session id,
+  slot}` (`main/frameCarrier/sharedTextureImport.ts`). The preload's
+  `SlotReader` keeps them by that tag. The open resolves once every texture
+  has arrived. A `slot{slot, gen}` message then comes down
+  `decodeSession:msg`; the preload reads that slot into an `ImageBitmap`
+  (`getVideoFrame` → `createImageBitmap`) and posts it on the session's port,
+  keeping the session's order: an `end` or `error` never overtakes a slot still
+  being read. `GpuTransport` posts `request{targetUs, requestId}` and
+  `release{slot, gen}` up the port. Every request carries a new id, and an
+  `end` names the newest request the session had served when it sent it:
+  `GpuTransport` reports only an end naming its last request, since an older
+  one may be in flight while the playhead jumps back from the tail, and
+  latching it would stop the requests at the new position. A session still at
+  its end repeats `end` to each newer request. Slot textures are imported as RGBA tagged sRGB passthrough: the native
+  shader already converted to working-space RGB, so `createImageBitmap` is a
+  byte copy. Motif's GPU frames use the same import and the same reader
+  ([`motifs.md`](motifs.md#reading-stored-frames)).
+- **A slot is released only after the GPU read completes. Delivery does not
+  wait.** ffmpeg overwrites a released slot on its own D3D11 device, and
+  Chromium cannot track that cross-device dependency. If the release comes too
+  early, a later frame's pixels arrive tagged with an earlier PTS. So the
+  bitmap is delivered immediately, and the page's slot fence decides the
+  release: it copies one pixel on Pixi's WebGPU queue, awaits
+  `onSubmittedWorkDone`, then posts `release` (`slotFenceQueue.ts`). That is
+  the lane's one read-completion strategy; with no live WebGPU device (none
+  yet, a WebGL preview, or one lost and not yet replaced by Pixi's restore) it
+  falls back to the one-pixel proof (`shared/readCompletion.ts`), and a frame
+  whose read nothing could prove is not shown and fails the transport
+  ([measurement](notes/slot-read-completion-2026-11-18.md)). A lost device runs
+  no copy, so a fence still pending when its device is lost proves nothing,
+  whether Chromium then rejects it or reports the work done: its slot is not
+  released and the transport fails, and `FfmpegSource` falls back to software.
+  The release does not depend on painting, and the page never releases on
+  elapsed time. Each slot goes back at most once: after its fence or proof,
+  at once when its read failed, and never when nothing proved its read or
+  after dispose: the session's close reclaims those. Native never reuses a
+  slot its consumer has not released: a slot left unreleased for 3 s
+  (`LEASE_TIMEOUT`, `preview_gpu/session.rs`) ends the session with a
+  terminal error, so a wedged consumer costs the lane (`FfmpegSource` falls
+  back), never a frame shown under another frame's PTS. Any non-zero
+  `lease_timeouts` counter means the consumer stopped releasing.
+  `preview-gpu-order.spec.ts` checks the ordering with per-frame barcodes, on
+  one session and on three concurrent sessions (Windows), and on the
+  copy-back lanes with one session.
+- **Every GPU session error is a transport failure.** Native sends `error`
+  with `terminal` set only when the session thread stopped (a panic, or an
+  expired lease); a failed
+  seek, decode, keyed-mutex acquire or conversion is non-terminal and the
+  session survives. `GpuTransport` reports both through `onError`, as it does
+  a slot the preload failed to read, and `FfmpegSource`'s failure table falls
+  back to software (ADR 0162).
+- **One close for every lane.** A transport's `dispose` closes its session by
+  id with `decodeSession:close`, an invoke on the route opens take, never up
+  the port, so it reaches main before any open started after it. Main ends the
+  session (native first, then its imports, then its reservation) and answers.
+  `GpuTransport.dispose` resolves on that answer, which is what a GPU→software
+  fallback waits for; the byte transports do not wait. A session also ends
+  with its document: a reload, crash or destroy closes every session it
+  opened.
 - **`SwTransport`.** libavcodec decodes in the main process, and NV12 (or
   I420P10) bytes go over classic IPC
   ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
-  The compositor's own ingest pass converts them to RGB using the source's
-  color tags, never through `createImageBitmap`, which always applies BT.601
+  Each `preview_sw` session is a decode session on the same carrier as export
+  decode ([`export-ipc-transport.md`](export-ipc-transport.md#decode-in)):
+  `previewDecode:open` reserves the decoder's memory and opens it, main sends
+  each of its messages (`bytes`, `end`, `error`) on `decodeSession:msg`, and
+  the preload posts it on the session's port with the frame buffer
+  transferred. `SwTransport` on the page main thread holds the other end and
+  posts `request` and `release` up it. Frames carry no colour: the
+  compositor's own ingest pass converts them to RGB using the colour the
+  session was opened with: the source's resolved colour (`resolveSourceColor`,
+  the one rule every lane shares), or for an RGB-coded source the YCbCr the
+  pack converted it into (`nativePlaneColor`; see
+  [`conformance.md`](conformance.md#decode-color-tags)), never through
+  `createImageBitmap`, which always applies BT.601
   ([ADR 0032](adr/0032-cpu-plane-yuv-converts-in-owned-shaders.md)). The gate
   is `preview-sw-color.spec.ts`.
+- **A software session reports its own death.** A native panic ends the
+  session with a terminal `error`, which reaches `SwTransport.onError` and the
+  failure table like a GPU error. A failed seek or decode is a non-terminal
+  `error`: native logs it and the next request seeks again; the renderer does
+  not act on it. The `end` of the material is not reported, because the
+  native cursor already absorbs requests past it.
 - **Software requests continue; they do not re-seek.** The native session
   keeps a cursor between requests. A target moving forward continues the same
   pass. Only a backward move, or a jump more than 1 s past the frontier,
@@ -199,16 +267,18 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   every request cost 137× decode amplification on a 240-frame GOP. The
   renderer requests a refill only when forward coverage drops below 150 ms
   (`REFILL_LOOKAHEAD_US`), and not while `FrameRing.isLookaheadFull()`.
-- **Software delivery uses credits.** Production opens allow at most 8
-  outstanding frames and 32 MiB (`preview_sw/flow.rs`); one oversized frame may
-  travel alone. Each frame stays charged until the renderer returns its unique
-  receipt, sent whether the frame was accepted or dropped. Duplicate or
-  foreign receipts are ignored. A seek changes the request identity but does
-  not cancel outstanding receipts. Forward refills keep the identity. A cache
-  flush changes it. Native code and the renderer both reject superseded work.
-  Decode runs in 8 ms cooperative slices and resumes the same cursor; it
-  cannot interrupt a blocking FFmpeg call. Renderer reload closes the producer.
-  Callers that use native code directly keep the uncredited contract.
+- **Software delivery uses leases.** A session has at most 8 frames and
+  32 MiB in flight (`WINDOW_FRAMES`, `WINDOW_BYTES` in
+  `preview_sw/session.rs`); one oversized frame may travel alone. Each frame
+  holds its lease until `SwTransport` releases it by id, exactly once,
+  whether the frame was shown or dropped. A duplicate or unknown lease is
+  ignored. A full window never parks the session: it keeps the frame it has
+  and serves the next request, and a released lease wakes it. A seek changes
+  the request id but does not forgive leases in flight. Forward refills keep
+  the id. A cache flush changes it. Every frame names the request it answers;
+  native code and the renderer both reject superseded work. Decode runs in
+  8 ms cooperative slices and resumes the same cursor; it cannot interrupt a
+  blocking FFmpeg call. Renderer reload closes the session.
 - **Hardware→software fallback happens inside the source.** A hardware error
   or device loss, at open or later, closes the failed transport and then opens
   `SwTransport` into the same ring with a fresh `streamId`, keeping the last
@@ -239,9 +309,9 @@ supported scale nearest 960×540, at half cadence (`budgetSpillProfile.ts`).
 
 **Reclaim and retry.** If a priority clip is refused, the pool closes
 non-priority hardware handles retained from earlier timeline regions. Each
-`previewGpu:close` is awaited through the native close and the lease release
-before `previewGpu:open` retries; a fire-and-forget close would race the
-lease. If the priority set alone exceeds capacity, the refused clip spills
+session's `decodeSession:close` is awaited through the native close and the
+lease release before `previewGpu:open` retries; a fire-and-forget close would
+race the lease. If the priority set alone exceeds capacity, the refused clip spills
 with no retry loop. When the epoch moves past a boundary, a still-priority
 spilled clip retries hardware inside its existing `FfmpegSource`, keeping its
 ring and sprite. Output from the retired transport is ignored. A repeated PTS

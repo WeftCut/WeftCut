@@ -18,6 +18,9 @@ import { FfmpegSource, type FfmpegSourceInit } from "./FfmpegSource";
 import { HW_BUDGET_EXCEEDED } from "../../../shared/ipc";
 import type { DecodeTransport } from "./transports/DecodeTransport";
 import { resetFfmpegLaneTrail } from './ffmpegLaneTrail';
+import { resolveSourceColor } from "./ffprobeColorSpace";
+
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 function fakeTransport(opts?: { openRejects?: string; disposeWaits?: Promise<void> }) {
   return {
@@ -37,6 +40,7 @@ function ffmpegInit(layerId: string): FfmpegSourceInit {
     layerId,
     mediaId: layerId,
     sourcePath: `C:/${layerId}.mp4`,
+    sourceColor: HD,
     codec: "h264",
     pixFmt: "yuv420p",
     width: 3840,
@@ -71,6 +75,7 @@ describe("SourceDecoderPool.acquire engine routing", () => {
       layerId: "L",
       mediaId: "m",
       proxyAssetUrl: "",
+      sourceColor: HD,
       engine: "ffmpeg",
       sourcePath: "C:/x.mp4",
       codec: "h264",
@@ -89,6 +94,7 @@ describe("SourceDecoderPool.acquire engine routing", () => {
       layerId: "L2",
       mediaId: "m2",
       proxyAssetUrl: "weftcut-media://p.mp4",
+      sourceColor: HD,
       engine: "webcodecs",
     } as never);
 
@@ -117,6 +123,7 @@ describe("SourceDecoderPool media refcounts across engines", () => {
       layerId: "L-web",
       mediaId: "shared",
       proxyAssetUrl: "weftcut-media://p.mp4",
+      sourceColor: HD,
       engine: "webcodecs",
     } as never) as { media: { disposed: boolean } };
     pool.acquire({ ...ffmpegInit("L-ff"), mediaId: "shared", engine: "ffmpeg", proxyAssetUrl: "" });

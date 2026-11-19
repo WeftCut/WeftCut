@@ -2,9 +2,8 @@
 //
 // Diagnostics only. Nothing may branch on this: the authority is main's gate
 // inside `previewGpu:open`, and a sample is already stale by the time it
-// arrives — sessions close asynchronously (the renderer's teardown fires
-// `previewGpu:close` without awaiting it), so `used < max` here is not a
-// promise that the next open succeeds.
+// arrives — other sessions open and close meanwhile, so `used < max` here is
+// not a promise that the next open succeeds.
 //
 // Deliberately NOT routed through `GpuTransport`, which owns a single session:
 // the budget is process-wide and stays readable with no session open at all.

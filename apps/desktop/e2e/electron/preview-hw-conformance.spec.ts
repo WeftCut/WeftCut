@@ -13,7 +13,7 @@ import { hardwareGate, hardwareEnvironmentGate } from './helpers/hardwareGate'
 // correct (SSIM vs an ffmpeg reference of the same source frame). Two
 // transport shapes share this one spec:
 //   - nvdec/vaapi (Linux) and videotoolbox (macOS, issue #10) copy-back:
-//     NV12 copies back to system memory and rides the SAME previewSw
+//     NV12 copies back to system memory and rides the SAME byte
 //     transport as software (ADR 0029), so everything downstream
 //     (ring → Nv12Ingest → sprite) is shared.
 //   - d3d11va (Windows shared-texture): frames stay on the GPU; native

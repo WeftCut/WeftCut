@@ -1,10 +1,10 @@
 // Integration test for the native export-decode session (ADR 0033). Drives the
-// @weftcut/native-decode napi seam DIRECTLY from Node — open → decodeRange →
-// returnCredit → close — with zero renderer/Electron involvement, and asserts
+// @weftcut/native-decode napi seam DIRECTLY from Node — open → range →
+// release → close — with zero renderer/Electron involvement, and asserts
 // exactly-once, GOP-exact, presentation-ordered coverage against ffprobe-known
-// fixtures, plus the credit-window flow control, internal EOS flush, and the
-// in-band ordering of control signals (frames and rangeEnd/ended/error share one
-// per-session channel).
+// fixtures, plus the lease-window flow control, internal EOS flush, and the
+// in-band ordering of control signals (frames and mark/end/error share one
+// per-session callback).
 //
 // Component-gated: the addon builds on Windows + Linux + macOS (each needs its
 // ffmpeg-lgpl libs + a `napi:build:decode`; macOS builds the libs from source). When
@@ -15,7 +15,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import type { ExportSwFrame, ExportSwMsg, NativeDecode } from '@weftcut/native-decode'
+import type { DecodeMsg, NativeDecode } from '@weftcut/native-decode'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const APP = path.resolve(HERE, '..', '..') // apps/desktop
@@ -47,31 +47,27 @@ function tryLoadAddon(): typeof import('@weftcut/native-decode') | null {
 
 const addon = tryLoadAddon()
 
-interface EventEnvelope {
-  event: string
-  payload: { sessionId?: string; message?: string }
-}
-
-/** One test session: the shared backend, the shared-envelope capture, and each
- * session's ordered in-band message stream. */
+/** One test session: the shared backend and each session's ordered in-band
+ * message stream. */
 interface Ctx {
   backend: NativeDecode
-  events: EventEnvelope[]
-  msgsById: Map<string, ExportSwMsg[]>
+  msgsById: Map<string, DecodeMsg[]>
 }
 
-function countKind(msgs: ExportSwMsg[], kind: string): number {
+type Frame = Extract<DecodeMsg, { kind: 'bytes' }>
+
+function countKind(msgs: DecodeMsg[], kind: DecodeMsg['kind']): number {
   return msgs.filter((m) => m.kind === kind).length
 }
 
-/** Count the range/stream-end markers seen so far on a session's channel. */
-function markersFor(msgs: ExportSwMsg[]): number {
-  return countKind(msgs, 'rangeEnd') + countKind(msgs, 'ended')
+/** Count the range/stream-end markers seen so far on a session's callback. */
+function markersFor(msgs: DecodeMsg[]): number {
+  return countKind(msgs, 'mark') + countKind(msgs, 'end')
 }
 
-/** The session's decoded frames, in delivery order (kind==='frame' payloads). */
-function framesOf(msgs: ExportSwMsg[]): ExportSwFrame[] {
-  return msgs.filter((m) => m.kind === 'frame').map((m) => m.frame!)
+/** The session's decoded frames, in delivery order. */
+function framesOf(msgs: DecodeMsg[]): Frame[] {
+  return msgs.filter((m): m is Frame => m.kind === 'bytes')
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -81,28 +77,38 @@ const DELIVERY_MS = 30_000
 vi.setConfig({ testTimeout: 2 * DELIVERY_MS })
 
 /** Wait for `count` frames, then give a producer that failed to park on its
- * credit window the time to show one more. */
-async function parkedAt(msgs: ExportSwMsg[], count: number): Promise<void> {
+ * lease window the time to show one more. */
+async function parkedAt(msgs: DecodeMsg[], count: number): Promise<void> {
   await vi.waitFor(() => expect(framesOf(msgs).length).toBeGreaterThanOrEqual(count), { timeout: DELIVERY_MS })
   await sleep(100)
   expect(framesOf(msgs).length).toBe(count)
 }
 
+/** Hand back the lease of every frame received so far that still holds one. */
+function releaseAll(ctx: Ctx, id: string, released: Set<number>): void {
+  for (const f of framesOf(ctx.msgsById.get(id)!)) {
+    if (released.has(f.lease)) continue
+    released.add(f.lease)
+    ctx.backend.exportDecodeRelease(id, f.lease)
+  }
+}
+
 /**
- * Drive a decodeRange and return credits generously (so the producer never
- * parks) until its rangeEnd lands; a range that never ends fails here. Mirrors the
- * Rust-side `run_range` test helper. Polls `rangeEnd` specifically: every
- * completed range emits exactly one, AFTER any `ended` — so on the FIFO
- * per-session channel, observing it guarantees the whole tail has crossed.
+ * Drive a range and release every frame's lease as it arrives (so the producer
+ * never parks) until its mark lands; a range that never ends fails here. Mirrors
+ * the Rust-side `run_range` test helper. Polls `mark` specifically: every
+ * completed range emits exactly one, AFTER any `end` — so on the FIFO
+ * per-session callback, observing it guarantees the whole tail has crossed.
  */
 async function drainRange(ctx: Ctx, id: string, a: number, b: number): Promise<void> {
   const msgs = ctx.msgsById.get(id)!
-  const before = countKind(msgs, 'rangeEnd')
-  ctx.backend.exportSwDecodeRange(id, a, b)
+  const before = countKind(msgs, 'mark')
+  const released = new Set<number>()
+  ctx.backend.exportDecodeRange(id, a, b)
   for (const giveUp = Date.now() + DELIVERY_MS; Date.now() < giveUp;) {
-    ctx.backend.exportSwReturnCredit(id, 64)
+    releaseAll(ctx, id, released)
     await sleep(5)
-    if (countKind(msgs, 'rangeEnd') > before) return
+    if (countKind(msgs, 'mark') > before) return
   }
   throw new Error(`range [${a},${b}] on '${id}' never completed`)
 }
@@ -112,18 +118,15 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
   const openSessions = new Set<string>()
 
   beforeAll(() => {
-    const events: EventEnvelope[] = []
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const backend = new addon!.NativeDecode((err, json) => {
-      if (!err) events.push(JSON.parse(json) as EventEnvelope)
-    })
-    ctx = { backend, events, msgsById: new Map() }
+    const backend = new addon!.NativeDecode()
+    ctx = { backend, msgsById: new Map() }
   })
 
   afterAll(() => {
     for (const id of openSessions) {
       try {
-        ctx.backend.exportSwClose(id)
+        ctx.backend.exportDecodeClose(id)
       } catch {
         /* already closed */
       }
@@ -131,9 +134,9 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
   })
 
   /** Open a session and collect its in-band messages; auto-tracked for teardown. */
-  function open(id: string, file: string, format = 'NV12', window = 6) {
-    const msgs: ExportSwMsg[] = []
-    const info = ctx.backend.exportSwOpen(id, file, format, window, (err, m) => {
+  function open(id: string, file: string, format: 'NV12' | 'I420P10' = 'NV12', window = 6) {
+    const msgs: DecodeMsg[] = []
+    const info = ctx.backend.exportDecodeOpen(id, file, format, window, { matrix: 'bt709', fullRange: false }, (err, m) => {
       if (!err) msgs.push(m)
     })
     ctx.msgsById.set(id, msgs)
@@ -141,16 +144,16 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     return { info, msgs }
   }
 
-  it('rangeEnd reports the exact completed source-time range', async () => {
+  it('mark reports the exact completed source-time range', async () => {
     const { msgs } = open('range-bounds', PRORES)
     await drainRange(ctx, 'range-bounds', 125_000, 500_000)
-    const completed = msgs.find((m) => m.kind === 'rangeEnd')
+    const completed = msgs.find((m) => m.kind === 'mark')
     expect(completed).toMatchObject({ aUs: 125_000, bUs: 500_000 })
     close('range-bounds')
   })
 
   function close(id: string) {
-    ctx.backend.exportSwClose(id)
+    ctx.backend.exportDecodeClose(id)
     openSessions.delete(id)
   }
 
@@ -164,7 +167,7 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
   })
 
   it('open fails loudly for a format the session cannot emit', () => {
-    expect(() => open('bad', PRORES, 'RGBA64')).toThrow(/RGBA64/)
+    expect(() => open('bad', PRORES, 'RGBA64' as 'NV12')).toThrow(/RGBA64/)
   })
 
   it('I420P10 opens successfully (the 10-bit lane)', () => {
@@ -175,7 +178,7 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     close('open10')
   })
 
-  it('decodeRange delivers exactly the intersecting intra frames, once, in order', async () => {
+  it('a range delivers exactly the intersecting intra frames, once, in order', async () => {
     const { msgs } = open('intra', PRORES)
     // ProRes: 8 intra frames at 0,125k,…,875k (dur 125k). [200k,500k] intersects
     // 125k (ends 250k>a), 250k, 375k, 500k (starts at b, inclusive).
@@ -184,17 +187,14 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     close('intra')
   })
 
-  it('NV12 frames carry dimensions, format, byte length, and color tags', async () => {
+  it('NV12 frames carry dimensions, format and byte length', async () => {
     const { msgs } = open('bytes', PRORES)
     await drainRange(ctx, 'bytes', 0, 125_000)
-    const first = msgs[0]!
-    expect(first.kind).toBe('frame')
-    expect(first.sessionId).toBe('bytes')
-    const f = first.frame!
+    const f = msgs[0]!
+    if (f.kind !== 'bytes') throw new Error(`first message is ${f.kind}, not a frame`)
     expect(f.format).toBe('NV12')
     expect(f.width).toBe(320)
     expect(f.height).toBe(240)
-    expect(f.colorRange).toBe('tv')
     // Tightly-packed NV12: Y (w*h) + interleaved UV (w*h/2) = w*h*3/2.
     expect(f.data.length).toBe((320 * 240 * 3) / 2)
     close('bytes')
@@ -203,9 +203,8 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
   it('I420P10 frames carry the u16LE plane layout with real 10-bit sample range', async () => {
     const { msgs } = open('bytes10', PRORES, 'I420P10')
     await drainRange(ctx, 'bytes10', 0, 125_000)
-    const first = msgs[0]!
-    expect(first.kind).toBe('frame')
-    const f = first.frame!
+    const f = msgs[0]!
+    if (f.kind !== 'bytes') throw new Error(`first message is ${f.kind}, not a frame`)
     expect(f.format).toBe('I420P10')
     expect(f.width).toBe(320)
     expect(f.height).toBe(240)
@@ -279,7 +278,7 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
   it('full MPEG-2 decode yields all 60 ffprobe frames in strict presentation order, then EOS', async () => {
     const { msgs } = open('full', MPEG2)
     // b far past the ~1.97s stream → drains the final GOP internally (no external
-    // next-key) and fires exactly one in-band `ended`.
+    // next-key) and fires exactly one in-band `end`.
     await drainRange(ctx, 'full', 0, 10_000_000)
     const pts = framesOf(msgs).map((f) => f.ptsUs)
     expect(pts.length).toBe(60) // ffprobe: nb_frames path = 60
@@ -287,14 +286,14 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     expect(pts[0]).toBeGreaterThanOrEqual(0)
     expect(pts[0]).toBeLessThan(40_000)
     expect(pts[pts.length - 1]).toBeGreaterThan(1_900_000)
-    // In-band ordering: `ended` shares the frames' channel, so it can NEVER
+    // In-band ordering: `end` shares the frames' callback, so it can NEVER
     // overtake a tail frame — its index must sit after every frame message.
     const kinds = msgs.map((m) => m.kind)
-    expect(countKind(msgs, 'ended')).toBe(1)
-    const endedIdx = kinds.indexOf('ended')
-    expect(kinds.lastIndexOf('frame')).toBeLessThan(endedIdx)
-    // EOS emit order is Ended then RangeEnd; the single queue preserves it.
-    expect(kinds[endedIdx + 1]).toBe('rangeEnd')
+    expect(countKind(msgs, 'end')).toBe(1)
+    const endIdx = kinds.indexOf('end')
+    expect(kinds.lastIndexOf('bytes')).toBeLessThan(endIdx)
+    // EOS emit order is End then Mark; the single queue preserves it.
+    expect(kinds[endIdx + 1]).toBe('mark')
     close('full')
   })
 
@@ -335,53 +334,51 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     close('gopback')
   })
 
-  it('the credit window halts in-flight frames and resumes on returned credits', async () => {
-    // window=3, request all 8 frames, return NO credits: at most 3 emit, then park.
-    const { msgs } = open('credit', PRORES, 'NV12', 3)
-    ctx.backend.exportSwDecodeRange('credit', 0, 875_000)
-    await parkedAt(msgs, 3)
-    expect(markersFor(msgs)).toBe(0) // range not done while parked
-    // Return 2 → exactly 2 more, then park again at 5.
-    ctx.backend.exportSwReturnCredit('credit', 2)
-    await parkedAt(msgs, 5)
-    // Drain the remainder.
-    ctx.backend.exportSwReturnCredit('credit', 64)
-    await vi.waitFor(() => expect(countKind(msgs, 'rangeEnd')).toBe(1), { timeout: DELIVERY_MS })
-    expect(framesOf(msgs).length).toBe(8)
-    // Range [0,875k] ends on the last frame, so it drains to EOS — exactly one
-    // rangeEnd (and one ended, asserted elsewhere) marks completion.
-    expect(countKind(msgs, 'rangeEnd')).toBe(1)
-    close('credit')
-  })
+  /** Hand back the leases of the frames at `indices` in delivery order. */
+  function release(id: string, msgs: DecodeMsg[], indices: number[]) {
+    const frames = framesOf(msgs)
+    for (const i of indices) ctx.backend.exportDecodeRelease(id, frames[i]!.lease)
+  }
 
-  it('the credit window bounds the 10-bit lane identically (no unbounded copy backlog)', async () => {
-    // Same shape as the NV12 window test: 10-bit frames are 2× the bytes, so a
-    // producer that ignored the window here would balloon memory twice as fast.
-    const { msgs } = open('credit10', PRORES, 'I420P10', 3)
-    ctx.backend.exportSwDecodeRange('credit10', 0, 875_000)
+  for (const format of ['NV12', 'I420P10'] as const) {
+    // 10-bit frames are 2x the bytes: a producer that ignored the window there
+    // would balloon memory twice as fast.
+    it(`the lease window halts in-flight ${format} frames and resumes on released leases`, async () => {
+      // window=3, request all 8 frames, release nothing: at most 3 emit, then park.
+      const id = `window-${format}`
+      const { msgs } = open(id, PRORES, format, 3)
+      ctx.backend.exportDecodeRange(id, 0, 875_000)
+      await parkedAt(msgs, 3)
+      expect(markersFor(msgs)).toBe(0) // range not done while parked
+      // Release 2 → exactly 2 more, then park again at 5.
+      release(id, msgs, [0, 1])
+      await parkedAt(msgs, 5)
+      // Drain the remainder.
+      const released = new Set(framesOf(msgs).slice(0, 2).map((f) => f.lease))
+      await vi.waitFor(() => {
+        releaseAll(ctx, id, released)
+        expect(countKind(msgs, 'mark')).toBe(1)
+      }, { timeout: DELIVERY_MS })
+      expect(framesOf(msgs).length).toBe(8)
+      close(id)
+    })
+  }
+
+  it('a lease is the frame it was granted for: releasing it twice frees one frame only', async () => {
+    const { msgs } = open('lease-twice', PRORES, 'NV12', 2)
+    ctx.backend.exportDecodeRange('lease-twice', 0, 875_000)
+    await parkedAt(msgs, 2)
+    release('lease-twice', msgs, [0, 0])
     await parkedAt(msgs, 3)
-    expect(markersFor(msgs)).toBe(0) // range not done while parked
-    ctx.backend.exportSwReturnCredit('credit10', 2)
-    await parkedAt(msgs, 5)
-    ctx.backend.exportSwReturnCredit('credit10', 64)
-    await vi.waitFor(() => expect(countKind(msgs, 'rangeEnd')).toBe(1), { timeout: DELIVERY_MS })
-    expect(framesOf(msgs).length).toBe(8)
-    expect(countKind(msgs, 'rangeEnd')).toBe(1)
-    close('credit10')
+    close('lease-twice')
   })
 
   it('closing a session parked on an exhausted window tears down without deadlock', async () => {
     open('parked', PRORES, 'NV12', 1)
-    ctx.backend.exportSwDecodeRange('parked', 0, 875_000)
+    ctx.backend.exportDecodeRange('parked', 0, 875_000)
     await sleep(80) // producer emits 1, parks on the exhausted window
     // A clean return (no hang) is the assertion; close unblocks the producer.
     expect(() => close('parked')).not.toThrow()
   })
 
-  it('the shared event envelope carries no exportSw traffic', () => {
-    // Control signals ride in-band, so nothing exportSw-shaped may appear on the
-    // `{event, payload}` envelope. Runs last: `ctx.events` has captured
-    // every envelope emission across the whole suite by now.
-    expect(ctx.events.filter((e) => e.event.startsWith('exportSw:'))).toEqual([])
-  })
 })

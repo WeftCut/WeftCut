@@ -2741,6 +2741,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-normalization",
  "uuid",
+ "weftcut-d3d",
  "weftcut-eval",
  "weftcut-reaper",
  "windows 0.62.2",
@@ -2754,6 +2755,13 @@ dependencies = [
  "serde",
  "serde_json",
  "weftcut-eval",
+]
+
+[[package]]
+name = "weftcut-d3d"
+version = "0.0.0"
+dependencies = [
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -2776,6 +2784,7 @@ dependencies = [
  "napi-derive",
  "serde_json",
  "tracing",
+ "weftcut-d3d",
  "windows 0.62.2",
 ]
 

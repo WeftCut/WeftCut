@@ -384,11 +384,12 @@ table:
   (`hwExportDecodeAllowed`, passed as `allowHwExportDecode`): on Linux/NVIDIA
   a hardware `VideoFrame` reads back as zeros with no error. The 10-bit lane
   always pins software.
-- **`NativeExportSourceHandle`** (`worker/nativeExportSource.ts`) — a relay to
-  a credit-windowed native `export_sw` session that decodes the **original**
-  and streams NV12/I420P10 planes back in order, one credit returned per frame
-  leaving the ring. `nd:rangeEnd` closes a range without an out-of-range proof
-  frame; a backward range starts a new generation. Transport:
+- **`NativeExportSourceHandle`** (`worker/nativeExportSource.ts`) — drives a
+  lease-windowed native `export_sw` session over its own port; the session
+  decodes the **original** and streams NV12/I420P10 planes back in order, and
+  each frame's lease goes back when it leaves the ring. `mark` closes a range
+  without an out-of-range proof frame; a backward range starts a new
+  generation. Transport:
   [`export-ipc-transport.md`](export-ipc-transport.md); decision: ADR 0033.
 
 Pipelines are keyed by `exportHandleKey` = `mediaId` + phase
@@ -410,7 +411,11 @@ Nothing re-resolves mid-run; a native session error aborts the export (ADR
 0033). `auto`: WebCodecs-decodable sources stay in-worker, `native-sw` routes
 decode the original natively. `ffmpeg`: every source native. `webcodecs`:
 every source in-worker. Without the component, `ffmpeg` degrades to `auto`
-and nothing routes native. The dialog's "N from originals, M from lossy proxy"
+and nothing routes native. One exception overrides the setting, as a
+temporary policy until the app converts HDR itself: an HDR source (PQ or HLG
+transfer) whose route is not `native-sw` always decodes in-worker, so its
+export looks the same under every setting
+([conformance](conformance.md#hdr-sources)). The dialog's "N from originals, M from lossy proxy"
 line comes from the same table (`routingSourceCounts`), and native-routed
 media skip proxy readiness (`proxyWaitScope`).
 
@@ -463,8 +468,10 @@ GOP, pixel format/profile, `bt709`/`limited` tags). A missing encoder yields
 structured `EncodeUnavailable` attempts, never a guessed encoder name.
 
 **10-bit** (HEVC Main10 / AV1 10-bit, and ProRes) composites into an
-`rgba16float` target; DNxHR is 8-bit. 10-bit-capable sources (Hi10P, AV1
-10-bit; `tenBitExportCapable`) decode in software through a CPU-plane lane —
+`rgba16float` target; DNxHR is 8-bit. 10-bit-capable SDR sources (Hi10P, AV1
+10-bit; `takesTenBitLane`, which keeps HDR sources off as a temporary policy,
+[conformance](conformance.md#hdr-sources)) decode in software through a
+CPU-plane lane —
 AV1 hardware decode emits opaque frames that cannot `copyTo`. `TenBitIngest`
 uploads planes as `rg8unorm` and unpacks into the f16 target. Copies share the
 24-frame window and hold their reservation until their input frames close.

@@ -8,6 +8,7 @@
 import type { NativeNv12Frame } from "../nv12Frame";
 import type { TenBitFrame } from "../tenBitFrame";
 import type { HandoffTimingSummary } from "./handoffTimings";
+import type { SourceColor } from "../ffprobeColorSpace";
 
 /// What a transport can push into the preview `FrameRing`.
 export type TransportFrame = ImageBitmap | NativeNv12Frame | TenBitFrame;
@@ -15,9 +16,10 @@ export type TransportFrame = ImageBitmap | NativeNv12Frame | TenBitFrame;
 export interface DecodeTransportOpen {
   streamId: string;
   path: string;
-  /// Source ffprobe color tags; each transport derives its own wire shape
-  /// (GPU: PreviewGpuColorSpace, SW: VideoColorSpaceInit), defaulting bt709/limited.
-  sourceColor?: VideoColorSpaceInit;
+  /// The source's resolved colour (`resolveSourceColor`). Both transports
+  /// open their session with the colour its planes carry (`nativePlaneColor`);
+  /// the SW transport also stamps that colour on every frame.
+  sourceColor: SourceColor;
   /// Native GPU pool size (GPU transport only; SW ignores). Default 3.
   poolSize?: number;
   /// Renderer-probed coded dimensions. The GPU transport sends them to main's
@@ -30,9 +32,10 @@ export interface DecodeTransport {
   open(o: DecodeTransportOpen): Promise<void>;
   requestFrameAt(tUs: number): void;
   onFrame(cb: (frame: TransportFrame, ptsUs: number, durUs: number) => void): void;
-  /// Terminal transport failure (GPU decode error / device loss); SW reports
-  /// none. A failed `open` is reported by its rejection only. FfmpegSource
-  /// decides whether either is recoverable.
+  /// Terminal transport failure after open: a GPU decode error or device
+  /// loss, or a byte session that ended (a native panic). A failed `open` is
+  /// reported by its rejection only. FfmpegSource decides whether either is
+  /// recoverable.
   onError(cb: (reason: string) => void): void;
   onEof(cb: () => void): void;
   /// Begins teardown. GPU transports resolve only after main has closed the

@@ -28,10 +28,7 @@ pub fn gpu_hardware_info() -> napi::Result<GpuHardwareInfo> {
                 .unwrap_or(desc.Description.len());
             Ok(GpuHardwareInfo {
                 name: String::from_utf16_lossy(&desc.Description[..end]),
-                luid: format!(
-                    "{:08x}:{:08x}",
-                    desc.AdapterLuid.HighPart as u32, desc.AdapterLuid.LowPart
-                ),
+                luid: weftcut_d3d::luid_string(desc.AdapterLuid),
                 dedicated_memory_mib: desc.DedicatedVideoMemory as f64 / 1_048_576.0,
                 shared_memory_mib: desc.SharedSystemMemory as f64 / 1_048_576.0,
             })

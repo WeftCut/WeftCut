@@ -9,11 +9,10 @@ use crate::motif_limits::textures_fit;
 use crate::motif_runtime::ScratchHold;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
-use windows::core::{Interface, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use weftcut_d3d::{handle_to_bytes, SharedTexture};
+use windows::core::Interface;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
-use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
 
 /// Stage times of one upload, in milliseconds.
 #[napi(object)]
@@ -60,7 +59,7 @@ impl MotifGpuPool {
         }
         let (worker, handle) = DeviceWorker::open("motif-gpu", "Motif GPU pool", move || {
             let pool = unsafe { Pool::new(width, height, bgra, upload) }?;
-            let handle = (pool.slot.handle.0 as usize).to_le_bytes().to_vec();
+            let handle = handle_to_bytes(pool.slot.handle()).to_vec();
             Ok((pool, handle))
         })?;
         Ok(Self { worker, handle })
@@ -99,19 +98,6 @@ impl MotifGpuPool {
     }
 }
 
-struct Slot {
-    texture: ID3D11Texture2D,
-    mutex: IDXGIKeyedMutex,
-    handle: HANDLE,
-}
-impl Drop for Slot {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.handle);
-        }
-    }
-}
-
 struct Pool {
     device: ID3D11Device1,
     context: ID3D11DeviceContext,
@@ -122,7 +108,7 @@ struct Pool {
     /// slot's mutex covers one GPU copy instead of a CPU upload. Only an
     /// upload pool has one.
     staging: Option<ID3D11Texture2D>,
-    slot: Slot,
+    slot: SharedTexture,
     /// Only an upload pool decodes stored frames into band buffers.
     _scratch: Option<ScratchHold>,
 }
@@ -130,35 +116,12 @@ impl Pool {
     unsafe fn new(width: u32, height: u32, bgra: bool, upload: bool) -> anyhow::Result<Self> {
         let (device, context) = create_device()?;
         let device: ID3D11Device1 = device.cast()?;
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: width,
-            Height: height,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: if bgra {
-                DXGI_FORMAT_B8G8R8A8_UNORM
-            } else {
-                DXGI_FORMAT_R8G8B8A8_UNORM
-            },
-            SampleDesc: DXGI_SAMPLE_DESC {
-                Count: 1,
-                Quality: 0,
-            },
-            Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
-            MiscFlags: (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0
-                | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32,
-            ..Default::default()
+        let format = if bgra {
+            DXGI_FORMAT_B8G8R8A8_UNORM
+        } else {
+            DXGI_FORMAT_R8G8B8A8_UNORM
         };
-        let texture = create_texture(&device, &desc)?;
-        let mutex = texture.cast()?;
-        let resource: IDXGIResource1 = texture.cast()?;
-        let handle = resource.CreateSharedHandle(None, 0x80000001, PCWSTR::null())?;
-        let slot = Slot {
-            texture,
-            mutex,
-            handle,
-        };
+        let slot = SharedTexture::create(&device, width, height, format)?;
         let staging = if upload {
             Some(create_texture(
                 &device,
@@ -167,7 +130,7 @@ impl Pool {
                     BindFlags: 0,
                     CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
                     MiscFlags: 0,
-                    ..desc
+                    ..slot.desc()
                 },
             )?)
         } else {
@@ -238,8 +201,7 @@ impl Pool {
 
     unsafe fn copy(&self, handle: NtHandle) -> anyhow::Result<()> {
         let source = open_shared(&self.device, handle)?;
-        let (src, mut dst) = (source.desc, D3D11_TEXTURE2D_DESC::default());
-        self.slot.texture.GetDesc(&mut dst);
+        let (src, dst) = (source.desc, self.slot.desc());
         // The capture host's surface keeps marker rows below the picture.
         if src.Width != dst.Width || src.Height < dst.Height || src.Format != dst.Format {
             return Err(device(anyhow::anyhow!(
@@ -268,10 +230,10 @@ impl Pool {
     unsafe fn write(&self, write: impl FnOnce(&ID3D11Texture2D)) -> anyhow::Result<(f64, f64)> {
         let slot = &self.slot;
         let acquire = std::time::Instant::now();
-        with_key(&slot.mutex, "Motif GPU", || {
+        with_key(slot.mutex(), "Motif GPU", || {
             let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.0;
             let gpu = std::time::Instant::now();
-            write(&slot.texture);
+            write(slot.texture());
             wait_idle(&self.context, &self.query)?;
             Ok((acquire_ms, gpu.elapsed().as_secs_f64() * 1000.0))
         })

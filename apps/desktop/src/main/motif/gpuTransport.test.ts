@@ -541,6 +541,15 @@ describe('Motif GPU leases', () => {
     expect(owner.send).not.toHaveBeenCalledWith('motif:texture-lane-reset', expect.anything())
   })
 
+  it('sends a new pool\'s texture tagged with the key its reads name', async () => {
+    const { owner, transport } = fixture()
+    vi.mocked(sharedTexture.sendSharedTexture).mockClear()
+    const frame = await texture(transport.read(owner, 'a', 128, 128, 1))
+    expect(vi.mocked(sharedTexture.sendSharedTexture).mock.calls.map(([, tag]) => tag)).toEqual([{ key: frame.key, slot: 0 }])
+    transport.release(owner, frame.token)
+    transport.close(owner)
+  })
+
   it('turns the lane off when an import fails', async () => {
     const { owner, transport } = fixture()
     vi.mocked(sharedTexture.importSharedTexture).mockImplementationOnce(() => { throw new Error('import refused') })

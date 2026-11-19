@@ -3,11 +3,10 @@
 //! on the software lane or a copy-back hardware lane (NVDEC/VAAPI/VideoToolbox),
 //! packed as 8-bit NV12 or u16LE I420P10.
 //!
-//! `decoder` is the streaming CPU decode surface; `session` drives it from a
-//! per-source worker thread and fans decoded frames out through a registry sink
-//! (the napi addon wires that sink + registry).
+//! `decoder` is the streaming CPU decode surface; `session` drives it on the
+//! carrier's session runtime, one session per source, every message in band on
+//! the session's own sink.
 
 pub mod decoder;
-mod flow;
 mod session;
-pub use session::{PreviewSwRegistry, SwFramePoke};
+pub use session::{PreviewOpenOptions, PreviewSessions};

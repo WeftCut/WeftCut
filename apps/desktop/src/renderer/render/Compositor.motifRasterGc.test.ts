@@ -13,6 +13,7 @@ import { useMotifBakeStatusStore, setLayerBakeStatuses } from "../timeline/motif
 import { summaryFixture } from "../testing/summaryFixture";
 import type { MotifBakePlan, MotifBakeSnapshot } from '../../shared/motifs/baking';
 import { holdBuiltinMotifs } from '../testing/projectMotifs';
+import { resolveSourceColor } from "./decoder/ffprobeColorSpace";
 
 // The project these tests render holds the built-ins.
 holdBuiltinMotifs();
@@ -75,7 +76,7 @@ describe('Compositor delegates durable Motif preparation to main', () => {
   const create = () => new Compositor({
     app: { stage: new Container() } as unknown as Application,
     width: 1920, height: 1080, mode: 'export',
-    originalAssetUrl: () => null, sourceColor: () => undefined, mediaById: () => undefined,
+    originalAssetUrl: () => null, sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }), mediaById: () => undefined,
     pool: { dispose: vi.fn() } as unknown as DecoderPool,
   });
   const plans = () => invoke.mock.calls.filter(([command]) => command === 'motif_bake_reconcile')

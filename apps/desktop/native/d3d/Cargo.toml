@@ -1,0 +1,24 @@
+# The D3D11 pieces both addons share: a shared texture with an owned NT handle,
+# its keyed-mutex guard, the handle's wire bytes and the adapter LUID string.
+# Windows-only content; elsewhere the crate is empty so the workspace builds.
+# No napi, anyhow, tokio or ffmpeg, and no statics: each `.node` addon links
+# its own copy.
+[package]
+name = "weftcut-d3d"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+rust-version = "1.88"
+
+# The same `windows` version as both addons, so the COM types this crate takes
+# and returns are theirs.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation", "Win32_Security", "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common",
+] }
+
+# The device tests build their own hardware device.
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.62", features = ["Win32_Graphics_Direct3D"] }

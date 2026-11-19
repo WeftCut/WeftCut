@@ -1,19 +1,14 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
-use crate::events::{EventSink, TsfnEventSink};
-use crate::recover::LockExt;
+use crate::carrier::{DecodeMsg, Sink};
 
 // ── wire structs ────────────────────────────────────────────────────────────
 
-/// One pool slot handed back by `preview_gpu_open`: the LE bytes of the shared
-/// D3D11 texture's NT handle (an `i64` value, not a pointer — see
-/// `preview_gpu::session::OpenInfo`). The main process re-parses these bytes
-/// and passes the handle to `importSharedTexture`.
+/// One pool slot handed back by `preview_gpu_open`: the shared D3D11
+/// texture's NT handle in its wire bytes (`weftcut_d3d::handle_to_bytes`).
+/// The main process passes them to `importSharedTexture`.
 #[napi(object)]
 pub struct PreviewGpuSlot {
     pub handle: Buffer,
@@ -85,39 +80,80 @@ pub struct PreviewGpuTimingReport {
     pub pool_slot_bytes: f64,
 }
 
-/// Reply of `preview_sw_open`: the dimensions the session's frames will SHIP at
-/// (`scale_div` already applied), which can be smaller than the source's.
+/// How a preview decode session decodes and what it ships. Every field is
+/// optional; an empty object is the software lane, NV12, full size, every frame.
 #[napi(object)]
-pub struct PreviewSwOpenInfoJs {
-    pub width: u32,
-    pub height: u32,
+pub struct PreviewDecodeOptions {
+    /// `"nvdec"`, `"vaapi"` or `"videotoolbox"` decode on that hardware lane and
+    /// copy each frame back to CPU memory; absent or `"software"` decodes with
+    /// libavcodec. Either way the shipped bytes are the same. An unknown lane is
+    /// treated as software: callers open only lanes they have probed.
+    pub lane: Option<String>,
+    /// The DRM render node a `vaapi` lane decodes on (libva's default device
+    /// is often the wrong GPU on a multi-GPU host); ignored by other lanes.
+    pub device: Option<String>,
+    /// Playback-resolution divisor (1 | 2 | 4; absent = 1): frames are scaled
+    /// down to `source / scaleDiv` before they are packed, so a 4K frame
+    /// crosses IPC at a fraction of its size. Native owns the dimension math
+    /// (even rounding, small-source floor); the open reply and every frame
+    /// report the shipped size.
+    pub scale_div: Option<u32>,
+    /// Output cadence divisor (absent = 1): decode still consumes every source
+    /// frame, but only every Nth is copied back, scaled, packed and shipped.
+    pub cadence_div: Option<u32>,
+    /// The packed layout: NV12 (absent, and for any unknown value) or I420P10,
+    /// which the renderer asks for for a 10-bit source on the videotoolbox
+    /// lane. Each frame's own `format` names what it carries.
+    #[napi(ts_type = "'NV12' | 'I420P10'")]
+    pub out_format: Option<String>,
 }
 
-/// One software-decoded frame delivered to JS. `data` is tightly packed per
-/// `format`: `"NV12"` (8-bit: `Y` plane `w*h` then interleaved `UV` `w*h/2`) or
-/// `"I420P10"` (u16LE planes `Y` then `U` then `V`, the `copyToTenBit` layout —
-/// the 10-bit VideoToolbox-lane sessions, issue #10).
-/// `pts_us`/`dur_us` cross as `f64` (napi has no ergonomic `i64`
-/// binding — matches the `preview_gpu` `target_us` convention). Color tags are
-/// canonical FFmpeg string names (`bt709`, `tv`, …) or `null` where the stream
-/// leaves them unspecified. `width`/`height` are the SHIPPED dimensions
-/// (`preview_sw_open`'s `scale_div` already applied), and `data`'s length always
-/// follows them — not the source resolution.
+/// The colour of the YCbCr planes a byte session ships, handed in at open: the
+/// renderer's `nativePlaneColor`, which it reads the planes back with. An
+/// RGB-coded source's frames are converted into it; a matrix the planes cannot
+/// carry fails the open (`PlaneColor::parse`).
 #[napi(object)]
-pub struct PreviewSwFrame {
-    pub receipt: u32,
-    pub request_id: u32,
-    pub stream_id: String,
-    pub pts_us: f64,
-    pub dur_us: f64,
+pub struct PlaneColorInit {
+    /// A WebCodecs YCbCr matrix name the decode lanes implement
+    /// (`crate::color::Matrix`).
+    pub matrix: String,
+    pub full_range: bool,
+}
+
+impl PlaneColorInit {
+    fn parse(&self) -> napi::Result<crate::preview_sw::decoder::PlaneColor> {
+        crate::preview_sw::decoder::PlaneColor::parse(&self.matrix, self.full_range)
+            .map_err(napi::Error::from_reason)
+    }
+}
+
+/// How a GPU session's shader converts its planes, handed in at open: the
+/// renderer's `planeConversion` of the source. A name the conversion does not
+/// implement fails the open (`crate::color::Conversion::parse`).
+#[napi(object)]
+pub struct GpuConversionInit {
+    /// A WebCodecs YCbCr matrix name (`crate::color::Matrix`).
+    pub matrix: String,
+    pub full_range: bool,
+    /// The WebCodecs name of the primaries converted into BT.709; `bt709`
+    /// converts none.
+    pub primaries: String,
+}
+
+#[cfg(windows)]
+impl GpuConversionInit {
+    fn parse(&self) -> napi::Result<crate::color::Conversion> {
+        crate::color::Conversion::parse(&self.matrix, self.full_range, &self.primaries)
+            .map_err(napi::Error::from_reason)
+    }
+}
+
+/// Reply of `preview_decode_open`: the dimensions the session's frames will
+/// SHIP at (`scaleDiv` already applied), which can be smaller than the source's.
+#[napi(object)]
+pub struct PreviewDecodeOpenInfo {
     pub width: u32,
     pub height: u32,
-    pub format: String,
-    pub color_matrix: Option<String>,
-    pub color_range: Option<String>,
-    pub color_primaries: Option<String>,
-    pub color_transfer: Option<String>,
-    pub data: Buffer,
 }
 
 /// Verdict of a one-frame SW decode probe. `codec`/`pix_fmt` echo what
@@ -143,36 +179,16 @@ pub struct PreviewGpuProbeResult {
     pub reason: Option<String>,
 }
 
-/// Move a decoded `SwFrame` into its napi wire form. `Buffer::from(f.data)` takes
-/// the `Vec` by value (zero-copy Rust-side); the single budgeted copy happens
-/// when napi marshals the `Buffer` across the JS boundary.
-fn sw_frame_to_napi(stream_id: &str, f: crate::preview_sw::decoder::SwFrame) -> PreviewSwFrame {
-    PreviewSwFrame {
-        receipt: 0,
-        request_id: 0,
-        stream_id: stream_id.to_string(),
-        pts_us: f.pts_us as f64,
-        dur_us: f.dur_us as f64,
-        width: f.width,
-        height: f.height,
-        format: f.format.wire_name().into(),
-        color_matrix: f.color.matrix,
-        color_range: f.color.range,
-        color_primaries: f.color.primaries,
-        color_transfer: f.color.transfer,
-        data: Buffer::from(f.data),
-    }
-}
-
 // ── export-decode wire structs ───────────────────────────────────────────────
 
-/// Reply of `export_sw_open`: the decoded stream's dimensions, source color
+/// Reply of `export_decode_open`: the decoded stream's dimensions, source color
 /// tags, and source-normalized start PTS (the offset applied to every frame's
-/// `pts_us`). `start_pts_us` crosses as `f64` (napi has no ergonomic `i64`),
-/// matching the `pts_us`/`target_us` convention. Color tags are canonical FFmpeg
-/// string names or `null` where unspecified.
+/// `pts_us`). The color tags are the session's; its frames carry none.
+/// `start_pts_us` crosses as `f64` (napi has no ergonomic `i64`), matching the
+/// `pts_us`/`target_us` convention. Color tags are canonical FFmpeg string
+/// names or `null` where unspecified.
 #[napi(object)]
-pub struct ExportSwOpenInfoJs {
+pub struct ExportDecodeOpenInfo {
     pub width: u32,
     pub height: u32,
     pub color_matrix: Option<String>,
@@ -180,61 +196,6 @@ pub struct ExportSwOpenInfoJs {
     pub color_primaries: Option<String>,
     pub color_transfer: Option<String>,
     pub start_pts_us: f64,
-}
-
-/// One export-decoded frame delivered to JS. Same wire shape as `PreviewSwFrame`,
-/// but `format` follows the session's requested output and delivery is the
-/// exactly-once range contract + credit window rather than best-effort
-/// preview. Crosses the boundary wrapped in an [`ExportSwMsg`] with
-/// `kind == "frame"`; `session_id` is kept here too so the frame stays
-/// self-identifying downstream of the wrapper.
-#[napi(object)]
-pub struct ExportSwFrame {
-    pub session_id: String,
-    pub pts_us: f64,
-    pub dur_us: f64,
-    pub width: u32,
-    pub height: u32,
-    pub format: String,
-    pub color_matrix: Option<String>,
-    pub color_range: Option<String>,
-    pub color_primaries: Option<String>,
-    pub color_transfer: Option<String>,
-    pub data: Buffer,
-}
-
-/// Export twin of `sw_frame_to_napi` (same zero-copy / one-marshal contract).
-fn export_frame_to_napi(session_id: &str, f: crate::preview_sw::decoder::SwFrame) -> ExportSwFrame {
-    ExportSwFrame {
-        session_id: session_id.to_string(),
-        pts_us: f.pts_us as f64,
-        dur_us: f.dur_us as f64,
-        width: f.width,
-        height: f.height,
-        format: f.format.wire_name().into(),
-        color_matrix: f.color.matrix,
-        color_range: f.color.range,
-        color_primaries: f.color.primaries,
-        color_transfer: f.color.transfer,
-        data: Buffer::from(f.data),
-    }
-}
-
-/// One in-band message on the per-session export channel — frames AND control
-/// signals ride this single tagged shape. Rationale on the sink closure in
-/// `NativeDecode::new`; TS mirror = `ExportSwMsg` in `shared/ipc.ts`.
-#[napi(object)]
-pub struct ExportSwMsg {
-    pub session_id: String,
-    /// "frame" | "rangeEnd" | "ended" | "error"
-    pub kind: String,
-    /// Present iff kind == "frame".
-    pub frame: Option<ExportSwFrame>,
-    /// Present iff kind == "error".
-    pub message: Option<String>,
-    /// Present iff kind == "rangeEnd": the exact completed source-time range.
-    pub a_us: Option<f64>,
-    pub b_us: Option<f64>,
 }
 
 /// The component's ffmpeg linkage identity — the SW capability-cache envKey.
@@ -312,185 +273,22 @@ pub fn capabilities() -> Vec<String> {
 #[napi]
 pub struct NativeDecode {
     #[cfg(windows)]
-    preview_gpu: crate::preview_gpu::PreviewGpuRegistry,
-    preview_sw: crate::preview_sw::PreviewSwRegistry,
-    preview_sw_sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<PreviewSwFrame>>>>,
-    export_sw: crate::export_sw::ExportSwRegistry,
-    export_sw_sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<ExportSwMsg>>>>,
+    preview_gpu: crate::preview_gpu::PreviewGpuSessions,
+    preview_decode: crate::preview_sw::PreviewSessions,
+    export_decode: crate::export_sw::ExportSessions,
 }
 
 #[napi]
 impl NativeDecode {
-    /// `on_event` receives the same `{event, payload}` JSON envelope the core
-    /// Backend's sink emits; main relays both through `evt:*`.
+    /// Every session's messages go to the callback it was opened with; the
+    /// component itself emits nothing.
     #[napi(constructor)]
-    pub fn new(on_event: ThreadsafeFunction<String>) -> Self {
-        // The GPU lane is the only emitter today and exists on Windows only; the
-        // sink itself is platform-neutral and is constructed everywhere so the
-        // next channel can wire in without touching the constructor.
-        #[cfg_attr(
-            not(windows),
-            expect(
-                unused_variables,
-                reason = "only the Windows-only GPU lane emits today"
-            )
-        )]
-        let events: Arc<dyn EventSink> = Arc::new(TsfnEventSink::new(on_event));
-
-        // Wire the registry's poke sink to the same `events` sink every other
-        // channel emits through, so `previewGpu:*` events reach Electron main
-        // the same way `log:entry` / `media:*` / etc. do.
-        #[cfg(windows)]
-        let preview_gpu = {
-            let registry = crate::preview_gpu::PreviewGpuRegistry::new();
-            let sink_events = events.clone();
-            registry.set_poke_sink(Box::new(move |poke| {
-                use crate::preview_gpu::PreviewGpuPoke;
-                match poke {
-                    PreviewGpuPoke::FrameReady {
-                        stream_id,
-                        slot,
-                        gen,
-                        pts_us,
-                        dur_us,
-                    } => {
-                        sink_events.emit(
-                            "previewGpu:frameReady",
-                            serde_json::json!({
-                                "streamId": stream_id,
-                                "slot": slot,
-                                "gen": gen,
-                                "ptsUs": pts_us,
-                                "durUs": dur_us,
-                            }),
-                        );
-                    }
-                    PreviewGpuPoke::Eof { stream_id } => {
-                        sink_events.emit(
-                            "previewGpu:eof",
-                            serde_json::json!({ "streamId": stream_id }),
-                        );
-                    }
-                    PreviewGpuPoke::Error { stream_id, message } => {
-                        sink_events.emit(
-                            "previewGpu:error",
-                            serde_json::json!({ "streamId": stream_id, "message": message }),
-                        );
-                    }
-                }
-            }));
-            registry
-        };
-        // Software preview: the registry has a SINGLE global frame sink, so install
-        // ONE routing closure here (NOT per-open, which would clobber earlier streams)
-        // that dispatches each `Frame` poke to the matching stream's per-stream
-        // `ThreadsafeFunction` in `preview_sw_sinks`. `Eof`/`Error` pokes have no JS
-        // callback shape (the delivery contract is frame bytes only) — log them.
-        // A poke whose `stream_id` has no entry drops silently — load-bearing:
-        // `preview_sw_close` may DETACH a wedged session thread, so a straggler
-        // can still poke after the entry is removed.
-        let (preview_sw, preview_sw_sinks) = {
-            let registry = crate::preview_sw::PreviewSwRegistry::new();
-            let sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<PreviewSwFrame>>>> =
-                Default::default();
-            let sinks_for_cb = sinks.clone();
-            registry.set_frame_sink(Box::new(move |poke| {
-                use crate::preview_sw::SwFramePoke;
-                match poke {
-                    SwFramePoke::Frame {
-                        stream_id,
-                        frame,
-                        receipt,
-                        request_id,
-                    } => {
-                        if let Some(tsfn) = sinks_for_cb.lock_recover().get(&stream_id) {
-                            let mut wire = sw_frame_to_napi(&stream_id, frame);
-                            wire.receipt = receipt;
-                            wire.request_id = request_id;
-                            let _ = tsfn.call(Ok(wire), ThreadsafeFunctionCallMode::NonBlocking);
-                        }
-                    }
-                    SwFramePoke::Eof { stream_id } => tracing::debug!(%stream_id, "preview-sw eof"),
-                    SwFramePoke::Error { stream_id, message } => {
-                        tracing::warn!(%stream_id, %message, "preview-sw decode error")
-                    }
-                }
-            }));
-            (registry, sinks)
-        };
-
-        // Export software decode: same single-global-sink pattern as preview,
-        // but EVERY poke — frames AND the RangeEnd/Ended/Error control signals —
-        // crosses as an `ExportSwMsg` on the matching session's per-session
-        // `ThreadsafeFunction`. One napi queue per session means JS observes
-        // pokes in exact producer order; a second channel (e.g. the shared
-        // `events` envelope) would let an `Ended` overtake the tail frames
-        // emitted before it. NonBlocking on the default UNBOUNDED tsfn queue is
-        // load-bearing: a bounded queue would silently drop pokes — including
-        // control signals — under backpressure. Pokes for an unregistered
-        // session drop silently (mirrors the preview-sw routing).
-        let (export_sw, export_sw_sinks) = {
-            let registry = crate::export_sw::ExportSwRegistry::new();
-            let sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<ExportSwMsg>>>> =
-                Default::default();
-            let sinks_for_cb = sinks.clone();
-            registry.set_sink(Box::new(move |poke| {
-                use crate::export_sw::ExportPoke;
-                let msg = match poke {
-                    ExportPoke::Frame { session_id, frame } => ExportSwMsg {
-                        frame: Some(export_frame_to_napi(&session_id, frame)),
-                        session_id,
-                        kind: "frame".into(),
-                        message: None,
-                        a_us: None,
-                        b_us: None,
-                    },
-                    ExportPoke::RangeEnd {
-                        session_id,
-                        a_us,
-                        b_us,
-                    } => ExportSwMsg {
-                        session_id,
-                        kind: "rangeEnd".into(),
-                        frame: None,
-                        message: None,
-                        a_us: Some(a_us as f64),
-                        b_us: Some(b_us as f64),
-                    },
-                    ExportPoke::Ended { session_id } => ExportSwMsg {
-                        session_id,
-                        kind: "ended".into(),
-                        frame: None,
-                        message: None,
-                        a_us: None,
-                        b_us: None,
-                    },
-                    ExportPoke::Error {
-                        session_id,
-                        message,
-                    } => ExportSwMsg {
-                        session_id,
-                        kind: "error".into(),
-                        frame: None,
-                        message: Some(message),
-                        a_us: None,
-                        b_us: None,
-                    },
-                };
-                if let Some(tsfn) = sinks_for_cb.lock_recover().get(&msg.session_id) {
-                    let _ = tsfn.call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
-                }
-            }));
-            (registry, sinks)
-        };
-
+    pub fn new() -> Self {
         NativeDecode {
             #[cfg(windows)]
-            preview_gpu,
-            preview_sw,
-            preview_sw_sinks,
-            export_sw,
-            export_sw_sinks,
+            preview_gpu: crate::preview_gpu::PreviewGpuSessions::new(),
+            preview_decode: crate::preview_sw::PreviewSessions::new(),
+            export_decode: crate::export_sw::ExportSessions::new(),
         }
     }
 }
@@ -498,30 +296,39 @@ impl NativeDecode {
 // ── GPU methods (Windows) ────────────────────────────────────────────────────
 
 /// Native GPU-decode preview command surface. Backed by
-/// `NativeDecode::preview_gpu`; pokes (`FrameReady`/`Eof`/`Error`) surface as
-/// `previewGpu:*` events through the same `events` sink every other channel
-/// uses (wired in the constructor).
+/// `NativeDecode::preview_gpu`; filled slots, the end of the material and
+/// errors reach JS in band as [`DecodeMsg`] on the callback the session was
+/// opened with.
 #[cfg(windows)]
 #[napi]
 impl NativeDecode {
     /// Open `path` for GPU preview: spawns the session's decode thread and
     /// returns the shared RGBA8 pool's slot handles + frame dimensions.
-    /// `matrix`/`full_range` are the stream's color tags (same derivation the
-    /// renderer ships in `previewGpu:open`'s colorSpace) — they select the
-    /// native NV12→RGBA conversion constants, so the shared texture is already
-    /// working-space RGBA and main imports it tagged sRGB-passthrough.
+    /// `conversion` selects the native NV12→RGBA shader's constants, so the
+    /// shared texture is already working-space RGBA and main imports it
+    /// tagged sRGB-passthrough.
+    /// `on_msg` belongs to the session: every message goes to it, and it is
+    /// dropped when the session closes or the open fails. Slots fill only
+    /// after the first `preview_gpu_request_frame_at`.
     #[napi]
     pub fn preview_gpu_open(
         &self,
-        stream_id: String,
+        session_id: String,
         path: String,
         pool_size: u32,
-        matrix: String,
-        full_range: bool,
+        conversion: GpuConversionInit,
+        on_msg: ThreadsafeFunction<DecodeMsg>,
     ) -> napi::Result<PreviewGpuOpenInfo> {
+        let conversion = conversion.parse()?;
         let info = self
             .preview_gpu
-            .open(&stream_id, &path, pool_size, &matrix, full_range)
+            .open(
+                &session_id,
+                &path,
+                pool_size,
+                conversion,
+                session_sink(on_msg),
+            )
             .map_err(napi::Error::from_reason)?;
         Ok(PreviewGpuOpenInfo {
             width: info.width,
@@ -536,7 +343,7 @@ impl NativeDecode {
                 .slot_handles
                 .into_iter()
                 .map(|h| PreviewGpuSlot {
-                    handle: Buffer::from(h.to_le_bytes().to_vec()),
+                    handle: Buffer::from(h.to_vec()),
                 })
                 .collect(),
         })
@@ -544,51 +351,48 @@ impl NativeDecode {
 
     /// Move the session's decode anchor. `target_us` is an `f64` (napi has no
     /// ergonomic `i64` param binding) carrying source microseconds; cast down
-    /// to the `i64` the registry expects.
+    /// to the `i64` the session expects. An `end` answering this request
+    /// names `request_id`.
     #[napi]
     pub fn preview_gpu_request_frame_at(
         &self,
-        stream_id: String,
+        session_id: String,
         target_us: f64,
+        request_id: u32,
     ) -> napi::Result<()> {
         self.preview_gpu
-            .request_frame_at(&stream_id, target_us as i64)
+            .request_frame_at(&session_id, target_us as i64, request_id)
             .map_err(napi::Error::from_reason)
     }
 
-    /// Release a slot back to the pool after the renderer drops its last
-    /// cross-process reference to the shared texture. `gen` echoes the
-    /// `frameReady` that delivered the slot (fencing token — a mismatch is
-    /// dropped native-side as stale).
+    /// Hand a slot back to the pool once the consumer's read of it has
+    /// completed. `gen` echoes the `slot` message that delivered it (fencing
+    /// token — a mismatch is dropped native-side as stale).
     #[napi]
-    pub fn preview_gpu_consume_ack(
-        &self,
-        stream_id: String,
-        slot: u32,
-        gen: u32,
-    ) -> napi::Result<()> {
+    pub fn preview_gpu_release(&self, session_id: String, slot: u32, gen: u32) -> napi::Result<()> {
         self.preview_gpu
-            .consume_ack(&stream_id, slot, gen)
+            .release(&session_id, slot, gen)
             .map_err(napi::Error::from_reason)
     }
 
-    /// Tear down a session: signals its decode thread to close and joins it.
+    /// Tear down a session within a bounded grace. The session emits nothing
+    /// after this returns; messages it had already queued for JS still arrive.
     #[napi]
-    pub fn preview_gpu_close(&self, stream_id: String) -> napi::Result<()> {
+    pub fn preview_gpu_close(&self, session_id: String) -> napi::Result<()> {
         self.preview_gpu
-            .close(&stream_id)
+            .close(&session_id)
             .map_err(napi::Error::from_reason)
     }
 
     /// One-frame HW decode probe: does d3d11va yield a decodable D3D11
     /// surface for this codec on this GPU? Calls the decoder-level primitive
-    /// directly (no session, no pool, no poke sink) — a throwaway open +
-    /// one-frame decode is self-contained and self-bounding, unlike the
-    /// streaming `preview_gpu_open` session. The `D3d11Frame` on success is
-    /// dropped immediately (its `Drop` releases the GPU texture); only the
-    /// ok/err verdict is returned. `timeout_ms` is advisory (kept for API
-    /// symmetry with `preview_hw_probe`) — this synchronous primitive has no
-    /// internal deadline machinery to wire it to.
+    /// directly (no session, no pool) — a throwaway open + one-frame decode is
+    /// self-contained and self-bounding, unlike the streaming
+    /// `preview_gpu_open` session. The `D3d11Frame` on success is dropped
+    /// immediately (its `Drop` releases the GPU texture); only the ok/err
+    /// verdict is returned. `timeout_ms` is advisory (kept for API symmetry
+    /// with `preview_hw_probe`) — this synchronous primitive has no internal
+    /// deadline machinery to wire it to.
     #[napi]
     pub fn preview_gpu_probe(
         &self,
@@ -611,11 +415,11 @@ impl NativeDecode {
     #[napi]
     pub fn preview_gpu_take_timings(
         &self,
-        stream_id: String,
+        session_id: String,
     ) -> napi::Result<PreviewGpuTimingReport> {
         let rep = self
             .preview_gpu
-            .take_timings(&stream_id)
+            .take_timings(&session_id)
             .map_err(napi::Error::from_reason)?;
         // Counts stay far under u32 in a bench window (see `note_lookahead_gated_skip`);
         // saturate defensively rather than silently wrap on the cast.
@@ -665,11 +469,11 @@ impl NativeDecode {
     #[napi]
     pub fn preview_gpu_open(
         &self,
-        _stream_id: String,
+        _session_id: String,
         _path: String,
         _pool_size: u32,
-        _matrix: String,
-        _full_range: bool,
+        _conversion: GpuConversionInit,
+        _on_msg: ThreadsafeFunction<DecodeMsg>,
     ) -> napi::Result<PreviewGpuOpenInfo> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
@@ -677,16 +481,17 @@ impl NativeDecode {
     #[napi]
     pub fn preview_gpu_request_frame_at(
         &self,
-        _stream_id: String,
+        _session_id: String,
         _target_us: f64,
+        _request_id: u32,
     ) -> napi::Result<()> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
 
     #[napi]
-    pub fn preview_gpu_consume_ack(
+    pub fn preview_gpu_release(
         &self,
-        _stream_id: String,
+        _session_id: String,
         _slot: u32,
         _gen: u32,
     ) -> napi::Result<()> {
@@ -694,14 +499,14 @@ impl NativeDecode {
     }
 
     #[napi]
-    pub fn preview_gpu_close(&self, _stream_id: String) -> napi::Result<()> {
+    pub fn preview_gpu_close(&self, _session_id: String) -> napi::Result<()> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
 
     #[napi]
     pub fn preview_gpu_take_timings(
         &self,
-        _stream_id: String,
+        _session_id: String,
     ) -> napi::Result<PreviewGpuTimingReport> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
@@ -723,160 +528,118 @@ impl NativeDecode {
     }
 }
 
-// ── SW methods (all platforms) ───────────────────────────────────────────────
+// ── preview-decode methods (all platforms) ───────────────────────────────────
 
-/// Native software-decode preview command surface (cross-platform). Backed by
-/// `NativeDecode::preview_sw`; decoded frames (NV12 or I420P10, per-frame
-/// `format`) reach JS through the per-stream `ThreadsafeFunction` registered in
-/// `preview_sw_open` and routed by the single sink installed in the constructor.
+/// One session's messages, in producer order, on its own JS callback.
+///
+/// LANDMINE: NonBlocking on the default UNBOUNDED tsfn queue. A bounded queue
+/// would silently drop messages — control signals included — under
+/// backpressure. One queue per session is what keeps JS observing messages in
+/// the order the session produced them.
+fn session_sink(on_msg: ThreadsafeFunction<DecodeMsg>) -> Sink {
+    Box::new(move |msg| {
+        let _ = on_msg.call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
+    })
+}
+
+/// Native preview decode command surface (cross-platform): the software lane
+/// and the copy-back hardware lanes, ADR 0029. Backed by
+/// `NativeDecode::preview_decode`; frames, the end of the material and errors
+/// reach JS in band as [`DecodeMsg`] on the callback the session was opened
+/// with.
 #[napi]
 impl NativeDecode {
-    /// Open `path` for preview: register the per-stream frame callback, then spawn
-    /// the session's decode thread and return the frame dimensions. The callback is
-    /// registered BEFORE opening so no early poke is dropped. `lane`/`device` select
-    /// the decode acceleration (issue #5 Block C); either way the session yields the
-    /// SAME CPU NV12 frame transport:
-    /// - `lane` `None`/`Some("software")` → the pure-software lane (default).
-    /// - `Some("nvdec")` → NVDEC copy-back (default GPU handle; `device` ignored).
-    /// - `Some("vaapi")` → VAAPI copy-back pinned to the `device` DRM render node
-    ///   (empty when absent, letting libva default-select).
-    /// - `Some("videotoolbox")` → VideoToolbox copy-back (issue #10; the single
-    ///   macOS OS media engine — `device` ignored).
-    /// - any other `lane` → treated as software (safe fallback; the caller should
-    ///   only ever open an already-probed lane).
-    ///
-    /// `scale_div` is the playback-resolution divisor (1 | 2 | 4; absent = 1 =
-    /// full): frames are swscale'd DOWN to `src / scale_div` BEFORE they are
-    /// packed, so a 4K frame crosses IPC at a fraction of 12.44 MB. Native owns
-    /// the dimension math (even rounding, small-source floor) — the reply and
-    /// every frame report the shipped size. Preview only; the export lane has no
-    /// such knob.
-    ///
-    /// `cadence_div` is also preview-only (absent = 1 = every frame). Decode
-    /// still consumes every source frame, but only every Nth frame proceeds to
-    /// copy-back/swscale/packing and IPC.
-    ///
-    /// `out_format` selects the CPU transport format the session packs into
-    /// (issue #10): absent/`"NV12"` = 8-bit NV12 (every pre-existing caller,
-    /// byte-for-byte); `"I420P10"` = tightly-packed u16LE planes (the
-    /// `copyToTenBit` layout), which the renderer picks for a 10-bit source on
-    /// the VideoToolbox lane. Each frame's `format` tag names what it carries,
-    /// so an unknown string falls back to NV12 defensively (mirrors `lane`) —
-    /// the renderer dispatches per frame, never on what it asked for.
+    /// Open `path` for preview: spawn the session's decode thread and return
+    /// the shipped frame dimensions, its planes carrying `color`. `on_msg`
+    /// belongs to the session: every
+    /// message goes to it, and it is dropped when the session closes or the
+    /// open fails. Fails if the id is already open or the decoder (a hardware
+    /// device included) cannot open, so the caller can fall back. Frames flow
+    /// only after the first `preview_decode_fill_from`.
     #[napi]
-    #[allow(clippy::too_many_arguments)]
-    pub fn preview_sw_open(
+    pub fn preview_decode_open(
         &self,
-        stream_id: String,
+        session_id: String,
         path: String,
-        on_frame: ThreadsafeFunction<PreviewSwFrame>,
-        lane: Option<String>,
-        device: Option<String>,
-        scale_div: Option<u32>,
-        cadence_div: Option<u32>,
-        out_format: Option<String>,
-    ) -> napi::Result<PreviewSwOpenInfoJs> {
+        options: PreviewDecodeOptions,
+        color: PlaneColorInit,
+        on_msg: ThreadsafeFunction<DecodeMsg>,
+    ) -> napi::Result<PreviewDecodeOpenInfo> {
         use crate::preview_sw::decoder::{DecodeAccel, OutScale, OutputCadence, SwOutFormat};
-        let accel = match lane.as_deref() {
-            None | Some("software") => DecodeAccel::Software,
+        let accel = match options.lane.as_deref() {
             Some("nvdec") => DecodeAccel::Nvdec,
             Some("vaapi") => DecodeAccel::Vaapi {
-                device: device.unwrap_or_default(),
+                device: options.device.unwrap_or_default(),
             },
             Some("videotoolbox") => DecodeAccel::VideoToolbox,
-            // Unknown lane: fall back to software rather than error — the resolver
-            // only opens lanes it has already probed, so this is defensive.
-            Some(_) => DecodeAccel::Software,
+            _ => DecodeAccel::Software,
         };
-        let out_format = match out_format.as_deref() {
+        let out_format = match options.out_format.as_deref() {
             Some("I420P10") => SwOutFormat::I420p10,
-            // Absent, "NV12", or unknown: the 8-bit default (see doc above).
             _ => SwOutFormat::Nv12,
         };
-        let out_scale = scale_div.map_or(OutScale::FULL, OutScale::from_divisor);
-        let output_cadence = cadence_div.map_or(OutputCadence::FULL, OutputCadence::from_divisor);
-        // Check-then-insert under ONE guard: a reused LIVE stream id must be
-        // refused before the insert, or the live session's sink is replaced
-        // right before the open below fails with "already open" — silencing a
-        // healthy session.
-        {
-            let mut sinks = self.preview_sw_sinks.lock_recover();
-            if sinks.contains_key(&stream_id) {
-                return Err(napi::Error::from_reason(format!(
-                    "preview-sw sink '{stream_id}' already registered"
-                )));
-            }
-            sinks.insert(stream_id.clone(), on_frame);
-        }
-        match self.preview_sw.open_with_accel_and_cadence(
-            &stream_id,
-            &path,
+        let options = crate::preview_sw::PreviewOpenOptions {
             accel,
             out_format,
-            out_scale,
-            output_cadence,
-        ) {
-            Ok(info) => Ok(PreviewSwOpenInfoJs {
-                width: info.width,
-                height: info.height,
-            }),
-            Err(e) => {
-                // Open failed — drop the callback we optimistically registered
-                // so a failed open never leaves a dangling sink entry. Failed
-                // opens are routine here: hw copy-back lanes open
-                // optimistically and fall back to software.
-                self.preview_sw_sinks.lock_recover().remove(&stream_id);
-                Err(napi::Error::from_reason(e))
-            }
-        }
+            plane_color: color.parse()?,
+            out_scale: options
+                .scale_div
+                .map_or(OutScale::FULL, OutScale::from_divisor),
+            output_cadence: options
+                .cadence_div
+                .map_or(OutputCadence::FULL, OutputCadence::from_divisor),
+        };
+        let info = self
+            .preview_decode
+            .open(&session_id, &path, options, session_sink(on_msg))
+            .map_err(napi::Error::from_reason)?;
+        Ok(PreviewDecodeOpenInfo {
+            width: info.width,
+            height: info.height,
+        })
     }
 
-    /// Move the session's decode anchor. `target_us` is an `f64` (napi has no
-    /// ergonomic `i64` param binding) carrying source microseconds; cast down to
-    /// the `i64` the registry expects. Fire-and-forget: frames arrive via the
-    /// registered callback.
+    /// Ask for every frame from `target_us` (source µs, as `f64`: napi has no
+    /// ergonomic `i64`) through the session's lookahead horizon, in answer to
+    /// `request_id`. Frames carry the id of the request they answer; a new id
+    /// is a discontinuity, so the session re-seeks and stops sending frames of
+    /// earlier requests. The newest request wins over any still queued.
     #[napi]
-    pub fn preview_sw_request_frame_at(
+    pub fn preview_decode_fill_from(
         &self,
-        stream_id: String,
+        session_id: String,
         target_us: f64,
-        request_id: Option<u32>,
+        request_id: u32,
     ) -> napi::Result<()> {
-        self.preview_sw
-            .request_frame_at_with_id(&stream_id, target_us as i64, request_id)
+        self.preview_decode
+            .fill_from(&session_id, target_us as i64, request_id)
             .map_err(napi::Error::from_reason)
     }
 
+    /// Hand back the lease of a frame the consumer has taken or dropped. A
+    /// lease not in flight (already returned, or never granted) is ignored.
     #[napi]
-    pub fn preview_sw_enable_flow(&self, stream_id: String) -> napi::Result<()> {
-        self.preview_sw
-            .enable_flow(&stream_id)
+    pub fn preview_decode_release(&self, session_id: String, lease: u32) -> napi::Result<()> {
+        self.preview_decode
+            .release(&session_id, lease)
+            .map(|_| ())
             .map_err(napi::Error::from_reason)
     }
 
+    /// Tear down a session within a bounded grace. The session emits nothing
+    /// after this returns; messages it had already queued for JS still arrive.
     #[napi]
-    pub fn preview_sw_consume(&self, stream_id: String, receipt: u32) {
-        self.preview_sw.consume(&stream_id, receipt);
+    pub fn preview_decode_close(&self, session_id: String) -> napi::Result<()> {
+        self.preview_decode
+            .close(&session_id)
+            .map_err(napi::Error::from_reason)
     }
+}
 
-    /// Tear down a session: close the decode thread FIRST, THEN drop the
-    /// per-stream `ThreadsafeFunction`. `close` returns promptly (bounded grace,
-    /// then detach — never an unbounded join on this napi thread); the contract
-    /// is that no poke is DELIVERED after the sink entry is removed, NOT that
-    /// the thread has exited: a detached straggler's late pokes hit the
-    /// constructor's router and drop silently once the entry is gone (a panic
-    /// on a detached thread is unobservable). Returns the close result either
-    /// way.
-    #[napi]
-    pub fn preview_sw_close(&self, stream_id: String) -> napi::Result<()> {
-        let r = self
-            .preview_sw
-            .close(&stream_id)
-            .map_err(napi::Error::from_reason);
-        self.preview_sw_sinks.lock_recover().remove(&stream_id);
-        r
-    }
-
+/// One-shot decode probes: no session, a verdict per call. Main asks them
+/// before it opens a lane.
+#[napi]
+impl NativeDecode {
     /// One-frame decode probe for the SW lane. Opens a THROWAWAY stream (never
     /// registered in the session registry), decodes one frame, closes. Failure
     /// is a verdict, not an error — Err only for panics worth surfacing.
@@ -974,90 +737,87 @@ impl NativeDecode {
 
 /// Native export software-decode command surface (cross-platform; the
 /// export-decode overlay, ADR 0030 and ADR 0033). Backed by
-/// `NativeDecode::export_sw`; everything — decoded frames and the control
-/// signals — reaches JS in-band as [`ExportSwMsg`] on the per-session
-/// `ThreadsafeFunction` registered in `export_sw_open`. The driving contract
-/// (open → decodeRange → returnCredit → close) is what the export Worker's
-/// `ExportDecodeSession` handle sits behind.
+/// `NativeDecode::export_decode`; decoded frames and the control signals
+/// reach JS in-band as [`DecodeMsg`] on the callback the session was opened
+/// with. The driving contract (open → range → release → close) is what the
+/// export Worker's `ExportDecodeSession` handle sits behind.
 #[napi]
 impl NativeDecode {
-    /// Open `path` for export decode into `out_format` (`"NV12"` or
-    /// `"I420P10"`), throttled through a `credit_window`-frame flow-control
-    /// window. Registers the
-    /// per-session message callback BEFORE opening so no early message is
-    /// dropped; fails loudly (removing the callback) if the format can't be
+    /// Open `path` for export decode into `out_format`, with at most `window`
+    /// frames (leases) in flight, its planes carrying `color`. `on_msg`
+    /// belongs to the session: every
+    /// message goes to it, and it is dropped when the session closes or the
+    /// open fails. Fails loudly if the id is already open, the format can't be
     /// emitted or the decoder can't open. Returns dimensions, source color tags,
     /// and start PTS.
     #[napi]
-    pub fn export_sw_open(
+    pub fn export_decode_open(
         &self,
         session_id: String,
         path: String,
-        out_format: String,
-        credit_window: u32,
-        on_msg: ThreadsafeFunction<ExportSwMsg>,
-    ) -> napi::Result<ExportSwOpenInfoJs> {
-        self.export_sw_sinks
-            .lock_recover()
-            .insert(session_id.clone(), on_msg);
-        match self
-            .export_sw
-            .open(&session_id, &path, &out_format, credit_window)
-        {
-            Ok(info) => Ok(ExportSwOpenInfoJs {
-                width: info.width,
-                height: info.height,
-                color_matrix: info.color.matrix,
-                color_range: info.color.range,
-                color_primaries: info.color.primaries,
-                color_transfer: info.color.transfer,
-                start_pts_us: info.start_pts_us as f64,
-            }),
-            Err(e) => {
-                // Open failed — drop the callback we optimistically registered so
-                // a failed session never leaves a dangling sink entry.
-                self.export_sw_sinks.lock_recover().remove(&session_id);
-                Err(napi::Error::from_reason(e))
-            }
-        }
+        #[napi(ts_arg_type = "'NV12' | 'I420P10'")] out_format: String,
+        window: u32,
+        color: PlaneColorInit,
+        on_msg: ThreadsafeFunction<DecodeMsg>,
+    ) -> napi::Result<ExportDecodeOpenInfo> {
+        let plane_color = color.parse()?;
+        let info = self
+            .export_decode
+            .open(
+                &session_id,
+                &path,
+                &out_format,
+                window,
+                plane_color,
+                session_sink(on_msg),
+            )
+            .map_err(napi::Error::from_reason)?;
+        Ok(ExportDecodeOpenInfo {
+            width: info.width,
+            height: info.height,
+            color_matrix: info.color.matrix,
+            color_range: info.color.range,
+            color_primaries: info.color.primaries,
+            color_transfer: info.color.transfer,
+            start_pts_us: info.start_pts_us as f64,
+        })
     }
 
     /// Decode the presentation range `[a_us, b_us]` (source-normalized µs, b
-    /// inclusive). Fire-and-forget: frame messages arrive on the registered
-    /// callback, followed in-band by a `rangeEnd` (or `ended` then `rangeEnd` at
-    /// stream end) once the range is satisfied. `a_us`/`b_us` cross as `f64` (no
+    /// inclusive). Fire-and-forget: `bytes` messages arrive on the session's
+    /// callback, followed in-band by a `mark` (or `end` then `mark` at stream
+    /// end) once the range is satisfied. `a_us`/`b_us` cross as `f64` (no
     /// ergonomic napi `i64`).
     #[napi]
-    pub fn export_sw_decode_range(
+    pub fn export_decode_range(
         &self,
         session_id: String,
         a_us: f64,
         b_us: f64,
     ) -> napi::Result<()> {
-        self.export_sw
+        self.export_decode
             .decode_range(&session_id, a_us as i64, b_us as i64)
             .map_err(napi::Error::from_reason)
     }
 
-    /// Return `credits` consumed frames to the session, resuming a producer parked
-    /// on an exhausted credit window. Safe to call while a range is in flight.
+    /// Hand back the lease of a frame that has left the consumer, resuming a
+    /// producer parked on a full window. Safe while a range is in flight; a
+    /// lease not in flight (already returned, or never granted) is ignored.
     #[napi]
-    pub fn export_sw_return_credit(&self, session_id: String, credits: u32) -> napi::Result<()> {
-        self.export_sw
-            .return_credit(&session_id, credits)
+    pub fn export_decode_release(&self, session_id: String, lease: u32) -> napi::Result<()> {
+        self.export_decode
+            .release(&session_id, lease)
+            .map(|_| ())
             .map_err(napi::Error::from_reason)
     }
 
-    /// Tear down a session: close+join the decode thread FIRST (unblocking any
-    /// producer parked on the credit window), THEN drop the per-session callback,
-    /// so no frame can arrive after its callback is removed.
+    /// Tear down a session: wakes a parked producer, abandons the range in
+    /// progress and returns within a bounded grace. The session emits nothing
+    /// after this returns; messages it had already queued for JS still arrive.
     #[napi]
-    pub fn export_sw_close(&self, session_id: String) -> napi::Result<()> {
-        let r = self
-            .export_sw
+    pub fn export_decode_close(&self, session_id: String) -> napi::Result<()> {
+        self.export_decode
             .close(&session_id)
-            .map_err(napi::Error::from_reason);
-        self.export_sw_sinks.lock_recover().remove(&session_id);
-        r
+            .map_err(napi::Error::from_reason)
     }
 }

@@ -5,6 +5,7 @@ import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import type { DecoderPool } from "./decoder/session";
 import { summaryFixture } from "../testing/summaryFixture";
+import { resolveSourceColor } from "./decoder/ffprobeColorSpace";
 
 // Decode sessions are pool-owned and keyed by LAYER id, so the only thing that
 // frees one — and, on the ffmpeg hardware lane, the GPU session inside it — is
@@ -100,7 +101,7 @@ describe("Compositor decode-session lifetime", () => {
       height: 1080,
       mode: "export",
       originalAssetUrl: () => null,
-      sourceColor: () => undefined,
+      sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }),
       mediaById: () => undefined,
       pool: { dispose: vi.fn(), release } as unknown as DecoderPool,
     });

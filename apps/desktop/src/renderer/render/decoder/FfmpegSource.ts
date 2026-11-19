@@ -7,6 +7,7 @@
 // (`SourceDecoderPool.ts`), which acquires it whenever the resolved engine is ffmpeg.
 import type { PreviewDecodeSession, PreviewDecodeDevice } from "./session";
 import type { FfmpegLane } from "./decodeEngine";
+import type { SourceColor } from "./ffprobeColorSpace";
 import { FrameRing } from "./FrameRing";
 import type { DecodeTransport } from "./transports/DecodeTransport";
 import type { HandoffTimingSummary } from "./transports/handoffTimings";
@@ -32,9 +33,13 @@ const CAPACITY_RETRY_MS = 1_000;
 // their target is not cached, and capacity remains the independent upper bound.
 const REFILL_LOOKAHEAD_US = 150_000;
 let nextStreamSeq = 0;
+/// Makes this document's session ids its own. Main keys every decode session
+/// by id across all documents, and two windows can hold the same layer; a
+/// second open under a live id is refused as a failure, not as "busy".
+const DOCUMENT_TAG = crypto.randomUUID().slice(0, 8);
 
-/// The HW lanes that COPY BACK to CPU frames and ship bytes over the previewSw
-/// transport (Linux NVDEC/VAAPI — ADR 0029; macOS VideoToolbox — issue #10), as
+/// The HW lanes that COPY BACK to CPU frames and ship bytes over `SwTransport`
+/// (Linux NVDEC/VAAPI — ADR 0029; macOS VideoToolbox — issue #10), as
 /// opposed to the Windows shared-texture lane (d3d11va → GpuTransport). One
 /// predicate so `makeHardwareTransport` and `usesSwTransport` cannot drift.
 function isCopyBackHwLane(lane: string): boolean {
@@ -46,7 +51,7 @@ export interface FfmpegSourceInit {
   mediaId: string;
   hardwareEvidenceIdentity?: { layerId: string; mediaId: string };
   sourcePath: string;
-  sourceColor?: VideoColorSpaceInit;
+  sourceColor: SourceColor;
   codec?: string | null;
   pixFmt?: string | null;
   /// Media dimensions — threaded into `pickInitialLane`'s classKey so the
@@ -182,7 +187,7 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// True while this source actually HOLDS a main-process admission lease — a
   /// transport on the shared-texture hardware lane. A source between
   /// transports holds none, and the copy-back lanes (nvdec/vaapi/videotoolbox)
-  /// ride `previewSw`: they hold global memory credits but no shared-texture
+  /// ride `SwTransport`: they hold global memory credits but no shared-texture
   /// HW session slot. This reclaim only targets that HW slot.
   holdsHwSessionLease(): boolean {
     const attempt = this.held();
@@ -350,16 +355,15 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.lane = lane;
     // A fresh streamId per open so late frames from a swapped-out transport
     // (still draining on the old streamId) can never land in the ring.
-    const streamId = `ffmpeg:${lane}:${this.layerId}:${nextStreamSeq++}`;
+    const streamId = `ffmpeg:${DOCUMENT_TAG}:${lane}:${this.layerId}:${nextStreamSeq++}`;
     let failure: { error: unknown } | null = null;
     try {
-      // Conditional spread, not `sourceColor: this.init.sourceColor` —
-      // exactOptionalPropertyTypes rejects an explicit `undefined` for the
-      // optional `sourceColor?`/`poolSize?` fields on `DecodeTransportOpen`.
+      // Conditional spreads — exactOptionalPropertyTypes rejects an explicit
+      // `undefined` for the optional fields on `DecodeTransportOpen`.
       await transport.open({
         streamId,
         path: this.init.sourcePath,
-        ...(this.init.sourceColor !== undefined ? { sourceColor: this.init.sourceColor } : {}),
+        sourceColor: this.init.sourceColor,
         ...(this.init.poolSize !== undefined ? { poolSize: this.init.poolSize } : {}),
         ...(this.init.width != null ? { codedWidth: this.init.width } : {}),
         ...(this.init.height != null ? { codedHeight: this.init.height } : {}),
@@ -420,7 +424,7 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// Pick the hardware transport by the resolved HW lane: the copy-back lanes
   /// (Linux nvdec/vaapi, macOS videotoolbox) ride the SW transport with a hw
   /// accel — decode happens on the GPU/OS media engine but frames ship as CPU
-  /// NV12 over the SAME previewSw transport; the Windows shared-texture lane
+  /// NV12 over the SAME byte transport; the Windows shared-texture lane
   /// (d3d11va) rides the GPU transport. A forced lane (bench) has no hwPlan and
   /// falls to the GPU transport.
   private makeHardwareTransport(): DecodeTransport {
