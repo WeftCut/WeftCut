@@ -1,0 +1,48 @@
+{
+  // Playwright E2E specs, their helpers and the Playwright config. The specs run
+  // in Node but hand callbacks to `page.evaluate`, which run in the renderer,
+  // hence DOM beside @types/node. Imports of app source resolve to the
+  // referenced projects' emitted .d.ts, so those files keep their own options
+  // and errors (see tsconfig.main.json).
+  //
+  // The .mjs helpers the specs import are listed so their exports get types
+  // (JSDoc where inference falls short); `checkJs: false` leaves their bodies
+  // unchecked, and the standalone .mjs scripts stay out of the program.
+  "compilerOptions": {
+    "composite": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowJs": true,
+    "checkJs": false,
+    // composite requires emit; redirect .d.ts out of source (TS6310).
+    "emitDeclarationOnly": true,
+    "declarationDir": "node_modules/.cache/tsc/e2e",
+    "types": ["node"],
+    // No JSX here, but without the option an import of a renderer .tsx module
+    // (driver.ts reads ExportPanel's types) cannot map to web's emitted .d.ts
+    // and fails as TS6305.
+    "jsx": "react-jsx",
+    "disableSourceOfProjectReferenceRedirect": true
+  },
+  "include": [
+    "playwright.config.ts",
+    "e2e/**/*.ts",
+    "e2e/lib/*.mjs",
+    "e2e/fixtures/generate*.mjs",
+    "scripts/build-three-motif.mjs"
+  ],
+  "exclude": ["e2e/**/*.test.mjs"],
+  "references": [
+    { "path": "./tsconfig.shared.json" },
+    { "path": "./tsconfig.main.json" },
+    { "path": "./tsconfig.web.json" }
+  ]
+}

@@ -15,7 +15,9 @@ import { normalize } from './motifPackage'
 import { runMotifTool, type MotifToolDeps } from './motifTools'
 import { projectMotifAccess } from './projectRecords'
 import { libraryPackage, ProjectMotifStore, type RevisionCause } from './projectStore'
+import { MotifRefusal } from './refusal'
 import { UserMotifStore } from './store'
+import { ALL_TRUSTED, type MotifTrustView } from './trust'
 
 const roots: string[] = []
 function temp() { const root = mkdtempSync(path.join(tmpdir(), 'motif-tools-')); roots.push(root); return root }
@@ -55,10 +57,13 @@ function world() {
   const idGen = seededGen()
   const actor = createActor({ initial: blankProject(idGen, 'Film'), idGen, motifs: projectMotifAccess(() => project, id => libraryPackage(store, [], id)) })
   let changed = 0
-  const deps: MotifToolDeps = { store, builtins: [], project: () => project, actor, emitChanged: () => { changed++ } }
+  /** Revisions this machine does not trust; every other one is trusted. */
+  const untrusted = new Set<string>()
+  const trust: MotifTrustView = { trusted: revision => !untrusted.has(revision) }
+  const deps: MotifToolDeps = { store, builtins: [], project: () => project, trust, actor, emitChanged: () => { changed++ } }
   const call = (name: string, args: Record<string, unknown> = {}, by: Actor | undefined = AGENT) => runMotifTool(name, args, deps, by) as any
   return {
-    root, store, projectDir, actor, call, seen, trashed,
+    root, store, projectDir, actor, call, seen, trashed, untrusted,
     close: () => { project = null },
     changes: () => changed,
     entries: () => actor.snapshot().motifs,
@@ -140,6 +145,8 @@ describe('create_motif', () => {
     writeFileSync(path.join(outside, 'index.html'), page('Outside'))
     const copied = w.call('create_motif', { source: { kind: 'directory', path: outside } })
     expect(copied.path).toBe(w.folder('outside'))
+    // Bytes from outside the project were not made here (Motif trust).
+    expect(w.seen).toContainEqual(['outside', 'imported'])
     const written = w.folder('hand-made')
     mkdirSync(written, { recursive: true })
     writeFileSync(path.join(written, 'index.html'), page('Whatever the page says'))
@@ -149,7 +156,9 @@ describe('create_motif', () => {
     expect(adopted).toEqual({ motif_id: 'hand-made', revision: expect.any(String), path: written })
     expect(tree(written)).toEqual(before)
     expect(w.entries()['hand-made']).toMatchObject({ revision: adopted.revision, from: null })
-    expect(w.seen).toContainEqual(['hand-made', 'created'])
+    // Adopting makes no bytes (Motif trust): the folder is observed as it stands.
+    expect(w.seen).toContainEqual(['hand-made', 'edited-while-open'])
+    expect(w.seen).not.toContainEqual(['hand-made', 'created'])
     // Adopting it again records nothing.
     const len = w.historyLen()
     expect(w.call('create_motif', { source: { kind: 'directory', path: written } }).motif_id).toBe('hand-made')
@@ -160,6 +169,32 @@ describe('create_motif', () => {
     const w = world()
     w.close()
     expect(() => w.call('create_motif', { source: { kind: 'empty', name: 'X' } })).toThrow(/No project is open/)
+  })
+
+  it('makes an empty Motif with its first files in one commit, so one undo takes it out', () => {
+    const w = world()
+    const before = w.historyLen()
+    const made = w.call('create_motif', { source: { kind: 'empty', name: 'Untitled', files: [
+      { path: 'manifest.json', text: JSON.stringify(manifest('Title Card')) },
+      { path: 'index.html', text: '<html><body><script>motif.define({frame(t){ /* first */ }})</script></body></html>' },
+      { path: 'notes.txt', text: 'hello' },
+    ] } })
+    // The manifest among the files names it.
+    expect(made.motif_id).toBe('title-card')
+    expect(readFileSync(path.join(made.path, 'index.html'), 'utf8')).toContain('/* first */')
+    expect(readFileSync(path.join(made.path, 'notes.txt'), 'utf8')).toBe('hello')
+    expect(w.entries()['title-card']).toMatchObject({ revision: made.revision })
+    expect(w.historyLen()).toBe(before + 1)
+    w.actor.dispatch('undo', {})
+    expect(w.entries()).not.toHaveProperty('title-card')
+  })
+
+  it('refuses first files that make no package, recording nothing', () => {
+    const w = world()
+    const before = w.historyLen()
+    expect(() => w.call('create_motif', { source: { kind: 'empty', name: 'Card', files: [{ path: 'manifest.json', text: '{broken' }] } })).toThrow(/JSON/)
+    expect(w.historyLen()).toBe(before)
+    expect(existsSync(w.folder('card'))).toBe(false)
   })
 })
 
@@ -188,7 +223,48 @@ describe('update_motif_files', () => {
     w.call('update_motif_files', { motif_id: 'card', expected_revision: added.revision, files: [{ path: 'a.txt', edits: [{ old: 'two', new: '2' }] }] })
     expect(readFileSync(path.join(w.folder('card'), 'a.txt'), 'utf8')).toBe('one 2 one')
   })
+
+  it('repairs a folder whose files make no package with expected_revision null, as one commit', () => {
+    const w = world()
+    w.call('create_motif', { source: { kind: 'empty', name: 'Card' } })
+    const manifestPath = path.join(w.folder('card'), 'manifest.json')
+    const repair = JSON.stringify({ ...JSON.parse(readFileSync(manifestPath, 'utf8')), default_duration_s: 2 })
+    writeFileSync(manifestPath, '{broken')
+    const before = w.historyLen()
+    // A revision names no folder that has none: the refusal says so.
+    const refusal = catchError(() => w.call('update_motif_files', { motif_id: 'card', expected_revision: 'stale', files: [{ path: 'manifest.json', text: repair }] }))
+    expect(refusal).toBeInstanceOf(MotifRefusal)
+    expect((refusal as MotifRefusal).data).toEqual({ error: 'RevisionConflict', current_revision: null })
+    // A batch that leaves it invalid writes nothing.
+    expect(() => w.call('update_motif_files', { motif_id: 'card', expected_revision: null, files: [{ path: 'notes.txt', text: 'x' }] })).toThrow(/JSON/)
+    expect(existsSync(path.join(w.folder('card'), 'notes.txt'))).toBe(false)
+    expect(w.historyLen()).toBe(before)
+
+    const repaired = w.call('update_motif_files', { motif_id: 'card', expected_revision: null, files: [{ path: 'manifest.json', text: repair }] })
+    expect(w.historyLen()).toBe(before + 1)
+    expect(w.lastOp().actor).toEqual(AGENT)
+    expect(w.entries().card!.revision).toBe(repaired.revision)
+    expect(w.call('read_motif', { motif_id: 'card' })).toMatchObject({ status: 'ok', revision: repaired.revision })
+  })
+
+  it('refuses expected_revision null for a folder that makes a package, naming its revision', () => {
+    const w = world()
+    const made = w.call('create_motif', { source: { kind: 'empty', name: 'Card' } })
+    const files = tree(w.folder('card'))
+    const before = w.historyLen()
+    const refusal = catchError(() => w.call('update_motif_files', { motif_id: 'card', expected_revision: null, files: [{ path: 'notes.txt', text: 'x' }] }))
+    expect(refusal).toBeInstanceOf(MotifRefusal)
+    expect((refusal as MotifRefusal).data).toEqual({ error: 'RevisionConflict', current_revision: made.revision })
+    expect(tree(w.folder('card'))).toEqual(files)
+    expect(w.historyLen()).toBe(before)
+  })
 })
+
+/** What `fn` throws; fails the test when it returns. */
+function catchError(fn: () => unknown): unknown {
+  try { fn() } catch (error) { return error }
+  throw new Error('expected a throw')
+}
 
 describe('delete_motif', () => {
   it('removes a Motif no layer uses from the project, keeping its folder; one in use is refused', () => {
@@ -275,6 +351,36 @@ describe('read_motif and export_motif', () => {
   })
 })
 
+describe('a project Motif not trusted on this machine', () => {
+  /** A placed Motif whose revision this machine does not trust. */
+  function untrustedWorld() {
+    const w = world()
+    w.install('lower', 'library body'); w.place('lower')
+    const revision = w.entries().lower!.revision!
+    w.untrusted.add(revision)
+    return { w, revision }
+  }
+
+  it('is listed as untrusted with its revision and manifest, and read as text', () => {
+    const { w, revision } = untrustedWorld()
+    expect(row(w, 'lower')).toMatchObject({ status: 'untrusted', revision, name: 'Lower', diagnostic: 'not trusted on this machine' })
+    expect(w.call('read_motif', { motif_id: 'lower' })).toMatchObject({ status: 'untrusted', revision, manifest: expect.objectContaining({ id: 'lower' }) })
+    expect(w.call('read_motif', { motif_id: 'lower', path: 'index.html' }).text).toContain('library body')
+  })
+
+  it('is neither copied, proposed nor published; it exports as its files stand', () => {
+    const { w, revision } = untrustedWorld()
+    const untrusted = expect.objectContaining({ data: { error: 'MotifUntrusted', id: 'lower', revision } })
+    expect(() => w.call('create_motif', { source: { kind: 'copy', motif_id: 'lower' } })).toThrow(untrusted)
+    expect(() => w.call('install_motif', { motif_id: 'lower' })).toThrow(untrusted)
+    expect(() => w.call('publish_motif', { motif_id: 'lower' }, { kind: 'User' })).toThrow(untrusted)
+    expect(Object.keys(w.entries())).toEqual(['lower'])
+    expect(w.call('export_motif', { motif_id: 'lower', path: path.join(w.root, 'lower.zip') })).toMatchObject({ revision })
+    w.untrusted.delete(revision)
+    expect(w.call('create_motif', { source: { kind: 'copy', motif_id: 'lower' } }).motif_id).toBe('lower-2')
+  })
+})
+
 describe('install_motif and the approval card', () => {
   it("proposes to the library Motif of the project Motif's lineage; approval adds a version and leaves the project byte-identical", () => {
     const w = world()
@@ -340,7 +446,7 @@ describe('install_motif and the approval card', () => {
     const proposed = w.call('install_motif', { motif_id: 'badge' })
     const restarted = new UserMotifStore(w.store.root())
     const actor = createActor({ initial: blankProject(seededGen(), 'Other'), idGen: seededGen() })
-    const approved = runMotifTool('approve_motif_proposal', { proposal_id: proposed.proposal_id }, { store: restarted, builtins: [], project: () => null, actor, emitChanged: () => {} }) as { motif_id: string }
+    const approved = runMotifTool('approve_motif_proposal', { proposal_id: proposed.proposal_id }, { store: restarted, builtins: [], project: () => null, trust: ALL_TRUSTED, actor, emitChanged: () => {} }) as { motif_id: string }
     expect(approved.motif_id).toBe('badge')
     expect(restarted.lineage.of('badge')).toBe(w.entries().badge!.uid)
   })

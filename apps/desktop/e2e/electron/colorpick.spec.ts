@@ -2,20 +2,25 @@
 // batched write → ONE undo reverts all three. Blue (not green) because the
 // chroma defaults ARE green — a green pick would assert nothing.
 import { test, expect } from '@playwright/test'
-import { launchApp, newProject, invokeCmd, summary, tmpDir, waitForHook, importAndPlaceMedia } from './helpers/driver'
+import { launchApp, newProject, invokeCmd, summary, tmpDir, waitForHook, importAndPlaceMedia, type CompositionSummary } from './helpers/driver'
+import type { Animated } from '../../src/shared/keyframe'
 import { writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-interface ParamTrack { mode: string; value?: number }
-interface LayerLite { id: string; effects?: Array<{ id: string; params: Record<string, ParamTrack> }> }
-
-function chromaParams(s: { tracks: Array<{ layers: LayerLite[] }> }, layerId: string): Record<string, ParamTrack> {
+function chromaParams(s: CompositionSummary, layerId: string): Record<string, Animated<number>> {
   for (const t of s.tracks) {
     for (const l of t.layers) {
       if (l.id === layerId) return l.effects?.[0]?.params ?? {}
     }
   }
   throw new Error(`layer ${layerId} not in summary`)
+}
+
+/// The eyedropper writes static keys; a keyframed one is a defect, not an
+/// absent key.
+function staticValue(track: Animated<number> | undefined): number | undefined {
+  if (track?.mode === 'Keyframed') throw new Error(`expected a static key, got ${JSON.stringify(track)}`)
+  return track?.value
 }
 
 /// Warm-up: force a real Pixi render and read back the center pixel through the
@@ -115,12 +120,12 @@ test('colorpick: chromakey eyedropper picks canvas blue; one undo reverts', asyn
   }
   // The batched write lands async after the overlay settles; poll the summary.
   await expect
-    .poll(async () => chromaParams(await summary(page), layerId).keyB?.value, { timeout: 10_000 })
+    .poll(async () => staticValue(chromaParams(await summary(page), layerId).keyB), { timeout: 10_000 })
     .toBeDefined()
   let p = chromaParams(await summary(page), layerId)
-  near(p.keyR?.value, 0)
-  near(p.keyG?.value, 0)
-  near(p.keyB?.value, 1)
+  near(staticValue(p.keyR), 0)
+  near(staticValue(p.keyG), 0)
+  near(staticValue(p.keyB), 1)
 
   // ONE undo reverts all three (single batched entry). add_effect creates
   // params:{} and undo restores that snapshot verbatim, so the lazily-created
@@ -128,9 +133,9 @@ test('colorpick: chromakey eyedropper picks canvas blue; one undo reverts', asyn
   // history.ts snapshot restore).
   await invokeCmd(page, 'project_undo', {})
   p = chromaParams(await summary(page), layerId)
-  expect(p.keyR?.value).toBeUndefined()
-  expect(p.keyG?.value).toBeUndefined()
-  expect(p.keyB?.value).toBeUndefined()
+  expect(staticValue(p.keyR)).toBeUndefined()
+  expect(staticValue(p.keyG)).toBeUndefined()
+  expect(staticValue(p.keyB)).toBeUndefined()
 
   await app.close()
 })
@@ -220,8 +225,8 @@ for (const backend of ['auto', 'webgl'] as const) test(`colorpick: samples the a
         const p = point(x, y); await page.mouse.move(p.x, p.y)
         await expect(page.getByTestId('colorpick-hex'), mode).toHaveText(hex)
       }
-      const top = mode === 'rotated' ? [208, 80] as const : [120, 80] as const
-      const bottom = mode === 'rotated' ? [128, 80] as const : [120, 160] as const
+      const top: readonly [number, number] = mode === 'rotated' ? [208, 80] : [120, 80]
+      const bottom: readonly [number, number] = mode === 'rotated' ? [128, 80] : [120, 160]
       const hex = mode === 'half-alpha' ? '#285014' : '#50a028'
       await hover(...top, hex)
       await hover(...bottom, mode === 'half-alpha' ? '#142850' : '#2850a0')
@@ -312,15 +317,15 @@ test('colorpick: desktop overlay commits once, undo restores, Escape cancels @se
     await desktop.mouse.move(120, 100)
     await expect(desktop.locator('#hex')).toHaveText(capturedHex)
     expect(await desktop.evaluate(() => typeof (window as any).api)).toBe('undefined')
-    expect(chromaParams(await summary(page), layerId).keyB?.value).toBeUndefined()
+    expect(staticValue(chromaParams(await summary(page), layerId).keyB)).toBeUndefined()
     await desktop.screenshot({ path: info.outputPath('desktop-picker.png') })
     await desktop.mouse.click(120, 100)
     await expect.poll(visibleOverlays).toBe(0)
     // Authored effect parameters are quantized to three decimal places.
-    await expect.poll(async () => chromaParams(await summary(page), layerId).keyB?.value).toBeCloseTo(captured[2]! / 255, 3)
+    await expect.poll(async () => staticValue(chromaParams(await summary(page), layerId).keyB)).toBeCloseTo(captured[2]! / 255, 3)
     const picked = chromaParams(await summary(page), layerId)
-    expect(picked.keyR?.value).toBeCloseTo(captured[0]! / 255, 3)
-    expect(picked.keyG?.value).toBeCloseTo(captured[1]! / 255, 3)
+    expect(staticValue(picked.keyR)).toBeCloseTo(captured[0]! / 255, 3)
+    expect(staticValue(picked.keyG)).toBeCloseTo(captured[1]! / 255, 3)
     await invokeCmd(page, 'project_undo', {})
     expect(chromaParams(await summary(page), layerId)).toEqual({})
 
@@ -362,7 +367,7 @@ test('colorpick: desktop capture failure returns to usable in-app picking @seria
     const box = await page.locator('canvas').first().boundingBox()
     if (!box) throw new Error('No preview canvas')
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-    await expect.poll(async () => chromaParams(await summary(page), layerId).keyB?.value).toBe(1)
+    await expect.poll(async () => staticValue(chromaParams(await summary(page), layerId).keyB)).toBe(1)
     await invokeCmd(page, 'project_undo', {})
     expect(chromaParams(await summary(page), layerId)).toEqual({})
   } finally { await app.close() }

@@ -39,6 +39,7 @@ function host() {
     motifTool: (name: string, args: { motif_id?: string }) => {
       reads.push(name)
       if (name !== 'read_motif') return null
+      if (args.motif_id === 'received') return { manifest: { ...MANIFEST, id: 'received' }, revision: 'a'.repeat(64), status: 'untrusted', diagnostic: 'not trusted on this machine' }
       if (args.motif_id !== 'lower-third') throw new MotifRefusal(`No Motif '${args.motif_id}' in this project — list_motifs lists its Motifs`, { error: 'MotifNotFound', id: args.motif_id! })
       return { manifest: MANIFEST, revision: 'rev-1', status: 'builtin' }
     },
@@ -51,6 +52,17 @@ const record = (out: Res) => JSON.parse(out.content[1]!.text!)
 /** `preview_motif` through the call funnel; `capture` records each frame's arguments. */
 const preview = (args: Record<string, unknown>) => handleCallTool(backend, host, 'preview_motif', args, undefined, undefined, undefined, undefined, undefined, frameArgs => capture(frameArgs))
 const sheetOf = (out: Res) => decodePng(new Uint8Array(Buffer.from(out.content[0]!.data!, 'base64')))
+
+describe('preview_motif and Motif trust', () => {
+  it('refuses a Motif not trusted on this machine before any capture, saying who trusts it and how to look first', async () => {
+    capture.mockClear()
+    const out = await preview({ motif_id: 'received', local_t_s: [1] }) as Res & { structuredContent: Record<string, unknown> }
+    expect(out.isError).toBe(true)
+    expect(out.structuredContent).toMatchObject({ error: 'MotifUntrusted', id: 'received', revision: 'a'.repeat(64) })
+    expect(out.content[0]!.text).toMatch(/not trusted on this machine.*Motifs panel.*read_motif/)
+    expect(capture).not.toHaveBeenCalled()
+  })
+})
 
 describe('preview_motif renders what add_layers would place', () => {
   it('omitted props take the manifest defaults; a frame is 640 wide by default; one Motif is read', async () => {

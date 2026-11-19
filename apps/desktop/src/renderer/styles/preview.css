@@ -469,7 +469,9 @@
   background: var(--warning);
 }
 
-.preview-transport button {
+/* The round icon buttons only: the row's other buttons (the timecode, the
+   Motif proposal note) size to their text. */
+.transport-buttons button {
   background: transparent;
   color: var(--muted-foreground);
   border: none;
@@ -484,30 +486,18 @@
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.preview-transport button:hover:not(:disabled) {
+.transport-buttons button:hover:not(:disabled) {
   background: var(--hover-neutral-strong);
   color: var(--foreground);
 }
 
-.preview-transport button:active:not(:disabled) {
+.transport-buttons button:active:not(:disabled) {
   background: var(--active-neutral);
 }
 
-.preview-transport button:disabled {
+.transport-buttons button:disabled {
   opacity: 0.3;
   cursor: not-allowed;
-}
-
-.preview-transport button.preview-timecode {
-  width: auto;
-  height: auto;
-  border-radius: var(--radius-control);
-  padding: 0 0 0 calc(4 * var(--ui-px));
-}
-
-.preview-transport button.preview-timecode:hover:not(:disabled),
-.preview-transport button.preview-timecode:active:not(:disabled) {
-  background: transparent;
 }
 
 .preview-failed-overlay {

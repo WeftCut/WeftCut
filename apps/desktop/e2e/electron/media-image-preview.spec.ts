@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, rootSummary } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, tmpDir, rootSummary } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const FIXTURE = path.resolve(__dirname, '../fixtures/media/test_chart_320x240.png')

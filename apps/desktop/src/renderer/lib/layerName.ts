@@ -1,5 +1,7 @@
 import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
 import type { CompositionSummary, LayerSummary } from "../ipc";
+import { useSyncExternalStore } from "react";
+import { getMotif, subscribeMotifCatalog } from "../render/motifs/catalog";
 
 /// The `N` in a derived `Group N`, per composition, root excluded — the stored
 /// `Composition.ordinal` lifted into the map shape the naming chain takes.
@@ -51,8 +53,9 @@ export function groupDisplayName(
 
 /// The one name a layer is shown under, anywhere it is named: its own label,
 /// else the source file it came from — for a Group layer, the composition it
-/// shows — else, for a Text layer, the words it actually renders, else its
-/// translated kind.
+/// shows — else, for a Text layer, the words it actually renders, for a Motif
+/// layer, its Motif's name (the project catalog's; surfaces that must follow a
+/// rename subscribe to `subscribeMotifCatalog`), else its translated kind.
 ///
 /// The Text rung is there because `kinds.text` is the one kind name that adds
 /// nothing: every surface that shows it also shows a Type glyph beside it, and
@@ -104,5 +107,36 @@ export function layerDisplayName(
     const content = textSnippet(layer.params.content, TEXT_NAME_MAX);
     if (content) return content;
   }
+  if (layer.params.kind === "Motif") {
+    // A Motif that cannot render has no manifest here; its id is still the
+    // readable slug of its folder under Motifs/.
+    const name = getMotif(layer.params.motif_id)?.manifest.name.trim();
+    if (name) return name;
+    if (layer.params.motif_id) return layer.params.motif_id;
+  }
   return t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind });
+}
+
+/// `layerDisplayName` for a component that shows the name: it renders again
+/// when the project Motif catalog changes the name (a Motif's manifest renamed,
+/// or the catalog arriving after the timeline). The snapshot is the name
+/// itself, so a catalog change re-renders only the layers whose name it moves.
+export function useLayerDisplayName(
+  layer: LayerSummary,
+  t: (key: string, values: Record<string, unknown>) => string,
+  groupOrdinals?: ReadonlyMap<string, number>,
+): string;
+export function useLayerDisplayName(
+  layer: LayerSummary | null,
+  t: (key: string, values: Record<string, unknown>) => string,
+  groupOrdinals?: ReadonlyMap<string, number>,
+): string | null;
+export function useLayerDisplayName(
+  layer: LayerSummary | null,
+  t: (key: string, values: Record<string, unknown>) => string,
+  groupOrdinals?: ReadonlyMap<string, number>,
+): string | null {
+  return useSyncExternalStore(subscribeMotifCatalog, () =>
+    layer ? layerDisplayName(layer, t, groupOrdinals) : null,
+  );
 }
