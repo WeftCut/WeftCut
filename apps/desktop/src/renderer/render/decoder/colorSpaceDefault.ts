@@ -19,7 +19,8 @@ import { asVideoColorSpace, type SourceColor } from "./ffprobeColorSpace";
 /// declares, and as BT.709 when it declares nothing, whatever the config's
 /// `colorSpace` says (observed: macOS VideoToolbox in Electron 44, an untagged
 /// 720x480 H.264 chart previews and exports with BT.709 colours under a
-/// smpte170m config). A software decoder's frames follow the config. So a
+/// smpte170m config; Windows' D3D11 decoder was measured to follow the
+/// config). A software decoder's frames follow the config. So a
 /// source whose matrix is the rule's and is not BT.709 decodes in software;
 /// it is an SD picture by the rule, where that costs little.
 export function decodesInSoftwareForColour(sourceColor: SourceColor): boolean {
