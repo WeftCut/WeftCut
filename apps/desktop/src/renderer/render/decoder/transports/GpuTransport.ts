@@ -120,15 +120,18 @@ export class GpuTransport implements DecodeTransport {
     }
   }
 
-  /// Every slot goes back exactly once, and only once nothing can still be
-  /// reading it: after its fence (shown or not), at once when the preload's read
-  /// failed, never after dispose (the session's close reclaims it).
+  /// Every slot goes back at most once, and only once nothing can still be
+  /// reading it: after its fence or proof (shown or not), at once when the
+  /// preload's read failed. A slot whose read nothing can prove, and every
+  /// slot after dispose, is never released: the session's close reclaims it.
   private onSlot(msg: SlotReadMsg): void {
     if (this._disposed) {
       msg.bitmap?.close();
       return;
     }
     const release = () => this.release(msg.slot, msg.gen);
+    // Nothing will prove this slot's read: its close reclaims the slot.
+    const unproven = () => this.fail("GPU slot read completion could not be verified");
     if (msg.bitmap === undefined) {
       // Nothing holds a read of the slot: `getVideoFrame`'s frame is closed.
       release();
@@ -138,13 +141,10 @@ export class GpuTransport implements DecodeTransport {
     const queue = sharedSlotFenceQueue();
     // Before `frameCb`, and unconditionally: the slot's release cannot depend
     // on the ring keeping the frame, or on anything painting it.
-    const completion = queue.submit(this.streamId, msg.slot, msg.bitmap, release);
+    const completion = queue.submit(this.streamId, msg.slot, msg.bitmap, release, unproven);
     if (completion.applied === "none") {
-      // Nothing proved the read complete, so the slot is not released; the
-      // session's close reclaims it.
       msg.bitmap.close();
-      this.errorCb?.("GPU slot read completion could not be verified");
-      void this.dispose().catch(() => {});
+      unproven();
       return;
     }
     this.timings.record(
@@ -168,12 +168,16 @@ export class GpuTransport implements DecodeTransport {
       // and close the session instead of leaving its pool one slot short: the
       // report is what lets `FfmpegSource` fall back. Deferred so `dropFor`
       // cannot mutate the fence queue while it drains other completed slots.
-      queueMicrotask(() => {
-        if (this._disposed) return;
-        this.errorCb?.("GPU slot release could not be delivered");
-        void this.dispose().catch(() => {});
-      });
+      queueMicrotask(() => this.fail("GPU slot release could not be delivered"));
     }
+  }
+
+  /// A slot this session cannot hand back: report it once (`FfmpegSource`
+  /// falls back) and close the session, whose close reclaims the slot.
+  private fail(reason: string): void {
+    if (this._disposed) return;
+    this.errorCb?.(reason);
+    void this.dispose().catch(() => {});
   }
 
   /// Read handoff timings for this session, or null before the first slot.

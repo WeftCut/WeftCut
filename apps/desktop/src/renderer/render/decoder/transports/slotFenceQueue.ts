@@ -21,24 +21,29 @@
 // safely overwrite the shared texture. Why this and not a synchronous proof
 // per frame: docs/notes/slot-read-completion-2026-11-18.md.
 //
-// INVARIANT — every live submitted bitmap releases EXACTLY ONCE, and only after
-// its probe signals. `submit` either queues the release or performs a completed
-// fallback before returning; a failed fallback reports failure without release
-// so the caller can close the stream. Nothing else may release. The release is
-// deliberately independent of PAINT: a frame the ring evicts, or one that
-// arrives while the compositor is suspended, still holds a slot and still
-// releases. The one exception is a stream tearing down (`dropFor`), where the
-// slots cease to exist with the native session and releasing into it is the
-// thing to avoid.
+// INVARIANT — every submitted bitmap releases AT MOST ONCE, and only on proof:
+// its probe completed, or the one-pixel fallback ran. `submit` either queues the
+// release or performs a completed fallback before returning; a failed fallback
+// reports failure without release so the caller can close the stream. A probe
+// whose device is lost before it completes proves nothing either: it reports
+// `unproven`, and its owner closes the stream. Nothing else may release. The
+// release is deliberately independent of PAINT: a frame the ring evicts, or one
+// that arrives while the compositor is suspended, still holds a slot and still
+// releases. A slot never released is reclaimed by the native session's close
+// (`dropFor`, then `GpuTransport.dispose`), never by a release into it.
 
 import type { FenceHandoffStats } from "./handoffTimings";
 import { webgpuDeviceOf } from "../../webgpuDevice";
 import { createReadCompletionProof } from "../../../../shared/readCompletion";
 
+/// Where one probe stands: still waiting, its copy has run (`complete`), or its
+/// device was lost first, so nothing will ever prove the read (`unproven`).
+export type SlotFenceState = "pending" | "complete" | "unproven";
+
 /// One in-flight completion probe over one delivered bitmap.
 export interface SlotFenceProbe {
-  /// Non-blocking: has the GPU finished the copy this probe was taken after?
-  signalled(): boolean;
+  /// Non-blocking. `complete` and `unproven` are final.
+  state(): SlotFenceState;
   /// Release whatever GPU object the probe holds.
   dispose(): void;
 }
@@ -48,9 +53,10 @@ export interface SlotFenceProbe {
 /// is a state the fallback ladder handles rather than a crash.
 export interface SlotFenceBackend {
   /// Submit the completion-forcing copy and start its probe. `onSignal` is a
-  /// WAKE-UP, not the ack — the queue re-reads `signalled()` itself, so a
-  /// backend that over-fires it is harmless. Null = this backend could not run,
-  /// and the caller must fall back to the one-pixel proof.
+  /// WAKE-UP, not the ack — the queue re-reads `state()` itself, so a backend
+  /// that over-fires it is harmless. Null = this backend could not run (its
+  /// device is lost, or the copy threw), and the caller must fall back to the
+  /// one-pixel proof.
   submit(bmp: ImageBitmap, onSignal: () => void): SlotFenceProbe | null;
 }
 
@@ -73,6 +79,7 @@ type PendingSlot = {
   probe: SlotFenceProbe;
   submittedAt: number;
   ack: () => void;
+  unproven: () => void;
 };
 
 type StreamStats = {
@@ -116,8 +123,15 @@ export class SlotFenceQueue {
 
   /// Take responsibility for one delivered bitmap's slot. Returns what ran; the
   /// release is queued (`fence`), done (`proof`), or withheld (`none`,
-  /// requiring the caller to close the stream).
-  submit(streamId: string, slot: number, bmp: ImageBitmap, ack: () => void): SlotFenceSubmission {
+  /// requiring the caller to close the stream). A queued fence that ends
+  /// `unproven` calls `unproven` instead of `ack`, with the same requirement.
+  submit(
+    streamId: string,
+    slot: number,
+    bmp: ImageBitmap,
+    ack: () => void,
+    unproven: () => void,
+  ): SlotFenceSubmission {
     const t0 = performance.now();
     // The copy is what forces completion; the probe only reports it. Both are
     // the backend's business, and either failing means the ladder must catch it.
@@ -134,7 +148,7 @@ export class SlotFenceQueue {
     }
     if (probe) {
       const drawMs = performance.now() - t0;
-      this.pending.push({ streamId, slot, probe, submittedAt: performance.now(), ack });
+      this.pending.push({ streamId, slot, probe, submittedAt: performance.now(), ack, unproven });
       const stats = this.statsFor(streamId);
       stats.pending += 1;
       stats.pendingPeak = Math.max(stats.pendingPeak, stats.pending);
@@ -156,27 +170,33 @@ export class SlotFenceQueue {
       : { applied: "none", drawMs: 0, readMs: 0 };
   }
 
-  /// Ack every pending slot whose probe has signalled. In the explicit unsafe
-  /// compatibility mode, a blown deadline is also released and counted.
+  /// Ack every pending slot whose probe completed, and hand every `unproven`
+  /// one to its owner without a release. In the explicit unsafe compatibility
+  /// mode, a blown deadline is also released and counted.
   /// Cheap enough to call opportunistically — a frame arriving is a wake-up the
   /// queue may already have been waiting for.
   drain(): void {
     if (this.pending.length === 0) return;
     const now = performance.now();
+    // Told after the pass: an owner closes its stream from there, and that
+    // close (`dropFor`) must not splice the list this pass is walking.
+    const unproven: (() => void)[] = [];
     for (let i = this.pending.length - 1; i >= 0; i--) {
       const p = this.pending[i]!;
-      let done = false;
+      let state: SlotFenceState;
       try {
-        done = p.probe.signalled();
+        state = p.probe.state();
       } catch {
         // An unreadable probe is not proof of completion. Retain its slot for
         // stream teardown, but keep draining independent slots.
         continue;
       }
+      const done = state === "complete";
       const unsafeDeadlineExpired =
+        state === "pending" &&
         this.releasePolicy.mode === "unsafe-deadline" &&
         now - p.submittedAt >= this.releasePolicy.deadlineMs;
-      if (!done && !unsafeDeadlineExpired) continue;
+      if (state === "pending" && !unsafeDeadlineExpired) continue;
       // Completion owns the slot release, not successful destruction of the
       // probe wrapper. A lost device can make cleanup throw after the work has
       // already settled; do not let that strand this or earlier ready slots.
@@ -188,6 +208,10 @@ export class SlotFenceQueue {
       this.pending.splice(i, 1);
       const stats = this.statsFor(p.streamId);
       stats.pending = Math.max(0, stats.pending - 1);
+      if (state === "unproven") {
+        unproven.push(p.unproven);
+        continue;
+      }
       stats.lastWaitMs = performance.now() - p.submittedAt;
       stats.waits[stats.completed++ % 120] = stats.lastWaitMs;
       if (!done) stats.forcedWaits += 1;
@@ -200,6 +224,13 @@ export class SlotFenceQueue {
         // The production callback owns its transport-failure response (it closes
         // the native session). Do not let one failed delivery strand other
         // independently completed slots in this drain pass.
+      }
+    }
+    for (const tell of unproven) {
+      try {
+        tell();
+      } catch {
+        // As with a failed ack: one owner's failure strands no other.
       }
     }
   }
@@ -297,14 +328,31 @@ export class SlotFenceQueue {
 ///
 /// `onSubmittedWorkDone` is the fence: a promise, so there is no polling and no
 /// spin. It resolves on its own; it is just slow to.
+///
+/// The fence proves the read only while its device lives. A lost device runs
+/// no copy (`dropCopiesOnceLost` drops it outright), so its queue orders after
+/// nothing: `submit` then reports "could not run", and a probe still pending
+/// when the loss is seen ends `unproven`, whether Chromium then rejects its
+/// promise or reports the work done.
 class WebgpuSlotFence implements SlotFenceBackend {
   /// One 1×1 destination, created lazily and reused for the whole session. The
   /// pixels are never read — only the dependency matters.
   private tex: GPUTexture | null = null;
 
-  constructor(private readonly device: GPUDevice) {}
+  private lost = false;
+
+  /// Each pending probe's way to end `unproven`, run when the loss is seen.
+  private readonly waiting = new Set<() => void>();
+
+  constructor(private readonly device: GPUDevice) {
+    void device.lost.then(() => {
+      this.lost = true;
+      for (const lose of [...this.waiting]) lose();
+    });
+  }
 
   submit(bmp: ImageBitmap, onSignal: () => void): SlotFenceProbe | null {
+    if (this.lost) return null;
     try {
       // RENDER_ATTACHMENT is required of a copyExternalImageToTexture
       // destination, COPY_DST of any copy destination.
@@ -318,16 +366,25 @@ class WebgpuSlotFence implements SlotFenceBackend {
         { texture: this.tex },
         [1, 1],
       );
-      let done = false;
-      // A rejected promise (device lost) settles as signalled: there can be no
-      // remaining device work to protect, and leaving it pending would retain
-      // the native slot until stream teardown.
-      const settle = (): void => {
-        done = true;
+      const workDone = this.device.queue.onSubmittedWorkDone();
+      let state: SlotFenceState = "pending";
+      const settle = (to: SlotFenceState): void => {
+        if (state !== "pending") return;
+        state = to;
+        this.waiting.delete(lose);
         onSignal();
       };
-      void this.device.queue.onSubmittedWorkDone().then(settle, settle);
-      return { signalled: () => done, dispose: () => {} };
+      const lose = (): void => settle("unproven");
+      this.waiting.add(lose);
+      // A rejection is no proof that the read ran, and neither is a
+      // fulfilment once the device is known lost.
+      void workDone.then(() => settle(this.lost ? "unproven" : "complete"), lose);
+      return {
+        state: () => state,
+        dispose: () => {
+          this.waiting.delete(lose);
+        },
+      };
     } catch {
       // A detached bitmap or a dead device — report "could not run" so the
       // caller falls back to the one-pixel proof instead.

@@ -131,7 +131,9 @@ through this copy. Every death traced was an upload on the lost device between
 the restart and Pixi's new device; no survivor made one.
 `dropCopiesOnceLost` (`render/webgpuDevice.ts`) drops the copy on a lost
 device, which executes nothing anyway. The two builds alternated, 40 runs each:
-with it 0 died paused and 0 playing, without it 5 and 40.
+with it 0 died paused and 0 playing, without it 5 and 40. Nothing on a lost
+device's queue orders after a read, so the GPU preview's slot fence takes no
+proof there ([`preview.md`](../preview.md), the slot release rule).
 
 ## macOS menu accelerators do not preempt the renderer
 

@@ -16,6 +16,8 @@ interface Entry {
   contents: WebContents
   message?: (event: { data: unknown }) => void
   closed?: () => void
+  /** The preload asked for the close: it has ended its side already. */
+  closedByPreload?: boolean
 }
 
 const ports = new Map<string, Entry>()
@@ -33,7 +35,10 @@ export function installDecodeSessionIpc(ipc: Pick<IpcMain, 'on' | 'handle'>): vo
     owned(event.sender, sessionId)?.message?.({ data: cmd })
   })
   ipc.handle('decodeSession:close', (event, sessionId: string) => {
-    owned(event.sender, sessionId)?.closed?.()
+    const entry = owned(event.sender, sessionId)
+    if (!entry) return
+    entry.closedByPreload = true
+    entry.closed?.()
   })
 }
 
@@ -57,8 +62,10 @@ export function ipcCarrierPort(contents: WebContents, sessionId: string): Carrie
     close() {
       if (ports.get(sessionId) !== entry) return
       ports.delete(sessionId)
-      // The preload closes its end, so the consumer's port goes with the session.
-      send('decodeSession:end')
+      // The preload closes its end, so the consumer's port goes with the
+      // session. Not after a close it asked for: it ended its side then, and
+      // may already hold the id for its next open, which an end would cut.
+      if (!entry.closedByPreload) send('decodeSession:end')
     },
   }
 }

@@ -73,7 +73,6 @@ import { installWindowsNotifications } from './windowsNotifications.js'
 import { buildApplicationMenuTemplate, sanitizeMenuProjection } from './appMenu.js'
 import type { MenuProjection } from '../shared/menu.js'
 import type { AppNotice } from '../shared/ipc.js'
-import type { PlaneColor } from '../shared/frameCarrier/wire.js'
 import { broadcastEvent } from './broadcast.js'
 import { createDeferredLog } from './deferredLog.js'
 import { createWorkspaceEventGate } from './workspaceEvents.js'
@@ -94,7 +93,7 @@ import { createFxCacheLayout, createNodeAudioFxFs, fxCacheRoot } from './audioFx
 import { fxWaveformKey } from '../shared/audioEffects/status.js'
 import { installPreviewGpuIpc } from './previewGpuIpc.js'
 import { openPreviewDecode, type PreviewDecodeRequest } from './previewDecode.js'
-import { openExportDecode } from './exportDecode.js'
+import { installExportDecodeIpc } from './exportDecode.js'
 import { installDecodeSessionIpc, ipcCarrierPort } from './frameCarrier/ipcCarrierPort.js'
 import { serveSinkPort } from './exportSinkPort.js'
 import { loadNativeDecode } from './native-decode.js'
@@ -2320,12 +2319,8 @@ app.whenReady().then(async () => {
   // to the export Worker (docs/export-ipc-transport.md § Decode-in).
   installDecodeSessionIpc(ipcMain)
   ipcMain.handle('previewDecode:open', (event, a: PreviewDecodeRequest) =>
-    openPreviewDecode(ndBackend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), a))
-  ipcMain.handle('exportDecode:open', (event, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number; color: PlaneColor }) =>
-    openExportDecode(ndBackend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), {
-      sessionId: a.sessionId, path: a.path, outFormat: a.outFormat, window: a.window, color: a.color,
-      finalizationId: resolveExportFinalization(event.sender.id, a.finalizationToken),
-    }))
+    openPreviewDecode(ndBackend(), event.sender, ipcCarrierPort, a))
+  installExportDecodeIpc(ipcMain, ndBackend, resolveExportFinalization)
 
   // Secondary windows (Dev Performance Monitor etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options, layoutTheme, motifTuning))

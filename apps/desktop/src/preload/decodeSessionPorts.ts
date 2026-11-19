@@ -13,8 +13,9 @@ export interface DecodeSessionPorts {
   /** Opens session `sessionId` with `invoke` (main's open handler) and, once it
    * resolves, hands the consumer its port through `handOver`. The port exists
    * before main opens the session, and a port queues what it receives until its
-   * consumer listens, so no message is lost in between. A failed open closes
-   * the port and rejects. */
+   * consumer listens, so no message is lost in between. Rejects at once, and
+   * touches nothing, when `sessionId` is already open or opening here. A
+   * failed open ends only the session it created, and rejects. */
   openSession<Info>(sessionId: string, invoke: () => Promise<Info>): Promise<Info>
   /** Ends session `sessionId`: nothing more reaches its consumer, and main
    * closes it. Resolves once main has. Goes to main on IPC directly, not up the
@@ -80,15 +81,20 @@ export function createDecodeSessionPorts(
   }
   return {
     async openSession(sessionId, invoke) {
+      // `end` goes by id: a second open under a live id would end the first.
+      if (kept.has(sessionId)) throw new Error(`Decode session '${sessionId}' is already open`)
       const { port1, port2 } = new MessageChannel()
-      kept.set(sessionId, { port: port1, queued: 0, tail: Promise.resolve() })
+      const session: Kept = { port: port1, queued: 0, tail: Promise.resolve() }
+      kept.set(sessionId, session)
       port1.onmessage = event => sendCommand(sessionId, event.data as DecodeCommand)
       try {
         const info = await invoke()
         handOver(sessionId, port2)
         return info
       } catch (error) {
-        end(sessionId)
+        // Main may have ended this session already, and the id opened again.
+        if (kept.get(sessionId) === session) end(sessionId)
+        port1.close()
         port2.close()
         throw error
       }
