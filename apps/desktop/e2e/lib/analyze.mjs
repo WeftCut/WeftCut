@@ -98,6 +98,10 @@ function runAnalyzer(mode, args, timeoutMs = TIMEOUT_MS) {
   }
 }
 
+/**
+ * @param {{ output: string, source: string, samples: number[], ssimMin?: number,
+ *   audio?: boolean, window?: number, timeoutMs?: number }} options
+ */
 export function analyze({ output, source, samples, ssimMin, audio, window, timeoutMs = TIMEOUT_MS }) {
   const args = [
     "--output", output, "--source", source, "--samples", samples.join(","),
@@ -124,6 +128,10 @@ export function analyzeSelf({ output, samples, ssimMax }) {
 // [{ t_s, expect_rms_db_delta }] — deltas relative to the file's loudest
 // 100 ms window. `peakMaxDb` additionally asserts the file's sample peak
 // stays at/below the given dBFS (the alimiter ceiling check).
+/**
+ * @param {{ output: string, expects: Array<{ t_s: number, expect_rms_db_delta: number }>,
+ *   peakMaxDb?: number }} options
+ */
 export function analyzeAudioEnvelope({ output, expects, peakMaxDb }) {
   const args = ["--audio-envelope", JSON.stringify(expects), "--output", output];
   if (peakMaxDb != null) args.push("--peak-max", String(peakMaxDb));

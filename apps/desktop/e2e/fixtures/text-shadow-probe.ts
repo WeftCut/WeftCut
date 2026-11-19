@@ -9,7 +9,7 @@ export function runTextShadowProbe() {
   const view: ResolvedTextView = {
     content: 'Sample video title', font_family: 'Arial', font_size_px: 80,
     weight: 500, italic: false, align: 'Center', color: { r: 255, g: 255, b: 255, a: 255 },
-    x: 0, y: 0, scale_x: 1, scale_y: 1, rotation_deg: 0, opacity: 1,
+    x: 0, y: 0, anchor_x: 0.5, anchor_y: 0.5, scale_x: 1, scale_y: 1, rotation_deg: 0, opacity: 1,
     outline: null, shadow: { color: { r: 0, g: 0, b: 0, a: 150 }, offset_x: 0, offset_y: 4, blur: 10 },
     box_w: 1400, box_h: 140, valign: 'Middle', line_height: 0, letter_spacing: 0,
   }

@@ -35,8 +35,7 @@ const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
 const PROJECT_NAME = "e2e-group-timeline";
 
-/// Only the fields this spec reads, spelled out rather than intersected onto the
-/// driver's loose `CompositionSummary`.
+/// Only the fields this spec reads.
 interface WireLayer {
   id: string;
   t_start_us: number;

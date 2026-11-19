@@ -9,7 +9,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { motifFileSegments, type MotifFile } from './packageFiles'
-import { replacePackage } from './motifPackage'
+import { declaredPackage, replacePackage } from './motifPackage'
 import { PROJECT_MOTIFS_DIR } from './projectStore'
 
 /** The folder under a project that keeps its Motif revisions. */
@@ -63,19 +63,23 @@ export class MotifBackups {
   }
 
   /** Keeps `files` as `revision` of `id`. A blob already kept is not written
-   *  again, nor is a revision already backed up. */
+   *  again, nor is a record already naming these files; one naming others
+   *  is written over: the project folder may have come from anyone. */
   backup(id: string, files: readonly MotifFile[], revision: string): void {
     const record = this.recordFile(id, revision)
-    if (existsSync(record)) return
     const paths: Record<string, string> = {}
     for (const file of files) {
       if (!motifFileSegments(file.path)) throw new Error(`Invalid Motif asset path: ${file.path}`)
-      const hash = sha256(file.bytes)
+      paths[file.path] = sha256(file.bytes)
+    }
+    const text = JSON.stringify({ files: paths } satisfies RevisionRecord)
+    try { if (readFileSync(record, 'utf8') === text) return } catch { /* none kept yet */ }
+    for (const file of files) {
+      const hash = paths[file.path]!
       if (!existsSync(this.blob(hash))) this.write(this.blob(hash), file.bytes)
-      paths[file.path] = hash
     }
     // The record last: a revision is listed only once every blob it names is kept.
-    this.write(record, JSON.stringify({ files: paths } satisfies RevisionRecord))
+    this.write(record, text)
   }
 
   has(id: string, revision: string): boolean {
@@ -83,20 +87,27 @@ export class MotifBackups {
   }
 
   /** The files of `revision` of `id`; null when it was not backed up. Throws
-   *  when a blob is gone or no longer holds its bytes. */
+   *  when a blob is gone or no longer holds its bytes, or when the files make
+   *  another revision than the record names: a received project's backups
+   *  are its sender's, and a record trusted by its name would put any bytes
+   *  in a folder under a revision this machine trusts (Motif trust). */
   files(id: string, revision: string): MotifFile[] | null {
     let record: RevisionRecord
     try { record = JSON.parse(readFileSync(this.recordFile(id, revision), 'utf8')) as RevisionRecord } catch { return null }
-    return Object.entries(record.files).map(([rel, hash]) => {
+    const files = Object.entries(record.files).map(([rel, hash]) => {
       const bytes = readFileSync(this.blob(hash))
       if (sha256(bytes) !== hash) throw new Error(`Backed-up file ${rel} of Motif '${id}' is damaged`)
       return { path: rel, bytes }
     })
+    let made: string | null
+    try { made = declaredPackage(files, id).revision } catch { made = null }
+    if (made !== revision) throw new Error(`The backup of revision ${revision} of Motif '${id}' holds other files`)
+    return files
   }
 
   /** Puts `revision` of `id` back as its folder under `Motifs/`, replacing
    *  what it holds whole. Throws, changing nothing, when the revision was not
-   *  backed up or a blob is damaged. */
+   *  backed up, a blob is damaged or the files make another revision. */
   restore(id: string, revision: string): void {
     const files = this.files(id, revision)
     if (!files) throw new Error(`Revision ${revision} of Motif '${id}' has no backup`)

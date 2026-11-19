@@ -14,6 +14,7 @@ import { builtinMotifs, motifRevision } from './authoring'
 import { legacyDraftIds, legacyDraftsNotice, legacyMigration, resolveLegacyMotif } from './legacyResolve'
 import { packageContentHash } from './contentHash'
 import { MotifResolver } from './resolver'
+import { ALL_TRUSTED } from './trust'
 import { normalize } from './motifPackage'
 import { readMotifDirectory } from './packageFiles'
 import { ProjectMotifStore } from './projectStore'
@@ -159,7 +160,7 @@ describe('opening a v5 project', () => {
   })
 
   it("hears each copy where the open project's revisions are heard, as placed", async () => {
-    const resolver = new MotifResolver(library, builtins)
+    const resolver = new MotifResolver(library, builtins, ALL_TRUSTED)
     const heard: Array<[string, string]> = []
     resolver.onRevisionSeen((id, _revision, cause) => heard.push([id, cause]))
     const placeMigratedMotifs = legacyMigration(library, builtins, project => resolver.hear(project)).placeMigratedMotifs

@@ -16,6 +16,7 @@ const invoke = <T = unknown>(page: Page, cmd: string, args: Record<string, unkno
   page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const) as Promise<T>
 
 test('bring-up: project summary is available immediately after boot (no flag)', async () => {
+  test.setTimeout(120_000)
   const { app, page } = await launchApp()
   try {
     // The production bridge is available on the startup screen.
@@ -29,4 +30,4 @@ test('bring-up: project summary is available immediately after boot (no flag)', 
   } finally {
     await app.close()
   }
-}, 120_000)
+})

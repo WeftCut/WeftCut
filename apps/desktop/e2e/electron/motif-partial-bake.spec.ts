@@ -68,9 +68,9 @@ for (const complete of [false, true]) {
         const captures: number[] = []
         ;(globalThis as any).__partialBakeCaptures = captures
         const capture = ipcMain._invokeHandlers.get('motif:capture')!
-        ipcMain._invokeHandlers.set('motif:capture', (...args: any[]) => {
-          captures.push(args[1].tSec)
-          return capture(...args)
+        ipcMain._invokeHandlers.set('motif:capture', (event, request, ...rest) => {
+          captures.push(request.tSec)
+          return capture(event, request, ...rest)
         })
       })
       await waitForHook(running.page, 'motifReopenProject')
