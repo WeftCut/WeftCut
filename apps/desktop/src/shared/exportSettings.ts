@@ -22,7 +22,8 @@ export type EncoderEngine = "auto" | "native" | "webcodecs";
 /// supply chains; "WebCodecs decode + native encode" is a legitimate combo).
 /// "auto" resolves per machine + per source at export start
 /// (`resolveExportDecodeRouting`); "ffmpeg" pins the native session on every
-/// source; "webcodecs" pins today's in-worker path (blind spots via proxy).
+/// source but an HDR one WebCodecs can decode; "webcodecs" pins today's
+/// in-worker path (blind spots via proxy).
 export type ExportDecodeEngine = "auto" | "ffmpeg" | "webcodecs";
 export const EXPORT_DECODE_ENGINES: readonly ExportDecodeEngine[] = [
   "auto",

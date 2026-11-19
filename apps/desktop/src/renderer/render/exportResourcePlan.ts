@@ -1,14 +1,13 @@
 import { resourceAllocation } from '../../shared/resource-policy';
 import { resourceBlockError, type ExportResourceBlock } from '../../shared/export-resources';
 import type { MediaSummary, ProjectSummary } from '../ipc';
-import type { ExportDecodeRouting } from './exportDecodeRouting';
+import { takesTenBitLane, type ExportDecodeRouting } from './exportDecodeRouting';
 import { rootCompositionOf } from '../ipc/compositions';
 import { selectActiveVideoLayers } from './activeVideoLayers';
 import { exportHandleKey } from './decoder/ExportDecoderPool';
 import { openMediaInput } from './decoder/mediaInput';
 import { resolveDecode } from './decodeRoute';
 import { convertFileSrc } from '@/bridge/ipc';
-import { tenBitExportCapable } from './exportSettings';
 import { forEachLayerInTime, instanceKey } from './compositionWalk';
 import { motifLayersToBake } from './exportBake';
 import { admitExportMetadata, exportBufferBytes } from './resourceClient';
@@ -123,7 +122,7 @@ export async function prepareExportResourcePlans(input: {
   const floor: Record<string,ExportSourceDemand>={};
   for (const id of ids) {
     const media=input.media.get(id); if (!media) throw new Error(`Missing export source: ${id}`);
-    const tenBit=input.bitDepth===10 && tenBitExportCapable(media);
+    const tenBit=input.bitDepth===10 && takesTenBitLane(media);
     floor[id]=input.routing?.routes[id]?.engine==='native'
       ? {width:0,height:0,tenBit,minimumFrames:EXPORT_MIN_FRAMES,nativeMiB:0}
       : {width:media.width ?? 0,height:media.height ?? 0,tenBit,minimumFrames:EXPORT_MIN_FRAMES};
@@ -136,7 +135,7 @@ export async function prepareExportResourcePlans(input: {
     input.signal.throwIfAborted();
     const media=input.media.get(id)!;
     const native=input.routing?.routes[id];
-    const tenBit=input.bitDepth===10 && tenBitExportCapable(media);
+    const tenBit=input.bitDepth===10 && takesTenBitLane(media);
     if (native?.engine==='native') {
       sources[id]={width:0,height:0,tenBit,minimumFrames:24,nativeMiB:await window.api.resources.estimateDecoder(native.sourcePath)};
     } else {
