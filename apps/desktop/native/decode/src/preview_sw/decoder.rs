@@ -19,6 +19,7 @@ use ffmpeg_next::util::frame::video::Video as VideoFrame;
 use std::ffi::CString;
 use std::ptr;
 
+use crate::color::Matrix;
 use crate::media_time::{source_us_to_ticks_floor, ticks_to_source_us, ticks_to_us};
 
 // FF_THREAD_FRAME (1) / FF_THREAD_SLICE (2) from libavcodec/avcodec.h. Literals,
@@ -340,14 +341,16 @@ impl PlaneColor {
     };
 
     /// `matrix` is the renderer's WebCodecs name. One that is not a YCbCr
-    /// matrix the pack converts into (`rgb` among them) fails the open: the
-    /// renderer never sends one, and a guess would be read back as something
-    /// else.
+    /// matrix the lanes implement (`crate::color::Matrix`; `rgb` among them)
+    /// fails the open: the renderer never sends one, and a guess would be read
+    /// back as something else.
     pub fn parse(matrix: &str, full_range: bool) -> Result<PlaneColor, String> {
-        let sws_colorspace = match matrix {
-            "bt709" => ffs::SWS_CS_ITU709,
-            "smpte170m" | "bt470bg" => ffs::SWS_CS_ITU601,
-            other => return Err(format!("decoded planes cannot carry matrix {other:?}")),
+        let sws_colorspace = match Matrix::parse(matrix)
+            .map_err(|_| format!("decoded planes cannot carry matrix {matrix:?}"))?
+        {
+            Matrix::Bt709 => ffs::SWS_CS_ITU709,
+            Matrix::Smpte170m | Matrix::Bt470bg => ffs::SWS_CS_ITU601,
+            Matrix::Bt2020Ncl => ffs::SWS_CS_BT2020,
         };
         Ok(PlaneColor {
             sws_colorspace,
@@ -1532,8 +1535,9 @@ mod tests {
         for fmt in [Pixel::RGB24, Pixel::GBRP] {
             for rgb in [[255, 0, 0], [0, 255, 0], [0, 0, 255], [200, 150, 120]] {
                 let src = solid_rgb(fmt, W, H, rgb);
-                for (matrix, kr, kb) in [("bt709", 0.2126, 0.0722), ("smpte170m", 0.299, 0.114)] {
-                    let (y, cb, cr) = ycbcr(kr, kb, rgb);
+                for matrix in ["bt709", "smpte170m", "bt2020-ncl"] {
+                    let coef = crate::color::Matrix::parse(matrix).unwrap().coef();
+                    let (y, cb, cr) = ycbcr(coef.kr, coef.kb, rgb);
                     for full in [false, true] {
                         // 8-bit code values; the 10-bit ones are four times these.
                         let (y_off, y_scale, c_scale) = if full {
@@ -1587,9 +1591,9 @@ mod tests {
     #[test]
     fn planes_never_carry_a_matrix_they_cannot_be_read_back_with() {
         assert!(PlaneColor::parse("rgb", true).is_err());
-        assert!(PlaneColor::parse("bt2020-ncl", false).is_err());
+        assert!(PlaneColor::parse("bt2020-cl", false).is_err());
         assert!(PlaneColor::parse("", false).is_err());
-        for matrix in ["bt709", "smpte170m", "bt470bg"] {
+        for matrix in ["bt709", "smpte170m", "bt470bg", "bt2020-ncl"] {
             assert!(PlaneColor::parse(matrix, false).is_ok(), "{matrix}");
         }
     }

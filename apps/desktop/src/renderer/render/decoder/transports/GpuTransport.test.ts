@@ -320,12 +320,12 @@ describe("GpuTransport", () => {
 
   it("hands main the colour it was given, not a default of its own", async () => {
     // An untagged SD source resolves to SMPTE 170M; the native shader must
-    // be opened with it.
+    // be opened with its matrix, and no primaries step (`planeConversion`).
     const { api } = installApi();
     const sd = new GpuTransport();
     await sd.open({ streamId: "sd", path: "C:/sd.mp4", sourceColor: resolveSourceColor({ width: 720, height: 480 }) });
     expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
-      colorSpace: { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m", range: "limited" },
+      colorSpace: { primaries: "bt709", transfer: "smpte170m", matrix: "smpte170m", range: "limited" },
     }));
     await sd.dispose();
 
@@ -339,6 +339,35 @@ describe("GpuTransport", () => {
       colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "smpte170m", range: "full" },
     }));
     await full.dispose();
+  });
+
+  it("hands main the conversion the ingest shaders would make: BT.2020 converted, HDR left alone", async () => {
+    const { api } = installApi();
+    const wide = new GpuTransport();
+    await wide.open({
+      streamId: "wide",
+      path: "C:/wide.mp4",
+      sourceColor: resolveSourceColor({
+        width: 1920, height: 1080, color_matrix: "bt2020nc", color_primaries: "bt2020", color_transfer: "bt2020-10",
+      }),
+    });
+    expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
+      colorSpace: { primaries: "bt2020", transfer: "bt709", matrix: "bt2020-ncl", range: "limited" },
+    }));
+    await wide.dispose();
+
+    const hdr = new GpuTransport();
+    await hdr.open({
+      streamId: "hdr",
+      path: "C:/hdr.mp4",
+      sourceColor: resolveSourceColor({
+        width: 3840, height: 2160, color_matrix: "bt2020nc", color_primaries: "bt2020", color_transfer: "smpte2084",
+      }),
+    });
+    expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
+      colorSpace: { primaries: "bt709", transfer: "pq", matrix: "bt709", range: "limited" },
+    }));
+    await hdr.dispose();
   });
 
   it("opens an RGB-coded source with the YCbCr colour every native lane's planes carry", async () => {

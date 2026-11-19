@@ -2,6 +2,8 @@
 // callback (copyTo + frame.close() immediately — drains the WebCodecs pool
 // outright, ADR 0004), stored in the export ring in place of the VideoFrame.
 
+import type { ColourStamp } from "./ffprobeColorSpace";
+
 export interface TenBitFrame {
   readonly kind: "p10";
   readonly width: number;
@@ -12,7 +14,7 @@ export interface TenBitFrame {
   readonly yOffset: number;
   readonly uOffset: number;
   readonly vOffset: number;
-  readonly colorSpace: VideoColorSpaceInit | null;
+  readonly colorSpace: ColourStamp | null;
   readonly timestamp: number;
   readonly duration: number | null;
   /// Called when the frame store lets the frame go, like `VideoFrame.close()`,
@@ -43,7 +45,7 @@ export function tenBitFrameFromBytes(init: {
   height: number;
   timestamp: number;
   duration: number | null;
-  colorSpace: VideoColorSpaceInit | null;
+  colorSpace: ColourStamp | null;
 }): TenBitFrame {
   const { data, width, height, timestamp, duration, colorSpace } = init;
   const ySize = width * height * 2;
