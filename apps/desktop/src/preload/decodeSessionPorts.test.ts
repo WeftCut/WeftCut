@@ -87,6 +87,18 @@ describe('decode session ports', () => {
     expect(() => ports.deliver('a', { kind: 'end' })).not.toThrow()
   })
 
+  it('closes in main a session it opened but could not hand over, before rejecting', async () => {
+    const closed: string[] = []
+    const ports = createDecodeSessionPorts(() => {}, async sessionId => { closed.push(sessionId) }, () => {
+      throw new Error('hand-over failed')
+    }, controlledSlots().slots)
+    await expect(ports.openSession('a', () => Promise.resolve({ width: 2 }))).rejects.toThrow('hand-over failed')
+    expect(closed).toEqual(['a'])
+    // A refused open was never main's to close.
+    await expect(ports.openSession('b', () => Promise.reject(new Error('codec failed')))).rejects.toThrow('codec failed')
+    expect(closed).toEqual(['a'])
+  })
+
   it("moves a frame's buffer to the consumer instead of copying it", async () => {
     const { ports, open } = sessionPorts()
     const arrived = received(await open('a'), 1)

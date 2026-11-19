@@ -208,7 +208,7 @@ fn recoverable(session: &str, ctx: &SessionCtx, message: String) {
 
 fn end(session: &str, ctx: &SessionCtx) {
     tracing::debug!(%session, "preview-sw eof");
-    ctx.emit(DecodeMsg::End);
+    ctx.emit(DecodeMsg::End { request_id: None });
 }
 
 /// Robustly seek to a keyframe at/before `target_us` and return the first frame
@@ -671,7 +671,7 @@ mod tests {
                 len: data.len(),
                 format,
             }),
-            DecodeMsg::End => Seen::End,
+            DecodeMsg::End { .. } => Seen::End,
             DecodeMsg::Error { message, terminal } => Seen::Error { message, terminal },
             DecodeMsg::Mark { .. } | DecodeMsg::Slot { .. } => Seen::Other,
         }

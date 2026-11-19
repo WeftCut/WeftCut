@@ -5,7 +5,7 @@
 //! Owns: the session's thread body, which opens the `VideoStream`, builds the
 //! pool on ffmpeg's own D3D11 device (the NV12→RGBA convert target) and
 //! announces each filled slot in band as [`DecodeMsg::Slot`]; the slot
-//! protocol (fill generation, lease reclaim); the session's timing probe.
+//! protocol (fill generation, lease expiry); the session's timing probe.
 //!
 //! Does NOT own the session lifecycle or the panic boundary
 //! (`carrier::SessionRuntime`), the shared texture and its keyed mutex
@@ -119,12 +119,11 @@ pub struct TimingReport {
     /// pool-full stall; `eof == true` confirms a decoder end.
     pub final_free_slots: u32,
     pub final_eof: bool,
-    /// Fencing-token protocol counters. `lease_timeouts` = delivered slots the
-    /// owner reclaimed after [`LEASE_TIMEOUT`] with no ack (each is one
-    /// possibly-torn frame traded against a wedge — routine non-zero means the
-    /// consumer is stalling). `stale_gen_acks` = acks dropped on a generation
-    /// mismatch (the ABA the token exists to catch, usually the late ack of a
-    /// reclaimed lease arriving after the slot refilled).
+    /// Fencing-token protocol counters. `lease_timeouts` = delivered slots
+    /// whose ack had not come back after [`LEASE_TIMEOUT`]; each one ended its
+    /// session. `stale_gen_acks` = acks dropped on a generation mismatch (the
+    /// ABA the token exists to catch: a repeated release arriving after the
+    /// slot refilled).
     pub lease_timeouts: u64,
     pub stale_gen_acks: u64,
     /// This session's shared-pool VRAM: `width × height × 4 (RGBA8) × slots`.
@@ -230,7 +229,7 @@ impl TimingAccum {
         self.final_free_slots = free_slots;
         self.final_eof = eof;
     }
-    /// A delivered slot's lease expired and the owner reclaimed it (gen bump).
+    /// A delivered slot's lease expired, which ends the session.
     pub fn note_lease_timeout(&mut self) {
         self.lease_timeouts = self.lease_timeouts.saturating_add(1);
     }
@@ -334,14 +333,17 @@ fn percentile_ms(sorted: &[u64], p: f64) -> f64 {
 /// permanent session-thread hang into an observable, recoverable skip.
 const ACQUIRE_TIMEOUT_MS: u32 = 1000;
 
-/// Owner-side lease ceiling: how long a delivered slot may sit un-acked before
-/// [`SessionState::reclaim_expired_leases`] takes it back (gen bump + free +
-/// counter). Two orders of magnitude above the p99 ack latency under full load
-/// (coord-RTT tens of ms) and 3× the AcquireSync ceiling, so it can only fire
-/// on a genuinely wedged/vanished consumer — an occluded renderer whose
-/// rAF-paced ack stalled, a dead port, a dropped IPC message. Deliberately NOT
-/// tighter: a reclaim of a slot Chromium is still reading trades one torn
-/// frame for the unwedge, and that trade should stay rare.
+/// How long a delivered slot may sit un-acked before the session ends with a
+/// terminal error ([`SessionState::expired_lease`]). Far above the ack latency
+/// under full load (the renderer's read-completion proof, ~90 ms), so it fires
+/// only on a consumer that has stopped answering: a dead port, a dropped IPC
+/// message, a release bookkeeping bug.
+///
+/// The session ends rather than taking the slot back: only the consumer's
+/// release proves its read has completed, and an overwrite before that shows
+/// the next frame under this frame's PTS (slotFenceQueue.ts). The consumer
+/// falls back to another lane on the error, so a stalled consumer costs the
+/// lane, never a wrong frame.
 const LEASE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How far ahead of the anchor the pump pre-decodes. Bounds pre-buffering so a
@@ -460,9 +462,9 @@ fn fold_key_interval(key_interval_us: i64, last_key_pts: i64, pts_us: i64) -> i6
 /// the exact frame reorder/tear the order gate exists to catch.
 ///
 /// The generation check is the ABA immunity the busy flag alone cannot give:
-/// after a lease timeout reclaims + refills a slot, the ORIGINAL occupant's
-/// late ack arrives against a busy slot again — busy-only validation would
-/// free the new frame mid-read. `gen` names WHICH occupancy the ack releases.
+/// once a slot is released and refilled, a repeat of the earlier release
+/// arrives against a busy slot again — busy-only validation would free the new
+/// frame mid-read. `gen` names WHICH occupancy the ack releases.
 fn ack_frees_slot(free: &[bool], slot_gen: &[u32], slot: usize, gen: u32) -> bool {
     free.get(slot) == Some(&false) && slot_gen.get(slot) == Some(&gen)
 }
@@ -473,8 +475,9 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(4);
 
 /// What a session's loop takes off its command channel.
 enum GpuCmd {
-    /// Set the decode anchor to this source-microsecond target.
-    RequestFrameAt(i64),
+    /// Set the decode anchor to `target_us`, in answer to the consumer's
+    /// request `request_id` (see `SessionState::request_id`).
+    RequestFrameAt { target_us: i64, request_id: u32 },
     /// The consumer is done with `slot`; it may be reused. `gen` is the fill
     /// generation the slot's `DecodeMsg::Slot` carried: a mismatch is a stale
     /// release, dropped whole (see `ack_frees_slot`).
@@ -543,10 +546,9 @@ struct SessionState {
     /// Per-slot free flag, owned solely by this thread (acks arrive as messages,
     /// so no cross-thread access -> a plain `Vec<bool>`, no atomics needed).
     free: Vec<bool>,
-    /// Per-slot fill generation — the fencing token. Bumped on every fill
-    /// (and on a lease-timeout reclaim, which is what invalidates the late
-    /// ack); emitted with `Slot` and echoed by `Release`. Wrapping
-    /// u32: ABA across 2^32 fills of one slot is not a real risk.
+    /// Per-slot fill generation — the fencing token. Bumped on every fill;
+    /// emitted with `Slot` and echoed by `Release`. Wrapping u32: ABA across
+    /// 2^32 fills of one slot is not a real risk.
     slot_gen: Vec<u32>,
     width: u32,
     height: u32,
@@ -571,6 +573,13 @@ struct SessionState {
     key_interval_us: i64,
     /// Decoder is drained; the pump idles until a backward seek resets this.
     eof: bool,
+    /// The decoder reached the stream's end, as opposed to halting on an
+    /// error (which also sets `eof`). Cleared with `eof` by a seek.
+    ended: bool,
+    /// The newest request served, which `End` names. The consumer counts an
+    /// end only for the last request it sent: an end in flight while it asked
+    /// for an earlier target would otherwise stop its requests there.
+    request_id: u32,
     /// Shared through `GpuShared` so `take_timings` can drain from the Node thread.
     timing: Arc<Mutex<TimingAccum>>,
     /// `Instant` the frame in each slot was announced via `Slot`; taken and
@@ -632,8 +641,8 @@ impl SessionState {
     /// Handle a release of `slot` at generation `gen`. A duplicate, stale,
     /// out-of-range or wrong-generation release is dropped whole (no free, no
     /// coord-RTT record; see `ack_frees_slot`). Generation mismatches are
-    /// counted apart from silence: routine stale releases mean the consumer is
-    /// answering leases the owner already reclaimed (a latency finding).
+    /// counted apart from silence: any non-zero count means the consumer
+    /// released one occupancy twice (a release bookkeeping bug).
     fn on_release(&mut self, slot: u32, gen: u32) {
         let slot = slot as usize;
         if ack_frees_slot(&self.free, &self.slot_gen, slot, gen) {
@@ -649,7 +658,9 @@ impl SessionState {
     /// Handle a `request_frame_at`: set the anchor and, if `needs_seek` says the
     /// target left the reachable forward window, seek. Decision logic is the pure
     /// [`needs_seek`] (unit-gated); this method owns only the state transition.
-    fn on_request(&mut self, t: i64, ctx: &SessionCtx) {
+    fn on_request(&mut self, t: i64, request_id: u32, ctx: &SessionCtx) {
+        let renewed = request_id != self.request_id;
+        self.request_id = request_id;
         let needs_seek = needs_seek(t, self.anchor, self.frontier_pts, self.key_interval_us);
         self.anchor = t;
         if needs_seek {
@@ -657,6 +668,7 @@ impl SessionState {
                 Ok(()) => {
                     self.post_seek = true;
                     self.eof = false;
+                    self.ended = false;
                     self.frontier_pts = i64::MIN;
                     self.last_delivered_pts = i64::MIN;
                     // The next keyframe after a seek is the landing key, not the
@@ -674,15 +686,19 @@ impl SessionState {
                 }
             }
         }
+        // Still at the end: the consumer drops an end that names an older
+        // request, so this request hears it again.
+        if self.ended && renewed {
+            ctx.emit(DecodeMsg::End {
+                request_id: Some(request_id),
+            });
+        }
     }
 
     /// Decode forward into free slots until the pool is full, the lookahead is
     /// satisfied, or the stream ends. Called after every message and on every
     /// recv timeout, so freed slots get refilled promptly without busy-spinning.
     fn pump(&mut self, ctx: &SessionCtx) {
-        // Lease sweep first, so a slot whose consumer vanished re-enters the
-        // free pool on the same tick that would otherwise report pool-full.
-        self.reclaim_expired_leases();
         loop {
             // A post-seek discard can decode up to a GOP in this loop; close
             // must not wait it out (its grace is short, see `CLOSE_GRACE`).
@@ -727,6 +743,7 @@ impl SessionState {
                 Ok(Some(f)) => f,
                 Ok(None) => {
                     self.eof = true;
+                    self.ended = true;
                     // Every pump exit must stamp the terminal snapshot, or a
                     // `take_timings` in this window reads the PREVIOUS exit's
                     // final_* (see `note_lookahead_gated_skip`'s landmine).
@@ -734,7 +751,9 @@ impl SessionState {
                     if let Ok(mut t) = self.timing.lock() {
                         t.note_eof_return(free, true);
                     }
-                    ctx.emit(DecodeMsg::End);
+                    ctx.emit(DecodeMsg::End {
+                        request_id: Some(self.request_id),
+                    });
                     return;
                 }
                 Err(e) => {
@@ -874,42 +893,15 @@ impl SessionState {
         }
     }
 
-    /// Owner-side lease timeout: reclaim delivered slots whose ack never came
-    /// back within [`LEASE_TIMEOUT`]. The trade is decided (drainFenceAcks
-    /// precedent): one possibly-torn frame < a permanently wedged session —
-    /// `pool_size` stranded slots stop production for good, and only the OWNER
-    /// can break that. Bumping the generation is what makes the reclaim safe
-    /// to observe: the original occupant's late ack now fails the gen check
-    /// instead of freeing whatever the slot holds by then. The keyed mutex
-    /// still serialises any actual GPU access if Chromium is genuinely
-    /// mid-read (worst case: the next fill's AcquireSync waits/times out).
-    ///
-    /// Runs at the top of every `pump` (each message + each 4ms idle tick), so
-    /// an expiry is noticed within one tick of `LEASE_TIMEOUT`.
-    fn reclaim_expired_leases(&mut self) {
-        let now = Instant::now();
-        for slot in 0..self.pool.len() {
-            if self.free[slot] {
-                continue;
-            }
-            let Some(emit_at) = self.slot_emit[slot] else {
-                continue; // busy-but-never-emitted: not a lease (mid-fill)
-            };
-            if now.duration_since(emit_at) < LEASE_TIMEOUT {
-                continue;
-            }
-            // Take the emit stamp so the (never-arriving) coord-RTT sample is
-            // cancelled with the lease rather than paired with a future ack —
-            // and the stale ack stamp, so the next fill's ack_to_emit doesn't
-            // pair against an ack from a previous occupancy.
-            self.slot_emit[slot] = None;
-            self.slot_ack_at[slot] = None;
-            self.slot_gen[slot] = self.slot_gen[slot].wrapping_add(1);
-            self.free[slot] = true;
-            if let Ok(mut t) = self.timing.lock() {
-                t.note_lease_timeout();
-            }
-        }
+    /// The first delivered slot whose release has not come back within
+    /// [`LEASE_TIMEOUT`], if any. Checked on every loop turn (each message and
+    /// each 4 ms idle tick), so an expiry is noticed within one tick.
+    fn expired_lease(&self, now: Instant) -> Option<usize> {
+        (0..self.pool.len()).find(|&slot| {
+            // A busy slot never emitted is mid-fill, not leased.
+            !self.free[slot]
+                && self.slot_emit[slot].is_some_and(|at| now.duration_since(at) >= LEASE_TIMEOUT)
+        })
     }
 }
 
@@ -1053,6 +1045,8 @@ fn init_session(
             last_key_pts: i64::MIN,
             key_interval_us: SEEK_FORWARD_THRESHOLD_US,
             eof: false,
+            ended: false,
+            request_id: 0,
             timing,
             slot_emit,
             slot_ack_at,
@@ -1062,13 +1056,10 @@ fn init_session(
     }
 }
 
-/// The session's loop: serve each command, and pump on every idle tick so a
-/// freed slot is refilled and an expired lease reclaimed without a message,
-/// until close disconnects the channel.
 /// What one sweep of the mailbox held.
 struct Drained {
-    /// The newest request's target, if the sweep held a request.
-    newest: Option<i64>,
+    /// The newest request's target and id, if the sweep held a request.
+    newest: Option<(i64, u32)>,
     requests: u64,
     releases: u64,
 }
@@ -1094,8 +1085,11 @@ fn drain_mailbox(
     let mut next = Some(first);
     while let Some(cmd) = next {
         match cmd {
-            GpuCmd::RequestFrameAt(t) => {
-                drained.newest = Some(t);
+            GpuCmd::RequestFrameAt {
+                target_us,
+                request_id,
+            } => {
+                drained.newest = Some((target_us, request_id));
                 drained.requests += 1;
             }
             GpuCmd::Release { slot, gen } => {
@@ -1108,6 +1102,9 @@ fn drain_mailbox(
     drained
 }
 
+/// The session's loop: serve each command, and pump on every idle tick so a
+/// freed slot is refilled without a message, until close disconnects the
+/// channel or a lease expires.
 fn run_session(mut state: SessionState, rx: Receiver<GpuCmd>, ctx: SessionCtx) {
     loop {
         // Thread time-budget probe: time the recv itself (0 when a message
@@ -1140,14 +1137,28 @@ fn run_session(mut state: SessionState, rx: Receiver<GpuCmd>, ctx: SessionCtx) {
                         t.note_recv_ack();
                     }
                 }
-                if let Some(t) = target.newest {
-                    state.on_request(t, &ctx);
+                if let Some((t, request_id)) = target.newest {
+                    state.on_request(t, request_id, &ctx);
                 }
-                state.pump(&ctx);
             }
-            Err(RecvTimeoutError::Timeout) => state.pump(&ctx),
+            Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
+        // After the mailbox, whose releases may have answered the lease.
+        if let Some(slot) = state.expired_lease(Instant::now()) {
+            if let Ok(mut t) = state.timing.lock() {
+                t.note_lease_timeout();
+            }
+            ctx.emit(DecodeMsg::Error {
+                message: format!(
+                    "GPU preview slot {slot} was not released within {} s",
+                    LEASE_TIMEOUT.as_secs()
+                ),
+                terminal: true,
+            });
+            break;
+        }
+        state.pump(&ctx);
     }
     // `state` drops here (or in the unwind the runtime catches): closes each
     // slot's NT handle, drops the VideoStream (unrefs the hw context), device,
@@ -1210,10 +1221,21 @@ impl PreviewGpuSessions {
         })
     }
 
-    /// Set the decode anchor for a session; the thread pumps lookahead toward it.
-    pub fn request_frame_at(&self, session_id: &str, target_us: i64) -> Result<(), String> {
-        self.runtime
-            .send(session_id, GpuCmd::RequestFrameAt(target_us))
+    /// Set the decode anchor for a session; the thread pumps lookahead toward
+    /// it. `request_id` is what an `End` answering this request names.
+    pub fn request_frame_at(
+        &self,
+        session_id: &str,
+        target_us: i64,
+        request_id: u32,
+    ) -> Result<(), String> {
+        self.runtime.send(
+            session_id,
+            GpuCmd::RequestFrameAt {
+                target_us,
+                request_id,
+            },
+        )
     }
 
     /// Hand a slot back to the pool. `gen` must echo the `DecodeMsg::Slot` that
@@ -1472,9 +1494,9 @@ mod tests {
         // Busy slot + matching generation: the renderer released it, the ack
         // frees it.
         assert!(ack_frees_slot(&free, &gen, 1, 7));
-        // Busy slot, WRONG generation (the ABA case: a late ack from a
-        // previous occupancy after a lease-timeout reclaim + refill): dropped,
-        // or it would free the CURRENT frame mid-read.
+        // Busy slot, WRONG generation (the ABA case: a repeated ack from a
+        // previous occupancy after a release + refill): dropped, or it would
+        // free the CURRENT frame mid-read.
         assert!(!ack_frees_slot(&free, &gen, 1, 6));
         assert!(!ack_frees_slot(&free, &gen, 1, 8));
         // Already-free slot (duplicate or stale ack): freeing again would let
@@ -1528,22 +1550,31 @@ mod tests {
         ));
     }
 
+    fn request(target_us: i64, request_id: u32) -> GpuCmd {
+        GpuCmd::RequestFrameAt {
+            target_us,
+            request_id,
+        }
+    }
+
     #[test]
     fn a_mailbox_sweep_keeps_every_release_in_order_and_only_the_newest_target() {
         let (tx, rx) = std::sync::mpsc::channel();
         for cmd in [
             GpuCmd::Release { slot: 1, gen: 4 },
-            GpuCmd::RequestFrameAt(200),
+            request(200, 2),
             GpuCmd::Release { slot: 0, gen: 9 },
-            GpuCmd::RequestFrameAt(300),
+            request(300, 3),
         ] {
             tx.send(cmd).unwrap();
         }
         let mut released = Vec::new();
-        let drained = drain_mailbox(GpuCmd::RequestFrameAt(100), &rx, |slot, gen| {
-            released.push((slot, gen))
-        });
-        assert_eq!(drained.newest, Some(300), "superseded targets are skipped");
+        let drained = drain_mailbox(request(100, 1), &rx, |slot, gen| released.push((slot, gen)));
+        assert_eq!(
+            drained.newest,
+            Some((300, 3)),
+            "superseded targets are skipped"
+        );
         assert_eq!(
             released,
             [(1, 4), (0, 9)],
@@ -1565,13 +1596,13 @@ mod tests {
 
     /// How long a test watches for a message that must not come. Only a
     /// negative reads after it: a slower machine makes the check weaker, never
-    /// red. Far below `LEASE_TIMEOUT`, so no reclaim frees a slot meanwhile.
+    /// red. Far below `LEASE_TIMEOUT`, so no lease expires meanwhile.
     const QUIET: Duration = Duration::from_millis(100);
 
     #[derive(Debug, Clone, PartialEq)]
     enum Seen {
         Slot { slot: u32, gen: u32, pts: i64 },
-        End,
+        End(Option<u32>),
         Error { message: String, terminal: bool },
         Other,
     }
@@ -1587,7 +1618,7 @@ mod tests {
                 gen,
                 pts: pts_us as i64,
             },
-            DecodeMsg::End => Seen::End,
+            DecodeMsg::End { request_id } => Seen::End(request_id),
             DecodeMsg::Error { message, terminal } => Seen::Error { message, terminal },
             DecodeMsg::Bytes { .. } | DecodeMsg::Mark { .. } => Seen::Other,
         }
@@ -1643,7 +1674,7 @@ mod tests {
             return;
         };
         assert_eq!(info.slot_handles.len(), 2, "one handle per slot");
-        s.request_frame_at("g", 0).unwrap();
+        s.request_frame_at("g", 0, 1).unwrap();
         assert!(
             wait_for(|| slots(&log).len() == 2),
             "the pool never filled: {:?}",
@@ -1690,15 +1721,15 @@ mod tests {
             return;
         };
         // Past the fixture's midpoint, so the lookahead reaches its end.
-        s.request_frame_at("g", 600_000).unwrap();
+        s.request_frame_at("g", 600_000, 1).unwrap();
         assert!(
-            wait_for(|| log.lock().unwrap().contains(&Seen::End)),
+            wait_for(|| log.lock().unwrap().contains(&Seen::End(Some(1)))),
             "no end: {:?}",
             log.lock().unwrap()
         );
         thread::sleep(QUIET);
         let got = log.lock().unwrap().clone();
-        let Some((Seen::End, frames)) = got.split_last() else {
+        let Some((Seen::End(_), frames)) = got.split_last() else {
             panic!("the end was not the last message: {got:?}");
         };
         assert!(!frames.is_empty(), "no frame before the end");
@@ -1711,6 +1742,83 @@ mod tests {
             pts.windows(2).all(|w| w[0] < w[1]),
             "frames in presentation order: {pts:?}"
         );
+        s.close("g").unwrap();
+    }
+
+    #[test]
+    fn an_end_names_the_newest_request_it_answers() {
+        let s = Arc::new(PreviewGpuSessions::new());
+        let Some((_info, log)) = open_live(&s, "g", 2, true) else {
+            return;
+        };
+        let ends = |log: &Log| -> Vec<Option<u32>> {
+            log.lock()
+                .unwrap()
+                .iter()
+                .filter_map(|m| match m {
+                    Seen::End(id) => Some(*id),
+                    _ => None,
+                })
+                .collect()
+        };
+        // The fixture is 1 s long: from 600 ms the lookahead reaches its end.
+        s.request_frame_at("g", 600_000, 1).unwrap();
+        assert!(
+            wait_for(|| ends(&log) == [Some(1)]),
+            "no end for the first request: {:?}",
+            log.lock().unwrap()
+        );
+        // A newer request at the end, which needs no seek, hears it again;
+        // the consumer has dropped the end that names request 1.
+        s.request_frame_at("g", 700_000, 2).unwrap();
+        assert!(
+            wait_for(|| ends(&log) == [Some(1), Some(2)]),
+            "the end was not repeated for a newer request: {:?}",
+            log.lock().unwrap()
+        );
+        // Back to the start: decoding resumes and stops at the lookahead,
+        // short of the end, so request 3 is answered by frames, not an end.
+        let before = slots(&log).len();
+        s.request_frame_at("g", 0, 3).unwrap();
+        assert!(
+            wait_for(|| slots(&log)[before..].iter().any(|f| f.2 == 0)),
+            "no frame from the start after the seek: {:?}",
+            log.lock().unwrap()
+        );
+        thread::sleep(QUIET);
+        assert_eq!(ends(&log), [Some(1), Some(2)], "an end short of the end");
+        s.close("g").unwrap();
+    }
+
+    #[test]
+    fn a_lease_never_released_ends_the_session_instead_of_reusing_its_slot() {
+        let s = Arc::new(PreviewGpuSessions::new());
+        let Some((_info, log)) = open_live(&s, "g", 1, false) else {
+            return;
+        };
+        s.request_frame_at("g", 0, 1).unwrap();
+        let terminal = |log: &Log| {
+            log.lock()
+                .unwrap()
+                .iter()
+                .any(|m| matches!(m, Seen::Error { terminal: true, .. }))
+        };
+        assert!(
+            wait_for(|| terminal(&log)),
+            "an unreleased lease never ended the session: {:?}",
+            log.lock().unwrap()
+        );
+        let got = log.lock().unwrap().clone();
+        assert_eq!(
+            slots(&log).len(),
+            1,
+            "the unreleased slot was filled again: {got:?}"
+        );
+        assert!(
+            matches!(got.last(), Some(Seen::Error { terminal: true, .. })),
+            "nothing follows the terminal error: {got:?}"
+        );
+        assert_eq!(s.take_timings("g").unwrap().lease_timeouts, 1);
         s.close("g").unwrap();
     }
 }

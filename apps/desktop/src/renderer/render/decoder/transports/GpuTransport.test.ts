@@ -42,6 +42,11 @@ class FakePort {
   requests(): number[] {
     return this.posted.flatMap((c) => (c.type === "request" ? [c.targetUs] : []));
   }
+  lastRequestId(): number {
+    const ids = this.posted.flatMap((c) => (c.type === "request" ? [c.requestId] : []));
+    if (ids.length === 0) throw new Error("no request was posted");
+    return ids[ids.length - 1]!;
+  }
 }
 
 interface FakeApi {
@@ -181,10 +186,32 @@ describe("GpuTransport", () => {
     const { t, port } = await opened();
     const eof = vi.fn();
     t.onEof(eof);
-    port.deliver({ kind: "end" });
+    t.requestFrameAt(900_000);
+    port.deliver({ kind: "end", requestId: port.lastRequestId() });
     await t.dispose();
-    port.deliver({ kind: "end" });
+    port.deliver({ kind: "end", requestId: port.lastRequestId() });
     expect(eof).toHaveBeenCalledOnce();
+  });
+
+  it("drops an end the session sent before it served the newest request", async () => {
+    const { t, port } = await opened();
+    const eof = vi.fn();
+    t.onEof(eof);
+    // At the tail the session decodes to the end and sends it; the playhead
+    // jumps back to the start before that end arrives.
+    t.requestFrameAt(900_000);
+    const tail = port.lastRequestId();
+    t.resetRequestDedup();
+    t.requestFrameAt(0);
+    port.deliver({ kind: "end", requestId: tail });
+    expect(eof, "a stale end would stop the requests at the start").not.toHaveBeenCalled();
+    // Playback moves on, and every new target still goes up the port.
+    t.requestFrameAt(500_000);
+    t.requestFrameAt(1_000_000);
+    expect(port.requests()).toEqual([900_000, 0, 500_000, 1_000_000]);
+    port.deliver({ kind: "end", requestId: port.lastRequestId() });
+    expect(eof).toHaveBeenCalledOnce();
+    await t.dispose();
   });
 
   it("reports and closes the session when a completed slot's release cannot cross the port", async () => {

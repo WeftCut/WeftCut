@@ -123,15 +123,16 @@ describe('GPU preview sessions', () => {
     const msgs: DecodeMsg[] = [
       { kind: 'slot', slot: 1, gen: 4, ptsUs: 0, durUs: 33_333 },
       { kind: 'error', message: 'seek failed', terminal: false },
-      { kind: 'end' },
+      { kind: 'end', requestId: 7 },
     ]
     for (const msg of msgs) emit('wire', msg)
     expect(port.posted).toEqual(msgs)
-    port.send({ type: 'request', targetUs: 5_000 })
+    port.send({ type: 'request', targetUs: 5_000, requestId: 7 })
+    port.send({ type: 'request', targetUs: 6_000 })
     port.send({ type: 'release', slot: 1, gen: 4 })
     port.send({ type: 'release', slot: -1, gen: 4 })
     port.send({ type: 'release', lease: 1 })
-    expect(backend.previewGpuRequestFrameAt.mock.calls).toEqual([['wire', 5_000]])
+    expect(backend.previewGpuRequestFrameAt.mock.calls).toEqual([['wire', 5_000, 7]])
     expect(backend.previewGpuRelease.mock.calls).toEqual([['wire', 1, 4]])
     port.consumerCloses()
   })
