@@ -5,13 +5,14 @@ import { readFileSync, writeFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { launchApp, invokeCmd, tmpDir, waitForHook } from './helpers/driver';
 import { mergeSettings } from '../../src/shared/exportSettings';
+import type { McpInfoView } from '../../src/renderer/ipc';
 
 test('MCP manages the shared preset library and exports by preset ID with per-job precedence', async () => {
   test.setTimeout(120_000);
   const { app, page } = await launchApp();
   let client: Client | undefined;
   try {
-    const info = await page.evaluate(() => window.api.mcp.getInfo());
+    const info = await page.evaluate(() => window.api.mcp.getInfo()) as McpInfoView;
     client = new Client({ name: 'preset-export-e2e', version: '1' }, { capabilities: {} });
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url), {
       requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } },
@@ -90,7 +91,7 @@ test('MCP export reconnects, reports the actual renamed file, and retries public
   const { app, page } = await launchApp({ locale: 'zh-CN' });
   let client: Client | undefined;
   try {
-    const info = await page.evaluate(() => window.api.mcp.getInfo());
+    const info = await page.evaluate(() => window.api.mcp.getInfo()) as McpInfoView;
     const connect = async () => {
       const next = new Client({ name: 'export-e2e', version: '1' }, { capabilities: {} });
       await next.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } } }));

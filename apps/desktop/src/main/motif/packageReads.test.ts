@@ -10,6 +10,7 @@ import { packageContentHash } from './contentHash'
 import { readMotifDirectory } from './packageFiles'
 import { PackageRevisions, STAMP_SETTLE_MS } from './packageRevisions'
 import { MotifResolver } from './resolver'
+import { ALL_TRUSTED } from './trust'
 import { UserMotifStore } from './store'
 
 vi.mock('node:fs', async importOriginal => {
@@ -106,7 +107,7 @@ describe('an installed package with a model', () => {
 
   it('is pinned under the revision it lists, before and after an edit in the store', () => {
     const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
-    const resolver = new MotifResolver(store, [])
+    const resolver = new MotifResolver(store, [], ALL_TRUSTED)
     install(store)
     const first = listed(store) as string
 
@@ -143,6 +144,6 @@ describe('an installed package with a model', () => {
     const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
     install(store)
     listed(store)
-    expect(() => new MotifResolver(store, []).pin('scene--library', 'f'.repeat(64))).toThrow(/revision changed/)
+    expect(() => new MotifResolver(store, [], ALL_TRUSTED).pin('scene--library', 'f'.repeat(64))).toThrow(/revision changed/)
   })
 })

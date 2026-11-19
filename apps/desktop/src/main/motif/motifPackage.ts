@@ -14,7 +14,7 @@ export const EMPTY_DRAFT = { name: 'Untitled Motif', size: [960, 540] as [number
 /** The files of a new, empty Motif named `name`. */
 export function emptyPackageFiles(name?: string): MotifFile[] {
   return [
-    { path: 'index.html', bytes: Buffer.from('<!doctype html><html><body><script>motif.define({frame(t){}})</script></body></html>') },
+    { path: 'index.html', bytes: Buffer.from('<!doctype html><html><head><style>html,body{margin:0;overflow:hidden;background:transparent}</style></head><body><script>motif.define({frame(t){}})</script></body></html>') },
     { path: 'manifest.json', bytes: Buffer.from(JSON.stringify({ ...EMPTY_DRAFT, name: name || EMPTY_DRAFT.name, props_schema: {} })) },
   ]
 }

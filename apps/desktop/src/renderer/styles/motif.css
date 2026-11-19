@@ -265,7 +265,8 @@
 /* One-off categorical badge palette — sanctioned literal (docs/ui-tokens.md).
    Also reused by the property panel's Motif row. Library rows: built-in or
    saved; project rows: what the row needs attention for (motifRows.ts),
-   red only for a Motif that cannot render. */
+   red only for a Motif that cannot render, outlined amber for one that waits
+   on the user's Trust. */
 .motif-card-status { flex: none; font-size: var(--font-size-micro); padding: calc(1 * var(--ui-px)) calc(6 * var(--ui-px)); border-radius: var(--radius-card); }
 .motif-card-status.status-installed { background: #2a6; color: #fff; }
 .motif-card-status.status-builtin { background: #444; color: #ccc; }
@@ -275,6 +276,7 @@
 .motif-card-status.status-in_sync { background: #444; color: #ccc; }
 .motif-card-status.status-missing,
 .motif-card-status.status-invalid { background: var(--destructive); color: #0a0c10; }
+.motif-card-status.status-untrusted { background: transparent; color: var(--warning); box-shadow: inset 0 0 0 1px var(--warning); }
 
 /* A group's heading in the catalog list: This project, Library. */
 .motif-picker-group {
@@ -284,17 +286,6 @@
   color: var(--muted-foreground);
 }
 .motif-picker-group:first-child { margin-top: 0; }
-
-/* A project Motif that cannot render has no cover: its diagnostic sits where
-   the cover would. */
-.motif-card-unavailable {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: calc(8 * var(--ui-px));
-  overflow: hidden;
-}
-.motif-card-unavailable .settings-error { margin: 0; font-size: var(--font-size-caption); }
 
 /* An invalid package's error under the localized lead (MotifProblem). */
 .motif-problem-detail {
@@ -324,8 +315,9 @@
   letter-spacing: 0.05em;
 }
 
-/* A broken row's pane names the Motif as a title, not a section label. */
-.motif-picker-form .motif-picker-unavailable h3 {
+/* A broken or untrusted row's pane leads with a title, not a section label. */
+.motif-picker-form .motif-picker-unavailable h3,
+.motif-picker-form .motif-trust h3 {
   font-size: var(--font-size-label);
   color: var(--foreground);
   text-transform: none;
@@ -383,6 +375,26 @@
   justify-content: flex-end;
   gap: calc(8 * var(--ui-px));
 }
+
+/* The trust card's static summary (TrustCard): a label column and the
+   findings, paths wrapping anywhere. */
+.motif-trust-summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: calc(4 * var(--ui-px)) calc(12 * var(--ui-px));
+  margin: calc(12 * var(--ui-px)) 0 0;
+  font-size: var(--font-size-caption);
+}
+.motif-trust-summary > div { display: contents; }
+.motif-trust-summary dt { color: var(--muted-foreground); }
+.motif-trust-summary dd { margin: 0; overflow-wrap: anywhere; }
+/* Trust sits under the findings it acts on, aligned with them, its hint
+   below: an inline pane action, not a dialog footer. */
+.motif-trust-actions {
+  display: flex;
+  margin-top: calc(12 * var(--ui-px));
+}
+.motif-trust .motif-picker-hint { margin-top: calc(8 * var(--ui-px)); }
 
 .motif-bake-dot {
   position: absolute;

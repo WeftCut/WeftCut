@@ -12,6 +12,7 @@
 
 import { test, expect } from '@playwright/test'
 import { launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
+import type { CompositeSample } from '../../src/renderer/testhook/e2eHook'
 
 test('motif live preview: accent pixels reach the Pixi compositor via CDP', async () => {
   test.setTimeout(120_000)
@@ -51,10 +52,7 @@ test('motif live preview: accent pixels reach the Pixi compositor via CDP', asyn
     //    Re-seek each round: a paused stale frame must not starve the bind.
     //    weftcutSeekUs throws until the PixiPreview bridge registers (it mounts
     //    async); swallow and continue polling per the documented gotcha.
-    let s: {
-      accentCount: number; accentR: number; accentG: number; accentB: number
-      w: number; h: number; nonTransparent: number
-    } | null = null
+    let s: CompositeSample | null = null
     let renders = 0
     const deadline = Date.now() + 25_000
 
@@ -85,7 +83,7 @@ test('motif live preview: accent pixels reach the Pixi compositor via CDP', asyn
         if (String(snap.error).includes('preview bridge not registered')) continue
         throw new Error('weftcutSampleComposite failed: ' + snap.error)
       }
-      s = snap.p as typeof s
+      s = snap.p as CompositeSample
       renders = snap.renders as number
       console.log(
         `[preview] ${s!.w}x${s!.h} nonTransparent=${s!.nonTransparent}` +

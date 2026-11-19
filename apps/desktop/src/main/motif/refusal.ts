@@ -14,7 +14,15 @@ export class MotifRefusal extends Error {
   }
 }
 
-/** A stale `expected_revision`: the answer carries the one the caller needs. */
-export function revisionConflict(currentRevision: string, next: string): MotifRefusal {
-  return new MotifRefusal(`Motif revision conflict: the current revision is ${currentRevision}; ${next}`, { error: 'RevisionConflict', current_revision: currentRevision })
+/** A stale `expected_revision`: the answer carries the one the caller needs,
+ *  null for a folder whose files make no package. */
+export function revisionConflict(currentRevision: string | null, next: string): MotifRefusal {
+  const current = currentRevision === null ? "the Motif's files make no package, so it has no revision" : `the current revision is ${currentRevision}`
+  return new MotifRefusal(`Motif revision conflict: ${current}; ${next}`, { error: 'RevisionConflict', current_revision: currentRevision })
+}
+
+/** A folder `Motifs/<folder>/` whose name differs from Motif `id`'s only in
+ *  case, where `id`'s folder is to be written. */
+export function caseAliasRefusal(folder: string, id: string): MotifRefusal {
+  return new MotifRefusal(`Motifs/${folder} differs only in case from ${id}; rename it to ${id}, or move it out of Motifs/`, { error: 'MotifFolderCaseAlias', id, folder })
 }

@@ -639,8 +639,8 @@ a version and changes no project.
 `<id>--library` the library's current version (a built-in's bundled bytes
 included), `<proposal id>--proposal` a pending proposal's frozen package. One
 resolver (`main/motif/resolver.ts`) decides each host's status (`ok`,
-`missing`, `invalid`) for the protocol, capture, covers and pins; nothing
-reads a store directly.
+`missing`, `invalid`, and for a project host `untrusted`) for the protocol,
+capture, covers and pins; nothing reads a store directly.
 
 - **Panel.** The Motifs panel shows two groups, *This project* and *Library*.
   A project row's state against the library Motif of its lineage is derived on
@@ -666,6 +666,16 @@ reads a store directly.
 - **Missing is visible.** A Motif whose folder is gone or invalid draws an
   error placeholder, is listed in `project://session`, and fails an export
   that uses it with `MotifUnavailable`.
+- **Trust.** A project Motif runs only when this machine trusts its revision
+  ([ADR 0174](adr/0174-a-motif-runs-only-when-trusted-on-this-machine.md)).
+  Placed from this library, made here, or edited here from a trusted revision
+  is trusted without asking; a revision found when a project opens, or brought
+  in from a ZIP or an outside folder, is not. An untrusted Motif is missing in
+  all but its files: the error placeholder, no cover, no preview, export
+  refused. Selecting its row in the Motifs panel shows the trust card: a
+  summary of its files read as text (count and size, scripts, Worker and
+  WebAssembly use, long minified lines, files too large to scan) and one
+  button, *Trust*. The property panel of a layer on it links to that card.
 
 A package's revision hashes every byte of it. Each one is kept against the
 stamps of the package's files (size, times, file id), in
@@ -703,18 +713,22 @@ a library Motif (a built-in included), which it copies into the project's
 `Motifs/` first (`from_library: true` places the library's Motif of an id the
 project uses for another one). `list_motifs` returns the manifest-only catalog of the open
 project's Motifs and the library: project rows with `status`
-(`ok | missing | invalid`) and `state` against the library, library rows with
+(`ok | missing | invalid | untrusted`) and `state` against the library, library rows with
 `status` (`builtin | installed`); `motifs://current` mirrors the project rows.
 Authoring uses `create_motif`, `read_motif`, `update_motif_files`,
 `preview_motif`, `install_motif`, `export_motif` and `delete_motif`
 ([`motif-workspaces.md`](motif-workspaces.md)) on the project's own Motifs.
 `install_motif` only proposes saving one to the library: the user approves or
-rejects the proposal on its card in the Motifs panel (ADR 0046). Agents never
-drive the renderer directly.
+rejects the proposal on its card in the Motifs panel (ADR 0046). An untrusted
+Motif is read with `read_motif` and refused `MotifUntrusted` where it would
+run; no tool trusts one (ADR 0174). Agents never drive the renderer directly.
 
 ## Security
 
-User Motifs are untrusted documents; the capture host is the trust boundary:
+Motif trust ([above](#project-motifs-and-the-library), ADR 0174) decides which
+project Motifs run at all; one this machine has not trusted never reaches the
+capture host. What runs is still treated as hostile, and the capture host is
+the boundary:
 a dedicated offscreen window, no preload and no Node on the `motif:` origin, and
 the render CSP (`main/motif/protocol.ts`):
 `default-src 'none'; script-src 'unsafe-inline' 'self' 'wasm-unsafe-eval';
