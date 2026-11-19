@@ -25,7 +25,7 @@ pub async fn run(
 ) -> Result<PathBuf> {
     // Cache hit before the ffmpeg check: adopting an already-landed proxy
     // needs no encoder.
-    let dest = cache.quick_proxy(&media.file_hash_blake3);
+    let dest = cache.quick_proxy(&media.file_hash_blake3, media.proxy_recipe());
     if crate::cache::valid_mp4(&dest) {
         return Ok(dest);
     }
@@ -112,14 +112,14 @@ async fn run_remux(cache: &CacheLayout, media: &MediaItem, tmp: &PathBuf) -> Res
 }
 
 async fn run_fast_transcode(cache: &CacheLayout, media: &MediaItem, tmp: &Path) -> Result<()> {
-    let scale_filter = crate::jobs::proxy::scale_filter(QUICK_PROXY_HEIGHT_CAP);
+    let video_filter = crate::jobs::proxy::video_filter(media, QUICK_PROXY_HEIGHT_CAP);
     // Short GOP so this preview proxy is scrub-friendly (docs/preview.md §Proxies), matching
     // the full proxy. The quick proxy is the scrub source for DirectExport /
     // long-GOP-demoted sources.
     let gop = crate::jobs::proxy::PROXY_GOP_FRAMES.to_string();
     let input = media.path_abs.clone();
 
-    let color_args = crate::jobs::proxy::source_color_args(media);
+    let color_args = crate::jobs::proxy::color_args(media);
     let output = hwaccel::output_with_hw_decode_fallback_scoped(cache, "quick proxy", |hw, cmd| {
         cmd.args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
         if hw {
@@ -127,7 +127,7 @@ async fn run_fast_transcode(cache: &CacheLayout, media: &MediaItem, tmp: &Path) 
         }
         cmd.arg("-i").arg(&input).args([
             "-vf",
-            &scale_filter,
+            &video_filter,
             "-c:v",
             "libx264",
             "-preset",
@@ -155,8 +155,8 @@ async fn run_fast_transcode(cache: &CacheLayout, media: &MediaItem, tmp: &Path) 
             "-f",
             "mp4",
         ]);
-        // Source color tags → VUI AND (with +write_colr) the mp4 colr atom;
-        // see `proxy::source_color_args`.
+        // Colour tags → VUI AND (with +write_colr) the mp4 colr atom; see
+        // `proxy::color_args`.
         cmd.args(&color_args);
         cmd.args(["-threads", &crate::resources::task_threads().to_string()])
             .arg(tmp)

@@ -25,12 +25,17 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForH
 //   A. bt709-tagged chart — renders WITHOUT the 601 tint.
 //   B. smpte170m-tagged chart — still selects BT.601 (no over-correction:
 //      a fix that hard-codes 709 would pass leg A and fail this one).
-//   C. untagged H.264 charts, SD and HD — the lane reads the absent tag the
-//      way every other lane does (`resolveSourceColor`): BT.601 below 720
-//      lines, BT.709 from 720 up. preview-hw-color, preview-lite-color and
+//   C. untagged H.264 charts, SD, HD and a cropped HD picture (1280x544) —
+//      the lane reads the absent tag the way every other lane does
+//      (`resolveSourceColor`): BT.601 for SD, BT.709 for HD, where 1280 wide
+//      is HD at any height. preview-hw-color, preview-lite-color and
 //      color-conformance hold the other lanes to the same patches.
 //   D. full-range H.264 charts (709full/601full, the ones preview-hw-color
 //      reads) — the lane keeps full-range levels end to end.
+//   E. RGB-coded charts (libx264rgb tagged gbr, QuickTime Animation untagged)
+//      — the pack converts the RGB samples into the YCbCr colour the ingest
+//      reads them with (`nativePlaneColor`). No hardware decoder takes these,
+//      so the hardware lanes run them here, in software.
 // Same run requirements as preview-sw-conformance.spec.ts: a
 // VITE_WEFTCUT_E2E=1 build and the built native-decode component.
 
@@ -40,10 +45,12 @@ const CHART_709 = path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_prores.mov')
 const CHART_601 = path.resolve(MEDIA_DIR, 'test_1080p_color_601ltd_prores.mov')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
 const MANIFEST_SD = path.resolve(MEDIA_DIR, 'color_manifest_720x480.json')
+const MANIFEST_WIDE = path.resolve(MEDIA_DIR, 'color_manifest_1280x544.json')
 
 type Canvas = { width: number; height: number; fpsNum: number; fpsDen: number }
 const CANVAS: Canvas = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
 const CANVAS_SD: Canvas = { width: 720, height: 480, fpsNum: 30, fpsDen: 1 }
+const CANVAS_WIDE: Canvas = { width: 1280, height: 544, fpsNum: 30, fpsDen: 1 }
 const SEEK_US = 500_000 // mid-chart; the chart is static, any decoded frame shows it
 
 // Component presence (same level-0 probe as export-prores-fidelity.spec.ts):
@@ -77,8 +84,8 @@ interface PatchOffender {
 }
 
 /// Where a leg's chart lives and how it is laid out. `nativeSwRoute`: the
-/// chart is WebCodecs-blind (ProRes), so import routes it `native-sw`; an
-/// H.264 chart reaches the software lane through the engine and lane pins alone.
+/// chart is WebCodecs-blind (ProRes), so import routes it `native-sw`; any
+/// other chart reaches the software lane through the engine and lane pins alone.
 interface ChartLeg {
   fixture: string
   manifest: string
@@ -212,7 +219,7 @@ test.describe('preview native-SW saturated-chart color gate (Electron)', () => {
   test.skip(!COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native SW sessions`)
 
   const prores = (fixture: string): ChartLeg => ({ fixture, manifest: MANIFEST, canvas: CANVAS, nativeSwRoute: true })
-  const h264 = (name: string, manifest: string, canvas: Canvas): ChartLeg =>
+  const pinned = (name: string, manifest: string, canvas: Canvas): ChartLeg =>
     ({ fixture: path.resolve(MEDIA_DIR, name), manifest, canvas, nativeSwRoute: false })
 
   test('bt709-tagged ProRes chart previews without the BT.601 tint', async () => {
@@ -224,16 +231,28 @@ test.describe('preview native-SW saturated-chart color gate (Electron)', () => {
   })
 
   test('untagged SD H.264 chart previews as BT.601 on the software lane', async () => {
-    await runChartLeg('psc-untagged-sd', h264('test_480p_color_601ltd_untagged.mp4', MANIFEST_SD, CANVAS_SD))
+    await runChartLeg('psc-untagged-sd', pinned('test_480p_color_601ltd_untagged.mp4', MANIFEST_SD, CANVAS_SD))
   })
 
   test('untagged HD H.264 chart previews as BT.709 on the software lane', async () => {
-    await runChartLeg('psc-untagged-hd', h264('test_1080p_color_709ltd_untagged.mp4', MANIFEST, CANVAS))
+    await runChartLeg('psc-untagged-hd', pinned('test_1080p_color_709ltd_untagged.mp4', MANIFEST, CANVAS))
+  })
+
+  test('untagged cropped HD H.264 chart (1280x544) previews as BT.709 on the software lane', async () => {
+    await runChartLeg('psc-untagged-wide', pinned('test_1280x544_color_709ltd_untagged.mp4', MANIFEST_WIDE, CANVAS_WIDE))
+  })
+
+  test('gbr-tagged RGB H.264 chart previews as its RGB on the software lane', async () => {
+    await runChartLeg('psc-rgb-h264', pinned('test_1080p_color_rgb_h264.mp4', MANIFEST, CANVAS))
+  })
+
+  test('untagged QuickTime Animation RGB chart previews as its RGB on the software lane', async () => {
+    await runChartLeg('psc-rgb-qtrle', pinned('test_1080p_color_rgb_qtrle.mov', MANIFEST, CANVAS))
   })
 
   for (const enc of ['709full', '601full'] as const) {
     test(`${enc} H.264 chart keeps full-range levels on the software lane`, async () => {
-      await runChartLeg(`psc-${enc}`, h264(`test_1080p_color_${enc}.mp4`, MANIFEST, CANVAS))
+      await runChartLeg(`psc-${enc}`, pinned(`test_1080p_color_${enc}.mp4`, MANIFEST, CANVAS))
     })
   }
 })

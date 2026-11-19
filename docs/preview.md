@@ -229,8 +229,10 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   the preload posts it on the session's port with the frame buffer
   transferred. `SwTransport` on the page main thread holds the other end and
   posts `request` and `release` up it. Frames carry no colour: the
-  compositor's own ingest pass converts them to RGB using the source's
-  resolved colour (`resolveSourceColor`, the one rule every lane shares; see
+  compositor's own ingest pass converts them to RGB using the colour the
+  session was opened with: the source's resolved colour (`resolveSourceColor`,
+  the one rule every lane shares), or for an RGB-coded source the YCbCr the
+  pack converted it into (`nativePlaneColor`; see
   [`conformance.md`](conformance.md#decode-color-tags)), never through
   `createImageBitmap`, which always applies BT.601
   ([ADR 0032](adr/0032-cpu-plane-yuv-converts-in-owned-shaders.md)). The gate

@@ -76,7 +76,7 @@ describe('Compositor delegates durable Motif preparation to main', () => {
   const create = () => new Compositor({
     app: { stage: new Container() } as unknown as Application,
     width: 1920, height: 1080, mode: 'export',
-    originalAssetUrl: () => null, sourceColor: () => resolveSourceColor({ height: 1080 }), mediaById: () => undefined,
+    originalAssetUrl: () => null, sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }), mediaById: () => undefined,
     pool: { dispose: vi.fn() } as unknown as DecoderPool,
   });
   const plans = () => invoke.mock.calls.filter(([command]) => command === 'motif_bake_reconcile')

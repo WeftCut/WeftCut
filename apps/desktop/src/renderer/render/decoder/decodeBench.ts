@@ -211,7 +211,7 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
     const h = pool.acquire({
       layerId: "order-0",
       mediaId: `order:${sourcePath}`,
-      sourceColor: resolveSourceColor({ height }),
+      sourceColor: resolveSourceColor({ width, height }),
       proxyAssetUrl: url,
       ...(strategy === "native"
         ? {
@@ -436,7 +436,7 @@ export async function decodeBenchConcurrentOrderCheck(
       const h = pool.acquire({
         layerId: `concurrent-order-${i}`,
         mediaId: `concurrent-order:${i}:${sourcePath}`,
-        sourceColor: resolveSourceColor({ height }),
+        sourceColor: resolveSourceColor({ width, height }),
         proxyAssetUrl: url,
         engine: "ffmpeg" as const,
         forceLane: "hardware" as const,
@@ -591,7 +591,7 @@ export async function decodeBenchBudgetProbe(args: {
       const h = pool.acquire({
         layerId: `budget-${i}`,
         mediaId: `budget:${i}:${args.sourcePath}`,
-        sourceColor: resolveSourceColor({ height: args.height }),
+        sourceColor: resolveSourceColor({ width: args.width, height: args.height }),
         proxyAssetUrl: url,
         engine: "ffmpeg",
         forceLane: "hardware",
@@ -679,7 +679,7 @@ export async function decodeBenchHwFallbackProbe(args: HwFallbackProbeArgs): Pro
       const h = pool.acquire({
         layerId: `hwfallback-${i}`,
         mediaId: `hwfallback:${i}:${args.sourcePath}`,
-        sourceColor: resolveSourceColor({ height: args.height }),
+        sourceColor: resolveSourceColor({ width: args.width, height: args.height }),
         proxyAssetUrl: url,
         engine: "ffmpeg",
         sourcePath: args.sourcePath,
@@ -925,7 +925,7 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
     const mkInit = (layerId: string) => ({
       layerId,
       mediaId: `bench:${args.sourcePath}`,
-      sourceColor: resolveSourceColor({ height: args.height ?? null }),
+      sourceColor: resolveSourceColor({ width: args.width ?? null, height: args.height ?? null }),
       // Unused by the ffmpeg engine (it decodes `sourcePath` directly) but
       // still passed — `proxyAssetUrl` is required by `SourceHandleInit`.
       proxyAssetUrl: url,

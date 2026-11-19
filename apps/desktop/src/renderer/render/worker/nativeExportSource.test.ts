@@ -18,7 +18,7 @@ import {
 import type { DecodeWireFrame, DecodeWireMsg, ExportDecodeCommand } from "../../../shared/frameCarrier/wire";
 import type { ExportEvent, ExportRequest } from "./protocol";
 import type { SourceHandleInit } from "../decoder/session";
-import { resolveSourceColor, type SourceColor } from "../decoder/ffprobeColorSpace";
+import { nativePlaneColor, resolveSourceColor, type SourceColor } from "../decoder/ffprobeColorSpace";
 import { isNativeNv12Frame, nv12FrameFromBytes, type NativeNv12Frame } from "../decoder/nv12Frame";
 import { isTenBitFrame, tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 
@@ -61,8 +61,8 @@ const H = 2;
 const DUR = 33_333;
 const WINDOW = 6;
 
-const HD = resolveSourceColor({ height: 1080 });
-const BT470BG_FULL = resolveSourceColor({ height: 1080, color_matrix: "bt470bg", color_range: "pc" });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
+const BT470BG_FULL = resolveSourceColor({ width: 1920, height: 1080, color_matrix: "bt470bg", color_range: "pc" });
 
 function makeHandle(
   sourceColor: SourceColor = HD,
@@ -128,7 +128,13 @@ describe("NativeExportSourceHandle", () => {
     await handle.ensureReady();
     await handle.ensureReady(); // memoized — no second open
     expect(opens).toEqual([
-      { sessionId: expect.any(String), path: "C:/orig/tiny.mov", outFormat: "NV12", window: WINDOW },
+      {
+        sessionId: expect.any(String),
+        path: "C:/orig/tiny.mov",
+        outFormat: "NV12",
+        window: WINDOW,
+        color: { matrix: HD.matrix, fullRange: HD.fullRange },
+      },
     ]);
   });
 
@@ -305,7 +311,7 @@ describe("NativeExportSourceHandle", () => {
   });
 
   it("stamps the colour it was given on an untagged SD source, not a default of its own", async () => {
-    const { handle, port } = makeHandle(resolveSourceColor({ height: 480 }));
+    const { handle, port } = makeHandle(resolveSourceColor({ width: 720, height: 480 }));
     await handle.ensureReady();
     port.deliver(frameMsg(0));
     const nv = handle.ring.frameAt(0) as NativeNv12Frame;
@@ -417,11 +423,12 @@ describe("createNativeDecodeSessions", () => {
   it("posts nd:open with the request and answers each by its reqId, in any order", async () => {
     const { s, posted, reply } = scope();
     const { open } = createNativeDecodeSessions(s);
-    const a = open({ sessionId: "a", path: "C:/orig/a.mov", outFormat: "NV12", window: 6 });
-    const b = open({ sessionId: "b", path: "C:/orig/b.mov", outFormat: "I420P10", window: 3 });
+    const color = { matrix: "bt709", fullRange: false };
+    const a = open({ sessionId: "a", path: "C:/orig/a.mov", outFormat: "NV12", window: 6, color });
+    const b = open({ sessionId: "b", path: "C:/orig/b.mov", outFormat: "I420P10", window: 3, color });
     expect(posted).toEqual([
-      { type: "nd:open", reqId: expect.any(Number), sessionId: "a", path: "C:/orig/a.mov", outFormat: "NV12", window: 6 },
-      { type: "nd:open", reqId: expect.any(Number), sessionId: "b", path: "C:/orig/b.mov", outFormat: "I420P10", window: 3 },
+      { type: "nd:open", reqId: expect.any(Number), sessionId: "a", path: "C:/orig/a.mov", outFormat: "NV12", window: 6, color },
+      { type: "nd:open", reqId: expect.any(Number), sessionId: "b", path: "C:/orig/b.mov", outFormat: "I420P10", window: 3, color },
     ]);
     const [ra, rb] = posted.map((m) => (m as Extract<ExportEvent, { type: "nd:open" }>).reqId);
     expect(ra).not.toBe(rb);
@@ -437,9 +444,10 @@ describe("createNativeDecodeSessions", () => {
   it("asks the page to end a session in the order the Worker asked, between the opens around it", () => {
     const { s, posted } = scope();
     const sessions = createNativeDecodeSessions(s);
-    void sessions.open({ sessionId: "a", path: "C:/orig/a.mov", outFormat: "NV12", window: 6 });
+    const color = { matrix: "bt709", fullRange: false };
+    void sessions.open({ sessionId: "a", path: "C:/orig/a.mov", outFormat: "NV12", window: 6, color });
     sessions.close("a");
-    void sessions.open({ sessionId: "b", path: "C:/orig/a.mov", outFormat: "NV12", window: 6 });
+    void sessions.open({ sessionId: "b", path: "C:/orig/a.mov", outFormat: "NV12", window: 6, color });
     expect(posted.map((m) => [m.type, (m as { sessionId: string }).sessionId])).toEqual([
       ["nd:open", "a"],
       ["nd:close", "a"],
@@ -635,6 +643,20 @@ describe("NativeExportSourceHandle — NV12 lane", () => {
     const nv = handle.ring.frameAt(0) as NativeNv12Frame;
     expect(nv.colorSpace?.matrix).toBe("smpte170m");
     expect(nv.colorSpace?.fullRange).toBe(false);
+  });
+
+  it("reads an RGB-coded source's frames with the YCbCr colour it opened the session with", async () => {
+    // The pack converts RGB into the colour the session is opened with, and
+    // the ingest reads the planes with the colour stamped on the frame: the
+    // two must be one value, and a YCbCr one.
+    const rgb = resolveSourceColor({ width: 1920, height: 1080, pix_fmt: "rgb24" });
+    const { handle, port, opens } = makeHandle(rgb);
+    await handle.ensureReady();
+    port.deliver(frameMsg(0));
+    const stamped = (handle.ring.frameAt(0) as NativeNv12Frame).colorSpace!;
+    expect(stamped.matrix).not.toBe("rgb");
+    expect(stamped).toEqual(nativePlaneColor(rgb));
+    expect(opens[0]!.color).toEqual({ matrix: stamped.matrix, fullRange: stamped.fullRange });
   });
 
   it("fails the ring loudly on a byteLength that doesn't match the layout", async () => {

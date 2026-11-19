@@ -136,7 +136,7 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
   /** Open a session and collect its in-band messages; auto-tracked for teardown. */
   function open(id: string, file: string, format: 'NV12' | 'I420P10' = 'NV12', window = 6) {
     const msgs: DecodeMsg[] = []
-    const info = ctx.backend.exportDecodeOpen(id, file, format, window, (err, m) => {
+    const info = ctx.backend.exportDecodeOpen(id, file, format, window, { matrix: 'bt709', fullRange: false }, (err, m) => {
       if (!err) msgs.push(m)
     })
     ctx.msgsById.set(id, msgs)

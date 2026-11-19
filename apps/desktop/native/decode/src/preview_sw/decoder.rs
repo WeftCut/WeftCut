@@ -319,6 +319,43 @@ pub enum SwOutFormat {
     I420p10,
 }
 
+/// The YCbCr colour of the planes a stream packs, handed in at open by the
+/// renderer, which reads the planes back with the same value
+/// (`nativePlaneColor` in `ffprobeColorSpace.ts`), so the pack and the ingest
+/// cannot disagree. A YCbCr frame already carries it: the pack never changes a
+/// YCbCr frame's matrix or levels. An RGB-coded frame (`gbrp`, `rgb24`,
+/// `pal8`, ...) has no matrix of its own and is converted into it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlaneColor {
+    /// swscale's `SWS_CS_*` for the matrix.
+    sws_colorspace: i32,
+    full_range: bool,
+}
+
+impl PlaneColor {
+    /// For a probe or a test, whose frames no ingest reads.
+    pub const BT709_LIMITED: PlaneColor = PlaneColor {
+        sws_colorspace: ffs::SWS_CS_ITU709,
+        full_range: false,
+    };
+
+    /// `matrix` is the renderer's WebCodecs name. One that is not a YCbCr
+    /// matrix the pack converts into (`rgb` among them) fails the open: the
+    /// renderer never sends one, and a guess would be read back as something
+    /// else.
+    pub fn parse(matrix: &str, full_range: bool) -> Result<PlaneColor, String> {
+        let sws_colorspace = match matrix {
+            "bt709" => ffs::SWS_CS_ITU709,
+            "smpte170m" | "bt470bg" => ffs::SWS_CS_ITU601,
+            other => return Err(format!("decoded planes cannot carry matrix {other:?}")),
+        };
+        Ok(PlaneColor {
+            sws_colorspace,
+            full_range,
+        })
+    }
+}
+
 /// Smallest long edge (px) a downscaled frame may ship at. Without it, ¼ of an
 /// already-small source is a thumbnail the Compositor then blows back up over
 /// the whole canvas.
@@ -494,6 +531,8 @@ pub struct SwVideoStream {
     pub thread_count: i32,
     /// Target format every decoded frame is packed into, fixed at open.
     out_format: SwOutFormat,
+    /// The colour the packed planes carry, fixed at open.
+    plane_color: PlaneColor,
     /// Producer-side preview cadence. Identity by default; when reduced, the
     /// skipped decoded frames never reach copy-back/swscale/packing.
     output_cadence: OutputCadence,
@@ -533,23 +572,34 @@ impl SwVideoStream {
             SwOutFormat::Nv12,
             DecodeAccel::Software,
             OutScale::FULL,
+            PlaneColor::BT709_LIMITED,
         )
     }
 
     /// Open `path` for pure-software decode, packing every decoded frame into
-    /// `out_format` (the export lane's 10-bit selector). Software only, and
-    /// always at FULL resolution — export must never inherit a preview
-    /// downscale.
-    pub fn open_with_format(path: &str, out_format: SwOutFormat) -> Result<SwVideoStream, String> {
-        Self::open_with_accel(path, out_format, DecodeAccel::Software, OutScale::FULL)
+    /// `out_format` (the export lane's 10-bit selector) carrying `plane_color`.
+    /// Software only, and always at FULL resolution — export must never inherit
+    /// a preview downscale.
+    pub fn open_with_format(
+        path: &str,
+        out_format: SwOutFormat,
+        plane_color: PlaneColor,
+    ) -> Result<SwVideoStream, String> {
+        Self::open_with_accel(
+            path,
+            out_format,
+            DecodeAccel::Software,
+            OutScale::FULL,
+            plane_color,
+        )
     }
 
     /// Open `path` on `accel` and prepare for streaming, packing every decoded
-    /// frame into `out_format` at `out_scale`'s output size. On a hardware lane a
-    /// hw device context is attached (`get_format` keeps frames on the GPU) and
-    /// each `next_frame` transfers the surface back to system memory before
-    /// packing — the packed bytes are identical to the software lane's, so the
-    /// same transport carries both (and the copy-back lanes get the downscale for
+    /// frame into `out_format` at `out_scale`'s output size, its planes carrying
+    /// `plane_color`. On a hardware lane a hw device context is attached
+    /// (`get_format` keeps frames on the GPU) and each `next_frame` transfers
+    /// the surface back to system memory before packing — the packed bytes are
+    /// identical to the software lane's, so the same transport carries both (and the copy-back lanes get the downscale for
     /// free: the transfer lands a full-size CPU frame either way). On the software
     /// lane libavcodec decodes to CPU frames with parallel threads. A hw device
     /// that can't be created (GPU/driver absent) surfaces as an `Err` so the
@@ -559,6 +609,7 @@ impl SwVideoStream {
         out_format: SwOutFormat,
         accel: DecodeAccel,
         out_scale: OutScale,
+        plane_color: PlaneColor,
     ) -> Result<SwVideoStream, String> {
         ffmpeg_next::init().ok();
         let map = |e: ffmpeg_next::Error| e.to_string();
@@ -654,6 +705,7 @@ impl SwVideoStream {
             color,
             thread_count,
             out_format,
+            plane_color,
             output_cadence: OutputCadence::FULL,
             hw_ctx,
             expected_hw_format: accel.hw_pix_fmt(),
@@ -748,11 +800,10 @@ impl SwVideoStream {
                 // the same pair and the pack takes the pre-scaling path.
                 let (sw, sh) = (self.width, self.height);
                 let (dw, dh) = (self.out_width, self.out_height);
+                let (plane, scratch) = (self.plane_color, &mut self.out_scratch);
                 let data = match self.out_format {
-                    SwOutFormat::Nv12 => frame_to_nv12(src, sw, sh, dw, dh, &mut self.out_scratch),
-                    SwOutFormat::I420p10 => {
-                        frame_to_i420p10(src, sw, sh, dw, dh, &mut self.out_scratch)
-                    }
+                    SwOutFormat::Nv12 => frame_to_nv12(src, sw, sh, dw, dh, plane, scratch),
+                    SwOutFormat::I420p10 => frame_to_i420p10(src, sw, sh, dw, dh, plane, scratch),
                 }
                 .map_err(map)?;
                 return Ok(Some(SwFrame {
@@ -855,8 +906,13 @@ pub fn probe_hw_first_frame(path: &str, accel: DecodeAccel) -> Result<(), String
     let want = accel
         .hw_pix_fmt()
         .ok_or_else(|| "software is not a hardware lane".to_string())?;
-    let mut stream =
-        SwVideoStream::open_with_accel(path, SwOutFormat::Nv12, accel.clone(), OutScale::FULL)?;
+    let mut stream = SwVideoStream::open_with_accel(
+        path,
+        SwOutFormat::Nv12,
+        accel.clone(),
+        OutScale::FULL,
+        PlaneColor::BT709_LIMITED,
+    )?;
     match stream.decode_one_raw_format() {
         Ok(Some(fmt)) if fmt == want => Ok(()),
         Ok(Some(fmt)) => Err(format!(
@@ -884,6 +940,7 @@ fn first_hw_frame_failure(path: &str, accel: &DecodeAccel, hw_error: String) -> 
             SwOutFormat::Nv12,
             DecodeAccel::Software,
             OutScale::FULL,
+            PlaneColor::BT709_LIMITED,
         )
         .and_then(|mut software| software.decode_one_raw_format())
         .is_ok_and(|frame| frame.is_some());
@@ -913,22 +970,35 @@ fn ensure_scratch(scratch: &mut VideoFrame, fmt: Pixel, w: u32, h: u32) {
     }
 }
 
-/// A swscale context that converts format and size but never levels.
+/// Whether frames of `fmt` hold RGB (or palette) samples rather than YCbCr.
+fn is_rgb_coded(fmt: Pixel) -> bool {
+    // SAFETY: the descriptor table is static; a null entry is checked.
+    unsafe {
+        let desc = ffs::av_pix_fmt_desc_get(fmt.into());
+        !desc.is_null()
+            && (*desc).flags & (ffs::AV_PIX_FMT_FLAG_RGB | ffs::AV_PIX_FMT_FLAG_PAL) as u64 != 0
+    }
+}
+
+/// A swscale context that converts format and size into planes carrying
+/// `plane`: a YCbCr source's levels and matrix pass through untouched, an
+/// RGB-coded source is converted into `plane`.
 ///
 /// LANDMINE: swscale reads a full-range "J" source format (`yuvj420p`, what
 /// libavcodec gives for full-range H.264 and MJPEG) as full range and squeezes
 /// it into the limited range its destination format defaults to. The frame's
 /// range travels separately, as the media's resolved colour the renderer's
 /// ingest shader applies, so squeezed bytes under a full-range label read
-/// washed out (red 255 shown as 238). The destination therefore takes the
+/// washed out (red 255 shown as 238). The destination therefore takes a YCbCr
 /// source's range, which makes the pass levels-neutral.
-fn levels_neutral_sws(
-    src_fmt: Pixel,
-    src_w: u32,
-    src_h: u32,
-    dst_fmt: Pixel,
-    dst_w: u32,
-    dst_h: u32,
+///
+/// LANDMINE: left to itself swscale converts RGB with BT.601 at full range,
+/// which the ingest reads with `plane`'s matrix and range (red 255 shown 29–40
+/// off), so an RGB-coded source's matrix and range are set explicitly.
+fn pack_sws(
+    (src_fmt, src_w, src_h): (Pixel, u32, u32),
+    (dst_fmt, dst_w, dst_h): (Pixel, u32, u32),
+    plane: PlaneColor,
     flags: Flags,
 ) -> Result<SwsContext, ffmpeg_next::Error> {
     let mut sws = SwsContext::get(src_fmt, src_w, src_h, dst_fmt, dst_w, dst_h, flags)?;
@@ -937,9 +1007,11 @@ fn levels_neutral_sws(
     let (mut brightness, mut contrast, mut saturation) = (0, 0, 0);
     // SAFETY: `sws` is a live context; the out-pointers are valid for the call
     // and the tables it returns are owned by the context they go back into.
+    // `sws_getCoefficients` returns a static table.
     unsafe {
         let ctx = sws.as_mut_ptr();
-        let known = ffs::sws_getColorspaceDetails(
+        // Fails only for a null context.
+        if ffs::sws_getColorspaceDetails(
             ctx,
             &mut inv_table,
             &mut src_range,
@@ -948,8 +1020,17 @@ fn levels_neutral_sws(
             &mut brightness,
             &mut contrast,
             &mut saturation,
-        ) >= 0;
-        if known && src_range != dst_range {
+        ) < 0
+        {
+            return Err(ffmpeg_next::Error::Bug);
+        }
+        if is_rgb_coded(src_fmt) {
+            let table = ffs::sws_getCoefficients(plane.sws_colorspace);
+            let dst_range = i32::from(plane.full_range);
+            ffs::sws_setColorspaceDetails(
+                ctx, inv_table, src_range, table, dst_range, brightness, contrast, saturation,
+            );
+        } else if src_range != dst_range {
             ffs::sws_setColorspaceDetails(
                 ctx, inv_table, src_range, table, src_range, brightness, contrast, saturation,
             );
@@ -959,10 +1040,10 @@ fn levels_neutral_sws(
 }
 
 /// Convert a decoded `VideoFrame` of `(src_w, src_h)` to tightly-packed NV12
-/// bytes at `(dst_w, dst_h)`. If it is already NV12 AND no resize is asked for
-/// (e.g. a codec that decodes to NV12 directly, at full playback resolution) pack
-/// it as-is; otherwise swscale it through the caller's reused `scratch` frame
-/// first. No D3D11 hw-transfer branch — a SW frame is already in system memory.
+/// bytes at `(dst_w, dst_h)` carrying `plane`. If it is already NV12 AND no
+/// resize is asked for (e.g. a codec that decodes to NV12 directly, at full
+/// playback resolution) pack it as-is; otherwise swscale it through the
+/// caller's reused `scratch` frame first. No D3D11 hw-transfer branch — a SW frame is already in system memory.
 ///
 /// The returned `Vec` is a fresh per-frame allocation by design — it is handed to
 /// JS and outlives the stream, so only the swscale destination is pooled.
@@ -972,6 +1053,7 @@ fn frame_to_nv12(
     src_h: u32,
     dst_w: u32,
     dst_h: u32,
+    plane: PlaneColor,
     scratch: &mut VideoFrame,
 ) -> Result<Vec<u8>, ffmpeg_next::Error> {
     let resize = (dst_w, dst_h) != (src_w, src_h);
@@ -983,13 +1065,10 @@ fn frame_to_nv12(
         // BILINEAR); same-size conversion keeps BILINEAR, which is what full
         // resolution has always used.
         let flags = if resize { Flags::AREA } else { Flags::BILINEAR };
-        let mut sws = levels_neutral_sws(
-            frame.format(),
-            src_w,
-            src_h,
-            Pixel::NV12,
-            dst_w,
-            dst_h,
+        let mut sws = pack_sws(
+            (frame.format(), src_w, src_h),
+            (Pixel::NV12, dst_w, dst_h),
+            plane,
             flags,
         )?;
         ensure_scratch(scratch, Pixel::NV12, dst_w, dst_h);
@@ -1033,6 +1112,7 @@ fn frame_to_i420p10(
     src_h: u32,
     dst_w: u32,
     dst_h: u32,
+    plane: PlaneColor,
     scratch: &mut VideoFrame,
 ) -> Result<Vec<u8>, ffmpeg_next::Error> {
     let resize = (dst_w, dst_h) != (src_w, src_h);
@@ -1040,13 +1120,10 @@ fn frame_to_i420p10(
         Ok(extract_i420p10_planes(frame))
     } else {
         let flags = if resize { Flags::AREA } else { Flags::BILINEAR };
-        let mut sws = levels_neutral_sws(
-            frame.format(),
-            src_w,
-            src_h,
-            Pixel::YUV420P10LE,
-            dst_w,
-            dst_h,
+        let mut sws = pack_sws(
+            (frame.format(), src_w, src_h),
+            (Pixel::YUV420P10LE, dst_w, dst_h),
+            plane,
             flags,
         )?;
         ensure_scratch(scratch, Pixel::YUV420P10LE, dst_w, dst_h);
@@ -1240,7 +1317,7 @@ mod scale_bench {
 
 #[cfg(test)]
 mod tests {
-    use super::{OutScale, OutputCadence, SwOutFormat, SwVideoStream};
+    use super::{OutScale, OutputCadence, PlaneColor, SwOutFormat, SwVideoStream};
 
     #[test]
     fn output_cadence_clamps_ships_first_and_every_other_frame_then_resets() {
@@ -1340,7 +1417,9 @@ mod tests {
             }
         }
         let mut scratch = VideoFrame::empty();
-        let packed = super::frame_to_nv12(&src, W, H, W, H, &mut scratch).unwrap();
+        let packed =
+            super::frame_to_nv12(&src, W, H, W, H, PlaneColor::BT709_LIMITED, &mut scratch)
+                .unwrap();
         assert_eq!(packed, super::extract_nv12_planes(&src));
         assert_eq!(
             scratch.width(),
@@ -1374,11 +1453,22 @@ mod tests {
         for (dw, dh) in [(W, H), (W / 2, H / 2)] {
             let last = dw as usize - 2;
             let mut scratch = VideoFrame::empty();
-            let nv12 = super::frame_to_nv12(&src, W, H, dw, dh, &mut scratch).unwrap();
+            let nv12 =
+                super::frame_to_nv12(&src, W, H, dw, dh, PlaneColor::BT709_LIMITED, &mut scratch)
+                    .unwrap();
             assert_eq!(nv12[1], 0, "black was lifted at {dw}x{dh}");
             assert_eq!(nv12[last], 255, "white was lowered at {dw}x{dh}");
             let mut scratch = VideoFrame::empty();
-            let p10 = super::frame_to_i420p10(&src, W, H, dw, dh, &mut scratch).unwrap();
+            let p10 = super::frame_to_i420p10(
+                &src,
+                W,
+                H,
+                dw,
+                dh,
+                PlaneColor::BT709_LIMITED,
+                &mut scratch,
+            )
+            .unwrap();
             let y = |x: usize| u16::from_le_bytes([p10[2 * x], p10[2 * x + 1]]);
             assert_eq!(y(1), 0, "10-bit black was lifted at {dw}x{dh}");
             // 8-bit 255 widened to 10 bits is 1020 or 1023 by the scaler's
@@ -1388,6 +1478,119 @@ mod tests {
                 "10-bit white was lowered at {dw}x{dh}: {}",
                 y(last)
             );
+        }
+    }
+
+    /// A `w`×`h` RGB-coded frame of one colour, packed (`rgb24`) or planar
+    /// (`gbrp`, whose planes are G, B, R).
+    fn solid_rgb(
+        fmt: ffmpeg_next::format::Pixel,
+        w: u32,
+        h: u32,
+        rgb: [u8; 3],
+    ) -> super::VideoFrame {
+        use ffmpeg_next::format::Pixel;
+        let mut f = super::VideoFrame::new(fmt, w, h);
+        match fmt {
+            Pixel::RGB24 => {
+                let stride = f.stride(0);
+                for (i, b) in f.data_mut(0).iter_mut().enumerate() {
+                    let x = i % stride;
+                    if x < (w * 3) as usize {
+                        *b = rgb[x % 3];
+                    }
+                }
+            }
+            Pixel::GBRP => {
+                for (plane, value) in [(0, rgb[1]), (1, rgb[2]), (2, rgb[0])] {
+                    f.data_mut(plane).fill(value);
+                }
+            }
+            other => panic!("no solid fill for {other:?}"),
+        }
+        f
+    }
+
+    #[test]
+    fn an_rgb_coded_frame_packs_into_the_plane_colour_it_is_given() {
+        // An RGB-coded frame has no matrix of its own: its planes must carry
+        // exactly the matrix and range the renderer reads them back with,
+        // whichever that is. The expected codes follow from each matrix's Kr/Kb.
+        use ffmpeg_next::format::Pixel;
+        use ffmpeg_next::util::frame::video::Video as VideoFrame;
+        const W: u32 = 64;
+        const H: u32 = 48;
+        let ycbcr = |kr: f64, kb: f64, rgb: [u8; 3]| {
+            let [r, g, b] = rgb.map(|v| f64::from(v) / 255.0);
+            let y = kr * r + (1.0 - kr - kb) * g + kb * b;
+            (
+                y,
+                (b - y) / (2.0 * (1.0 - kb)),
+                (r - y) / (2.0 * (1.0 - kr)),
+            )
+        };
+        for fmt in [Pixel::RGB24, Pixel::GBRP] {
+            for rgb in [[255, 0, 0], [0, 255, 0], [0, 0, 255], [200, 150, 120]] {
+                let src = solid_rgb(fmt, W, H, rgb);
+                for (matrix, kr, kb) in [("bt709", 0.2126, 0.0722), ("smpte170m", 0.299, 0.114)] {
+                    let (y, cb, cr) = ycbcr(kr, kb, rgb);
+                    for full in [false, true] {
+                        // 8-bit code values; the 10-bit ones are four times these.
+                        let (y_off, y_scale, c_scale) = if full {
+                            (0.0, 255.0, 255.0)
+                        } else {
+                            (16.0, 219.0, 224.0)
+                        };
+                        let want = [
+                            y_off + y_scale * y,
+                            128.0 + c_scale * cb,
+                            128.0 + c_scale * cr,
+                        ];
+                        let plane = PlaneColor::parse(matrix, full).unwrap();
+                        for (dw, dh) in [(W, H), (W / 2, H / 2)] {
+                            let label = format!("{fmt:?} {rgb:?} {matrix} full={full} {dw}x{dh}");
+                            let mut scratch = VideoFrame::empty();
+                            let nv12 =
+                                super::frame_to_nv12(&src, W, H, dw, dh, plane, &mut scratch)
+                                    .unwrap();
+                            let luma = (dw * dh) as usize;
+                            let got =
+                                [nv12[luma / 2 + dw as usize / 2], nv12[luma], nv12[luma + 1]];
+                            for (g, w) in got.iter().zip(want) {
+                                assert!(
+                                    (f64::from(*g) - w).abs() <= 2.0,
+                                    "{label}: NV12 {got:?}, want {want:?}"
+                                );
+                            }
+                            let mut scratch = VideoFrame::empty();
+                            let p10 =
+                                super::frame_to_i420p10(&src, W, H, dw, dh, plane, &mut scratch)
+                                    .unwrap();
+                            let at = |i: usize| {
+                                f64::from(u16::from_le_bytes([p10[2 * i], p10[2 * i + 1]]))
+                            };
+                            let chroma = luma / 4;
+                            let got = [at(luma / 2 + dw as usize / 2), at(luma), at(luma + chroma)];
+                            for (g, w) in got.iter().zip(want) {
+                                assert!(
+                                    (g - 4.0 * w).abs() <= 8.0,
+                                    "{label}: I420P10 {got:?}, want 4x{want:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn planes_never_carry_a_matrix_they_cannot_be_read_back_with() {
+        assert!(PlaneColor::parse("rgb", true).is_err());
+        assert!(PlaneColor::parse("bt2020-ncl", false).is_err());
+        assert!(PlaneColor::parse("", false).is_err());
+        for matrix in ["bt709", "smpte170m", "bt470bg"] {
+            assert!(PlaneColor::parse(matrix, false).is_ok(), "{matrix}");
         }
     }
 
@@ -1409,10 +1612,21 @@ mod tests {
         let (dw, dh) = OutScale::from_divisor(2).dims_for(W, H);
         assert_eq!((dw, dh), (640, 360));
         let mut scratch = VideoFrame::empty();
-        let scaled = super::frame_to_nv12(&src, W, H, dw, dh, &mut scratch).unwrap();
+        let scaled =
+            super::frame_to_nv12(&src, W, H, dw, dh, PlaneColor::BT709_LIMITED, &mut scratch)
+                .unwrap();
         assert_eq!(scaled.len(), (dw * dh + dw * dh / 2) as usize);
         // …and a quarter of the full-size pack's bytes, which is the whole point.
-        let full = super::frame_to_nv12(&src, W, H, W, H, &mut VideoFrame::empty()).unwrap();
+        let full = super::frame_to_nv12(
+            &src,
+            W,
+            H,
+            W,
+            H,
+            PlaneColor::BT709_LIMITED,
+            &mut VideoFrame::empty(),
+        )
+        .unwrap();
         assert_eq!(full.len(), scaled.len() * 4);
     }
 
@@ -1440,12 +1654,30 @@ mod tests {
         for div in [2u32, 4] {
             let (dw, dh) = OutScale::from_divisor(div).dims_for(W, H);
             assert_eq!((dw % 2, dh % 2), (0, 0), "downscale must stay even");
-            let scaled = super::frame_to_i420p10(&src, W, H, dw, dh, &mut scratch).unwrap();
+            let scaled = super::frame_to_i420p10(
+                &src,
+                W,
+                H,
+                dw,
+                dh,
+                PlaneColor::BT709_LIMITED,
+                &mut scratch,
+            )
+            .unwrap();
             let expected = (dw * dh * 2 + 2 * ((dw >> 1) * (dh >> 1) * 2)) as usize; // = w*h*3, adapter layout
             assert_eq!(scaled.len(), expected, "div {div} packed length");
         }
         // Full resolution stays the pre-scaling shape.
-        let full = super::frame_to_i420p10(&src, W, H, W, H, &mut VideoFrame::empty()).unwrap();
+        let full = super::frame_to_i420p10(
+            &src,
+            W,
+            H,
+            W,
+            H,
+            PlaneColor::BT709_LIMITED,
+            &mut VideoFrame::empty(),
+        )
+        .unwrap();
         assert_eq!(full.len(), (W * H * 3) as usize);
     }
 
@@ -1468,7 +1700,9 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
-        let mut s = SwVideoStream::open_with_format(p, SwOutFormat::I420p10).expect("open");
+        let mut s =
+            SwVideoStream::open_with_format(p, SwOutFormat::I420p10, PlaneColor::BT709_LIMITED)
+                .expect("open");
         let f = s.next_frame().expect("decode").expect("some frame");
         assert_eq!(f.format, SwOutFormat::I420p10);
         // I420P10: u16LE Y (w*h) + U + V at (w/2)*(h/2) → 3 bytes/px, even dims.
@@ -1536,10 +1770,30 @@ mod tests {
         let (a, b) = (synth(0), synth(199));
 
         let mut scratch = VideoFrame::empty();
-        let reused_a = super::frame_to_nv12(&a, W, H, W, H, &mut scratch).unwrap();
-        let reused_b = super::frame_to_nv12(&b, W, H, W, H, &mut scratch).unwrap();
-        let fresh_a = super::frame_to_nv12(&a, W, H, W, H, &mut VideoFrame::empty()).unwrap();
-        let fresh_b = super::frame_to_nv12(&b, W, H, W, H, &mut VideoFrame::empty()).unwrap();
+        let reused_a =
+            super::frame_to_nv12(&a, W, H, W, H, PlaneColor::BT709_LIMITED, &mut scratch).unwrap();
+        let reused_b =
+            super::frame_to_nv12(&b, W, H, W, H, PlaneColor::BT709_LIMITED, &mut scratch).unwrap();
+        let fresh_a = super::frame_to_nv12(
+            &a,
+            W,
+            H,
+            W,
+            H,
+            PlaneColor::BT709_LIMITED,
+            &mut VideoFrame::empty(),
+        )
+        .unwrap();
+        let fresh_b = super::frame_to_nv12(
+            &b,
+            W,
+            H,
+            W,
+            H,
+            PlaneColor::BT709_LIMITED,
+            &mut VideoFrame::empty(),
+        )
+        .unwrap();
 
         assert_ne!(
             fresh_a, fresh_b,
@@ -1553,15 +1807,37 @@ mod tests {
 
         // Same for the 10-bit lane, and through the SAME scratch the 8-bit lane
         // just used — the format change must force a reallocation.
-        let ten_a = super::frame_to_i420p10(&a, W, H, W, H, &mut scratch).unwrap();
-        let ten_b = super::frame_to_i420p10(&b, W, H, W, H, &mut scratch).unwrap();
+        let ten_a =
+            super::frame_to_i420p10(&a, W, H, W, H, PlaneColor::BT709_LIMITED, &mut scratch)
+                .unwrap();
+        let ten_b =
+            super::frame_to_i420p10(&b, W, H, W, H, PlaneColor::BT709_LIMITED, &mut scratch)
+                .unwrap();
         assert_eq!(
             ten_a,
-            super::frame_to_i420p10(&a, W, H, W, H, &mut VideoFrame::empty()).unwrap()
+            super::frame_to_i420p10(
+                &a,
+                W,
+                H,
+                W,
+                H,
+                PlaneColor::BT709_LIMITED,
+                &mut VideoFrame::empty()
+            )
+            .unwrap()
         );
         assert_eq!(
             ten_b,
-            super::frame_to_i420p10(&b, W, H, W, H, &mut VideoFrame::empty()).unwrap()
+            super::frame_to_i420p10(
+                &b,
+                W,
+                H,
+                W,
+                H,
+                PlaneColor::BT709_LIMITED,
+                &mut VideoFrame::empty()
+            )
+            .unwrap()
         );
     }
 
@@ -1820,6 +2096,7 @@ mod tests {
             SwOutFormat::I420p10,
             DecodeAccel::VideoToolbox,
             OutScale::FULL,
+            PlaneColor::BT709_LIMITED,
         )
         .expect("open HEVC Main10 on videotoolbox");
         let mut frames = 0u32;
@@ -1867,8 +2144,14 @@ mod tests {
                 DecodeAccel::Software
             }
         };
-        let mut s = SwVideoStream::open_with_accel(p, SwOutFormat::I420p10, accel, OutScale::FULL)
-            .expect("open ProRes on the probed lane");
+        let mut s = SwVideoStream::open_with_accel(
+            p,
+            SwOutFormat::I420p10,
+            accel,
+            OutScale::FULL,
+            PlaneColor::BT709_LIMITED,
+        )
+        .expect("open ProRes on the probed lane");
         let mut frames = 0u32;
         while let Some(f) = s.next_frame().expect("decode") {
             assert_eq!(f.format, SwOutFormat::I420p10);
@@ -1892,6 +2175,7 @@ mod tests {
             SwOutFormat::Nv12,
             DecodeAccel::VideoToolbox,
             OutScale::FULL,
+            PlaneColor::BT709_LIMITED,
         )
         .expect("open on videotoolbox");
         let mut frames = 0u32;

@@ -364,6 +364,21 @@ test('the imageset and colour entries claim more than they are named for', () =>
     'color_manifest.json',
     'test_1080p_color_709ltd_untagged.mp4',
   ])
+  assert.deepEqual(recipeOf({ colorUntagged: 'wide' }).files, [
+    'color_chart_1280x544.png',
+    'color_manifest_1280x544.json',
+    'test_1280x544_color_709ltd_untagged.mp4',
+  ])
+  assert.deepEqual(recipeOf({ colorRgb: 'h264' }).files, [
+    'color_chart.png',
+    'color_manifest.json',
+    'test_1080p_color_rgb_h264.mp4',
+  ])
+  assert.deepEqual(recipeOf({ colorRgb: 'qtrle' }).files, [
+    'color_chart.png',
+    'color_manifest.json',
+    'test_1080p_color_rgb_qtrle.mov',
+  ])
 })
 
 test('the untagged colour charts carry no colour tag and decode as the matrix they state', async (t) => {
@@ -376,6 +391,7 @@ test('the untagged colour charts carry no colour tag and decode as the matrix th
   const shapes = [
     { entry: { colorUntagged: 'sd' }, manifest: 'color_manifest_720x480.json', stated: 'smpte170m', other: 'bt709' },
     { entry: { colorUntagged: 'hd' }, manifest: 'color_manifest.json', stated: 'bt709', other: 'smpte170m' },
+    { entry: { colorUntagged: 'wide' }, manifest: 'color_manifest_1280x544.json', stated: 'bt709', other: 'smpte170m' },
   ]
 
   try {
@@ -426,6 +442,57 @@ test('the untagged colour charts carry no colour tag and decode as the matrix th
         statedErr < otherErr,
         `${name}: decoding as ${stated} is off by ${statedErr}, as ${other} by ${otherErr}`,
       )
+    }
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('the RGB colour charts hold RGB samples, tagged as their encoder tags them, and decode to the chart', async (t) => {
+  if (!ffmpegOnPath()) {
+    t.skip('no ffmpeg on PATH, so the fixture cannot be produced either')
+    return
+  }
+  const parent = mkdtempSync(path.join(tmpdir(), 'weftcut fixture rgb '))
+  const outputDir = path.join(parent, 'media with spaces')
+  const shapes = [
+    // libx264rgb declares its RGB matrix itself; QuickTime Animation declares nothing.
+    { entry: { colorRgb: 'h264' }, pixFmt: 'gbrp', colorSpace: 'gbr' },
+    { entry: { colorRgb: 'qtrle' }, pixFmt: 'rgb24', colorSpace: undefined },
+  ]
+
+  try {
+    await withCapturedLogs(() => ensureFixtures(outputDir, { matrix: shapes.map(({ entry }) => entry) }))
+    const { width, height, patches } = JSON.parse(readFileSync(path.join(outputDir, 'color_manifest.json'), 'utf8'))
+
+    for (const { entry, pixFmt, colorSpace } of shapes) {
+      const name = outputName(entry)
+      const media = path.join(outputDir, name)
+      const probe = spawnSync('ffprobe', [
+        '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=pix_fmt,color_space', '-of', 'json', media,
+      ], { encoding: 'utf8' })
+      assert.equal(probe.status, 0, `ffprobe failed:\n${probe.stderr}`)
+      const stream = JSON.parse(probe.stdout).streams[0]
+      assert.equal(stream.pix_fmt, pixFmt, `${name}: pixel format`)
+      assert.equal(stream.color_space === 'unknown' ? undefined : stream.color_space, colorSpace, `${name}: matrix tag`)
+
+      // RGB samples need no matrix to read: the authored patches come back.
+      const rgb = spawnSync('ffmpeg', [
+        '-hide_banner', '-loglevel', 'error', '-i', media, '-frames:v', '1',
+        '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-',
+      ], { maxBuffer: 1 << 26 })
+      assert.equal(rgb.status, 0, `ffmpeg failed:\n${rgb.stderr}`)
+      assert.equal(rgb.stdout.length, width * height * 3)
+      for (const patch of patches) {
+        const at = ((patch.y + Math.floor(patch.h / 2)) * width + patch.x + Math.floor(patch.w / 2)) * 3
+        for (let c = 0; c < 3; c += 1) {
+          assert.ok(
+            Math.abs(rgb.stdout[at + c] - patch.rgb[c]) <= 2,
+            `${name}: ${patch.id} reads ${[...rgb.stdout.subarray(at, at + 3)]}, authored ${patch.rgb}`,
+          )
+        }
+      }
     }
   } finally {
     rmSync(parent, { recursive: true, force: true })

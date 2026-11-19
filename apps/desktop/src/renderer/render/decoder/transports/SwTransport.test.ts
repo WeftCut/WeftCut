@@ -9,12 +9,12 @@ import type { DecodeWireMsg, PreviewDecodeCommand } from "../../../../shared/fra
 import { isNativeNv12Frame, type NativeNv12Frame } from "../nv12Frame";
 import { isTenBitFrame, type TenBitFrame } from "../tenBitFrame";
 import { SwTransport } from "./SwTransport";
-import { resolveSourceColor } from "../ffprobeColorSpace";
+import { nativePlaneColor, resolveSourceColor } from "../ffprobeColorSpace";
 
 const session = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../../ipc/decodeSession", () => ({ openDecodeSession: session.open }));
 
-const HD = resolveSourceColor({ height: 1080 });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 /// The transport's end of its session port; `deliver` stands in for main.
 class FakePort {
@@ -251,8 +251,8 @@ describe("SwTransport", () => {
   it("stamps the open-time sourceColor on every frame, whatever it is", async () => {
     // An untagged SD source's colour: the lane must carry it, not a default
     // of its own.
-    const sd = resolveSourceColor({ height: 480 });
-    const { port } = installApi();
+    const sd = resolveSourceColor({ width: 720, height: 480 });
+    const { api, port } = installApi();
     const t = new SwTransport();
     const frames: NativeNv12Frame[] = [];
     t.onFrame((f) => frames.push(f as NativeNv12Frame));
@@ -260,17 +260,36 @@ describe("SwTransport", () => {
     port.deliver(frame(1, { ptsUs: 0 }));
     port.deliver(frame(2, { ptsUs: 33 }));
     expect(frames.map((f) => f.colorSpace)).toEqual([sd, sd]);
+    expect(api.open.mock.calls[0]![0].color).toEqual({ matrix: sd.matrix, fullRange: sd.fullRange });
     t.dispose();
 
     const second = installApi();
     const tFull = new SwTransport();
     const fullFrames: NativeNv12Frame[] = [];
     tFull.onFrame((f) => fullFrames.push(f as NativeNv12Frame));
-    const full = resolveSourceColor({ height: 1080, color_matrix: "bt709", color_range: "pc" });
+    const full = resolveSourceColor({ width: 1920, height: 1080, color_matrix: "bt709", color_range: "pc" });
     await tFull.open({ streamId: "s2", path: "C:/y.mp4", sourceColor: full });
     second.port.deliver(frame(1));
     expect(fullFrames[0]!.colorSpace).toEqual(full);
     tFull.dispose();
+  });
+
+  it("reads an RGB-coded source's frames with the YCbCr colour it opened the session with", async () => {
+    // The pack converts RGB into the colour the session is opened with, and
+    // the ingest reads the planes with the colour stamped on the frame: the
+    // two must be one value, and a YCbCr one.
+    const rgb = resolveSourceColor({ width: 1920, height: 1080, pix_fmt: "gbrp", color_matrix: "gbr", color_range: "pc" });
+    const { api, port } = installApi();
+    const t = new SwTransport();
+    const frames: NativeNv12Frame[] = [];
+    t.onFrame((f) => frames.push(f as NativeNv12Frame));
+    await t.open({ streamId: "s1", path: "C:/x.mp4", sourceColor: rgb });
+    port.deliver(frame(1));
+    const stamped = frames[0]!.colorSpace!;
+    expect(stamped.matrix).not.toBe("rgb");
+    expect(stamped).toEqual(nativePlaneColor(rgb));
+    expect(api.open.mock.calls[0]![0].color).toEqual({ matrix: stamped.matrix, fullRange: stamped.fullRange });
+    t.dispose();
   });
 
   // I420P10 frames — the 10-bit VideoToolbox-lane sessions — dispatch on the
@@ -333,14 +352,15 @@ describe("SwTransport", () => {
       return api.open.mock.calls[0]![0];
     };
 
-    it("sends nothing but the session and path on the software path at full size", async () => {
-      expect(await opened(new SwTransport())).toEqual({ sessionId: "s1", path: "/tmp/x.mov", options: {} });
+    it("sends nothing but the session, path and plane colour on the software path at full size", async () => {
+      const color = { matrix: HD.matrix, fullRange: HD.fullRange };
+      expect(await opened(new SwTransport())).toEqual({ sessionId: "s1", path: "/tmp/x.mov", color, options: {} });
       // An explicit 1 is the wire default and stays off the wire.
-      expect(await opened(new SwTransport(undefined, 1, 1))).toEqual({ sessionId: "s1", path: "/tmp/x.mov", options: {} });
+      expect(await opened(new SwTransport(undefined, 1, 1))).toEqual({ sessionId: "s1", path: "/tmp/x.mov", color, options: {} });
     });
 
     it("forwards a hardware copy-back lane, with its device only when it has one", async () => {
-      expect(await opened(new SwTransport({ lane: "vaapi", device: "/dev/dri/renderD128" }))).toEqual({
+      expect(await opened(new SwTransport({ lane: "vaapi", device: "/dev/dri/renderD128" }))).toMatchObject({
         sessionId: "s1",
         path: "/tmp/x.mov",
         options: { lane: "vaapi", device: "/dev/dri/renderD128" },

@@ -137,9 +137,9 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const mediaDims: Record<string, { width: number | null; height: number | null }> = {};
   const mediaStartPtsUs: Record<string, number | null> = {};
   // Per-media resolved colour, applied to WHATEVER the export decodes — the
-  // original trivially, and a proxy PRESERVES the source's colorimetry (the
-  // recipe never converts matrix/range, and since PROXY_FORMAT_VERSION 7
-  // asserts the source tags + a colr atom outright). mediabunny's own
+  // original trivially, and a YCbCr source's proxy PRESERVES its colorimetry
+  // (the recipe never converts its matrix/range, and since full-proxy
+  // version 7 asserts the source tags + a colr atom outright). mediabunny's own
   // container tag still outranks this per-field in `withDefaultColorSpace`,
   // so a self-describing proxy reads its colr and an older colr-less one
   // falls back to the source's colour.
@@ -419,6 +419,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
           path: ev.path,
           outFormat: ev.outFormat,
           window: ev.window,
+          color: ev.color,
           finalizationToken: init.finalizationToken,
         })).then(
           ({ info, port }) => {

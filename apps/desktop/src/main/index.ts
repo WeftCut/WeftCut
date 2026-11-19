@@ -73,6 +73,7 @@ import { installWindowsNotifications } from './windowsNotifications.js'
 import { buildApplicationMenuTemplate, sanitizeMenuProjection } from './appMenu.js'
 import type { MenuProjection } from '../shared/menu.js'
 import type { AppNotice } from '../shared/ipc.js'
+import type { PlaneColor } from '../shared/frameCarrier/wire.js'
 import { broadcastEvent } from './broadcast.js'
 import { createDeferredLog } from './deferredLog.js'
 import { createWorkspaceEventGate } from './workspaceEvents.js'
@@ -2320,9 +2321,9 @@ app.whenReady().then(async () => {
   installDecodeSessionIpc(ipcMain)
   ipcMain.handle('previewDecode:open', (event, a: PreviewDecodeRequest) =>
     openPreviewDecode(ndBackend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), a))
-  ipcMain.handle('exportDecode:open', (event, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number }) =>
+  ipcMain.handle('exportDecode:open', (event, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number; color: PlaneColor }) =>
     openExportDecode(ndBackend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), {
-      sessionId: a.sessionId, path: a.path, outFormat: a.outFormat, window: a.window,
+      sessionId: a.sessionId, path: a.path, outFormat: a.outFormat, window: a.window, color: a.color,
       finalizationId: resolveExportFinalization(event.sender.id, a.finalizationToken),
     }))
 
