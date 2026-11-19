@@ -141,8 +141,12 @@ reference pixels computed independently of either).
 
 Only those two take the step because Chromium converts exactly those on the
 WebCodecs lanes (Lite preview, the WebCodecs export decode engine; its 2D
-`drawImage`, observed on macOS and Windows), so converting them makes the
-lanes agree. Deferred: `smpte170m` (SMPTE C) primaries, declared or assumed,
+`drawImage`, observed on macOS and Windows), so converting them brings the
+lanes together instead of apart: measured on both systems, a BT.2020 source
+is within 4–5 steps between the native and the WebCodecs lanes (117 before),
+an EBU one within 12–13 (28 before). The EBU remainder is the re-encoding
+curve: Chromium's values match the sRGB curve, this step uses BT.1886. No gate
+compares the two kinds of lane on these sources. Deferred: `smpte170m` (SMPTE C) primaries, declared or assumed,
 take no step on any lane, the same as Chromium gives them. That is a
 temporary exclusion tied to the WebCodecs lanes, not a claim that SMPTE C is
 BT.709: converting it on the native lanes alone would part them from the

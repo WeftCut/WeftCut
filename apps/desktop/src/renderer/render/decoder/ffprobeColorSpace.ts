@@ -177,7 +177,9 @@ export interface PlaneConversion {
 const YCBCR_MATRICES: ReadonlySet<string> = new Set<YCbCrMatrix>(["bt709", "smpte170m", "bt470bg", "bt2020-ncl"]);
 /// The primaries whose frames take the primaries step: only those Chromium
 /// converts on the WebCodecs lanes too (its 2D `drawImage`, observed on macOS
-/// and Windows), so converting them makes the lanes agree.
+/// and Windows), so converting them brings the lanes together: within 4–5
+/// steps on BT.2020, within 12–13 on EBU, where Chromium re-encodes with the
+/// sRGB curve and this step with BT.1886.
 ///
 /// LANDMINE: `smpte170m` (SMPTE C) is left out on purpose and only for now,
 /// not because it equals BT.709: Chromium leaves it alone, so converting it on
