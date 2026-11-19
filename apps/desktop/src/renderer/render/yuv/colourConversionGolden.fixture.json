@@ -1,0 +1,543 @@
+{
+  "_note": "Shared golden of the owned YCbCr -> display conversion, read by the renderer tests (colourConversion.test.ts) and the decode crate (color.rs). Computed with exact rational arithmetic from the published constants, independently of either implementation: Kr/Kb of BT.709, BT.601 (smpte170m, bt470bg) and BT.2020 non-constant luminance; CIE xy chromaticities of BT.709, BT.2020, BT.470 System B/G (EBU) and SMPTE 170M with the D65 white (0.3127, 0.3290). toBt709 maps linear RGB in the named primaries to linear BT.709 RGB (row-major; rows sum to 1). conversions: integer codes of the stated R'G'B' and their displayed BT.709 R'G'B', with the display transfer a pure 2.4 power both ways (BT.1886) and a per-channel clip to [0, 1] in linear light; linear709 is the value before that clip.",
+  "displayGamma": 2.4,
+  "matrices": [
+    {
+      "matrix": "bt709",
+      "kr": 0.2126,
+      "kb": 0.0722,
+      "inverse": [
+        1.5748,
+        0.18732427293064877,
+        0.4681242729306488,
+        1.8556
+      ]
+    },
+    {
+      "matrix": "smpte170m",
+      "kr": 0.299,
+      "kb": 0.114,
+      "inverse": [
+        1.402,
+        0.34413628620102216,
+        0.7141362862010221,
+        1.772
+      ]
+    },
+    {
+      "matrix": "bt470bg",
+      "kr": 0.299,
+      "kb": 0.114,
+      "inverse": [
+        1.402,
+        0.34413628620102216,
+        0.7141362862010221,
+        1.772
+      ]
+    },
+    {
+      "matrix": "bt2020-ncl",
+      "kr": 0.2627,
+      "kb": 0.0593,
+      "inverse": [
+        1.4746,
+        0.1645531268436578,
+        0.5713531268436578,
+        1.8814
+      ]
+    }
+  ],
+  "primaries": [
+    {
+      "primaries": "bt709",
+      "toBt709": null
+    },
+    {
+      "primaries": "bt2020",
+      "toBt709": [
+        [
+          1.6604910021084345,
+          -0.5876411387885495,
+          -0.07284986331988488
+        ],
+        [
+          -0.12455047452159074,
+          1.1328998971259603,
+          -0.008349422604369477
+        ],
+        [
+          -0.018150763354905303,
+          -0.10057889800800739,
+          1.1187296613629127
+        ]
+      ]
+    },
+    {
+      "primaries": "bt470bg",
+      "toBt709": [
+        [
+          1.0440432087628349,
+          -0.044043208762834934,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.011793378284005151,
+          0.9882066217159948
+        ]
+      ]
+    },
+    {
+      "primaries": "smpte170m",
+      "toBt709": [
+        [
+          0.9395420637732396,
+          0.05018135685986761,
+          0.010276579366892774
+        ],
+        [
+          0.01777222314356081,
+          0.9657928624969045,
+          0.016434914359534616
+        ],
+        [
+          -0.0016215999431855412,
+          -0.004369749659735675,
+          1.0059913496029211
+        ]
+      ]
+    }
+  ],
+  "conversions": [
+    {
+      "id": "bt709 red, 8-bit limited, BT.709 primaries",
+      "matrix": "bt709",
+      "primaries": "bt709",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        63,
+        102,
+        240
+      ],
+      "rgb": [
+        1.0,
+        0.002292731645958926,
+        0.0
+      ]
+    },
+    {
+      "id": "bt709 orange, 8-bit full, BT.709 primaries",
+      "matrix": "bt709",
+      "primaries": "bt709",
+      "bits": 8,
+      "fullRange": true,
+      "codes": [
+        145,
+        50,
+        198
+      ],
+      "rgb": [
+        1.0,
+        0.49742193797429485,
+        0.001032156862745098
+      ]
+    },
+    {
+      "id": "bt2020 red, 10-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 10,
+      "fullRange": false,
+      "codes": [
+        294,
+        387,
+        960
+      ],
+      "rgb": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "linear709": [
+        1.6599214879179154,
+        -0.12450775627819927,
+        -0.018144537827160433
+      ]
+    },
+    {
+      "id": "bt2020 green, 10-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 10,
+      "fullRange": false,
+      "codes": [
+        658,
+        189,
+        100
+      ],
+      "rgb": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "linear709": [
+        -0.587641138766251,
+        1.1328998971242876,
+        -0.10057889800825114
+      ]
+    },
+    {
+      "id": "bt2020 blue, 10-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 10,
+      "fullRange": false,
+      "codes": [
+        116,
+        960,
+        476
+      ],
+      "rgb": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "linear709": [
+        -0.07284986277242407,
+        -0.008349422614516667,
+        1.1187296613538902
+      ]
+    },
+    {
+      "id": "bt2020 orange, 10-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 10,
+      "fullRange": false,
+      "codes": [
+        591,
+        225,
+        754
+      ],
+      "rgb": [
+        1.0,
+        0.36687083062628806,
+        0.0
+      ],
+      "linear709": [
+        1.5486483246871283,
+        0.09012216976917782,
+        -0.037200425646360016
+      ]
+    },
+    {
+      "id": "bt2020 black, 10-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 10,
+      "fullRange": false,
+      "codes": [
+        64,
+        512,
+        512
+      ],
+      "rgb": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "linear709": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "bt2020 grey 25%, 10-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 10,
+      "fullRange": false,
+      "codes": [
+        283,
+        512,
+        512
+      ],
+      "rgb": [
+        0.25,
+        0.25,
+        0.25
+      ],
+      "linear709": [
+        0.03589682359365735,
+        0.035896823593657354,
+        0.035896823593657354
+      ]
+    },
+    {
+      "id": "bt2020 grey 50%, 10-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 10,
+      "fullRange": false,
+      "codes": [
+        502,
+        512,
+        512
+      ],
+      "rgb": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "linear709": [
+        0.1894645708137998,
+        0.1894645708137998,
+        0.1894645708137998
+      ]
+    },
+    {
+      "id": "bt2020 white, 10-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 10,
+      "fullRange": false,
+      "codes": [
+        940,
+        512,
+        512
+      ],
+      "rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "linear709": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bt2020 red, 8-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        74,
+        97,
+        240
+      ],
+      "rgb": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "linear709": [
+        1.6604906539904967,
+        -0.12455014445046587,
+        -0.01814823008403782
+      ]
+    },
+    {
+      "id": "bt2020 green, 8-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        164,
+        47,
+        25
+      ],
+      "rgb": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "linear709": [
+        -0.5848568746115236,
+        1.1275321779662246,
+        -0.10010235168712565
+      ]
+    },
+    {
+      "id": "bt2020 blue, 8-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        29,
+        240,
+        119
+      ],
+      "rgb": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "linear709": [
+        -0.07284986277242407,
+        -0.008349422614516667,
+        1.1187296613538902
+      ]
+    },
+    {
+      "id": "bt2020 orange, 8-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        148,
+        56,
+        189
+      ],
+      "rgb": [
+        1.0,
+        0.36689299603581904,
+        0.0
+      ],
+      "linear709": [
+        1.5491323930802745,
+        0.09013523821147901,
+        -0.03721056948564504
+      ]
+    },
+    {
+      "id": "bt2020 grey 50%, 8-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        126,
+        128,
+        128
+      ],
+      "rgb": [
+        0.502283105022831,
+        0.502283105022831,
+        0.502283105022831
+      ],
+      "linear709": [
+        0.19154753556758733,
+        0.19154753556758733,
+        0.19154753556758733
+      ]
+    },
+    {
+      "id": "bt2020 violet, 8-bit full",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt2020",
+      "bits": 8,
+      "fullRange": true,
+      "codes": [
+        88,
+        183,
+        155
+      ],
+      "rgb": [
+        0.569494494890958,
+        0.16046358380685405,
+        0.7827080110638777
+      ],
+      "linear709": [
+        0.2589255292458679,
+        0.012385215570981618,
+        0.5554429633896681
+      ]
+    },
+    {
+      "id": "bt2020-ncl matrix with BT.709 primaries, 8-bit limited",
+      "matrix": "bt2020-ncl",
+      "primaries": "bt709",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        148,
+        56,
+        189
+      ],
+      "rgb": [
+        1.0,
+        0.5000401027920411,
+        0.0
+      ]
+    },
+    {
+      "id": "smpte170m red, 8-bit limited",
+      "matrix": "smpte170m",
+      "primaries": "smpte170m",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        81,
+        90,
+        240
+      ],
+      "rgb": [
+        0.9722102258859061,
+        0.1861104768428609,
+        0.0
+      ],
+      "linear709": [
+        0.9345971307823645,
+        0.01767868560444218,
+        -0.0016130652502045204
+      ]
+    },
+    {
+      "id": "bt470bg green, 8-bit limited",
+      "matrix": "bt470bg",
+      "primaries": "bt470bg",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        145,
+        54,
+        34
+      ],
+      "rgb": [
+        0.0,
+        1.0,
+        0.15723068137107074
+      ],
+      "linear709": [
+        -0.04404318060199141,
+        1.0,
+        0.011794770951898844
+      ]
+    },
+    {
+      "id": "bt470bg grey 50%, 8-bit limited",
+      "matrix": "bt470bg",
+      "primaries": "bt470bg",
+      "bits": 8,
+      "fullRange": false,
+      "codes": [
+        126,
+        128,
+        128
+      ],
+      "rgb": [
+        0.502283105022831,
+        0.502283105022831,
+        0.502283105022831
+      ],
+      "linear709": [
+        0.19154753556758733,
+        0.19154753556758733,
+        0.1915475355675873
+      ]
+    }
+  ]
+}

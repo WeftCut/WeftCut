@@ -66,6 +66,13 @@ export const MATRIX = [
   // preview-lite-color, color-conformance)
   { colorRgb: "h264" },
   { colorRgb: "qtrle" },
+  // the chart tagged with primaries other than BT.709: BT.2020 SDR as 8-bit
+  // H.264 and 10-bit HEVC, and PAL SD (EBU primaries) — the native lanes must
+  // show it converted into BT.709 primaries (preview-sw-color,
+  // preview-hw-color, color-conformance's ffmpeg decode engine)
+  { colorGamut: "2020-h264" },
+  { colorGamut: "2020-hevc10" },
+  { colorGamut: "pal" },
   // the 709ltd chart as color-tagged 10-bit ProRes 422 HQ — the export
   // decode-engine ProRes fidelity gate (export-prores-fidelity.spec.ts)
   { colorProres: true },

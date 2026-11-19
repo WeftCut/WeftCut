@@ -114,7 +114,8 @@ pub struct PreviewDecodeOptions {
 /// carry fails the open (`PlaneColor::parse`).
 #[napi(object)]
 pub struct PlaneColorInit {
-    /// A WebCodecs YCbCr matrix name (`bt709`, `smpte170m`, `bt470bg`).
+    /// A WebCodecs YCbCr matrix name the decode lanes implement
+    /// (`crate::color::Matrix`).
     pub matrix: String,
     pub full_range: bool,
 }
@@ -122,6 +123,27 @@ pub struct PlaneColorInit {
 impl PlaneColorInit {
     fn parse(&self) -> napi::Result<crate::preview_sw::decoder::PlaneColor> {
         crate::preview_sw::decoder::PlaneColor::parse(&self.matrix, self.full_range)
+            .map_err(napi::Error::from_reason)
+    }
+}
+
+/// How a GPU session's shader converts its planes, handed in at open: the
+/// renderer's `planeConversion` of the source. A name the conversion does not
+/// implement fails the open (`crate::color::Conversion::parse`).
+#[napi(object)]
+pub struct GpuConversionInit {
+    /// A WebCodecs YCbCr matrix name (`crate::color::Matrix`).
+    pub matrix: String,
+    pub full_range: bool,
+    /// The WebCodecs name of the primaries converted into BT.709; `bt709`
+    /// converts none.
+    pub primaries: String,
+}
+
+#[cfg(windows)]
+impl GpuConversionInit {
+    fn parse(&self) -> napi::Result<crate::color::Conversion> {
+        crate::color::Conversion::parse(&self.matrix, self.full_range, &self.primaries)
             .map_err(napi::Error::from_reason)
     }
 }
@@ -282,10 +304,9 @@ impl NativeDecode {
 impl NativeDecode {
     /// Open `path` for GPU preview: spawns the session's decode thread and
     /// returns the shared RGBA8 pool's slot handles + frame dimensions.
-    /// `matrix`/`full_range` are the stream's color tags (the same derivation
-    /// the renderer ships with the open request) — they select the native
-    /// NV12→RGBA conversion constants, so the shared texture is already
-    /// working-space RGBA and main imports it tagged sRGB-passthrough.
+    /// `conversion` selects the native NV12→RGBA shader's constants, so the
+    /// shared texture is already working-space RGBA and main imports it
+    /// tagged sRGB-passthrough.
     /// `on_msg` belongs to the session: every message goes to it, and it is
     /// dropped when the session closes or the open fails. Slots fill only
     /// after the first `preview_gpu_request_frame_at`.
@@ -295,18 +316,17 @@ impl NativeDecode {
         session_id: String,
         path: String,
         pool_size: u32,
-        matrix: String,
-        full_range: bool,
+        conversion: GpuConversionInit,
         on_msg: ThreadsafeFunction<DecodeMsg>,
     ) -> napi::Result<PreviewGpuOpenInfo> {
+        let conversion = conversion.parse()?;
         let info = self
             .preview_gpu
             .open(
                 &session_id,
                 &path,
                 pool_size,
-                &matrix,
-                full_range,
+                conversion,
                 session_sink(on_msg),
             )
             .map_err(napi::Error::from_reason)?;
@@ -450,8 +470,7 @@ impl NativeDecode {
         _session_id: String,
         _path: String,
         _pool_size: u32,
-        _matrix: String,
-        _full_range: bool,
+        _conversion: GpuConversionInit,
         _on_msg: ThreadsafeFunction<DecodeMsg>,
     ) -> napi::Result<PreviewGpuOpenInfo> {
         Err(napi::Error::from_reason("preview-gpu not built"))

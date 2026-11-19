@@ -36,22 +36,27 @@ over IPC (ADR 0029) and, on Windows, as d3d11va shared textures.
 - **CPU planes never become browser-converted `VideoFrame`s.** They ride the
   ring as `NativeNv12Frame` / `TenBitFrame` and convert in the owned passes
   `Nv12Ingest` / `TenBitIngest` (GLSL for the WebGL export worker, a WGSL twin
-  for the WebGPU preview). `coefForMatrix` (`render/tenbit/yuv10.ts`) is the single
-  coefficient selector: BT.601 for `smpte170m`/`bt470bg`, else BT.709, range
-  explicit. `VideoClipSprite.updateFrame` accepts only `BrowserConvertibleFrame`,
-  so the forbidden route does not type-check.
+  for the WebGPU preview). `planeConversion` (`render/decoder/ffprobeColorSpace.ts`)
+  is the single decision of a frame's matrix (BT.709, BT.601, BT.2020
+  non-constant luminance), range and source primaries; a frame that declares
+  BT.2020 or EBU primaries is converted into BT.709 in linear light, and SMPTE
+  C waits until the WebCodecs lanes stop delegating colour to Chromium
+  (docs/conformance.md § Owned conversion). `VideoClipSprite.updateFrame`
+  accepts only `BrowserConvertibleFrame`, so the forbidden route does not
+  type-check.
 - **The d3d11va lane converts NV12→RGBA8 on the decode device** with a
   session-owned pixel shader into `R8G8B8A8_UNORM` pool slots, imported as
   `rgba` tagged `{bt709, srgb, rgb, full}`. The browser only moves bytes. The
-  shader's constants derive from Rust twins of `coefForMatrix` and
-  `Nv12Ingest`'s range normalization, pinned by golden unit tests; both lanes
-  point-sample chroma.
+  shader and its constants live in `native/decode/src/color.rs`, the Rust twin
+  of `render/yuv/colourConversion.ts`; both are held to one golden fixture.
+  Both lanes point-sample chroma.
 - **Not `VideoProcessorBlt`.** Its math is driver-defined and cannot be pinned
   to the goldens.
 - **WebCodecs decoder frames keep browser conversion** under ADR 0014's gates.
 - **Every owned lane is gated with saturated charts** (709/601 ×
-  limited/full): `export-prores-fidelity`, `preview-sw-color`,
-  `preview-hw-color`, plus `color-conformance` for decoder-frame delegation.
+  limited/full, BT.2020 SDR, PAL): `export-prores-fidelity`,
+  `preview-sw-color`, `preview-hw-color`, plus `color-conformance` for
+  decoder-frame delegation.
 
 ## Consequences
 

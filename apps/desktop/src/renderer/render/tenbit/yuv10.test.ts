@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { rgbToYuv10, yuv10ToRgb, BT709, BT601, coefForMatrix, inverseCoef, packTwoSamples } from "./yuv10";
+import { rgbToYuv10, packTwoSamples } from "./yuv10";
+import { BT601, BT709, displayRgb } from "../yuv/colourConversion";
+
+const TEN_BIT_LIMITED = { yOffset: 64, yScale: 876, cScale: 896, chromaZero: 512 };
+const BT709_PLANES = { matrix: "bt709", primaries: "bt709", fullRange: false } as const;
 
 describe("yuv10 (BT.709 limited, gamma-domain)", () => {
   it("maps black/white/grey to canonical codes", () => {
@@ -17,7 +21,7 @@ describe("yuv10 (BT.709 limited, gamma-domain)", () => {
     const cases: [number, number, number][] = [[0.1, 0.5, 0.9], [0.73, 0.21, 0.02], [1, 1, 0]];
     for (const [r, g, b] of cases) {
       const [y, u, v] = rgbToYuv10(r, g, b, BT709);
-      const [r2, g2, b2] = yuv10ToRgb(y, u, v, BT709);
+      const [r2, g2, b2] = displayRgb([y, u, v], BT709_PLANES, TEN_BIT_LIMITED);
       expect(Math.abs(r2 - r)).toBeLessThan(1.5 / 876);
       expect(Math.abs(g2 - g)).toBeLessThan(1.5 / 876);
       expect(Math.abs(b2 - b)).toBeLessThan(1.5 / 876);
@@ -34,32 +38,5 @@ describe("yuv10 (BT.709 limited, gamma-domain)", () => {
   it("packs two 10-bit samples as u16LE byte quads", () => {
     expect(packTwoSamples(0x3ff, 0x040)).toEqual([255, 3, 64, 0]);
     expect(packTwoSamples(0, 1023)).toEqual([0, 0, 255, 3]);
-  });
-});
-
-describe("coefForMatrix (shared ingest matrix selection)", () => {
-  it("selects BT.601 only for the two 601 tags; everything else is BT.709", () => {
-    expect(coefForMatrix("smpte170m")).toBe(BT601);
-    expect(coefForMatrix("bt470bg")).toBe(BT601);
-    expect(coefForMatrix("bt709")).toBe(BT709);
-    expect(coefForMatrix("bt2020-ncl")).toBe(BT709);
-    expect(coefForMatrix(undefined)).toBe(BT709);
-    expect(coefForMatrix(null)).toBe(BT709);
-  });
-
-  it("pins the derived shader coefficients [crR, cbG, crG, cbB] (golden)", () => {
-    // Textbook inverse-matrix constants: R = Y + crR·Cr; G = Y − crG·Cr − cbG·Cb;
-    // B = Y + cbB·Cb. The 601/709 gap in cbB (1.772 vs 1.8556) is what the
-    // fidelity gate measured as the blue-channel error on the native lane.
-    const c709 = inverseCoef(BT709);
-    expect(c709[0]).toBeCloseTo(1.5748, 4);
-    expect(c709[1]).toBeCloseTo(0.18732, 4);
-    expect(c709[2]).toBeCloseTo(0.46812, 4);
-    expect(c709[3]).toBeCloseTo(1.8556, 4);
-    const c601 = inverseCoef(BT601);
-    expect(c601[0]).toBeCloseTo(1.402, 4);
-    expect(c601[1]).toBeCloseTo(0.34414, 5);
-    expect(c601[2]).toBeCloseTo(0.71414, 5);
-    expect(c601[3]).toBeCloseTo(1.772, 4);
   });
 });

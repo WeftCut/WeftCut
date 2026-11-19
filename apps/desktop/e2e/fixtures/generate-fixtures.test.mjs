@@ -16,6 +16,7 @@ import { inflateSync } from 'node:zlib'
 
 import { MATRIX, ensureFixtures } from './generate-fixtures.mjs'
 import {
+  displayedColour,
   drawtextFontFile,
   generateFixture,
   outputName,
@@ -379,6 +380,109 @@ test('the imageset and colour entries claim more than they are named for', () =>
     'color_manifest.json',
     'test_1080p_color_rgb_qtrle.mov',
   ])
+  assert.deepEqual(recipeOf({ colorGamut: '2020-hevc10' }).files, [
+    'color_chart.png',
+    'color_manifest.json',
+    'test_1080p_color_2020_hevc10.mp4',
+  ])
+  assert.deepEqual(recipeOf({ colorGamut: 'pal' }).files, [
+    'color_chart_720x576.png',
+    'color_manifest_720x576.json',
+    'test_576p_color_pal.mp4',
+  ])
+})
+
+test('displayedColour converts into BT.709 primaries as the golden defines, and BT.709 not at all', () => {
+  // Independent values: exact rational matrices from the published xy
+  // chromaticities and D65, the display transfer a 2.4 power both ways.
+  const expected = {
+    bt2020: { red: [255, 0, 0], orange: [255, 94, 0], skin: [226, 142, 114], navy: [0, 62, 93], lime: [0, 208, 0] },
+    bt470bg: { green: [0, 255, 40], orange: [255, 128, 20], lime: [115, 200, 65] },
+    smpte170m: { red: [248, 48, 0], green: [73, 251, 0], blue: [38, 46, 255], skin: [197, 151, 120] },
+  }
+  const authored = { red: [255, 0, 0], green: [0, 255, 0], blue: [0, 0, 255], orange: [255, 128, 0], skin: [200, 150, 120], navy: [30, 60, 90], lime: [120, 200, 60] }
+  for (const [primaries, patches] of Object.entries(expected)) {
+    for (const [id, rgb] of Object.entries(patches)) {
+      assert.deepEqual(displayedColour(authored[id], primaries), rgb, `${primaries} ${id}`)
+    }
+    // Greys are the same in every set of primaries.
+    for (const v of [0, 16, 64, 128, 192, 235, 255]) {
+      assert.deepEqual(displayedColour([v, v, v], primaries), [v, v, v], `${primaries} grey ${v}`)
+    }
+  }
+  assert.deepEqual(displayedColour([120, 200, 60], 'bt709'), [120, 200, 60])
+  assert.throws(() => displayedColour([0, 0, 0], 'smpte432'))
+})
+
+test('the tagged colour charts carry their colour tags and decode as their matrix', async (t) => {
+  if (!ffmpegOnPath()) {
+    t.skip('no ffmpeg on PATH, so the fixture cannot be produced either')
+    return
+  }
+  const parent = mkdtempSync(path.join(tmpdir(), 'weftcut fixture gamut '))
+  const outputDir = path.join(parent, 'media with spaces')
+  const shapes = [
+    {
+      entry: { colorGamut: '2020-h264' }, manifest: 'color_manifest.json', matrix: 'bt2020',
+      tags: { color_space: 'bt2020nc', color_primaries: 'bt2020', color_transfer: 'bt2020-10', color_range: 'tv' },
+      pixFmt: 'yuv420p',
+    },
+    {
+      entry: { colorGamut: '2020-hevc10' }, manifest: 'color_manifest.json', matrix: 'bt2020',
+      tags: { color_space: 'bt2020nc', color_primaries: 'bt2020', color_transfer: 'bt2020-10', color_range: 'tv' },
+      pixFmt: 'yuv420p10le',
+    },
+    {
+      // The tagged BT.601 chart, whose primaries the native lanes convert too.
+      entry: { color: '601ltd' }, manifest: 'color_manifest.json', matrix: 'smpte170m',
+      tags: { color_space: 'smpte170m', color_primaries: 'smpte170m', color_transfer: 'smpte170m', color_range: 'tv' },
+      pixFmt: 'yuv420p',
+    },
+    {
+      entry: { colorGamut: 'pal' }, manifest: 'color_manifest_720x576.json', matrix: 'bt470',
+      tags: { color_space: 'bt470bg', color_primaries: 'bt470bg', color_transfer: 'smpte170m', color_range: 'tv' },
+      pixFmt: 'yuv420p',
+    },
+  ]
+
+  try {
+    await withCapturedLogs(() => ensureFixtures(outputDir, { matrix: shapes.map(({ entry }) => entry) }))
+
+    for (const { entry, manifest, matrix, tags, pixFmt } of shapes) {
+      const name = outputName(entry)
+      const media = path.join(outputDir, name)
+      const probe = spawnSync('ffprobe', [
+        '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=pix_fmt,color_space,color_range,color_primaries,color_transfer',
+        '-of', 'json', media,
+      ], { encoding: 'utf8' })
+      assert.equal(probe.status, 0, `ffprobe failed:\n${probe.stderr}`)
+      const stream = JSON.parse(probe.stdout).streams[0]
+      assert.equal(stream.pix_fmt, pixFmt, `${name}: pixel format`)
+      for (const [field, value] of Object.entries(tags)) assert.equal(stream[field], value, `${name}: ${field}`)
+
+      // The chart was converted with its own matrix: decoding with it gives the
+      // authored patches back, primaries untouched.
+      const { width, height, patches } = JSON.parse(readFileSync(path.join(outputDir, manifest), 'utf8'))
+      const rgb = spawnSync('ffmpeg', [
+        '-hide_banner', '-loglevel', 'error', '-i', media, '-frames:v', '1',
+        '-vf', `scale=in_color_matrix=${matrix}:in_range=tv`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-',
+      ], { maxBuffer: 1 << 26 })
+      assert.equal(rgb.status, 0, `ffmpeg failed:\n${rgb.stderr}`)
+      assert.equal(rgb.stdout.length, width * height * 3)
+      for (const patch of patches) {
+        const at = ((patch.y + Math.floor(patch.h / 2)) * width + patch.x + Math.floor(patch.w / 2)) * 3
+        for (let c = 0; c < 3; c += 1) {
+          assert.ok(
+            Math.abs(rgb.stdout[at + c] - patch.rgb[c]) <= 3,
+            `${name}: ${patch.id} reads ${[...rgb.stdout.subarray(at, at + 3)]}, authored ${patch.rgb}`,
+          )
+        }
+      }
+    }
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
 })
 
 test('the untagged colour charts carry no colour tag and decode as the matrix they state', async (t) => {
