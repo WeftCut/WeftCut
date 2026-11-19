@@ -26,7 +26,15 @@ vi.mock("../ipc", async (importActual) => {
   };
 });
 
+// The App's command that mounts the Motifs panel.
+const openPicker = vi.hoisted(() => vi.fn());
+vi.mock("../commands/registry", async (importActual) => ({
+  ...(await importActual<typeof import("../commands/registry")>()),
+  getCommand: (id: string) => (id === "openMotifPicker" ? { id, run: openPicker } : undefined),
+}));
+
 import { updateLayerParams } from "../ipc";
+import { takeMotifsPanelRow } from "../motifs/openMotifsPanel";
 import { setProjectMotifs, type MotifManifest } from "../render/motifs/catalog";
 import { clearPropSectionMemory } from "./PropSection";
 
@@ -191,6 +199,25 @@ describe("MotifFields form generation", () => {
     expect(screen.getByText("Loading this Motif…")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Props" })).toBeNull();
     expect(updateLayerParams).not.toHaveBeenCalled();
+  });
+
+  it("sends an untrusted Motif's layer to its row in the Motifs panel, where only the user trusts it", () => {
+    setProjectMotifs([], [{ motif_id: "received", status: "untrusted", diagnostic: "not trusted on this machine", revision: "c".repeat(64) }]);
+    render(
+      <AttributePanel
+        tracks={[motifTrack("received", {})]}
+        selectedLayerId="layer-m1"
+        onMutated={vi.fn().mockResolvedValue(undefined)}
+        fpsNum={30}
+        fpsDen={1}
+        currentTimeUs={1_000_000}
+      />,
+    );
+    expect(screen.getByText("Not trusted on this machine")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Props" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review in Motifs panel" }));
+    expect(openPicker).toHaveBeenCalledOnce();
+    expect(takeMotifsPanelRow()).toBe("project:received");
   });
 });
 

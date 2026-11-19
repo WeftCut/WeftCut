@@ -11,6 +11,7 @@ import { ownProcessTree, closeProcessTree } from '../../lib/process-cleanup.mjs'
 /// step), and a rename there must fail HERE at type-check time rather than
 /// freeze a cursor and surface as a STALLED export one budget later.
 import type { ExportState } from '../../../src/renderer/panels/ExportPanel'
+import type { CompositionSummary, ProjectSummary as ProjectSummaryWire } from '../../../src/main/state/summary'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// Built Electron main entry. Helpers live at e2e/electron/helpers; the build
@@ -414,28 +415,10 @@ export async function applySubtitleFile(page: Page, path: string): Promise<strin
   return mediaId
 }
 
-/// One composition on the wire — the root and every Group share the shape
-/// (`main/state/summary.ts` CompositionSummary). Loosely typed; callers narrow
-/// the fields they read.
-export interface CompositionSummary {
-  id: string
-  label: string | null
-  fps_num: number
-  fps_den: number
-  duration_us: number
-  tracks: Array<{ id: string; role?: string | null; label?: string | null; layers: Array<{ id: string; params: { kind: string } }> }>
-  markers: unknown[]
-  links: unknown[]
-}
-/// The project summary as `project_summary` returns it: every composition keyed
-/// by id, the root named by `root_id`.
-export interface ProjectSummaryWire {
-  root_id: string
-  compositions: Record<string, CompositionSummary>
-  track_count: number
-  layer_count: number
-  media: Array<{ id: string }>
-}
+/// The summary as `project_summary` returns it, typed by the code that builds
+/// it (`main/state/summary.ts`): every composition keyed by id, the root named
+/// by `root_id`.
+export type { CompositionSummary, ProjectSummaryWire }
 /// The project fields with the ROOT's timeline spread flat — `s.tracks`,
 /// `s.links`, `s.markers`, `s.duration_us` — which is how every spec in this
 /// suite reads it: they all edit the root. `composition-scope.spec.ts` is the

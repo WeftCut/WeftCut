@@ -17,9 +17,6 @@ const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_6s.mp4')
 // f16/WebGL2 + yuv420p10le pack + native IPC video sink + ffmpeg HEVC Main10 chain.
 const SOURCE_10BIT = path.resolve(MEDIA_DIR, 'test_1080p_gradient10_h264.mp4')
 
-// Repo root (e2e/electron → apps/desktop → repo root = 3 levels up from __dirname).
-const REPO = path.resolve(__dirname, '..', '..', '..', '..')
-
 // ---------------------------------------------------------------------------
 // Export settings per codec. The `codec` field is the routing discriminator.
 // `encoderEngine:'auto'` resolves to the native ffmpeg sink; WebCodecs is

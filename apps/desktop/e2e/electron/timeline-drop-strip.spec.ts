@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { invokeCmd, launchApp, newProject, tmpDir, rootSummary } from './helpers/driver'
+import { launchApp, newProject, tmpDir, rootSummary } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // A still image is ready the moment it is in the pool — no proxy, so the card is

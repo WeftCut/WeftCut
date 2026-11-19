@@ -24,7 +24,8 @@ function demoModel() {
 }
 
 /** Build a portable offline package. Input resources are copied as a snapshot;
- * the same template builder is exercised by Electron codec integration tests. */
+ * the same template builder is exercised by Electron codec integration tests.
+ * @param {{ assetsDir?: string, model?: string }} [options] */
 export function buildThreeMotifFiles({ assetsDir, model = assetsDir ? 'model.glb' : 'demo.gltf' } = {}) {
   if (!model || model.split('/').some(p => !p || p === '.' || p === '..') || /[\\:\x00-\x1f]/.test(model)) {
     throw new Error('model must be a relative path inside assetsDir');

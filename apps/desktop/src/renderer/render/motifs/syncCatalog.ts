@@ -18,7 +18,9 @@ export async function syncProjectMotifsFromBackend(): Promise<void> {
     const manifests: MotifManifest[] = [];
     const missing = [];
     for (const row of project) {
-      if (row.motif) manifests.push(row.motif as MotifManifest);
+      // Only an `ok` row renders: an untrusted one carries a package whose
+      // code must not run here (ADR 0174), so it is unavailable like a broken one.
+      if (row.status === "ok" && row.motif) manifests.push(row.motif as MotifManifest);
       else if (row.status !== "ok") missing.push({ motif_id: row.id, status: row.status, diagnostic: row.diagnostic ?? "" });
     }
     setProjectMotifs(manifests, missing);

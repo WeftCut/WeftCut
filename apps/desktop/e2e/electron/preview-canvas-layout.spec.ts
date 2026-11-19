@@ -272,9 +272,9 @@ test('the preview zooms about the pointer and pans with no tool armed', async ()
     expect((await box()).x).toBeCloseTo(surface.x, 0)
     await page.mouse.move(cx, cy)
     for (let notch = 0; notch < 12; notch++) await page.mouse.wheel(0, -240)
-    await expect.poll(() => canvas.evaluate(el => el.width)).toBe(1920)
+    await expect.poll(() => canvas.evaluate((el: HTMLCanvasElement) => el.width)).toBe(1920)
     await run('cyclePlaybackResolution')
-    await expect.poll(() => canvas.evaluate(el => el.width)).toBe(960)
+    await expect.poll(() => canvas.evaluate((el: HTMLCanvasElement) => el.width)).toBe(960)
   } finally {
     await app.close()
   }

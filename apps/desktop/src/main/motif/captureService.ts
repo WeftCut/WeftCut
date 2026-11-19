@@ -5,6 +5,7 @@ import type { MotifFrameStore, FrameWriter } from './frameStore'
 import type { MotifCacheAddress, MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifContentRef, MotifFramePriority, MotifPresence, MotifTextureFrame } from '../../shared/motifs/frameTransport'
 import { MotifError, motifErrorCode } from '../../shared/motifs/errors'
 import { isMotifFrameAddress } from './frameAddress'
+import { MotifGateRefusal } from './resolver'
 import { MotifFrameWriteQueue, type FrameRead } from './frameWriteQueue'
 import { failsTexturePath, MotifFrameJobs, type FrameJobHandle, type FrameJobSession, type PersistSubscriber } from './frameJobs'
 import type { MotifNative, MotifRawFrame, MotifTextureReader } from './native'
@@ -96,6 +97,8 @@ export class MotifCaptureService {
   private useTexture: boolean
   private textureReader: MotifTextureReader | null = null
   private liveWriteWarned = false
+  /** The Motif and state last refused, which `warnRefusal` logged. */
+  private lastRefusal: string | null = null
   private readonly session: FrameJobSession
   private readonly workspaceJobs = new WeakMap<MotifFrameStore, MotifFrameJobs>()
   /** Requests in flight by `${sender id}:${requestId}`, for their controls. */
@@ -137,8 +140,8 @@ export class MotifCaptureService {
 
   /** `motif:capture`. Registered before it returns, so a control that follows
    * the request on the same sender finds it. A withdrawn request resolves
-   * `superseded`, and a refused one `capacity`, instead of rejecting
-   * (`MotifCaptureReply`). */
+   * `superseded`, and one refused by admission or by its Motif's state
+   * `refused`, instead of rejecting (`MotifCaptureReply`). */
   capture(owner: WebContents, request: MotifCaptureRequest, isCurrent: () => boolean = () => true, finalizationId?: number, store = this.deps.store): Promise<MotifCaptureReply> {
     const { requestId, priority, address, store: storeMode, afterMiss, finalizationToken: _token, ...args } = request
     const { result, handle } = this.jobsFor(store).display(address, args,
@@ -152,7 +155,11 @@ export class MotifCaptureService {
     result.then(forget, forget)
     return result.catch((error: unknown): MotifCaptureReply => {
       if (motifErrorCode(error) === 'superseded') return { kind: 'superseded' }
-      if (error instanceof MotifError && error.code === 'capacity') return { kind: 'capacity', detail: error.detail }
+      if (error instanceof MotifError && error.code === 'capacity') return { kind: 'refused', code: error.code, detail: error.detail }
+      if (error instanceof MotifGateRefusal) {
+        this.warnRefusal(args.motifId, error)
+        return { kind: 'refused', code: error.code, detail: error.detail }
+      }
       throw error
     })
   }
@@ -208,6 +215,15 @@ export class MotifCaptureService {
       const bgra = frame.image.toBitmap()
       return async () => writer.encoded(await this.deps.convert({ from: 'premultipliedBgra', to: 'frame' }, bgra, frame.width, frame.height))
     }
+  }
+
+  /** One warn row per Motif state refused, not one per frame: a preview
+   *  keeps asking for the Motif until the folder watcher tells it the state. */
+  private warnRefusal(motifId: string, refusal: MotifGateRefusal): void {
+    const key = `${motifId}\0${refusal.status}`
+    if (this.lastRefusal === key) return
+    this.lastRefusal = key
+    console.warn(`[weftcut/motif] Capture of Motif '${motifId}' refused (${refusal.status}):`, refusal.detail)
   }
 
   private warnLiveWrite(error: unknown): void {
