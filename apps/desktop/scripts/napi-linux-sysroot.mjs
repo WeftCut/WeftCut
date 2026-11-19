@@ -11,6 +11,16 @@
 // and a C23-default gcc turns sscanf/strtol into `__isoc23_*` imports that only
 // glibc 2.38+ provides. The per-triple names below are the ones cc-rs reads in
 // that case. Anything the caller already set wins, as napi's own variables do.
+//
+// LANDMINE — a dependency that links a HOST library breaks the link. lzma-sys
+// (xz2, behind ffmpeg-sidecar) asks pkg-config for a system liblzma and, where
+// the build machine has one, links it dynamically and puts the host's library
+// directory on the link line; the toolchain's ld then resolves libm through
+// the host's linker script and stops on a section it does not know
+// (`unknown type [0x13] section .relr.dyn`, then `cannot find libm.so.6`).
+// LZMA_API_STATIC makes it compile its bundled copy with the cross compiler
+// instead. A warm cargo cache hides the failure, because the build script does
+// not run again; a clean build shows it.
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -39,5 +49,6 @@ export function linuxSysroot(env = process.env, { platform = process.platform, a
     const key = `${name}_${suffix}`
     if (!env[key]) tools[key] = join(bin, `${LINUX_TRIPLE}-${exe}`)
   }
+  if (!env.LZMA_API_STATIC) tools.LZMA_API_STATIC = '1'
   return { args: `--use-napi-cross --target ${LINUX_TRIPLE}`, env: tools }
 }
