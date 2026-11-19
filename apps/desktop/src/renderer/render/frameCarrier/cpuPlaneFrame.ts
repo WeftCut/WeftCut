@@ -4,6 +4,7 @@
 // fails its ring.
 
 import type { DecodeWireFrame } from "../../../shared/frameCarrier/wire";
+import type { ColourStamp } from "../decoder/ffprobeColorSpace";
 import { nv12FrameFromBytes, type NativeNv12Frame } from "../decoder/nv12Frame";
 import { tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 
@@ -14,7 +15,7 @@ import { tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 ///
 /// LANDMINE: never `new VideoFrame` + drawImage instead. Chromium converts a
 /// buffer-defined NV12 frame as BT.601 whatever its colour (ADR 0032).
-export function cpuPlaneFrame(msg: DecodeWireFrame, colorSpace: VideoColorSpaceInit): NativeNv12Frame | TenBitFrame {
+export function cpuPlaneFrame(msg: DecodeWireFrame, colorSpace: ColourStamp): NativeNv12Frame | TenBitFrame {
   const layout = {
     data: msg.data,
     width: msg.width,

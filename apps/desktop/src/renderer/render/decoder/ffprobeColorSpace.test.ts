@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { isRgbCoded, nativePlaneColor, resolveSourceColor, undeclaredIsHd } from "./ffprobeColorSpace";
+import {
+  asVideoColorSpace, isRgbCoded, nativePlaneColor, planeConversion, resolveSourceColor, undeclaredIsHd,
+} from "./ffprobeColorSpace";
 import golden from "./undeclaredColourGolden.fixture.json";
 
 const BT601 = { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m" };
@@ -59,10 +61,33 @@ describe("resolveSourceColor", () => {
   });
 
   it("treats a value it cannot map as absent", () => {
-    // HDR/wide-gamut names have no lib.dom WebCodecs enum (SDR-only mapping).
-    expect(resolveSourceColor({ width: 3840, height: 2160, color_matrix: "bt2020nc", color_transfer: "smpte2084" }))
-      .toEqual({ ...BT709, fullRange: false, matrixAssumed: true });
-    expect(resolveSourceColor({ width: 720, height: 480, color_matrix: "fcc" }).matrix).toBe("smpte170m");
+    // Matrices no owned conversion implements read as an untagged source's.
+    for (const color_matrix of ["bt2020c", "smpte240m", "ycgco", "ictcp", "fcc"]) {
+      expect(resolveSourceColor({ width: 720, height: 480, color_matrix }), color_matrix)
+        .toMatchObject({ matrix: "smpte170m", matrixAssumed: true });
+      expect(resolveSourceColor({ width: 1920, height: 1080, color_matrix }), color_matrix)
+        .toMatchObject({ matrix: "bt709", matrixAssumed: true });
+    }
+    expect(resolveSourceColor({ width: 720, height: 480, color_primaries: "smpte432", color_transfer: "linear" }))
+      .toMatchObject({ primaries: "smpte170m", transfer: "smpte170m" });
+  });
+
+  it("reads a BT.2020 SDR source as BT.2020, its transfer as the BT.709 curve", () => {
+    for (const color_transfer of ["bt2020-10", "bt2020-12", "bt709"]) {
+      expect(resolveSourceColor({
+        width: 1920, height: 1080,
+        color_matrix: "bt2020nc", color_primaries: "bt2020", color_transfer, color_range: "tv",
+      }), color_transfer).toEqual({
+        matrix: "bt2020-ncl", primaries: "bt2020", transfer: "bt709", fullRange: false, matrixAssumed: false,
+      });
+    }
+  });
+
+  it("names an HDR transfer, which the owned conversions leave alone", () => {
+    expect(resolveSourceColor({
+      width: 3840, height: 2160, color_matrix: "bt2020nc", color_primaries: "bt2020", color_transfer: "smpte2084",
+    })).toMatchObject({ matrix: "bt2020-ncl", primaries: "bt2020", transfer: "pq" });
+    expect(resolveSourceColor({ width: 3840, height: 2160, color_transfer: "arib-std-b67" }).transfer).toBe("hlg");
   });
 
   it("maps ffprobe's gbr matrix to WebCodecs rgb", () => {
@@ -102,5 +127,73 @@ describe("nativePlaneColor", () => {
     expect(planes.matrix).not.toBe("rgb");
     expect(["bt709", "smpte170m", "bt470bg"]).toContain(planes.matrix);
     expect(planes).toMatchObject({ primaries: rgb.primaries, transfer: rgb.transfer });
+  });
+});
+
+describe("planeConversion", () => {
+  const hd = (tags: Record<string, string>) => resolveSourceColor({ width: 1920, height: 1080, ...tags });
+
+  it("converts declared BT.2020 and EBU primaries into BT.709, with the source's own matrix and range", () => {
+    for (const color_range of ["tv", "pc"]) {
+      expect(planeConversion(hd({ color_matrix: "bt2020nc", color_primaries: "bt2020", color_transfer: "bt2020-10", color_range })))
+        .toEqual({ matrix: "bt2020-ncl", primaries: "bt2020", fullRange: color_range === "pc" });
+      expect(planeConversion(resolveSourceColor({
+        width: 720, height: 576, color_matrix: "bt470bg", color_primaries: "bt470bg", color_transfer: "smpte170m", color_range,
+      }))).toEqual({ matrix: "bt470bg", primaries: "bt470bg", fullRange: color_range === "pc" });
+    }
+  });
+
+  it("gives declared SMPTE C primaries no primaries step, as the WebCodecs lanes give them none", () => {
+    expect(planeConversion(hd({ color_matrix: "smpte170m", color_primaries: "smpte170m", color_transfer: "smpte170m" })))
+      .toEqual({ matrix: "smpte170m", primaries: "bt709", fullRange: false });
+    expect(planeConversion(resolveSourceColor({
+      width: 720, height: 480, color_matrix: "smpte170m", color_primaries: "smpte170m", color_range: "tv",
+    }))).toEqual({ matrix: "smpte170m", primaries: "bt709", fullRange: false });
+  });
+
+  it("never converts the primaries of a source that declares none, at any size", () => {
+    for (const c of golden.cases) {
+      const conversion = planeConversion(resolveSourceColor({ width: c.width, height: c.height }));
+      expect(conversion.primaries, `${c.width}x${c.height}`).toBe("bt709");
+    }
+    expect(planeConversion(resolveSourceColor({ width: 720, height: 480 })))
+      .toEqual({ matrix: "smpte170m", primaries: "bt709", fullRange: false });
+  });
+
+  it("converts a declared BT.2020 matrix as BT.2020 whatever the primaries", () => {
+    for (const color_primaries of [undefined, "bt709", "smpte170m", "bt2020"]) {
+      const tags: Record<string, string> = { color_matrix: "bt2020nc", color_transfer: "bt2020-10" };
+      if (color_primaries) tags.color_primaries = color_primaries;
+      expect(planeConversion(hd(tags)).matrix, String(color_primaries)).toBe("bt2020-ncl");
+    }
+  });
+
+  it("converts an RGB-coded source's planes as BT.709 limited, in the source's primaries", () => {
+    const rgb = resolveSourceColor({ width: 1920, height: 1080, pix_fmt: "gbrp", color_primaries: "bt470bg" });
+    expect(planeConversion(nativePlaneColor(rgb))).toEqual({ matrix: "bt709", primaries: "bt470bg", fullRange: false });
+  });
+
+  it("converts an HDR source with BT.709 coefficients and no primaries step", () => {
+    for (const color_transfer of ["smpte2084", "arib-std-b67"]) {
+      const c = resolveSourceColor({
+        width: 3840, height: 2160, color_matrix: "bt2020nc", color_primaries: "bt2020", color_transfer,
+      });
+      expect(planeConversion(c), color_transfer).toEqual({ matrix: "bt709", primaries: "bt709", fullRange: false });
+    }
+    // Any other matrix it keeps.
+    expect(planeConversion({ matrix: "smpte170m", primaries: "bt2020", transfer: "pq" }).matrix).toBe("smpte170m");
+  });
+
+  it("converts a stamp naming nothing it implements as BT.709", () => {
+    expect(planeConversion(null)).toEqual({ matrix: "bt709", primaries: "bt709", fullRange: false });
+    expect(planeConversion({ matrix: "rgb", primaries: "smpte432", transfer: "linear", fullRange: true }))
+      .toEqual({ matrix: "bt709", primaries: "bt709", fullRange: true });
+  });
+});
+
+describe("asVideoColorSpace", () => {
+  it("hands WebCodecs the same names, the wide-gamut ones included", () => {
+    const c = resolveSourceColor({ width: 1920, height: 1080, color_matrix: "bt2020nc", color_primaries: "bt2020" });
+    expect(asVideoColorSpace(c)).toEqual({ matrix: "bt2020-ncl", primaries: "bt2020", transfer: "bt709", fullRange: false });
   });
 });

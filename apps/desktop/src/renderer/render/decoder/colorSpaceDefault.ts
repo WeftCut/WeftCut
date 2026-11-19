@@ -1,7 +1,7 @@
 // The colour a WebCodecs decode is configured with: the decode target's own
 // container tag, then the source's resolved colour (`resolveSourceColor`).
 // ADR 0014; layer order in docs/conformance.md § Decode color tags.
-import type { SourceColor } from "./ffprobeColorSpace";
+import { asVideoColorSpace, type SourceColor } from "./ffprobeColorSpace";
 
 /// Return `config` with every `colorSpace` field set. Per field, mediabunny's
 /// tag wins: it comes from the decode target's container `colr` atom (mediabunny
@@ -31,13 +31,14 @@ export function withDefaultColorSpace(
   sourceColor: SourceColor,
 ): VideoDecoderConfig {
   const cs = config.colorSpace;
+  const source = asVideoColorSpace(sourceColor);
   return {
     ...config,
     colorSpace: {
-      primaries: cs?.primaries ?? sourceColor.primaries,
-      transfer: cs?.transfer ?? sourceColor.transfer,
-      matrix: cs?.matrix ?? sourceColor.matrix,
-      fullRange: cs?.fullRange ?? sourceColor.fullRange,
+      primaries: cs?.primaries ?? source.primaries,
+      transfer: cs?.transfer ?? source.transfer,
+      matrix: cs?.matrix ?? source.matrix,
+      fullRange: cs?.fullRange ?? source.fullRange,
     },
   };
 }

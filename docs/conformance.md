@@ -36,6 +36,14 @@ trusted. Playwright `globalSetup` runs the same pass; CI caches the media per
 OS because the drawtext font and the bundled ffmpeg differ per platform.
 `color_baseline.json` and `gradient_baseline.json` hold the expected errors.
 
+A colour chart's expected displayed colour is computed, never measured from
+the app: `displayedColour` (`generate.mjs`) converts the authored patch into
+BT.709 by the definition in § Owned conversion, reading the matrices from the
+same golden the app's code is held to. The gates that read a native lane
+(`preview-sw-color`, `preview-hw-color`, the ffmpeg decode engine of
+`color-conformance`) expect it for the charts whose primaries those lanes
+convert (BT.2020, PAL); every other chart is expected as authored.
+
 ## Gates
 
 | Spec | Guards |
@@ -45,7 +53,7 @@ OS because the drawtext font and the bundled ffmpeg differ per platform.
 | `export-range-audio.spec.ts` | range export trims audio at the requested source time; AAC/Opus and muted settings; software video encoder alignment |
 | `export_eos_tail.spec.ts` | a final GOP spanning several chunks with audio 1 s past video: completes, plans the audio-extended frame count, tail stays aligned |
 | `export_overlap_same_source.spec.ts` | two copies of one media: same-phase copies share one decode pipeline (no extra dispatch); a 2 s-offset copy keeps its own source frames |
-| `color-conformance.spec.ts` | 709/601 × limited/full patches stay faithful; all four DirectExport the original (`yuvj420p` is browser-friendly); the untagged SD, HD and 1280x544 charts and the two RGB-coded charts export faithfully through both decode engines, the patches the preview colour gates sample; the two full-range charts also export through the ffmpeg decode engine |
+| `color-conformance.spec.ts` | 709/601 × limited/full patches stay faithful; all four DirectExport the original (`yuvj420p` is browser-friendly); the untagged SD, HD and 1280x544 charts and the two RGB-coded charts export faithfully through both decode engines, the patches the preview colour gates sample; the two full-range charts and the BT.2020 SDR (8-bit H.264, 10-bit HEVC) and PAL charts also export through the ffmpeg decode engine, which must show them converted into BT.709 primaries (§ Owned conversion) |
 | `export_codecs.spec.ts` | AV1/HEVC/10-bit HEVC/ProRes/DNxHR codec shape and container; 10-bit distinct steps above the 8-bit ceiling |
 
 The conform format range itself is pinned by the Rust unit test
@@ -76,6 +84,13 @@ proxies, below) use the same size and RGB rules from the native crate
 (`VideoStreamMeta::undeclared_is_hd`, `is_rgb_pix_fmt`); one list of cases,
 `undeclaredColourGolden.fixture.json`, holds both sides.
 
+The rule maps BT.2020 non-constant luminance (`bt2020nc` → `bt2020-ncl`),
+BT.2020 primaries, and the BT.2020 SDR transfers `bt2020-10`/`bt2020-12` (the
+BT.709 curve, so `bt709`); PQ and HLG map to `pq` and `hlg`. A tag it does not
+map counts as absent and the size rule fills it: a matrix no owned conversion
+implements (constant-luminance BT.2020, ICtCp, YCgCo, SMPTE 240M) reads as an
+untagged source of that size does, with `matrixAssumed` set.
+
 The native lanes (software, copy-back hardware, d3d11va, native export decode)
 deliver YCbCr planes, so they use it through `nativePlaneColor`: a YCbCr
 source's planes keep its own colour, an RGB-coded source's planes are BT.709
@@ -100,6 +115,51 @@ Two lanes need help to show that colour:
   label. An RGB frame it converts into the plane colour it was opened with;
   left to itself swscale would use BT.601 at full range.
 
+## Owned conversion
+
+On the native lanes the app converts the planes itself: the ingest shaders
+(`Nv12Ingest`, `TenBitIngest`; GLSL and WGSL) and the d3d11va HLSL
+(`native/decode/src/color.rs`). One function decides what they do with a
+frame's colour, `planeConversion` (`ffprobeColorSpace.ts`): its matrix and
+range, and the primaries it converts from. The numbers live in
+`render/yuv/colourConversion.ts` and its Rust twin `color.rs`; both are held to
+`colourConversionGolden.fixture.json` (Kr/Kb, the primaries matrices, and
+reference pixels computed independently of either).
+
+1. YCbCr → R'G'B' with the matrix (BT.709, BT.601 under both names, BT.2020
+   non-constant luminance) and range. A declared BT.2020 matrix converts as
+   BT.2020 whatever the primaries.
+2. Primaries: when the source declares BT.2020 or `bt470bg` (EBU) primaries,
+   R'G'B' is clipped to [0, 1], linearised, taken into BT.709 primaries by a
+   3x3 matrix derived from the CIE xy chromaticities and the D65 white,
+   clipped per channel in linear light, and re-encoded. The transfer both
+   ways is BT.1886's pure 2.4 power for every SDR source: the conversion is
+   display-referred (the picture as an SDR display shows it, re-shown in
+   BT.709 primaries), where inverting the camera OETF would change its tone.
+   A frame without the step runs a shader variant that has none.
+
+Only those two take the step because Chromium converts exactly those on the
+WebCodecs lanes (Lite preview, the WebCodecs export decode engine; its 2D
+`drawImage`, observed on macOS and Windows), so converting them makes the
+lanes agree. Deferred: `smpte170m` (SMPTE C) primaries, declared or assumed,
+take no step on any lane, the same as Chromium gives them. That is a
+temporary exclusion tied to the WebCodecs lanes, not a claim that SMPTE C is
+BT.709: converting it on the native lanes alone would part them from the
+WebCodecs lanes by up to about 48 steps on common SD material. It ends when
+the WebCodecs lanes stop delegating colour to Chromium. Primaries the size
+rule fills in for an untagged source are BT.709 or SMPTE C, so an untagged
+source never takes the step.
+
+The SMPTE C primaries matrix is implemented and held to the golden like the
+others, so lifting the exclusion is a change to `planeConversion` alone.
+
+An HDR source (PQ, HLG) is not handled by this step: no lane tone-maps,
+so it takes no primaries step and a BT.2020 matrix converts with BT.709
+coefficients; the right matrix without a tone map would change its colours
+without making them right. A frame stamp that names no matrix or primaries
+the conversions implement (only Chromium's stamp on a WebCodecs-decoded
+10-bit frame can) converts as BT.709.
+
 ## Proxies
 
 Both proxy recipes (`jobs/proxy.rs`, `jobs/quick_proxy.rs`) keep a YCbCr
@@ -122,6 +182,8 @@ range, so the extracting ffmpeg call converts each frame to that matrix
 (`jobs/jpeg.rs`): from the frame's own tag when the source declares one, from
 the size rule above when it declares none. Pinned by the Rust test
 `bt709_red_is_red_in_the_jpeg_whether_the_source_declares_its_matrix_or_not`.
+The conversion is the matrix's only: a source in other primaries keeps them in
+its JPEGs (§ Owned conversion).
 
 Filmstrip tiles carry a recipe number in their cache directory (`orig-2`,
 `quick-2`, `full-2`) and the cache sweep deletes other directories, so a strip

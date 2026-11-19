@@ -13,7 +13,7 @@ import type { EncodedPacket } from "mediabunny";
 import type { DecoderPool, ExportDecodeSession, FrameStore, SourceHandleInit } from "./session";
 import { NativeExportSourceHandle } from "../worker/nativeExportSource";
 import { decodesInSoftwareForColour, withDefaultColorSpace } from "./colorSpaceDefault";
-import type { SourceColor } from "./ffprobeColorSpace";
+import type { ColourStamp, SourceColor } from "./ffprobeColorSpace";
 import { DecodeClock } from "./decodeClock";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
@@ -48,10 +48,10 @@ interface RingEntry {
 export interface ExportColorDiag {
   mediaId: string;
   /// `config.colorSpace` handed to `decoder.configure` (post-withDefaultColorSpace).
-  configColor: VideoColorSpaceInit | null;
+  configColor: ColourStamp | null;
   /// `frame.colorSpace` the decoder stamped on its output (the real tag the
   /// downstream YUV→RGB conversion honors).
-  frameColor: VideoColorSpaceInit | null;
+  frameColor: ColourStamp | null;
   /// `frame.format` (NV12 / I420 / RGBA / …) — RGBA would mean the conversion
   /// already happened in the decoder.
   frameFormat: string | null;
