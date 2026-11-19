@@ -317,6 +317,10 @@ The document renders in an offline, isolated capture host. Hard limits:
 - **Transparency is real.** The capture preserves alpha: keep
   `html, body { background: transparent }` unless the Motif is deliberately
   opaque.
+- **The page is exactly `size`.** The Motif's frame is the manifest size,
+  with no room around it. Zero the browser's default body margin, and keep
+  content inside the canvas: `html, body { margin: 0; overflow: hidden }`.
+  Otherwise content sized to the canvas shows scrollbars in every frame.
 - **Initialization and frames time out.** Setup has 30 seconds; normal
   frame/CDP operations have 5 seconds. A timeout tears down the capture host.
   Await all decoding in setup; Workers may only be created during setup, at

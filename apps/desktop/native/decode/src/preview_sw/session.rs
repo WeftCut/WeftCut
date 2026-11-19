@@ -19,7 +19,9 @@ use std::time::{Duration, Instant};
 
 use napi::bindgen_prelude::Buffer;
 
-use super::decoder::{DecodeAccel, OutScale, OutputCadence, SwFrame, SwOutFormat, SwVideoStream};
+use super::decoder::{
+    DecodeAccel, OutScale, OutputCadence, PlaneColor, SwFrame, SwOutFormat, SwVideoStream,
+};
 use crate::carrier::{ByteWindow, DecodeMsg, SessionCtx, SessionRuntime, SessionShared, Sink};
 
 /// How far PAST the request target this lane keeps frames decoded before it
@@ -92,24 +94,28 @@ pub struct PreviewOpenInfo {
     pub height: u32,
 }
 
-/// How a session decodes and what it ships. The default is the software lane,
-/// NV12, full size, every frame.
+/// How a session decodes and what it ships. The tests' default is the software
+/// lane, NV12, full size, every frame.
 #[derive(Debug, Clone)]
 pub struct PreviewOpenOptions {
     /// Software, or a copy-back hardware lane; the shipped bytes are the same.
     pub accel: DecodeAccel,
     pub out_format: SwOutFormat,
+    /// The colour the shipped planes carry.
+    pub plane_color: PlaneColor,
     /// Playback-resolution divisor, applied before the bytes are packed.
     pub out_scale: OutScale,
     /// Which decoded frames are packed and shipped; decode still sees every one.
     pub output_cadence: OutputCadence,
 }
 
+#[cfg(test)]
 impl Default for PreviewOpenOptions {
     fn default() -> Self {
         Self {
             accel: DecodeAccel::Software,
             out_format: SwOutFormat::Nv12,
+            plane_color: PlaneColor::BT709_LIMITED,
             out_scale: OutScale::FULL,
             output_cadence: OutputCadence::FULL,
         }
@@ -542,6 +548,7 @@ impl PreviewSessions {
                 options.out_format,
                 options.accel,
                 options.out_scale,
+                options.plane_color,
             )?;
             stream.set_output_cadence(options.output_cadence);
             let info = PreviewOpenInfo {
@@ -899,6 +906,7 @@ mod tests {
             SwOutFormat::Nv12,
             DecodeAccel::Software,
             OutScale::FULL,
+            PlaneColor::BT709_LIMITED,
         )
         .unwrap();
         let shared = Arc::new(PreviewShared::new());

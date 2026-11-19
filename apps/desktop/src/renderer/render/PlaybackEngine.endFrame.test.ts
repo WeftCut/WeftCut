@@ -43,7 +43,7 @@ it("keeps the final Motif on stage across ticks before and after the end timer",
   audio.setProject(summary, ROOT_ID);
   const compositor = new Compositor({ app: { stage: new Container() } as unknown as Application,
     width: 1920, height: 1080, mode: "preview", originalAssetUrl: () => null,
-    sourceColor: () => resolveSourceColor({ height: 1080 }), mediaById: () => undefined,
+    sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }), mediaById: () => undefined,
     pool: { dispose: vi.fn() } as unknown as DecoderPool });
   compositor.setProject(summary);
   let tick!: () => void;

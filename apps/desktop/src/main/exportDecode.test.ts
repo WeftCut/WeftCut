@@ -27,7 +27,7 @@ type OnMsg = (err: Error | null, msg: DecodeMsg) => void
 function fakeBackend() {
   const callbacks = new Map<string, OnMsg>()
   const backend = {
-    exportDecodeOpen: vi.fn((id: string, _path: string, _format: string, _window: number, onMsg: OnMsg) => {
+    exportDecodeOpen: vi.fn((id: string, _path: string, _format: string, _window: number, _color: unknown, onMsg: OnMsg) => {
       callbacks.set(id, onMsg)
       return { width: 2, height: 2, startPtsUs: 0 }
     }),
@@ -39,7 +39,8 @@ function fakeBackend() {
 }
 
 const contents = () => new EventEmitter() as unknown as WebContents
-const request = (sessionId: string): ExportDecodeRequest => ({ sessionId, path: '/home/u/clip.mov', outFormat: 'NV12', window: 6 })
+const request = (sessionId: string): ExportDecodeRequest =>
+  ({ sessionId, path: '/home/u/clip.mov', outFormat: 'NV12', window: 6, color: { matrix: 'bt709', fullRange: false } })
 
 beforeEach(() => {
   resources.reserve.mockReset()
@@ -61,7 +62,8 @@ describe('openExportDecode', () => {
     const { backend, native, callbacks } = fakeBackend()
     const { port, posted, send } = fakePort()
     openExportDecode(native, contents(), () => port, request('s'))
-    expect(backend.exportDecodeOpen).toHaveBeenCalledWith('s', '/home/u/clip.mov', 'NV12', 6, expect.any(Function))
+    expect(backend.exportDecodeOpen).toHaveBeenCalledWith(
+      's', '/home/u/clip.mov', 'NV12', 6, { matrix: 'bt709', fullRange: false }, expect.any(Function))
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     send({ type: 'range', aUs: 0, bUs: 500 })
     send({ type: 'release', lease: 4 })

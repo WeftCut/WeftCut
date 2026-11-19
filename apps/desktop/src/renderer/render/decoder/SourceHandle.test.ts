@@ -89,7 +89,7 @@ class FakeVideoDecoder {
 /// Every fake settles in microtasks; one macrotask drains them all.
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
-function makeHandle(sourceColor: SourceColor = resolveSourceColor({ height: 1080 })): SourceHandle {
+function makeHandle(sourceColor: SourceColor = resolveSourceColor({ width: 1920, height: 1080 })): SourceHandle {
   return new SourceHandle("layer-1", new SourceMedia("media-1", "weftcut-media://localhost/test.mp4", sourceColor));
 }
 
@@ -274,9 +274,9 @@ describe("SourceHandle after an unclassified decoder error", () => {
 // rule supplies for an untagged SD source.
 describe("SourceHandle decoder lane", () => {
   it.each([
-    ["an untagged SD source", resolveSourceColor({ height: 480 }), "prefer-software"],
-    ["an untagged HD source", resolveSourceColor({ height: 1080 }), "prefer-hardware"],
-    ["a 601-tagged SD source", resolveSourceColor({ height: 480, color_matrix: "smpte170m" }), "prefer-hardware"],
+    ["an untagged SD source", resolveSourceColor({ width: 720, height: 480 }), "prefer-software"],
+    ["an untagged HD source", resolveSourceColor({ width: 1920, height: 1080 }), "prefer-hardware"],
+    ["a 601-tagged SD source", resolveSourceColor({ width: 720, height: 480, color_matrix: "smpte170m" }), "prefer-hardware"],
   ] as const)("builds the decoder of %s as its colour needs", async (_name, sourceColor, lane) => {
     const configure = vi.spyOn(FakeVideoDecoder.prototype, "configure");
     const h = makeHandle(sourceColor);

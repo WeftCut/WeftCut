@@ -17,7 +17,7 @@ import type { PreviewGpuColorSpace } from "../../../../shared/ipc";
 import type { PreviewGpuCommand, SlotReadMsg, SlotSessionMsg } from "../../../../shared/frameCarrier/wire";
 import { openDecodeSession } from "../../../ipc/decodeSession";
 import type { DecodeTransport, DecodeTransportOpen } from "./DecodeTransport";
-import type { SourceColor } from "../ffprobeColorSpace";
+import { nativePlaneColor, type SourceColor } from "../ffprobeColorSpace";
 import { HandoffTimings, type HandoffTimingSummary } from "./handoffTimings";
 import { sharedSlotFenceQueue } from "./slotFenceQueue";
 
@@ -28,13 +28,15 @@ interface SessionPort {
   close(): void;
 }
 
-/// The source's resolved colour in the shape `previewGpu.open` carries.
+/// The colour the session's planes carry (`nativePlaneColor` of the source's
+/// resolved colour) in the shape `previewGpu.open` carries.
 export function deriveColorSpace(sourceColor: SourceColor): PreviewGpuColorSpace {
+  const planes = nativePlaneColor(sourceColor);
   return {
-    primaries: sourceColor.primaries,
-    transfer: sourceColor.transfer,
-    matrix: sourceColor.matrix,
-    range: sourceColor.fullRange ? "full" : "limited",
+    primaries: planes.primaries,
+    transfer: planes.transfer,
+    matrix: planes.matrix,
+    range: planes.fullRange ? "full" : "limited",
   };
 }
 

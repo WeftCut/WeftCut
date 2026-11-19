@@ -307,7 +307,6 @@ impl Backend {
             .snapshot_expected(expected_generation)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         let events = cache.scoped_events(self.events.clone());
-        use crate::jobs::proxy::PROXY_FORMAT_VERSION;
         let items: Vec<crate::state::MediaItem> = serde_json::from_str(&media_items_json)
             .map_err(|e| Error::from_reason(format!("parse media list: {e}")))?;
         for item in items {
@@ -328,7 +327,7 @@ impl Backend {
                 ..
             } = &item.decode_route
             {
-                if *format_version < PROXY_FORMAT_VERSION {
+                if *format_version < item.proxy_recipe().full_version() {
                     let patch = crate::state::MediaDerivativesPatch {
                         full_proxy_landed: Some(None),
                         ..Default::default()

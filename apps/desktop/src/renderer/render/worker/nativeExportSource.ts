@@ -10,10 +10,16 @@
 // Backpressure is a lease window: the session parks once `window` frames are
 // out, and each frame's lease goes back when that frame leaves the ring.
 
-import type { DecodeWireFrame, DecodeWireMsg, ExportDecodeCommand, ExportDecodeOpenInfo } from "../../../shared/frameCarrier/wire";
+import type {
+  DecodeWireFrame,
+  DecodeWireMsg,
+  ExportDecodeCommand,
+  ExportDecodeOpenInfo,
+  PlaneColor,
+} from "../../../shared/frameCarrier/wire";
 import type { ExportColorDiag } from "../decoder/ExportDecoderPool";
 import { ExportFrameStore } from "../decoder/ExportDecoderPool";
-import type { SourceColor } from "../decoder/ffprobeColorSpace";
+import { nativePlaneColor, type SourceColor } from "../decoder/ffprobeColorSpace";
 import type { ExportDecodeSession, SourceHandleInit } from "../decoder/session";
 import type { TenBitFrame } from "../decoder/tenBitFrame";
 import type { NativeNv12Frame } from "../decoder/nv12Frame";
@@ -33,6 +39,8 @@ export interface NativeDecodeOpenRequest {
   path: string;
   outFormat: ExportTransportFormat;
   window: number;
+  /// The colour the session's planes carry.
+  color: PlaneColor;
 }
 
 /// How a handle starts and ends its native session.
@@ -109,10 +117,11 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   private readonly sourcePath: string;
   private readonly outFormat: ExportTransportFormat;
   private readonly window: number;
-  /// The colour stamped on every pushed frame: the source's resolved colour,
-  /// fixed per handle (one handle = one source). The session's own tags (raw
-  /// FFmpeg names in its open info) are never used: they would fork the app's
-  /// single colour model.
+  /// The colour stamped on every pushed frame: what the session's planes carry
+  /// (`nativePlaneColor` of the source's resolved colour), the same value the
+  /// session is opened with; fixed per handle (one handle = one source). The
+  /// session's own tags (raw FFmpeg names in its open info) are never used:
+  /// they would fork the app's single colour model.
   private readonly frameColorSpace: SourceColor;
   /// `aUs` of the previous `decodeRange`; `aUs < lastRangeAUs` is a backward
   /// clip-reuse jump — the only case that must reset the ring's EOS clamp.
@@ -142,7 +151,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.sourcePath = ne.sourcePath;
     this.outFormat = ne.outFormat;
     this.window = ne.window;
-    this.frameColorSpace = init.sourceColor;
+    this.frameColorSpace = nativePlaneColor(init.sourceColor);
     // Unique, realm-safe, stable for this handle's lifetime.
     this.sessionId = `nd-${seq++}-${init.mediaId}-${init.handleKey ?? init.mediaId}`;
     this.sessions = sessions;
@@ -156,11 +165,13 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     if (this.readyP) return this.readyP;
     // The open info is not needed: frames carry their own dimensions and an
     // already source-normalized `ptsUs`, and colour comes from `sourceColor`.
+    const { matrix, fullRange } = this.frameColorSpace;
     this.readyP = this.sessions.open({
       sessionId: this.sessionId,
       path: this.sourcePath,
       outFormat: this.outFormat,
       window: this.window,
+      color: { matrix, fullRange },
     }).then(({ port }) => {
       // Ended while opening: the close already went out, behind the open.
       if (this.ended) {

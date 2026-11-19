@@ -6,6 +6,7 @@ import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest
 import type { MotifFrameStore } from './frameStore';
 import type { MotifCaptureRequest } from '../../shared/motifs/frameTransport';
 import { MotifError } from '../../shared/motifs/errors';
+import { MotifGateRefusal } from './resolver';
 import { loadMotifNative, type MotifConversion } from './native';
 import { MOTIF_LIMITS } from '../../shared/motifs/limits';
 
@@ -174,7 +175,7 @@ describe('Motif capture and persistence', () => {
     h.failNext(failure);
     const result = h.service.capture(owner, kept());
     if (code === 'superseded') await expect(result).resolves.toEqual({ kind: 'superseded' });
-    else if (code === 'capacity') await expect(result).resolves.toEqual({ kind: 'capacity', detail: 'synthetic' });
+    else if (code === 'capacity') await expect(result).resolves.toEqual({ kind: 'refused', code: 'capacity', detail: 'synthetic' });
     else await expect(result).rejects.toBe(failure);
     expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
     expect(await h.service.capture(owner, kept())).toMatchObject({ kind: 'texture' });
@@ -191,6 +192,26 @@ describe('Motif capture and persistence', () => {
     await expect(h.service.capture(owner, preview())).rejects.toMatchObject({ code: 'closed' });
   });
 
+  it('answers a capture its Motif\'s state refuses `refused` with a warn row, instead of throwing it', async () => {
+    const h = fixture();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // The folder deleted while its captures were in flight.
+      for (let i = 0; i < 2; i++) {
+        h.failNext(new MotifGateRefusal('missing', "Motif 'synthetic' has no folder in this project"));
+        await expect(h.service.capture(owner, preview())).resolves.toEqual({ kind: 'refused', code: 'content', detail: "Motif 'synthetic' has no folder in this project" });
+      }
+      expect(warn, 'one row per Motif state, not per frame').toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]!.join(' ')).toMatch(/synthetic.*missing/);
+      // The Motif's own script throwing is still a failure.
+      const threw = new MotifError('content', 'synthetic threw');
+      h.failNext(threw);
+      await expect(h.service.capture(owner, preview())).rejects.toBe(threw);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('answers a capture refused at dispatch `capacity` with the refusal, instead of throwing it', async () => {
     const h = fixture();
     h.deps.frame.mockImplementationOnce((_args, consume, options) => run(Promise.resolve().then(() => {
@@ -198,7 +219,7 @@ describe('Motif capture and persistence', () => {
       return consume(bitmapFrame);
     })));
     pressure.refuse = true;
-    await expect(h.service.capture(owner, preview({ address: bake }))).resolves.toEqual({ kind: 'capacity', detail: 'resource-capacity-exceeded: synthetic' });
+    await expect(h.service.capture(owner, preview({ address: bake }))).resolves.toEqual({ kind: 'refused', code: 'capacity', detail: 'resource-capacity-exceeded: synthetic' });
   });
 
   it.each(['transient', 'oversize', 'closed'] as const)('a %s readback costs a display its receipt, not the GPU path', async code => {

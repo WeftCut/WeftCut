@@ -53,9 +53,12 @@ function capture(): Promise<unknown> {
 }
 
 describe('Motif frame port, main to page', () => {
-  it('a `capacity` reply reaches the page as the `capacity` failure main refused with', async () => {
-    main.answers.push({ reply: { kind: 'capacity', detail: 'resource-capacity-exceeded: synthetic' } })
-    expect(await capture()).toEqual({ id: nextId, error: 'resource-capacity-exceeded: synthetic', code: 'capacity' })
+  it.each([
+    ['capacity', 'resource-capacity-exceeded: synthetic'],
+    ['content', "Motif 'm' has no folder in this project"],
+  ])('a `refused` %s reply reaches the page as the failure main refused with', async (code, detail) => {
+    main.answers.push({ reply: { kind: 'refused', code, detail } })
+    expect(await capture()).toEqual({ id: nextId, error: detail, code })
   })
 
   it('a `superseded` reply is not a failure; a thrown failure keeps its code', async () => {

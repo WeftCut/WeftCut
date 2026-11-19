@@ -116,7 +116,7 @@ describe("CJK line breaking", () => {
       height: 360,
       mode: "preview",
       originalAssetUrl: () => null,
-      sourceColor: () => resolveSourceColor({ height: 1080 }),
+      sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }),
       mediaById: () => undefined,
       pool: { dispose: vi.fn() } as unknown as DecoderPool,
     });

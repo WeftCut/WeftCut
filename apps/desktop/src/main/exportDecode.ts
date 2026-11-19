@@ -6,7 +6,7 @@
 
 import type { IpcMain, WebContents } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
-import type { ExportDecodeCommand, ExportDecodeOpenInfo } from '../shared/frameCarrier/wire'
+import type { ExportDecodeCommand, ExportDecodeOpenInfo, PlaneColor } from '../shared/frameCarrier/wire'
 import { admitDecodeSession, type ConnectCarrier } from './frameCarrier/decodeSessionAdmission'
 import { parseRelease } from './frameCarrier/decodeSessionHost'
 import { ipcCarrierPort } from './frameCarrier/ipcCarrierPort'
@@ -18,6 +18,8 @@ export interface ExportDecodeRequest {
   outFormat: 'NV12' | 'I420P10'
   /** Frames the session may have in flight before it waits for a release. */
   window: number
+  /** The colour the session's planes carry. */
+  color: PlaneColor
   /** The export's finalization, so its reservation borrows from the export's. */
   finalizationId?: number | undefined
 }
@@ -37,7 +39,7 @@ export function installExportDecodeIpc(
 ): void {
   ipc.handle('exportDecode:open', (event, a: ExportDecodeOpenArgs) =>
     openExportDecode(backend(), event.sender, ipcCarrierPort, {
-      sessionId: a.sessionId, path: a.path, outFormat: a.outFormat, window: a.window,
+      sessionId: a.sessionId, path: a.path, outFormat: a.outFormat, window: a.window, color: a.color,
       finalizationId: resolveFinalization(event.sender.id, a.finalizationToken),
     }))
 }
@@ -51,13 +53,13 @@ export function openExportDecode(
   connect: ConnectCarrier,
   request: ExportDecodeRequest,
 ): ExportDecodeOpenInfo {
-  const { sessionId, path, outFormat, window, finalizationId } = request
+  const { sessionId, path, outFormat, window, color, finalizationId } = request
   return admitDecodeSession({
     sessionId,
     connect,
     owner,
     reserve: () => reserveDecoderResources(path, finalizationId),
-    open: onMsg => backend.exportDecodeOpen(sessionId, path, outFormat, window, (err, msg) => {
+    open: onMsg => backend.exportDecodeOpen(sessionId, path, outFormat, window, color, (err, msg) => {
       // A message the addon could not hand over is lost, so the range it
       // belonged to can no longer complete exactly once: fail it loudly.
       onMsg(err ? { kind: 'error', message: err.message, terminal: false } : msg)

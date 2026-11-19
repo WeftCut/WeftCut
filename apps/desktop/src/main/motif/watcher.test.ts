@@ -4,8 +4,23 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { composeMotifHtml } from '../../shared/motifs/catalog'
+import { EventEmitter } from 'node:events'
 import { ProjectMotifStore, type MotifState } from './projectStore'
+import { TRUST_FILES } from './trust'
 import { DEBOUNCE_QUIET_MS, Debouncer, spawnMotifWatcher, watchProjectMotifs } from './watcher'
+
+// The OS watch, replaced only by a test that sets `fakeWatch.next`: what a
+// watch reports is then emitted by the test itself.
+const fakeWatch = vi.hoisted(() => ({ next: null as unknown }))
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>()
+  const watch = ((...args: Parameters<typeof fs.watch>) => {
+    const fake = fakeWatch.next
+    fakeWatch.next = null
+    return fake ?? fs.watch(...args)
+  }) as typeof fs.watch
+  return { ...fs, watch }
+})
 
 describe('Debouncer', () => {
   beforeEach(() => vi.useFakeTimers())
@@ -58,6 +73,35 @@ async function expectFiresOnWrite(root: string): Promise<void> {
 }
 
 describe('spawnMotifWatcher', () => {
+  describe('on reported changes', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it('fires for a library change, never for the trust record beside the library', () => {
+      const root = mkdtempSync(path.join(tmpdir(), 'motifwatch-'))
+      const tree = Object.assign(new EventEmitter(), { close: () => {} })
+      fakeWatch.next = tree
+      const fired = vi.fn()
+      const w = spawnMotifWatcher(root, fired)
+      try {
+        // A trust write: its temp written, then renamed over the record.
+        for (const name of TRUST_FILES) tree.emit('change', 'rename', name)
+        vi.advanceTimersByTime(DEBOUNCE_QUIET_MS)
+        expect(fired, 'the trust record is no library change').not.toHaveBeenCalled()
+        tree.emit('change', 'rename', path.join('card', 'v2', 'index.html'))
+        vi.advanceTimersByTime(DEBOUNCE_QUIET_MS)
+        expect(fired).toHaveBeenCalledTimes(1)
+        // A change the watch cannot name may be the library's.
+        tree.emit('change', 'rename', null)
+        vi.advanceTimersByTime(DEBOUNCE_QUIET_MS)
+        expect(fired).toHaveBeenCalledTimes(2)
+      } finally {
+        w.close()
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  })
+
   it('fires onChange on a real file write under the root', async () => {
     await expectFiresOnWrite(mkdtempSync(path.join(tmpdir(), 'motifwatch-')))
   }, 2 * WATCH_REPORTS_MS)
@@ -89,11 +133,14 @@ describe('watchProjectMotifs', () => {
   let dir: string
   afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
-  it('tells only the Motif whose folder was edited, with its new revision', async () => {
+  it('tells only the Motif whose folder was edited, with its new revision, observed as an edit of what it held', async () => {
     dir = mkdtempSync(path.join(tmpdir(), 'project-watch-'))
     const project = new ProjectMotifStore(dir)
     write(project, 'edited', 0)
     write(project, 'untouched', 0)
+    const found = project.found('edited').revision
+    const heard: Array<[string, string, string | null]> = []
+    project.onRevisionSeen((id, revision, cause, base) => { if (cause === 'edited-while-open') heard.push([id, revision, base]) })
     const told: Array<[string, MotifState]> = []
     const w = watchProjectMotifs(project, (id, state) => told.push([id, state]))
     try {
@@ -106,6 +153,8 @@ describe('watchProjectMotifs', () => {
       expect(told.map(([id]) => id).every(id => id === 'edited')).toBe(true)
       expect(told.at(-1)![1]).toEqual(project.status('edited'))
       expect(told.at(-1)![1].status).toBe('ok')
+      // The first edit told is heard from the revision found before it.
+      expect(heard[0]).toEqual(['edited', told[0]![1].revision, found])
     } finally {
       w.close()
     }

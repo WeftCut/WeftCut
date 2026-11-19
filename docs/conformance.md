@@ -45,12 +45,14 @@ OS because the drawtext font and the bundled ffmpeg differ per platform.
 | `export-range-audio.spec.ts` | range export trims audio at the requested source time; AAC/Opus and muted settings; software video encoder alignment |
 | `export_eos_tail.spec.ts` | a final GOP spanning several chunks with audio 1 s past video: completes, plans the audio-extended frame count, tail stays aligned |
 | `export_overlap_same_source.spec.ts` | two copies of one media: same-phase copies share one decode pipeline (no extra dispatch); a 2 s-offset copy keeps its own source frames |
-| `color-conformance.spec.ts` | 709/601 × limited/full patches stay faithful; all four DirectExport the original (`yuvj420p` is browser-friendly); the untagged SD/HD charts export faithfully through both decode engines, the patches the preview colour gates sample; the two full-range charts also export through the ffmpeg decode engine |
+| `color-conformance.spec.ts` | 709/601 × limited/full patches stay faithful; all four DirectExport the original (`yuvj420p` is browser-friendly); the untagged SD, HD and 1280x544 charts and the two RGB-coded charts export faithfully through both decode engines, the patches the preview colour gates sample; the two full-range charts also export through the ffmpeg decode engine |
 | `export_codecs.spec.ts` | AV1/HEVC/10-bit HEVC/ProRes/DNxHR codec shape and container; 10-bit distinct steps above the 8-bit ceiling |
 
 The conform format range itself is pinned by the Rust unit test
 `jobs::conform::tests::conform_format_matrix_against_real_ffmpeg`. Proxy color
-self-description is pinned by `proxy_carries_source_color_tags_and_colr_atom`.
+self-description is pinned by `proxy_carries_source_color_tags_and_colr_atom`
+and, for an RGB-coded source, by
+`an_rgb_coded_source_gets_proxies_whose_tags_match_their_pixels`.
 
 ## Decode color tags
 
@@ -59,11 +61,27 @@ self-description is pinned by `proxy_carries_source_color_tags_and_colr_atom`.
 the one complete colour every decode lane uses, per field:
 
 1. the mapped ffprobe tag;
-2. when absent: SMPTE 170M if the ORIGINAL's probed height is below 720,
-   BT.709 otherwise; limited range.
+2. when absent: BT.709 if the ORIGINAL is at least 1280 wide or taller than
+   576 lines, SMPTE 170M otherwise (`undeclaredIsHd`; width counts so that a
+   cropped HD picture such as 1280x544 stays HD); limited range.
+
+An RGB-coded original (`isRgbCoded`: `gbrp`, `rgb24`, `bgra`, `pal8`, ...) has
+matrix `rgb` and full range whatever it is tagged, so an untagged QuickTime
+Animation file resolves as a `gbr`-tagged libx264rgb one does. The WebCodecs
+config needs exactly this: Chromium's software H.264 decoder ignores the
+bitstream's RGB matrix in High 4:4:4 and follows the config.
+
+The ffmpeg jobs that convert colour themselves (the JPEG derivatives and the
+proxies, below) use the same size and RGB rules from the native crate
+(`VideoStreamMeta::undeclared_is_hd`, `is_rgb_pix_fmt`); one list of cases,
+`undeclaredColourGolden.fixture.json`, holds both sides.
 
 The native lanes (software, copy-back hardware, d3d11va, native export decode)
-use it as is. The WebCodecs pools pass it through `withDefaultColorSpace`
+deliver YCbCr planes, so they use it through `nativePlaneColor`: a YCbCr
+source's planes keep its own colour, an RGB-coded source's planes are BT.709
+limited. Each lane is opened with that value (the pack converts RGB samples
+into it with an explicit matrix and range) and its frames are read back with
+the same value, so the pack and the ingest cannot disagree. The WebCodecs pools pass it through `withDefaultColorSpace`
 (`render/decoder/colorSpaceDefault.ts`), where a field the decode target's
 container `colr` tag carries (as mediabunny reports it; mediabunny never parses
 the SPS VUI) wins over it. `VideoClipSprite` then converts through the
@@ -73,13 +91,44 @@ Two lanes need help to show that colour:
 
 - A hardware WebCodecs decoder converts by what the bitstream declares, and as
   BT.709 when it declares nothing, whatever the config says (observed on macOS
-  VideoToolbox). A source whose matrix the rule supplied, and is not BT.709,
+  VideoToolbox; Windows' D3D11 decoder follows the config for such a stream,
+  and the rule below applies on every system so the lanes agree). A source whose matrix the rule supplied, and is not BT.709,
   therefore decodes prefer-software on the WebCodecs pools
-  (`decodesInSoftwareForColour`); by the rule it is below 720 lines.
-- The native software pack converts format and size, never levels
-  (`levels_neutral_sws` in `preview_sw/decoder.rs`): swscale would otherwise
+  (`decodesInSoftwareForColour`); by the rule it is an SD picture.
+- The native software pack converts a YCbCr frame's format and size, never
+  its levels (`pack_sws` in `preview_sw/decoder.rs`): swscale would otherwise
   squeeze a full-range `yuvj420p` frame into limited range under a full-range
-  label.
+  label. An RGB frame it converts into the plane colour it was opened with;
+  left to itself swscale would use BT.601 at full range.
+
+## Proxies
+
+Both proxy recipes (`jobs/proxy.rs`, `jobs/quick_proxy.rs`) keep a YCbCr
+source's matrix and range and assert its tags (`color_args`, with the mp4
+`colr` atom). An RGB-coded source is converted into BT.709 limited in the same
+`scale` and tagged so (`video_filter`, `RGB_PROXY_COLOR`): its own `gbr` tag on
+a YCbCr encode made libx264 abort, and an untagged one left ffmpeg's BT.601
+with no tag, which the size rule read as BT.709.
+
+The two kinds of source are separate recipes with their own versions
+(`ProxyRecipe`), in the proxy's cache file name and the route's
+`format_version`: the RGB recipe is at 8 / `q5`, the YCbCr recipe, whose
+output did not change, stays at 7 / `q4`.
+
+## JPEG derivatives
+
+Thumbnails, filmstrip tiles and the MCP `media://…/frame` image are JPEGs. A
+JPEG carries no colour description and every viewer decodes it as BT.601 full
+range, so the extracting ffmpeg call converts each frame to that matrix
+(`jobs/jpeg.rs`): from the frame's own tag when the source declares one, from
+the size rule above when it declares none. Pinned by the Rust test
+`bt709_red_is_red_in_the_jpeg_whether_the_source_declares_its_matrix_or_not`.
+
+Filmstrip tiles carry a recipe number in their cache directory (`orig-2`,
+`quick-2`, `full-2`) and the cache sweep deletes other directories, so a strip
+never mixes tiles from before and after a recipe change. Thumbnails and cached
+MCP frames have no recipe number: ones made before the conversion keep their
+old colour until they are made again.
 
 ffmpeg/swscale read an unspecified matrix as BT.601 at every size, so the
 analyzer never infers a source's colour: every gate passes `--in-matrix` and

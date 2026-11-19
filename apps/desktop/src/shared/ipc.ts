@@ -11,7 +11,7 @@
 // contexts); this file is never imported by the non-DOM main process.
 
 import type { UpdateDownloadResult, UpdateRestartResult, UpdateResume, UpdateStatus } from './updates'
-import type { ExportDecodeOpenInfo, PreviewDecodeOpenInfo, PreviewDecodeOptions } from './frameCarrier/wire'
+import type { ExportDecodeOpenInfo, PlaneColor, PreviewDecodeOpenInfo, PreviewDecodeOptions } from './frameCarrier/wire'
 
 export type DialogOpenOpts = {
   title?: string
@@ -411,7 +411,7 @@ export interface WeftcutApi {
   /// and errors down and its `request`/`release` commands up. `close` ends the
   /// session; it goes to main ahead of any open started after it.
   previewDecode: {
-    open(args: { sessionId: string; path: string; options: PreviewDecodeOptions }): Promise<PreviewDecodeOpenInfo>
+    open(args: { sessionId: string; path: string; color: PlaneColor; options: PreviewDecodeOptions }): Promise<PreviewDecodeOpenInfo>
     close(args: { sessionId: string }): void
   }
   /// Native software export-decode (blind-spot originals: ProRes/DNxHD/MPEG-2/
@@ -428,6 +428,8 @@ export interface WeftcutApi {
       outFormat: 'NV12' | 'I420P10'
       /// Frames in flight before the session waits for a release.
       window: number
+      /// The colour the session's planes carry.
+      color: PlaneColor
       finalizationToken?: string | undefined
     }): Promise<ExportDecodeOpenInfo>
     close(args: { sessionId: string }): void

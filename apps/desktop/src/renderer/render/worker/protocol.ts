@@ -12,7 +12,7 @@ import type { ExportTransportFormat } from "../exportDecodeRouting";
 import type { SourceColor } from "../decoder/ffprobeColorSpace";
 import type { MotifFramePacket } from "./motifStream";
 import type { SinkPixFmt } from "../../../shared/export-resources";
-import type { ExportDecodeOpenInfo } from "../../../shared/frameCarrier/wire";
+import type { ExportDecodeOpenInfo, PlaneColor } from "../../../shared/frameCarrier/wire";
 
 /// Snapshot of project state needed to render the export. The Worker
 /// receives this as a structured-clone of the live `ProjectSummary`,
@@ -196,7 +196,7 @@ export type ExportEvent =
   /// Asks the page to open a native export decode session; answered by
   /// `nd:openResult` with the same `reqId`. No frame and no per-frame message
   /// of the session passes the page.
-  | { type: "nd:open"; reqId: number; sessionId: string; path: string; outFormat: ExportTransportFormat; window: number }
+  | { type: "nd:open"; reqId: number; sessionId: string; path: string; outFormat: ExportTransportFormat; window: number; color: PlaneColor }
   /// Asks the page to end a session. It travels where `nd:open` travels, so a
   /// close reaches main before any open the Worker asks for after it.
   | { type: "nd:close"; sessionId: string };

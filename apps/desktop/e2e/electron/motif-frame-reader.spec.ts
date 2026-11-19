@@ -457,12 +457,12 @@ for (const lane of LANES) {
         // The texture lane's transport fails (as a lost slot or a closed
         // consumer would): the read is retried once, then rejected.
         await app.evaluate(({ ipcMain }, hold) => {
-          const handlers = (ipcMain as any)._invokeHandlers as Map<string, (event: unknown, args: any) => unknown>
+          const handlers = ipcMain._invokeHandlers
           const original = handlers.get('motif:read')
           if (!original) throw new Error('motif:read has no handler')
           const state = { injected: 0, restore: () => { handlers.set('motif:read', original) } }
           ;(globalThis as any).__readerConformanceInjection = state
-          handlers.set('motif:read', async (event: unknown, args: { frame?: unknown }) => {
+          handlers.set('motif:read', async (event, args: { frame?: unknown }) => {
             if (args?.frame === hold) { state.injected++; throw new Error('injected texture transport failure') }
             return original(event, args)
           })

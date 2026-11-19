@@ -62,6 +62,10 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let fps = THUMB_COUNT as f64 / duration_s;
 
     let pattern = tmp_dir.join("%03d.jpg");
+    let scale = super::jpeg::scale_filter(
+        &format!("scale={THUMB_WIDTH}:-2"),
+        media.metadata.video.as_ref(),
+    );
 
     // -an drops audio (we only want frames). -q:v 5 = mid-quality JPG, ~30 KB
     // per thumbnail. The fps filter rounds, so `-frames:v` is what caps the set
@@ -90,7 +94,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
                 .args([
                     "-an",
                     "-vf",
-                    &format!("scale={THUMB_WIDTH}:-2"),
+                    &scale,
                     "-frames:v",
                     "1",
                     "-q:v",
@@ -120,7 +124,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             .args([
                 "-an",
                 "-vf",
-                &format!("fps={fps:.6},scale={THUMB_WIDTH}:-2"),
+                &format!("fps={fps:.6},{scale}"),
                 "-frames:v",
                 &THUMB_COUNT.to_string(),
                 "-q:v",

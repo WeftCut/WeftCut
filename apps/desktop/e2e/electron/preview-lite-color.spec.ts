@@ -6,11 +6,14 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, colorFai
 
 // Saturated-chart color gate for the Lite engine's PREVIEW (WebCodecs decode
 // of the original, converted by the browser's 2D-canvas path; ADR 0014). The
-// charts carry no colour tag at all, so what this reads is how the lane fills
-// the absence: the decoder config takes every field from the source's
-// resolved colour (`resolveSourceColor` through `withDefaultColorSpace`), and
-// must land on the same patches the native lanes do (preview-sw-color,
-// preview-hw-color) and export does (color-conformance).
+// untagged charts carry no colour tag at all, so what this reads is how the
+// lane fills the absence: the decoder config takes every field from the
+// source's resolved colour (`resolveSourceColor` through
+// `withDefaultColorSpace`), and must land on the same patches the native lanes
+// do (preview-sw-color, preview-hw-color) and export does (color-conformance).
+// The RGB-coded H.264 chart reads the same way: its resolved matrix is `rgb`,
+// which the config must carry (see `resolveSourceColor`). The QuickTime
+// Animation chart is not here: the Lite engine does not decode it.
 //
 // Same sampling method as preview-sw-color. Needs a VITE_WEFTCUT_E2E=1 build;
 // no native-decode component.
@@ -159,7 +162,7 @@ async function runChartLeg(label: string, fixture: string, manifestPath: string,
   }
 }
 
-test.describe('preview Lite-engine untagged-chart color gate (Electron)', () => {
+test.describe('preview Lite-engine untagged- and RGB-chart color gate (Electron)', () => {
   test('untagged SD H.264 chart previews as BT.601 on the Lite engine', async () => {
     await runChartLeg(
       'plc-untagged-sd',
@@ -173,6 +176,24 @@ test.describe('preview Lite-engine untagged-chart color gate (Electron)', () => 
     await runChartLeg(
       'plc-untagged-hd',
       path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_untagged.mp4'),
+      path.resolve(MEDIA_DIR, 'color_manifest.json'),
+      { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+    )
+  })
+
+  test('untagged cropped HD H.264 chart (1280x544) previews as BT.709 on the Lite engine', async () => {
+    await runChartLeg(
+      'plc-untagged-wide',
+      path.resolve(MEDIA_DIR, 'test_1280x544_color_709ltd_untagged.mp4'),
+      path.resolve(MEDIA_DIR, 'color_manifest_1280x544.json'),
+      { width: 1280, height: 544, fpsNum: 30, fpsDen: 1 },
+    )
+  })
+
+  test('gbr-tagged RGB H.264 chart previews as its RGB on the Lite engine', async () => {
+    await runChartLeg(
+      'plc-rgb-h264',
+      path.resolve(MEDIA_DIR, 'test_1080p_color_rgb_h264.mp4'),
       path.resolve(MEDIA_DIR, 'color_manifest.json'),
       { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
     )

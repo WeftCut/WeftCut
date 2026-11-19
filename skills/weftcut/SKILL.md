@@ -185,6 +185,9 @@ prop; moving footage stays a video layer.
    note.
 4. `export_motif` and `delete_motif` (removes it from the project) only when
    the user asks.
+5. A Motif that came with a project renders nothing until the user trusts it
+   in WeftCut's Motifs panel; `read_motif` inspects it without running it.
+   Never ask the user to bypass trust.
 
 **Three.js Motifs**: read `motif-three-model.md` and start from
 `templates/three-model.zip` beside this file.

@@ -700,11 +700,19 @@ mod tests {
         let old = l.filmstrip_root().join("h").join("3");
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("000001.jpg"), b"old-layout").unwrap();
+        // An earlier tile recipe: its tag dir has no recipe number.
+        let earlier = l.filmstrip_root().join("h").join("orig").join("3");
+        fs::create_dir_all(&earlier).unwrap();
+        fs::write(earlier.join("000001.jpg"), b"earlier-recipe").unwrap();
         let tagged = put_tile(&l, "h", 3, 1, 10, now);
         sweep(&l, u64::MAX, now);
         assert!(
             !old.exists(),
             "pre-provenance layout is unreachable by the key scheme"
+        );
+        assert!(
+            !earlier.exists(),
+            "tiles of an earlier recipe are unreachable by the key scheme"
         );
         assert!(tagged.exists());
     }

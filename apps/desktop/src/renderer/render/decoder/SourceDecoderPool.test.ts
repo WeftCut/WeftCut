@@ -20,7 +20,7 @@ import type { DecodeTransport } from "./transports/DecodeTransport";
 import { resetFfmpegLaneTrail } from './ffmpegLaneTrail';
 import { resolveSourceColor } from "./ffprobeColorSpace";
 
-const HD = resolveSourceColor({ height: 1080 });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 function fakeTransport(opts?: { openRejects?: string; disposeWaits?: Promise<void> }) {
   return {
