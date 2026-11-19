@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { formatMediaDuration } from "../frames";
 import type { MediaSummary } from "../ipc";
+import { formatBytes } from "../lib/formatBytes";
 import {
   mediaReferenceMeta,
   mediaReferencesFor,
@@ -21,20 +22,6 @@ const ABSENT = "—";
 /// layer kind. One namespace for all media, so the sections a user collapsed
 /// stay collapsed as they click from clip to clip.
 const SECTION_KIND = "Media";
-
-const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
-
-/// Bytes as the largest unit that keeps the number under 1024. No shared
-/// formatter exists in the renderer; this is the app's only file-size readout.
-function formatBytes(bytes: number): string {
-  let value = Math.max(0, bytes);
-  let unit = 0;
-  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${unit === 0 ? value : value.toFixed(1)} ${BYTE_UNITS[unit] ?? BYTE_UNITS[0]}`;
-}
 
 /// Read-only description of a media item, for the pool card the user picked.
 ///

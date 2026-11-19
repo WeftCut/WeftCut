@@ -26,6 +26,16 @@ describe("syncProjectMotifsFromBackend", () => {
     expect(motifUnavailable("gone")).toMatchObject({ status: "missing", diagnostic: "" });
   });
 
+  it("keeps an untrusted Motif out of what renders, though its row carries the package", async () => {
+    bridge.invoke.mockResolvedValue([
+      { ...manifest("received", [320, 240]), group: "project", uid: "u3", status: "untrusted", state: "modified", from: null,
+        path: "/home/u/Film/Motifs/received", revision: "a".repeat(64), diagnostic: "not trusted on this machine" },
+    ]);
+    await syncProjectMotifsFromBackend();
+    expect(getMotif("received")).toBeNull();
+    expect(motifUnavailable("received")).toMatchObject({ status: "untrusted", diagnostic: "not trusted on this machine" });
+  });
+
   it("re-pulls on motifs:changed, so a Motif placed by the commit that sent it resolves", async () => {
     await installMotifsChangedListener();
     const onChanged = vi.mocked(listen).mock.calls.at(-1)![1] as () => void;
