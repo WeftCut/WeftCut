@@ -91,7 +91,8 @@ Two lanes need help to show that colour:
 
 - A hardware WebCodecs decoder converts by what the bitstream declares, and as
   BT.709 when it declares nothing, whatever the config says (observed on macOS
-  VideoToolbox). A source whose matrix the rule supplied, and is not BT.709,
+  VideoToolbox; Windows' D3D11 decoder follows the config for such a stream,
+  and the rule below applies on every system so the lanes agree). A source whose matrix the rule supplied, and is not BT.709,
   therefore decodes prefer-software on the WebCodecs pools
   (`decodesInSoftwareForColour`); by the rule it is an SD picture.
 - The native software pack converts a YCbCr frame's format and size, never
