@@ -384,11 +384,12 @@ table:
   (`hwExportDecodeAllowed`, passed as `allowHwExportDecode`): on Linux/NVIDIA
   a hardware `VideoFrame` reads back as zeros with no error. The 10-bit lane
   always pins software.
-- **`NativeExportSourceHandle`** (`worker/nativeExportSource.ts`) — a relay to
-  a credit-windowed native `export_sw` session that decodes the **original**
-  and streams NV12/I420P10 planes back in order, one credit returned per frame
-  leaving the ring. `nd:rangeEnd` closes a range without an out-of-range proof
-  frame; a backward range starts a new generation. Transport:
+- **`NativeExportSourceHandle`** (`worker/nativeExportSource.ts`) — drives a
+  lease-windowed native `export_sw` session over its own port; the session
+  decodes the **original** and streams NV12/I420P10 planes back in order, and
+  each frame's lease goes back when it leaves the ring. `mark` closes a range
+  without an out-of-range proof frame; a backward range starts a new
+  generation. Transport:
   [`export-ipc-transport.md`](export-ipc-transport.md); decision: ADR 0033.
 
 Pipelines are keyed by `exportHandleKey` = `mediaId` + phase

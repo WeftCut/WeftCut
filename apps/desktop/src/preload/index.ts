@@ -3,6 +3,7 @@ import type { SharedTextureImported } from 'electron'
 import { installMotifFrames } from './motifFrames'
 import { MotifReadBarrier } from './motifReadBarrier'
 import { createPreviewSwFrames } from './previewSwFrames'
+import { createDecodeSessionPorts } from './decodeSessionPorts'
 import { createReadCompletionProof, type ReadCompletionCost } from '../shared/readCompletion'
 import { readLayoutThemeArgument } from '../shared/layout-theme'
 import { readMotifTuningArgument } from '../shared/motifs/tuning'
@@ -26,8 +27,6 @@ import type {
   PreviewGpuSlotAck,
   PreviewGpuTimingReport,
   PreviewSwFrameMsg,
-  ExportSwMsg,
-  ExportSwOpenReply,
   SystemStats,
   WinCreateOpts,
   WinAction,
@@ -39,11 +38,16 @@ import type {
 } from '../shared/data-root'
 import type { MenuProjection } from '../shared/menu'
 import type { UpdateDownloadResult, UpdateRestartResult, UpdateResume, UpdateStatus } from '../shared/updates'
+import type { DecodeWireMsg, ExportDecodeOpenInfo } from '../shared/frameCarrier/wire'
 
 type Listener = (payload: unknown) => void
 
 const previewSwFrames = createPreviewSwFrames()
 ipcRenderer.on('previewSw:frame', (_e, frame: PreviewSwFrameMsg) => previewSwFrames.dispatch(frame))
+// Decode sessions served on a port this preload holds (decodeSessionPorts.ts).
+const decodeSessionPorts = createDecodeSessionPorts((sessionId, cmd) => ipcRenderer.send('decodeSession:cmd', sessionId, cmd))
+ipcRenderer.on('decodeSession:msg', (_e, sessionId: string, msg: DecodeWireMsg) => decodeSessionPorts.deliver(sessionId, msg))
+ipcRenderer.on('decodeSession:end', (_e, sessionId: string) => decodeSessionPorts.end(sessionId))
 
 // The contextBridge surface — the COMPLETE set of things the (untrusted)
 // renderer can ask the main process to do. Grouped, named methods rather than a
@@ -313,30 +317,23 @@ const api: WeftcutApi = {
     },
   },
 
-  // Native SOFTWARE export-decode relay — the EXPORT-side mirror of previewSw.
-  // Implements `WeftcutApi.exportSw`; the single-ordered-channel contract that
-  // keeps control from overtaking frames lives on `ExportSwMsg` in
-  // shared/ipc.ts.
-  exportSw: {
-    open(args: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; creditWindow: number }): Promise<ExportSwOpenReply> {
-      return ipcRenderer.invoke('exportSw:open', args) as Promise<ExportSwOpenReply>
-    },
-    decodeRange(args: { sessionId: string; aUs: number; bUs: number }): void {
-      ipcRenderer.send('exportSw:decodeRange', args)
-    },
-    returnCredit(args: { sessionId: string; credits: number }): void {
-      ipcRenderer.send('exportSw:returnCredit', args)
+  // Native software export-decode. A port cannot cross contextBridge, so the
+  // consumer's end reaches the page as a window message tagged with its session
+  // id (`openExportDecode` in the renderer).
+  exportDecode: {
+    async open(args: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number; finalizationToken?: string | undefined }): Promise<ExportDecodeOpenInfo> {
+      const consumerPort = decodeSessionPorts.open(args.sessionId)
+      try {
+        const info = await ipcRenderer.invoke('exportDecode:open', args) as ExportDecodeOpenInfo
+        window.postMessage({ weftcutExportDecodePort: args.sessionId }, '*', [consumerPort])
+        return info
+      } catch (error) {
+        decodeSessionPorts.end(args.sessionId)
+        throw error
+      }
     },
     close(args: { sessionId: string }): void {
-      ipcRenderer.send('exportSw:close', args)
-    },
-    closeAll(): void {
-      ipcRenderer.send('exportSw:closeAll')
-    },
-    onMsg(cb: (m: ExportSwMsg) => void): () => void {
-      const h = (_e: unknown, m: ExportSwMsg) => cb(m)
-      ipcRenderer.on('exportSw:msg', h)
-      return () => { ipcRenderer.removeListener('exportSw:msg', h) }
+      ipcRenderer.send('decodeSession:cmd', args.sessionId, { type: 'close' })
     },
   },
 

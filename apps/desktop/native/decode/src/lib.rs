@@ -5,6 +5,7 @@
 //! docs/adr/0030, docs/adr/0033, and docs/preview.md §Decode engine.
 
 mod backend;
+mod carrier;
 mod events;
 mod export_sw;
 mod media_time;

@@ -42,26 +42,48 @@ The renderer main thread never touches a frame.
 
 ## Decode-in
 
-Main → renderer → Worker, feeding natively decoded frames to the export
-compositor (routing: [ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md);
-consumption: [`render.md`](render.md) § Export decode pipelines):
+Main → Worker, one port per session held by the export Worker, feeding
+natively decoded frames to the export compositor (routing:
+[ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md); consumption:
+[`render.md`](render.md) § Export decode pipelines):
 
-1. `NativeExportSourceHandle` sends `nd:*` commands (open / decodeRange /
-   returnCredit / close); the renderer forwards them to `window.api.exportSw`,
-   which drives the `export_sw` session (`src/main/exportSw.ts`).
-2. The session decodes GOP-aligned exact coverage of each range and emits
-   everything in-band as `ExportSwMsg` (`frame`, `rangeEnd`, `ended`, `error`)
-   on the single `exportSw:msg` channel; the renderer re-posts frames to the
-   Worker as transferred `ArrayBuffer`s. `rangeEnd` carries the completed
-   `[aUs, bUs]` and, once every earlier frame has arrived, proves presentation
-   finality for pending `waitForPts` targets.
-3. **Delivery order is the contract.** An `ended`/`rangeEnd` overtaking its
-   tail frames corrupts the export tail; never split control and frames onto
-   separate channels.
-4. Backpressure is a credit window: the Rust producer parks at `creditWindow`
-   frames in flight, and the handle returns one credit per frame that leaves
-   the ring (consumed, evicted or freed). Credits bypass the session's command
-   channel so they land mid-range.
+1. `NativeExportSourceHandle` posts `nd:open`; the page calls
+   `exportDecode.open`. The preload creates the session's `MessageChannel`
+   and keeps one end (`preload/decodeSessionPorts.ts`); main
+   (`src/main/exportDecode.ts`) reserves the decoder's memory and opens the
+   `export_sw` session. The other end reaches the page as a window message
+   tagged with its session id, and the page transfers it to the Worker in
+   `nd:openResult` (`renderer/ipc/exportDecode.ts`). No page code handles a
+   frame or a per-frame message.
+2. The session's messages are the addon's generated `DecodeMsg` (`bytes`,
+   `mark`, `end`, `error`). Main sends each on `decodeSession:msg` as
+   delivered (`main/frameCarrier/decodeSessionHost.ts` over
+   `ipcCarrierPort.ts`): the one cross-process copy. The preload posts it on
+   the session's port with the frame's buffer transferred, so the bytes cross
+   no `contextBridge`. `mark` carries the completed `[aUs, bUs]` and, since
+   every earlier frame has arrived, proves presentation finality for pending
+   `waitForPts` targets.
+   Main does not hold the port itself: posting a 4K frame on a
+   `MessagePortMain` cost main 1.6× (Windows) to 2.3× (macOS) the time of
+   `webContents.send`, and a 4K native-decode export ran 10 % slower on
+   Windows with it.
+3. **Delivery order is the contract.** An `end`/`mark` overtaking its tail
+   frames corrupts the export tail; never split control and frames onto
+   separate ports or channels.
+4. Backpressure is a lease window: the producer parks at `window` frames in
+   flight, and the handle posts `release` with a frame's lease the moment
+   that frame leaves the ring (consumed, evicted or freed). Commands go up
+   the port and on to main as `decodeSession:cmd`; main hands a release to
+   the session directly, so it lands mid-range.
+5. A `close` by session id ends the session. The handle asks for it on
+   dispose and on a terminal error as `nd:close`, which the page passes to
+   `exportDecode.close`. It does not go up the session's port: the export
+   releases one phase's handle and opens the next phase's in the same turn,
+   and only the route `nd:open` takes keeps that close ahead of that open in
+   main, where the old session still holds its decoder memory. When an export
+   ends, the page closes every session it opened, which covers a Worker
+   terminated before its handles disposed. Main also closes a session when its
+   document goes (reload, crash, destroy).
 
 ## Why IPC
 

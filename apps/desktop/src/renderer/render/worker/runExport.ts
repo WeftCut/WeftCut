@@ -11,6 +11,7 @@
 
 import { convertFileSrc } from "@/bridge/ipc";
 import { openVideoSinkPort } from "../../ipc";
+import { openExportDecode } from "../../ipc/exportDecode";
 import { loadBundledFontBytes, resolveFontsForFamilies } from "../fonts/registry";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
@@ -301,7 +302,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
           nativeDecode: {
             mediaIds: nativeDecodeMediaIds,
             outFormat: init.decodeRouting.outFormat,
-            creditWindow: 6,
+            window: 6,
           },
         }
       : {}),
@@ -324,86 +325,17 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         [...new Set(Object.values(packet.frames).map(frame => frame.bitmap))]),
       fail: error => { cleanup(); reject(error); },
     }) : null;
-    // ── Native export-decode relay ───────────────────────────────────────────
-    // The renderer main thread is a PURE relay between the export Worker's
-    // `NativeExportSourceHandle` and the main-process `NativeDecode` session:
-    // tagged `ExportSwMsg`s (frames AND rangeEnd/ended/error) arrive on the ONE
-    // ordered `exportSw:msg` channel and are posted to the Worker synchronously
-    // in arrival order — never split control onto a second subscription;
-    // ordering is the contract (see `ExportSwMsg` in shared/ipc). The reverse
-    // commands (nd:open / nd:decodeRange / nd:returnCredit / nd:close) arrive
-    // in `worker.onmessage` below. Unsubscribed in `cleanup()` so the listener
-    // doesn't leak across exports.
-    const offMsg = window.api.exportSw.onMsg((m) => {
-      switch (m.kind) {
-        case "frame": {
-          const f = m.frame;
-          // The one main→renderer copy already happened (structured-clone to a
-          // Uint8Array); hand its ArrayBuffer to the Worker zero-copy via
-          // transfer.
-          const u8 = f.data;
-          const ab = (u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength
-            ? u8.buffer
-            : u8.slice().buffer) as ArrayBuffer;
-          // Optional color tags via conditional spread — `exactOptionalPropertyTypes`
-          // forbids writing `undefined` into an exact-optional `string` field.
-          worker.postMessage(
-            {
-              type: "nd:frame",
-              frame: {
-                sessionId: f.sessionId,
-                ptsUs: f.ptsUs,
-                durUs: f.durUs,
-                width: f.width,
-                height: f.height,
-                format: f.format,
-                ...(f.colorMatrix !== undefined ? { colorMatrix: f.colorMatrix } : {}),
-                ...(f.colorRange !== undefined ? { colorRange: f.colorRange } : {}),
-                ...(f.colorPrimaries !== undefined ? { colorPrimaries: f.colorPrimaries } : {}),
-                ...(f.colorTransfer !== undefined ? { colorTransfer: f.colorTransfer } : {}),
-                data: ab,
-              },
-            } satisfies ExportRequest,
-            [ab],
-          );
-          return;
-        }
-        case "rangeEnd":
-          worker.postMessage({
-            type: "nd:rangeEnd",
-            sessionId: m.sessionId,
-            aUs: m.aUs,
-            bUs: m.bUs,
-          } satisfies ExportRequest);
-          return;
-        case "ended":
-          worker.postMessage({
-            type: "nd:ended",
-            sessionId: m.sessionId,
-          } satisfies ExportRequest);
-          return;
-        case "error":
-          worker.postMessage({
-            type: "nd:error",
-            sessionId: m.sessionId,
-            message: m.message,
-          } satisfies ExportRequest);
-          return;
-      }
-    });
-
+    const decodeSessions = new Set<string>();
     const cleanup = () => {
       if (disposed) return;
       disposed = true;
       resourceWaits.abort();
       motifProducer?.dispose();
       init.signal?.removeEventListener("abort", onAbort);
-      offMsg();
-      // A terminated Worker may never flush its per-session `nd:close` (on cancel
-      // it is torn down before draining; on success it posts `done` before its
-      // pool disposes), so reap any still-open native sessions on the main side
-      // here — on every terminal path — or the native decode threads leak.
-      if (nativeDecodeMediaIds.length > 0) window.api.exportSw.closeAll();
+      // A handle closes its own native decode session when it is disposed, but
+      // a Worker terminated here may never get to: end every session this
+      // export opened (a no-op for one already closed), so none outlives it.
+      for (const sessionId of decodeSessions) window.api.exportDecode.close({ sessionId });
       worker.terminate();
       sender?.terminate();
       for (const release of workerResources.values()) release();
@@ -477,37 +409,37 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         cleanup();
         reject(new Error(ev.message));
       } else if (ev.type === "nd:open") {
-        // Native export-decode: open the main-process session and reply with
-        // the correlated result. Any open failure surfaces to the Worker's
-        // handle (`ensureReady` rejects → the export aborts).
-        window.api.exportSw
-          .open({
-            sessionId: ev.sessionId,
-            path: ev.path,
-            outFormat: ev.outFormat,
-            creditWindow: ev.creditWindow,
-            finalizationToken: init.finalizationToken,
-          })
-          .then((info) => {
-            worker.postMessage({
-              type: "nd:openResult",
-              reqId: ev.reqId,
-              ok: true,
-              info,
-            } satisfies ExportRequest);
-          })
-          .catch((err: unknown) => {
+        // Native export-decode: open the session in main and hand its port to
+        // the Worker, which talks to the session directly from then on. An
+        // open failure reaches the Worker's handle (`ensureReady` rejects →
+        // the export aborts).
+        decodeSessions.add(ev.sessionId);
+        openExportDecode({
+          sessionId: ev.sessionId,
+          path: ev.path,
+          outFormat: ev.outFormat,
+          window: ev.window,
+          finalizationToken: init.finalizationToken,
+        }).then(
+          ({ info, port }) => {
+            // The export ended while this open was in flight, so its cleanup
+            // could not reach the session yet.
+            if (disposed) { port.close(); window.api.exportDecode.close({ sessionId: ev.sessionId }); return; }
+            worker.postMessage({ type: "nd:openResult", reqId: ev.reqId, ok: true, info, port } satisfies ExportRequest, [port]);
+          },
+          (err: unknown) => {
+            if (disposed) return;
             worker.postMessage({
               type: "nd:openResult",
               reqId: ev.reqId,
               ok: false,
               error: err instanceof Error ? err.message : String(err),
             } satisfies ExportRequest);
-          });
-      } else if (ev.type === "nd:decodeRange") {
-        window.api.exportSw.decodeRange({ sessionId: ev.sessionId, aUs: ev.aUs, bUs: ev.bUs });
-      } else if (ev.type === "nd:returnCredit") {
-        window.api.exportSw.returnCredit({ sessionId: ev.sessionId, credits: ev.credits });
+          },
+        );
+      } else if (ev.type === "nd:close") {
+        window.api.exportDecode.close({ sessionId: ev.sessionId });
+        decodeSessions.delete(ev.sessionId);
       } else if (ev.type === 'resource:acquire') {
         void acquireExportResources(ev.memoryMiB, ev.threads, init.finalizationToken, resourceWaits.signal).then(release => {
           if (disposed) { release(); return; }
@@ -518,8 +450,6 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         });
       } else if (ev.type === 'resource:release') {
         workerResources.get(ev.id)?.(); workerResources.delete(ev.id);
-      } else if (ev.type === "nd:close") {
-        window.api.exportSw.close({ sessionId: ev.sessionId });
       }
     };
   });

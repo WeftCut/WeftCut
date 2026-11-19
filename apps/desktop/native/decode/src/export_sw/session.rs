@@ -1,30 +1,34 @@
-//! Per-source export-decode session thread + registry + credit window.
+//! Per-source export-decode session: the range driver ([`serve_range`]) run on
+//! the carrier's [`SessionRuntime`], one [`ByteWindow`] lease per frame.
 //!
-//! Owns: a dedicated OS thread per session that opens a
-//! [`SwVideoStream`], services
-//! `decode_range` commands posted over an mpsc channel, and ships owned
-//! [`SwFrame`] bytes (NV12 or I420P10, per the session's [`ExportOutFormat`])
-//! out through a shared sink one credit at a time. The reorder,
-//! GOP walk, and EOS drain are the decoder's; the coverage/continuation contract
-//! is [`serve_range`]; the flow-control contract is [`CreditWindow`].
+//! Owns: the session's thread body, which opens a [`SwVideoStream`], services
+//! range commands in FIFO order and ships owned frame bytes (NV12 or I420P10,
+//! per the session's [`ExportOutFormat`]) as [`DecodeMsg`]s. The reorder, GOP
+//! walk and EOS drain are the decoder's; the coverage/continuation contract is
+//! [`serve_range`].
 //!
-//! Does NOT own the decode surface (`preview_sw::decoder`) or any VideoFrame
-//! pool. See ADR 0030 and ADR 0033 for why this contract differs from the
-//! preview path.
-#![allow(dead_code)]
+//! Does NOT own the decode surface (`preview_sw::decoder`), any VideoFrame
+//! pool, or the session lifecycle (`carrier::SessionRuntime`). See ADR 0030
+//! and ADR 0033 for why this contract differs from the preview path.
 
-use std::collections::HashMap;
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread::{self, JoinHandle};
+use std::sync::mpsc::Receiver;
+use std::sync::Arc;
 
+use napi::bindgen_prelude::Buffer;
+
+use crate::carrier::{ByteWindow, DecodeMsg, SessionCtx, SessionRuntime, Sink};
 use crate::preview_sw::decoder::{SwColorTags, SwFrame, SwOutFormat, SwVideoStream};
-use crate::recover::{panic_message, LockExt};
 
-/// Default credits (frames in flight) when a caller does not specify one: bounds
-/// a 4K 10-bit export's main-process frame memory to ~100–200 MB while keeping
-/// the decoder far enough ahead of the encoder that it never idles between
-/// chunks. See ADR 0033.
+/// Default window (frames in flight): bounds a 4K 10-bit export's main-process
+/// frame memory to ~100–200 MB while keeping the decoder far enough ahead of
+/// the encoder that it never idles between chunks. See ADR 0033.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the export Worker passes its window at open; this names the value for ADR 0033 and the tests"
+    )
+)]
 pub const DEFAULT_CREDIT_WINDOW: u32 = 6;
 
 /// Largest number of backward re-seek attempts when a container's seek overshoots
@@ -70,9 +74,9 @@ impl ExportOutFormat {
 /// What `open` hands back once the session thread has opened its decoder: the
 /// stream's frame dimensions, color tags, and source-normalized start PTS. Built
 /// from `SwVideoStream`'s public fields (set at open) — no frame is decoded just
-/// to learn them.
+/// to learn them. Frames carry no color of their own; this is the session's.
 #[derive(Debug, Clone)]
-pub struct ExportSwOpenInfo {
+pub struct ExportOpenInfo {
     pub width: u32,
     pub height: u32,
     pub color: SwColorTags,
@@ -82,119 +86,16 @@ pub struct ExportSwOpenInfo {
     pub start_pts_us: i64,
 }
 
-/// Announced out of a session thread through the shared sink. `Send` (its only
-/// payload is the owned [`SwFrame`] + plain strings). Every variant carries
-/// `session_id` so a single sink routes to the right per-session callback.
-pub enum ExportPoke {
-    /// A decoded in-range frame: owned bytes + timing/color, layout tagged by
-    /// `frame.format`.
-    Frame { session_id: String, frame: SwFrame },
-    /// The current `decode_range` has emitted every frame intersecting its
-    /// `[a, b]`; the range is satisfied. Fired once per completed range (also
-    /// for a zero-frame already-covered range).
-    RangeEnd {
-        session_id: String,
-        a_us: i64,
-        b_us: i64,
-    },
-    /// The stream reached its end during a range: the final GOP's trailing frames
-    /// were flushed internally (no external "next key" needed) and delivered
-    /// before this signal. A subsequent backward range re-arms decoding.
-    Ended { session_id: String },
-    /// A decode/seek failure while serving a range. The session stays registered
-    /// and can be retried with another `decode_range` (or a backward re-seek).
-    Error { session_id: String, message: String },
+/// The one command a session's loop takes: decode `[a_us, b_us]`. Lease
+/// returns do NOT travel here — they reach the [`ByteWindow`] directly, so
+/// they land while the loop is mid-range.
+struct DecodeRange {
+    a_us: i64,
+    b_us: i64,
 }
 
-/// Boxed sink shared with every session thread. `Mutex<Box<dyn Fn + Send>>` is
-/// `Send + Sync`, so an `Arc` clones into each thread and the mutex serialises
-/// concurrent sessions' calls. Mirrors `preview_sw`'s `FrameSink`.
-type ExportSink = Arc<Mutex<Option<Box<dyn Fn(ExportPoke) + Send>>>>;
-
-fn emit(sink: &ExportSink, poke: ExportPoke) {
-    let guard = sink.lock_recover();
-    if let Some(f) = guard.as_ref() {
-        f(poke);
-    }
-}
-
-// ── credit window ────────────────────────────────────────────────────────────
-
-struct CreditInner {
-    credits: i64,
-    closed: bool,
-}
-
-/// A counting semaphore bounding frames in flight.
-struct CreditWindow {
-    lock: Mutex<CreditInner>,
-    cv: Condvar,
-}
-
-impl CreditWindow {
-    fn new(window: u32) -> Self {
-        Self {
-            lock: Mutex::new(CreditInner {
-                credits: window.max(1) as i64,
-                closed: false,
-            }),
-            cv: Condvar::new(),
-        }
-    }
-
-    /// Take one credit, parking while none are available. Returns `false` if the
-    /// window was closed while waiting (or already) — the caller must abandon the
-    /// range rather than emit.
-    fn acquire(&self) -> bool {
-        let mut st = self.lock.lock_recover();
-        while st.credits <= 0 && !st.closed {
-            st = self.cv.wait(st).unwrap_or_else(|p| p.into_inner());
-        }
-        if st.closed {
-            return false;
-        }
-        st.credits -= 1;
-        true
-    }
-
-    /// Return `n` consumed credits, waking a parked producer.
-    fn release(&self, n: u32) {
-        let mut st = self.lock.lock_recover();
-        st.credits += n as i64;
-        drop(st);
-        self.cv.notify_all();
-    }
-
-    /// Mark closed and wake any parked producer so it can exit.
-    fn close(&self) {
-        let mut st = self.lock.lock_recover();
-        st.closed = true;
-        drop(st);
-        self.cv.notify_all();
-    }
-}
-
-// ── session thread ───────────────────────────────────────────────────────────
-
-/// Control messages posted to a session thread. Credit returns do NOT travel
-/// here — they hit the shared [`CreditWindow`] directly, so they can unblock a
-/// producer parked mid-range while this FIFO channel is busy.
-enum ExportMsg {
-    DecodeRange(i64, i64),
-    Close,
-}
-
-/// The registry's per-session handle: the command channel, the shared credit
-/// window (so `return_credit` can reach it without a message), and the join
-/// handle. The decoder itself lives on the thread, never here.
-struct Session {
-    tx: Sender<ExportMsg>,
-    credit: Arc<CreditWindow>,
-    join: Option<JoinHandle<()>>,
-}
-
-/// Per-thread cursor state carried across `decode_range` calls. Owned by the
-/// session thread; never crosses a boundary.
+/// Per-thread cursor state carried across ranges. Owned by the session
+/// thread; never crosses a boundary.
 #[derive(Default)]
 struct RangeState {
     /// A frame decoded past the previous range's `b`, held so a forward
@@ -249,23 +150,39 @@ fn robust_seek_and_probe(
     }
 }
 
-/// Service one `decode_range(a, b)`: deliver every frame whose presentation
-/// interval `[pts, pts+dur)` intersects `[a, b]` (b inclusive — matches the
+fn mark(a: i64, b: i64) -> DecodeMsg {
+    DecodeMsg::Mark {
+        a_us: a as f64,
+        b_us: b as f64,
+    }
+}
+
+/// A seek/decode failure the session survives: the next range re-seeks or
+/// continues as usual.
+fn recoverable(message: String) -> DecodeMsg {
+    DecodeMsg::Error {
+        message,
+        terminal: false,
+    }
+}
+
+/// Service one range `[a, b]`: deliver every frame whose presentation
+/// interval `[pts, pts+dur)` intersects it (b inclusive — matches the
 /// WebCodecs `ExportFrameStore` half-open containment + `pts <= bUs` feed
-/// cutoff), exactly once, in presentation order, throttled through the credit
-/// window.
+/// cutoff), exactly once, in presentation order, one window lease per frame.
 ///
 /// Coverage is a plain forward scan because `next_frame` already yields
 /// presentation order (monotonic `pts_us`) — no stop-key packet bookkeeping, no
 /// mid-flush. A range is a *forward* continuation when `a >= last_range_a`,
 /// resuming on the previous range's stopped-on frame ([`RangeState::pending`])
 /// with no prefix re-feed; otherwise (backward clip-reuse jump) it re-seeks.
+///
+/// A cancelled session abandons the range between frames, without its `Mark`.
 fn serve_range(
     stream: &mut SwVideoStream,
     state: &mut RangeState,
-    credit: &CreditWindow,
-    sink: &ExportSink,
-    session_id: &str,
+    window: &ByteWindow,
+    ctx: &SessionCtx,
     a: i64,
     b: i64,
 ) {
@@ -274,14 +191,7 @@ fn serve_range(
     // Forward past a drained stream, or fully behind what we've already emitted:
     // nothing to decode, the range is trivially satisfied.
     if forward && (state.ended || b < state.covered_through_us) {
-        emit(
-            sink,
-            ExportPoke::RangeEnd {
-                session_id: session_id.to_string(),
-                a_us: a,
-                b_us: b,
-            },
-        );
+        ctx.emit(mark(a, b));
         return;
     }
 
@@ -300,13 +210,7 @@ fn serve_range(
                 state.covered_through_us = i64::MIN;
             }
             Err(e) => {
-                emit(
-                    sink,
-                    ExportPoke::Error {
-                        session_id: session_id.to_string(),
-                        message: e,
-                    },
-                );
+                ctx.emit(recoverable(e));
                 return;
             }
         }
@@ -314,6 +218,9 @@ fn serve_range(
     state.last_range_a = Some(a);
 
     loop {
+        if ctx.cancelled() {
+            return;
+        }
         let frame = match state.pending.take() {
             Some(f) => f,
             None => match stream.next_frame() {
@@ -323,30 +230,12 @@ fn serve_range(
                     // been drained + delivered above. Signal end-of-stream, then
                     // close the range.
                     state.ended = true;
-                    emit(
-                        sink,
-                        ExportPoke::Ended {
-                            session_id: session_id.to_string(),
-                        },
-                    );
-                    emit(
-                        sink,
-                        ExportPoke::RangeEnd {
-                            session_id: session_id.to_string(),
-                            a_us: a,
-                            b_us: b,
-                        },
-                    );
+                    ctx.emit(DecodeMsg::End);
+                    ctx.emit(mark(a, b));
                     return;
                 }
                 Err(e) => {
-                    emit(
-                        sink,
-                        ExportPoke::Error {
-                            session_id: session_id.to_string(),
-                            message: e,
-                        },
-                    );
+                    ctx.emit(recoverable(e));
                     return;
                 }
             },
@@ -358,14 +247,7 @@ fn serve_range(
         // the inclusive range and must be delivered.)
         if frame.pts_us > b {
             state.pending = Some(frame);
-            emit(
-                sink,
-                ExportPoke::RangeEnd {
-                    session_id: session_id.to_string(),
-                    a_us: a,
-                    b_us: b,
-                },
-            );
+            ctx.emit(mark(a, b));
             return;
         }
 
@@ -376,241 +258,131 @@ fn serve_range(
             continue;
         }
 
-        // In range. Gate on a credit BEFORE emitting so in-flight frames never
-        // exceed the window; a closed window means teardown — abandon silently.
-        if !credit.acquire() {
+        // In range. Take a lease BEFORE emitting so in-flight frames never
+        // exceed the window. A closed window, or a lease granted after cancel,
+        // means teardown: abandon silently.
+        let Some(lease) = window.acquire(frame.data.len()) else {
+            return;
+        };
+        if ctx.cancelled() {
+            window.release(lease);
             return;
         }
         if frame.pts_us > state.covered_through_us {
             state.covered_through_us = frame.pts_us;
         }
-        emit(
-            sink,
-            ExportPoke::Frame {
-                session_id: session_id.to_string(),
-                frame,
-            },
-        );
+        ctx.emit(DecodeMsg::Bytes {
+            lease,
+            pts_us: frame.pts_us as f64,
+            dur_us: frame.dur_us as f64,
+            width: frame.width,
+            height: frame.height,
+            format: frame.format.into(),
+            data: Buffer::from(frame.data),
+        });
     }
 }
 
-/// The session thread body: open the decoder targeting the session's parsed
-/// output format, report metadata back to `open`, then run a blocking message
-/// loop until `Close` (or the sender drops).
-fn session_thread(
-    session_id: String,
-    path: String,
-    out_format: ExportOutFormat,
-    credit: Arc<CreditWindow>,
-    rx: Receiver<ExportMsg>,
-    init_tx: Sender<Result<ExportSwOpenInfo, String>>,
-    sink: ExportSink,
+/// The session's loop: serve ranges in FIFO order until close disconnects the
+/// channel. A range still queued when the session is cancelled is dropped
+/// unserved.
+fn run_session(
+    mut stream: SwVideoStream,
+    rx: Receiver<DecodeRange>,
+    ctx: SessionCtx,
+    window: Arc<ByteWindow>,
 ) {
-    let mut stream = match SwVideoStream::open_with_format(&path, out_format.decoder_format()) {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = init_tx.send(Err(e));
-            return;
-        }
-    };
-    let info = ExportSwOpenInfo {
-        width: stream.width,
-        height: stream.height,
-        color: stream.color.clone(),
-        start_pts_us: stream.start_pts_us,
-    };
-    if init_tx.send(Ok(info)).is_err() {
-        return; // `open` gave up waiting; drop `stream` and exit.
-    }
-
     let mut state = RangeState::new();
-    while let Ok(msg) = rx.recv() {
-        match msg {
-            ExportMsg::DecodeRange(a, b) => {
-                // A panic in the ffmpeg decode path must not silently kill this
-                // thread and strand the export Worker on frames that never arrive.
-                // Catch it, surface it in-band as an `Error` message (so JS fails
-                // the range / tears the session down), then stop: the stream's
-                // libav state is suspect after an unwind, so we never touch it or
-                // `state` again — which is what makes the `AssertUnwindSafe`
-                // (needed for the `&mut stream` / `&mut state` captures) sound.
-                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    serve_range(&mut stream, &mut state, &credit, &sink, &session_id, a, b)
-                }));
-                if let Err(payload) = outcome {
-                    emit(
-                        &sink,
-                        ExportPoke::Error {
-                            session_id: session_id.clone(),
-                            message: format!(
-                                "export-sw decode panicked: {}",
-                                panic_message(&*payload)
-                            ),
-                        },
-                    );
-                    break;
-                }
-            }
-            ExportMsg::Close => break,
+    while let Ok(DecodeRange { a_us, b_us }) = rx.recv() {
+        if ctx.cancelled() {
+            break;
         }
+        serve_range(&mut stream, &mut state, &window, &ctx, a_us, b_us);
     }
     // `stream` drops here: the decoder + format context release on this thread.
 }
 
-// ── registry ─────────────────────────────────────────────────────────────────
-
-/// The set of live export software-decode sessions. `Send + Sync`, so the addon
-/// can hold it behind an `Arc` and drive it from napi calls.
-pub struct ExportSwRegistry {
-    sessions: Mutex<HashMap<String, Session>>,
-    sink: ExportSink,
+/// The live export-decode sessions. `Send + Sync`, so the addon drives it from
+/// napi calls.
+pub struct ExportSessions {
+    runtime: SessionRuntime<DecodeRange, ByteWindow>,
 }
 
-impl Default for ExportSwRegistry {
+impl Default for ExportSessions {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ExportSwRegistry {
+impl ExportSessions {
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
-            sink: Arc::new(Mutex::new(None)),
+            runtime: SessionRuntime::new("export-sw"),
         }
     }
 
-    /// Install the sink every session emits pokes through. Set once before any
-    /// `open`; sessions share the same cell.
-    pub fn set_sink(&self, sink: Box<dyn Fn(ExportPoke) + Send>) {
-        *self.sink.lock_recover() = Some(sink);
-    }
-
-    /// Open `path` for export decode into `out_format`, with a credit window of
-    /// `credit_window` frames. Fails loudly (before returning) if the requested
-    /// format cannot be emitted or the decoder cannot open. Blocks on the init
-    /// handshake so a decoder-open failure surfaces synchronously with metadata.
+    /// Open `path` for export decode into `out_format`, with at most `window`
+    /// frames in flight and every message going to `sink`. Fails loudly
+    /// (before returning) if the requested format cannot be emitted or the
+    /// decoder cannot open.
     pub fn open(
         &self,
         session_id: &str,
         path: &str,
         out_format: &str,
-        credit_window: u32,
-    ) -> Result<ExportSwOpenInfo, String> {
+        window: u32,
+        sink: Sink,
+    ) -> Result<ExportOpenInfo, String> {
         // Validate the requested format FIRST — a format the session can't emit
         // must fail at open, before any thread or decoder work.
         let fmt = ExportOutFormat::parse(out_format)?;
-
-        let mut sessions = self.sessions.lock_recover();
-        if sessions.contains_key(session_id) {
-            return Err(format!("export-sw session '{session_id}' is already open"));
-        }
-
-        let (init_tx, init_rx) = mpsc::channel::<Result<ExportSwOpenInfo, String>>();
-        let (cmd_tx, cmd_rx) = mpsc::channel::<ExportMsg>();
-        let credit = Arc::new(CreditWindow::new(credit_window));
-        let credit_for_thread = Arc::clone(&credit);
-        let sink = Arc::clone(&self.sink);
-        let sid = session_id.to_string();
-        let path_owned = path.to_string();
-
+        let window = Arc::new(ByteWindow::new(window, 0));
+        let thread_window = Arc::clone(&window);
+        let path = path.to_string();
         let thread_limit = crate::preview_sw::decoder::configured_decode_threads();
-        let join = thread::Builder::new()
-            .name(format!("export-sw-{sid}"))
-            .spawn(move || {
-                crate::preview_sw::decoder::set_session_threads(thread_limit);
-                session_thread(
-                    sid,
-                    path_owned,
-                    fmt,
-                    credit_for_thread,
-                    cmd_rx,
-                    init_tx,
-                    sink,
-                )
-            })
-            .map_err(|e| format!("spawn export-sw session thread failed: {e}"))?;
-
-        match init_rx.recv() {
-            Ok(Ok(info)) => {
-                sessions.insert(
-                    session_id.to_string(),
-                    Session {
-                        tx: cmd_tx,
-                        credit,
-                        join: Some(join),
-                    },
-                );
-                Ok(info)
-            }
-            Ok(Err(e)) => {
-                let _ = join.join();
-                Err(e)
-            }
-            Err(_) => {
-                let _ = join.join();
-                Err(format!(
-                    "export-sw session '{session_id}' thread exited before init"
-                ))
-            }
-        }
+        self.runtime.open(session_id, sink, window, move |ctx, rx| {
+            crate::preview_sw::decoder::set_session_threads(thread_limit);
+            let stream = SwVideoStream::open_with_format(&path, fmt.decoder_format())?;
+            let info = ExportOpenInfo {
+                width: stream.width,
+                height: stream.height,
+                color: stream.color.clone(),
+                start_pts_us: stream.start_pts_us,
+            };
+            Ok((info, move || run_session(stream, rx, ctx, thread_window)))
+        })
     }
 
-    /// Ask a session to decode `[a_us, b_us]`. Fire-and-forget: the thread seeks/
-    /// decodes and pokes frames + a `RangeEnd` (or `Ended`) out through the sink.
+    /// Ask a session to decode `[a_us, b_us]`. Fire-and-forget: frames and a
+    /// `Mark` (or `End` then `Mark`) follow on the session's sink.
     pub fn decode_range(&self, session_id: &str, a_us: i64, b_us: i64) -> Result<(), String> {
-        let sessions = self.sessions.lock_recover();
-        let session = sessions
-            .get(session_id)
-            .ok_or_else(|| format!("no export-sw session '{session_id}'"))?;
-        session
-            .tx
-            .send(ExportMsg::DecodeRange(a_us, b_us))
-            .map_err(|_| format!("export-sw session '{session_id}' thread is gone"))
+        self.runtime.send(session_id, DecodeRange { a_us, b_us })
     }
 
-    /// Return `n` consumed credits to a session, resuming a producer parked on an
-    /// exhausted window. Reaches the credit window directly (not via the command
-    /// channel) so it works even while the thread is mid-range.
-    pub fn return_credit(&self, session_id: &str, n: u32) -> Result<(), String> {
-        let sessions = self.sessions.lock_recover();
-        let session = sessions
-            .get(session_id)
-            .ok_or_else(|| format!("no export-sw session '{session_id}'"))?;
-        session.credit.release(n);
-        Ok(())
+    /// Hand a frame's lease back, resuming a producer parked on a full window.
+    /// Reaches the window directly, so it lands while a range is being served
+    /// (ADR 0033). `Ok(false)`: the lease was not in flight and changed nothing.
+    pub fn release(&self, session_id: &str, lease: u32) -> Result<bool, String> {
+        self.runtime
+            .with(session_id, |window| window.release(lease))
     }
 
-    /// Tear down a session: close the credit window FIRST (so a producer parked in
-    /// `acquire` wakes and abandons its range) and signal + join the thread. The
-    /// FIFO channel guarantees any range sent before this is drained (as a no-op
-    /// once closed) before the thread sees `Close`.
+    /// Tear a session down: a parked producer wakes, a range in progress is
+    /// abandoned between frames, queued ranges are dropped, and the call
+    /// returns within the runtime's close grace.
     pub fn close(&self, session_id: &str) -> Result<(), String> {
-        let mut session = {
-            let mut sessions = self.sessions.lock_recover();
-            sessions.remove(session_id)
-        };
-        match session.as_mut() {
-            Some(s) => {
-                s.credit.close();
-                let _ = s.tx.send(ExportMsg::Close);
-                if let Some(join) = s.join.take() {
-                    join.join().map_err(|_| {
-                        format!("export-sw session '{session_id}' thread panicked during teardown")
-                    })?;
-                }
-                Ok(())
-            }
-            None => Err(format!("no export-sw session '{session_id}'")),
-        }
+        self.runtime.close(session_id)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::carrier::PlaneFormat;
     use crate::test_wait::wait_for;
-    use std::sync::{Arc, Mutex};
+    use std::sync::mpsc;
+    use std::sync::Mutex;
+    use std::thread;
     use std::time::Duration;
 
     const PRORES: &str = concat!(
@@ -619,50 +391,79 @@ mod tests {
     );
     const MPEG2: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
 
-    /// Collects every poke a registry emits, tagged, so tests can assert the
-    /// frame PTS sequence, per-frame format/bytes, and the control markers.
+    /// Everything one session sent, so tests can assert the frame PTS
+    /// sequence, per-frame format/bytes, the leases and the control markers.
     #[derive(Default)]
     struct Collected {
         pts: Vec<i64>,
         durs: Vec<i64>,
-        colors: Vec<SwColorTags>,
-        formats: Vec<SwOutFormat>,
+        formats: Vec<PlaneFormat>,
         datas: Vec<Vec<u8>>,
+        leases: Vec<u32>,
+        /// How many of `leases` the test has handed back.
+        returned: usize,
         range_ends: usize,
         completed_ranges: Vec<(i64, i64)>,
         ended: usize,
-        errors: Vec<String>,
+        errors: Vec<(String, bool)>,
     }
 
-    fn registry_with_collector() -> (ExportSwRegistry, Arc<Mutex<Collected>>) {
+    fn record(c: &mut Collected, msg: DecodeMsg) {
+        match msg {
+            DecodeMsg::Bytes {
+                lease,
+                pts_us,
+                dur_us,
+                format,
+                data,
+                ..
+            } => {
+                c.leases.push(lease);
+                c.pts.push(pts_us as i64);
+                c.durs.push(dur_us as i64);
+                c.formats.push(format);
+                c.datas.push(data.to_vec());
+            }
+            DecodeMsg::Mark { a_us, b_us } => {
+                c.range_ends += 1;
+                c.completed_ranges.push((a_us as i64, b_us as i64));
+            }
+            DecodeMsg::End => c.ended += 1,
+            DecodeMsg::Error { message, terminal } => c.errors.push((message, terminal)),
+        }
+    }
+
+    fn collector() -> (Sink, Arc<Mutex<Collected>>) {
         let got = Arc::new(Mutex::new(Collected::default()));
         let g2 = got.clone();
-        let reg = ExportSwRegistry::new();
-        reg.set_sink(Box::new(move |poke| {
-            let mut c = g2.lock().unwrap();
-            match poke {
-                ExportPoke::Frame { frame, .. } => {
-                    c.pts.push(frame.pts_us);
-                    c.durs.push(frame.dur_us);
-                    c.colors.push(frame.color.clone());
-                    c.formats.push(frame.format);
-                    c.datas.push(frame.data);
-                }
-                ExportPoke::RangeEnd { a_us, b_us, .. } => {
-                    c.range_ends += 1;
-                    c.completed_ranges.push((a_us, b_us));
-                }
-                ExportPoke::Ended { .. } => c.ended += 1,
-                ExportPoke::Error { message, .. } => c.errors.push(message),
-            }
-        }));
-        (reg, got)
+        (
+            Box::new(move |msg| record(&mut g2.lock().unwrap(), msg)),
+            got,
+        )
     }
 
-    /// How long a test gives a producer that should be parked on credit to show
-    /// it is not. Only a negative reads after it: a slower machine makes the
-    /// check weaker, never red.
+    /// Open `id` on `sessions` with a fresh collector as its sink.
+    fn open(
+        sessions: &ExportSessions,
+        id: &str,
+        path: &str,
+        format: &str,
+        window: u32,
+    ) -> Result<(ExportOpenInfo, Arc<Mutex<Collected>>), String> {
+        let (sink, got) = collector();
+        sessions
+            .open(id, path, format, window, sink)
+            .map(|info| (info, got))
+    }
+
+    /// How long a test gives a producer that should be parked on the window to
+    /// show it is not. Only a negative reads after it: a slower machine makes
+    /// the check weaker, never red.
     const PARKED: Duration = Duration::from_millis(100);
+
+    fn frames(got: &Arc<Mutex<Collected>>) -> usize {
+        got.lock().unwrap().pts.len()
+    }
 
     /// Total control markers seen (range ends + stream ends). Read with a SINGLE
     /// lock — reading two fields off two `got.lock()` calls in one expression
@@ -672,33 +473,45 @@ mod tests {
         c.range_ends + c.ended
     }
 
-    /// Drive a range to its RangeEnd (or Ended), returning credits generously so
+    /// Hand back every lease received and not yet returned, as a consumer that
+    /// keeps up would.
+    fn return_all(s: &ExportSessions, id: &str, got: &Arc<Mutex<Collected>>) {
+        let leases = {
+            let mut c = got.lock().unwrap();
+            let fresh = c.leases[c.returned..].to_vec();
+            c.returned = c.leases.len();
+            fresh
+        };
+        for lease in leases {
+            assert!(s.release(id, lease).unwrap(), "lease {lease} was in flight");
+        }
+    }
+
+    /// Drive a range to its Mark (or End), returning leases as they arrive so
     /// the producer never parks. A range that reaches neither fails here, so a
     /// caller's assertions always read a finished range.
-    fn run_range(reg: &ExportSwRegistry, id: &str, a: i64, b: i64, got: &Arc<Mutex<Collected>>) {
+    fn run_range(s: &ExportSessions, id: &str, a: i64, b: i64, got: &Arc<Mutex<Collected>>) {
         let ends_before = markers(got);
-        reg.decode_range(id, a, b).unwrap();
+        s.decode_range(id, a, b).unwrap();
         let finished = wait_for(|| {
-            reg.return_credit(id, 64).unwrap();
+            return_all(s, id, got);
             markers(got) > ends_before
         });
         assert!(
             finished,
-            "range {a}..{b} of '{id}' reached neither a RangeEnd nor an Ended"
+            "range {a}..{b} of '{id}' reached neither a Mark nor an End"
         );
     }
 
     #[test]
     fn open_returns_dimensions_color_and_start_pts() {
-        let (reg, _got) = registry_with_collector();
-        let info = reg
-            .open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
-            .expect("open");
+        let s = ExportSessions::new();
+        let (info, _got) = open(&s, "s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).expect("open");
         assert_eq!((info.width, info.height), (320, 240));
         // ProRes fixture is color_range=tv; matrix/primaries/transfer unspecified.
         assert_eq!(info.color.range.as_deref(), Some("tv"));
         assert_eq!(info.start_pts_us, 0);
-        reg.close("s").unwrap();
+        s.close("s").unwrap();
     }
 
     #[test]
@@ -716,12 +529,10 @@ mod tests {
         );
         drop(stream);
 
-        let (reg, got) = registry_with_collector();
-        let info = reg
-            .open("full", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
-            .expect("open");
+        let s = ExportSessions::new();
+        let (info, got) = open(&s, "full", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).expect("open");
         assert_eq!((info.width, info.height), (320, 240));
-        run_range(&reg, "full", 0, 300_000, &got);
+        run_range(&s, "full", 0, 300_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         assert!(!c.datas.is_empty(), "no frames delivered");
@@ -733,36 +544,34 @@ mod tests {
             );
         }
         drop(c);
-        reg.close("full").unwrap();
+        s.close("full").unwrap();
     }
 
     #[test]
     fn range_end_reports_the_exact_completed_range() {
-        let (reg, got) = registry_with_collector();
-        reg.open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
-            .expect("open");
-        run_range(&reg, "s", 125_000, 500_000, &got);
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).expect("open");
+        run_range(&s, "s", 125_000, 500_000, &got);
         assert_eq!(
             got.lock().unwrap().completed_ranges,
             vec![(125_000, 500_000)]
         );
-        reg.close("s").unwrap();
+        s.close("s").unwrap();
     }
 
     #[test]
     fn open_accepts_i420p10_and_rejects_garbage_loudly() {
-        let (reg, _got) = registry_with_collector();
-        let err = reg
-            .open("s", PRORES, "RGBA64", DEFAULT_CREDIT_WINDOW)
-            .unwrap_err();
+        let s = ExportSessions::new();
+        let Err(err) = open(&s, "s", PRORES, "RGBA64", DEFAULT_CREDIT_WINDOW) else {
+            panic!("RGBA64 opened");
+        };
         assert!(
             err.contains("RGBA64"),
             "error should name the format: {err}"
         );
         // 10-bit is a first-class lane output.
-        reg.open("s", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW)
-            .expect("I420P10 opens");
-        reg.close("s").unwrap();
+        open(&s, "s", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW).expect("I420P10 opens");
+        s.close("s").unwrap();
     }
 
     #[test]
@@ -771,23 +580,21 @@ mod tests {
         // packed output must show >8-bit code values — an 8-bit-quantized path
         // caps every u16 sample at 255, while even 10-bit limited-range BLACK
         // is 256 (and white ~940).
-        let (reg, got) = registry_with_collector();
-        let info = reg
-            .open("p", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW)
-            .unwrap();
+        let s = ExportSessions::new();
+        let (info, got) = open(&s, "p", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW).unwrap();
         assert_eq!((info.width, info.height), (320, 240)); // even dims → w*h*3 bytes
-        run_range(&reg, "p", 0, 300_000, &got);
+        assert_eq!(
+            info.color.range.as_deref(),
+            Some("tv"),
+            "color tags carried by the open reply"
+        );
+        run_range(&s, "p", 0, 300_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         assert!(!c.datas.is_empty(), "no frames delivered");
         assert!(
-            c.formats.iter().all(|&f| f == SwOutFormat::I420p10),
-            "poke-level format tag"
-        );
-        assert_eq!(
-            c.colors[0].range.as_deref(),
-            Some("tv"),
-            "color tags still carried"
+            c.formats.iter().all(|&f| f == PlaneFormat::I420p10),
+            "message-level format tag"
         );
         let y_bytes = 320 * 240 * 2;
         let mut luma_above_8bit = false;
@@ -806,7 +613,7 @@ mod tests {
             "no luma sample above 255 — output looks 8-bit-quantized"
         );
         drop(c);
-        reg.close("p").unwrap();
+        s.close("p").unwrap();
     }
 
     #[test]
@@ -814,18 +621,16 @@ mod tests {
         // MPEG-2 decodes to 8-bit yuv420p; the lane still emits I420P10
         // (swscale 8→10 upconvert) so a mixed-depth timeline needs no
         // per-source format branch downstream.
-        let (reg, got) = registry_with_collector();
-        let info = reg
-            .open("m", MPEG2, "I420P10", DEFAULT_CREDIT_WINDOW)
-            .unwrap();
+        let s = ExportSessions::new();
+        let (info, got) = open(&s, "m", MPEG2, "I420P10", DEFAULT_CREDIT_WINDOW).unwrap();
         assert_eq!((info.width, info.height), (320, 240));
-        run_range(&reg, "m", 0, 200_000, &got);
+        run_range(&s, "m", 0, 200_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         assert!(!c.datas.is_empty(), "no frames delivered");
         assert!(
-            c.formats.iter().all(|&f| f == SwOutFormat::I420p10),
-            "poke-level format tag"
+            c.formats.iter().all(|&f| f == PlaneFormat::I420p10),
+            "message-level format tag"
         );
         for d in &c.datas {
             assert_eq!(d.len(), 320 * 240 * 3, "tightly-packed I420P10 length");
@@ -843,7 +648,7 @@ mod tests {
             );
         }
         drop(c);
-        reg.close("m").unwrap();
+        s.close("m").unwrap();
     }
 
     #[test]
@@ -852,40 +657,29 @@ mod tests {
         // [200_000, 500_000] intersects frames at 125_000 (ends 250_000 > a),
         // 250_000, 375_000, and 500_000 (starts at b, inclusive). Not 0 (ends at
         // 125_000 <= a) nor 625_000 (starts past b).
-        let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
-            .unwrap();
-        run_range(&reg, "p", 200_000, 500_000, &got);
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&s, "p", 200_000, 500_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         assert_eq!(c.pts, vec![125_000, 250_000, 375_000, 500_000]);
+        assert!(
+            c.formats.iter().all(|&f| f == PlaneFormat::Nv12),
+            "message-level format tag"
+        );
         assert_eq!(c.range_ends, 1);
         drop(c);
-        reg.close("p").unwrap();
-    }
-
-    #[test]
-    fn frames_carry_color_tags() {
-        let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
-            .unwrap();
-        run_range(&reg, "p", 0, 200_000, &got);
-        let c = got.lock().unwrap();
-        assert!(!c.colors.is_empty());
-        assert_eq!(c.colors[0].range.as_deref(), Some("tv"));
-        drop(c);
-        reg.close("p").unwrap();
+        s.close("p").unwrap();
     }
 
     #[test]
     fn forward_ranges_continue_without_duplicates() {
         // Two contiguous forward ranges over ProRes must partition the frames with
         // no repeats and no gaps: [0,300_000] then [300_001,700_000].
-        let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
-            .unwrap();
-        run_range(&reg, "p", 0, 300_000, &got);
-        run_range(&reg, "p", 300_001, 700_000, &got);
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&s, "p", 0, 300_000, &got);
+        run_range(&s, "p", 300_001, 700_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         // [0,300_000]: 0,125_000,250_000 (375_000 starts past 300_000).
@@ -895,24 +689,23 @@ mod tests {
         // Strictly increasing → no duplicates, presentation order preserved.
         assert!(c.pts.windows(2).all(|w| w[0] < w[1]));
         drop(c);
-        reg.close("p").unwrap();
+        s.close("p").unwrap();
     }
 
     #[test]
     fn backward_range_reseeks_and_reemits() {
-        let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
-            .unwrap();
-        run_range(&reg, "p", 500_000, 875_000, &got);
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&s, "p", 500_000, 875_000, &got);
         let after_fwd = got.lock().unwrap().pts.clone();
         assert_eq!(after_fwd, vec![500_000, 625_000, 750_000, 875_000]);
         // Clip-reuse jump backward: re-seek and re-emit the earlier frames.
-        run_range(&reg, "p", 0, 200_000, &got);
+        run_range(&s, "p", 0, 200_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         assert_eq!(&c.pts[after_fwd.len()..], &[0, 125_000]);
         drop(c);
-        reg.close("p").unwrap();
+        s.close("p").unwrap();
     }
 
     #[test]
@@ -921,19 +714,18 @@ mod tests {
         // Without the reset, the third range below sits under the FIRST range's
         // high-water mark (875k), short-circuits as "already covered", and
         // delivers nothing — though [300k, 400k] was never covered by any range.
-        let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
-            .unwrap();
-        run_range(&reg, "p", 500_000, 875_000, &got); // high-water → 875k
-        run_range(&reg, "p", 0, 200_000, &got); // backward jump: coverage resets
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&s, "p", 500_000, 875_000, &got); // high-water → 875k
+        run_range(&s, "p", 0, 200_000, &got); // backward jump: coverage resets
         let before = got.lock().unwrap().pts.len();
-        run_range(&reg, "p", 300_000, 400_000, &got); // forward, never covered
+        run_range(&s, "p", 300_000, 400_000, &got); // forward, never covered
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         // 250k ([250k,375k) intersects) and 375k ([375k,500k) intersects b=400k).
         assert_eq!(&c.pts[before..], &[250_000, 375_000]);
         drop(c);
-        reg.close("p").unwrap();
+        s.close("p").unwrap();
     }
 
     #[test]
@@ -942,9 +734,9 @@ mod tests {
         // first two GOPs must deliver monotonically increasing (presentation-order)
         // PTS despite B-frame decode-order reordering, covering the range densely
         // (30fps → ~33_333us spacing).
-        let (reg, got) = registry_with_collector();
-        reg.open("m", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
-        run_range(&reg, "m", 0, 600_000, &got);
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "m", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&s, "m", 0, 600_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         assert!(
@@ -963,7 +755,7 @@ mod tests {
         // Every delivered frame intersects [0, 600_000] (b inclusive).
         assert!(c.pts.iter().all(|&p| p <= 600_000));
         drop(c);
-        reg.close("m").unwrap();
+        s.close("m").unwrap();
     }
 
     #[test]
@@ -974,15 +766,14 @@ mod tests {
         // mid-stream seek must deliver exactly the frames the linear pass produced
         // in that window (same set, same presentation order) — a dropped, doubled,
         // or mis-timed frame from a botched seek would diverge.
-        let (reg, got) = registry_with_collector();
-        reg.open("full", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW)
-            .unwrap();
-        run_range(&reg, "full", 0, 10_000_000, &got);
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "full", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&s, "full", 0, 10_000_000, &got);
         let all: Vec<(i64, i64)> = {
             let c = got.lock().unwrap();
             c.pts.iter().copied().zip(c.durs.iter().copied()).collect()
         };
-        reg.close("full").unwrap();
+        s.close("full").unwrap();
         assert_eq!(all.len(), 60);
 
         let (a, b) = (700_000, 1_100_000);
@@ -993,16 +784,15 @@ mod tests {
             .collect();
         assert!(expected.len() >= 10, "mid-stream window unexpectedly small");
 
-        let (reg2, got2) = registry_with_collector();
-        reg2.open("mid", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW)
-            .unwrap();
-        run_range(&reg2, "mid", a, b, &got2);
+        let s2 = ExportSessions::new();
+        let (_info, got2) = open(&s2, "mid", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&s2, "mid", a, b, &got2);
         let delivered = {
             let c = got2.lock().unwrap();
             assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
             c.pts.clone()
         };
-        reg2.close("mid").unwrap();
+        s2.close("mid").unwrap();
         assert_eq!(delivered, expected);
     }
 
@@ -1012,9 +802,9 @@ mod tests {
         // case): decode a late window, then jump into an earlier GOP. The session
         // must re-seek to an earlier keyframe and deliver the earlier frames in
         // presentation order, covering the new range.
-        let (reg, got) = registry_with_collector();
-        reg.open("g", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
-        run_range(&reg, "g", 1_400_000, 1_700_000, &got);
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "g", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&s, "g", 1_400_000, 1_700_000, &got);
         let before = {
             let c = got.lock().unwrap();
             assert!(c.pts.windows(2).all(|w| w[0] < w[1]), "late not monotonic");
@@ -1024,7 +814,7 @@ mod tests {
                 .all(|&p| p + 33_333 > 1_400_000 && p <= 1_700_000));
             c.pts.len()
         };
-        run_range(&reg, "g", 400_000, 700_000, &got);
+        run_range(&s, "g", 400_000, 700_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         let early = &c.pts[before..];
@@ -1043,122 +833,229 @@ mod tests {
             early[0]
         );
         drop(c);
-        reg.close("g").unwrap();
+        s.close("g").unwrap();
     }
 
     #[test]
     fn eos_flushes_final_gop_then_signals_end() {
         // A range past the stream end drains the final GOP's trailing frames (no
-        // external next-key) and fires exactly one Ended.
-        let (reg, got) = registry_with_collector();
-        let info = reg.open("m", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        // external next-key) and fires exactly one End, before the range's Mark.
+        let s = ExportSessions::new();
+        let (info, got) = open(&s, "m", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
         assert_eq!((info.width, info.height), (320, 240));
-        run_range(&reg, "m", 0, 10_000_000, &got); // b beyond the ~1.97s stream
+        run_range(&s, "m", 0, 10_000_000, &got); // b beyond the ~1.97s stream
+                                                 // The End is a marker of its own, so wait for the Mark behind it too.
+        assert!(wait_for(|| got.lock().unwrap().range_ends == 1));
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
-        assert_eq!(c.ended, 1, "expected exactly one Ended");
+        assert_eq!(c.ended, 1, "expected exactly one End");
         // All 60 frames delivered, last near the stream end (~1.966s normalized).
         assert_eq!(c.pts.len(), 60, "expected all 60 frames");
         assert!(*c.pts.last().unwrap() > 1_900_000);
         drop(c);
-        reg.close("m").unwrap();
+        s.close("m").unwrap();
     }
 
     #[test]
-    fn credit_window_halts_then_resumes() {
-        // With window=3 and NO credits returned beyond the initial fill, the
-        // session emits at most 3 frames then parks. Returning credits resumes it.
-        let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", 3).unwrap();
-        reg.decode_range("p", 0, 875_000).unwrap(); // all 8 frames intersect
-        let frames = || got.lock().unwrap().pts.len();
-        // Each wait is for the frames the credit allows; the pause after it is
-        // the time a producer that failed to park would have to show a frame
-        // too many.
-        wait_for(|| frames() >= 3);
+    fn window_halts_then_resumes_per_returned_lease() {
+        // With window=3 and no lease returned, the session emits 3 frames then
+        // parks. Each returned lease lets exactly one more frame through.
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "p", PRORES, "NV12", 3).unwrap();
+        s.decode_range("p", 0, 875_000).unwrap(); // all 8 frames intersect
+                                                  // Each wait is for the frames the window allows; the pause after it is
+                                                  // the time a producer that failed to park would have to show a frame
+                                                  // too many.
+        wait_for(|| frames(&got) >= 3);
         thread::sleep(PARKED);
         {
             let c = got.lock().unwrap();
             assert_eq!(c.pts.len(), 3, "window=3 should halt at 3 in flight");
             assert_eq!(c.range_ends, 0, "range not done while parked");
         }
-        // Resume: return 2 credits → 2 more frames, then park again at 5 total.
-        reg.return_credit("p", 2).unwrap();
-        wait_for(|| frames() >= 5);
+        // Resume: return 2 leases → 2 more frames, then park again at 5 total.
+        let (l0, l1) = {
+            let c = got.lock().unwrap();
+            (c.leases[0], c.leases[1])
+        };
+        assert!(s.release("p", l0).unwrap());
+        assert!(s.release("p", l1).unwrap());
+        wait_for(|| frames(&got) >= 5);
         thread::sleep(PARKED);
-        assert_eq!(frames(), 5, "2 credits → 2 more frames");
+        assert_eq!(frames(&got), 5, "2 leases → 2 more frames");
         // Drain the rest.
-        reg.return_credit("p", 64).unwrap();
-        wait_for(|| {
+        got.lock().unwrap().returned = 2;
+        let done = wait_for(|| {
+            return_all(&s, "p", &got);
             let c = got.lock().unwrap();
             c.pts.len() >= 8 && c.range_ends >= 1
         });
+        assert!(done, "the range never finished after its leases came back");
         {
             let c = got.lock().unwrap();
-            assert_eq!(c.pts.len(), 8, "all frames after draining credits");
+            assert_eq!(c.pts.len(), 8, "all frames after returning the leases");
             assert_eq!(c.range_ends, 1);
         }
-        reg.close("p").unwrap();
+        s.close("p").unwrap();
+    }
+
+    #[test]
+    fn a_duplicate_release_does_not_widen_the_window() {
+        // A counter would take a lease returned twice as two credits and let a
+        // third frame travel beside the two still in flight.
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "p", PRORES, "NV12", 2).unwrap();
+        s.decode_range("p", 0, 875_000).unwrap();
+        assert!(wait_for(|| frames(&got) >= 2));
+        let first = got.lock().unwrap().leases[0];
+        assert!(s.release("p", first).unwrap());
+        assert!(
+            !s.release("p", first).unwrap(),
+            "the second return is ignored"
+        );
+        assert!(wait_for(|| frames(&got) >= 3));
+        thread::sleep(PARKED);
+        assert_eq!(
+            frames(&got),
+            3,
+            "one returned lease → one more frame, whatever the duplicate"
+        );
+        s.close("p").unwrap();
+    }
+
+    #[test]
+    fn leases_are_distinct_while_in_flight() {
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&s, "p", 0, 875_000, &got);
+        let c = got.lock().unwrap();
+        let mut leases = c.leases.clone();
+        assert!(leases.iter().all(|&l| l != 0), "0 is never a lease");
+        leases.sort_unstable();
+        leases.dedup();
+        assert_eq!(leases.len(), c.leases.len(), "a lease was granted twice");
+        drop(c);
+        s.close("p").unwrap();
     }
 
     #[test]
     fn close_unblocks_a_parked_producer() {
-        // A session parked on an exhausted credit window must tear down promptly
-        // (no deadlock): open tiny window, request a big range, don't return
-        // credits, then close — join must complete. The window is 1, so the
+        // A session parked on a full window must tear down promptly (no
+        // deadlock): window 1, a big range, no lease returned, then close. The
         // first frame is the last one before the producer parks.
-        let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", 1).unwrap();
-        reg.decode_range("p", 0, 875_000).unwrap();
+        let s = ExportSessions::new();
+        let (_info, got) = open(&s, "p", PRORES, "NV12", 1).unwrap();
+        s.decode_range("p", 0, 875_000).unwrap();
         assert!(
-            wait_for(|| got.lock().unwrap().pts.len() == 1),
+            wait_for(|| frames(&got) == 1),
             "the producer never delivered the frame it parks behind"
         );
         // Time to reach the park; close has to return either way.
         thread::sleep(PARKED);
         // If close hangs, the test harness will time out; a clean return is the
         // assertion.
-        reg.close("p").unwrap();
+        s.close("p").unwrap();
     }
 
     #[test]
-    fn decode_panic_surfaces_as_error_poke_and_leaves_registry_usable() {
-        // Mirror of the preview-sw panic test for the export lane. The sink panics
-        // on its FIRST call (poisoning the shared sink lock); `serve_range`'s
-        // `catch_unwind` must turn that into an in-band `Error` message, and the
-        // recovery `emit` must succeed via `lock_recover` on the poisoned lock —
-        // otherwise the export Worker strands on frames that never arrive.
+    fn cancel_abandons_the_range_in_progress_and_the_ranges_queued_behind_it() {
+        // Close sets the cancel flag before anything else. Driven here without
+        // the runtime, which would also silence the sink, so what the loop does
+        // after the flag stays visible. The window parks the producer at two
+        // frames; returning both leases after the cancel lets it run again, and
+        // it must stop rather than finish the 60-frame range and the next one.
+        let (sink, got) = collector();
+        let ctx = SessionCtx::for_test(sink);
+        let window = Arc::new(ByteWindow::new(2, 0));
+        let (tx, rx) = mpsc::channel();
+        let (loop_ctx, loop_window) = (ctx.clone(), Arc::clone(&window));
+        let session = thread::spawn(move || {
+            let stream = SwVideoStream::open_with_format(MPEG2, SwOutFormat::Nv12).expect("open");
+            run_session(stream, rx, loop_ctx, loop_window);
+        });
+        tx.send(DecodeRange {
+            a_us: 0,
+            b_us: 10_000_000,
+        })
+        .unwrap();
+        tx.send(DecodeRange {
+            a_us: 0,
+            b_us: 500_000,
+        })
+        .unwrap();
+        assert!(
+            wait_for(|| frames(&got) == 2),
+            "the window's two frames never came"
+        );
+
+        ctx.cancel();
+        let leases = got.lock().unwrap().leases.clone();
+        for lease in leases {
+            assert!(window.release(lease));
+        }
+        drop(tx);
+        // Bounded: a loop that ignores the flag parks again on the window
+        // rather than exiting.
+        let exited = wait_for(|| session.is_finished());
+
+        let c = got.lock().unwrap();
+        assert_eq!(c.pts.len(), 2, "a frame was emitted after the cancel");
+        assert_eq!(c.range_ends, 0, "a range was completed after the cancel");
+        assert_eq!(
+            c.ended, 0,
+            "the stream was decoded to its end after the cancel"
+        );
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+        assert!(exited, "the session loop kept running after the cancel");
+        drop(c);
+        session.join().expect("the session loop exits cleanly");
+    }
+
+    #[test]
+    fn decode_panic_surfaces_as_terminal_error_and_leaves_sessions_usable() {
+        // The sink panics on its FIRST call (poisoning the session's sink
+        // lock); the runtime's `catch_unwind` must turn that into an in-band
+        // terminal `Error`, and the recovery emit must succeed via
+        // `lock_recover` on the poisoned lock — otherwise the export Worker
+        // strands on frames that never arrive.
         use std::sync::atomic::{AtomicUsize, Ordering};
         let calls = Arc::new(AtomicUsize::new(0));
-        let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let errors: Arc<Mutex<Vec<(String, bool)>>> = Arc::new(Mutex::new(vec![]));
         let calls2 = calls.clone();
         let errors2 = errors.clone();
-        let reg = ExportSwRegistry::new();
-        reg.set_sink(Box::new(move |poke| {
-            if calls2.fetch_add(1, Ordering::SeqCst) == 0 {
-                panic!("boom in export-sw sink");
-            }
-            if let ExportPoke::Error { message, .. } = poke {
-                errors2.lock().unwrap().push(message);
-            }
-        }));
-        reg.open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
-            .expect("open");
-        reg.decode_range("s", 0, 875_000).unwrap();
-        let saw_panic_poke = wait_for(|| {
+        let s = ExportSessions::new();
+        s.open(
+            "s",
+            PRORES,
+            "NV12",
+            DEFAULT_CREDIT_WINDOW,
+            Box::new(move |msg| {
+                if calls2.fetch_add(1, Ordering::SeqCst) == 0 {
+                    panic!("boom in export-sw sink");
+                }
+                if let DecodeMsg::Error { message, terminal } = msg {
+                    errors2.lock().unwrap().push((message, terminal));
+                }
+            }),
+        )
+        .expect("open");
+        s.decode_range("s", 0, 875_000).unwrap();
+        let saw_panic = wait_for(|| {
             errors
                 .lock()
                 .unwrap()
                 .iter()
-                .any(|m| m.contains("panicked"))
+                .any(|(m, terminal)| m.contains("panicked") && *terminal)
         });
         let errs = errors.lock().unwrap();
         assert!(
-            saw_panic_poke,
-            "expected a decode-panic Error poke, got: {errs:?}"
+            saw_panic,
+            "expected a terminal decode-panic Error, got: {errs:?}"
         );
         drop(errs);
-        reg.close("s")
-            .expect("registry usable after a caught decode panic");
+        s.close("s")
+            .expect("sessions usable after a caught decode panic");
+        open(&s, "s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).expect("the id reopens");
+        s.close("s").unwrap();
     }
 }

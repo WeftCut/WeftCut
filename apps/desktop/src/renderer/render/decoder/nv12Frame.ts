@@ -17,7 +17,8 @@ export interface NativeNv12Frame {
   readonly colorSpace: VideoColorSpaceInit | null;
   readonly timestamp: number;
   readonly duration: number | null;
-  /// Uniform-shape no-op so ring eviction code treats all frame kinds alike.
+  /// Called when the frame store lets the frame go, like `VideoFrame.close()`,
+  /// so eviction treats all frame kinds alike. The builder's own is a no-op.
   close(): void;
 }
 

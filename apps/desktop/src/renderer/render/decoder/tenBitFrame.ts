@@ -15,7 +15,8 @@ export interface TenBitFrame {
   readonly colorSpace: VideoColorSpaceInit | null;
   readonly timestamp: number;
   readonly duration: number | null;
-  /// Uniform-shape no-op so ring eviction code treats both frame kinds alike.
+  /// Called when the frame store lets the frame go, like `VideoFrame.close()`,
+  /// so eviction treats both frame kinds alike. The builders' own is a no-op.
   close(): void;
 }
 

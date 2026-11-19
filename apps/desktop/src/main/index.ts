@@ -94,7 +94,8 @@ import { fxWaveformKey } from '../shared/audioEffects/status.js'
 import { installPreviewGpuIpc } from './previewGpuIpc.js'
 import { recordFrameReadySent } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw, consumePreviewSw } from './previewSw.js'
-import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
+import { openExportDecode } from './exportDecode.js'
+import { installDecodeSessionIpc, ipcCarrierPort } from './frameCarrier/ipcCarrierPort.js'
 import { serveSinkPort } from './exportSinkPort.js'
 import { loadNativeDecode } from './native-decode.js'
 import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
@@ -2357,39 +2358,15 @@ app.whenReady().then(async () => {
     catch (e) { console.warn('[main] previewSw:consume failed', e) }
   })
 
-  // Native SOFTWARE export-decode (blind-spot originals) — the EXPORT-side
-  // mirror of previewSw + the reverse of the encode chunk channel. Everything
-  // flows on the one dedicated `exportSw:msg` channel (see ./exportSw and
-  // `ExportSwMsg` in shared/ipc — never split it); nothing exportSw rides the
-  // generic `evt:*` relay.
-  ipcMain.handle('exportSw:open', (e, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; creditWindow: number }) => {
-    const win = BrowserWindow.fromWebContents(e.sender)
-    if (!win) throw new Error('exportSw:open — no window for sender')
-    return openExportSw(ndBackend(), win, a.sessionId, a.path, a.outFormat, a.creditWindow, resolveExportFinalization(e.sender.id, a.finalizationToken))
-  })
-  ipcMain.on('exportSw:decodeRange', (_e, a: { sessionId: string; aUs: number; bUs: number }) => {
-    // Fire-and-forget .on: napi can throw Err (unknown/already-closed sessionId
-    // from a renderer race), which as a .on listener would be an uncaught main
-    // exception. Swallow (matches previewSw:requestFrameAt).
-    try { decodeRangeExportSw(ndBackend(), a.sessionId, a.aUs, a.bUs) }
-    catch (e) { console.warn('[main] exportSw:decodeRange failed', e) }
-  })
-  ipcMain.on('exportSw:returnCredit', (_e, a: { sessionId: string; credits: number }) => {
-    try { returnCreditExportSw(ndBackend(), a.sessionId, a.credits) }
-    catch (e) { console.warn('[main] exportSw:returnCredit failed', e) }
-  })
-  ipcMain.on('exportSw:close', (_e, a: { sessionId: string }) => {
-    try { closeExportSw(ndBackend(), a.sessionId) }
-    catch (e) { console.warn('[main] exportSw:close failed', e) }
-  })
-  // Reap every still-open export session at export end (done / error / cancel).
-  // A Worker terminated mid-teardown may never send its per-session close, so
-  // the renderer signals main to close them directly — else the native decode
-  // threads leak. Idempotent; no-ops when nothing is open.
-  ipcMain.on('exportSw:closeAll', event => {
-    try { closeAllExportSw(ndBackend(), event.sender.id) }
-    catch (e) { console.warn('[main] exportSw:closeAll failed', e) }
-  })
+  // Native software export-decode: each session is served on a port the
+  // sender's preload holds, whose other end the page hands to the export Worker
+  // (docs/export-ipc-transport.md § Decode-in).
+  installDecodeSessionIpc(ipcMain)
+  ipcMain.handle('exportDecode:open', (event, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number }) =>
+    openExportDecode(ndBackend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), {
+      sessionId: a.sessionId, path: a.path, outFormat: a.outFormat, window: a.window,
+      finalizationId: resolveExportFinalization(event.sender.id, a.finalizationToken),
+    }))
 
   // Secondary windows (Dev Performance Monitor etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options, layoutTheme, motifTuning))

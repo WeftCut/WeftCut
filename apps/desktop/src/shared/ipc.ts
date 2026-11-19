@@ -11,6 +11,7 @@
 // contexts); this file is never imported by the non-DOM main process.
 
 import type { UpdateDownloadResult, UpdateRestartResult, UpdateResume, UpdateStatus } from './updates'
+import type { ExportDecodeOpenInfo } from './frameCarrier/wire'
 
 export type DialogOpenOpts = {
   title?: string
@@ -312,58 +313,6 @@ export type PreviewSwFrameMsg = {
   data: Uint8Array
 }
 
-/// One export-decoded frame — the EXPORT-side mirror of `PreviewSwFrameMsg`,
-/// carried as the `frame` body of an `ExportSwMsg` (kind `'frame'`) on the
-/// dedicated `exportSw:msg` channel. Delivered under the exactly-once range
-/// contract + credit window (not best-effort preview), and carries `sessionId`
-/// (not `streamId`) because one export runs several native sessions
-/// concurrently (one per phase group). `data` is the Rust `Buffer`
-/// structured-cloned to the renderer as a `Uint8Array` — the one main→renderer
-/// copy; the renderer then transfers its ArrayBuffer on to the export Worker
-/// (zero-copy) via postMessage.
-export type ExportSwFrameMsg = {
-  sessionId: string
-  ptsUs: number
-  durUs: number
-  width: number
-  height: number
-  /// NV12 = 8-bit; I420P10 = tightly-packed u16LE planes (Y then U then V,
-  /// the `copyToTenBit` layout — see renderer/render/decoder/tenBitFrame.ts).
-  format: 'NV12' | 'I420P10'
-  colorMatrix?: string
-  colorRange?: string
-  colorPrimaries?: string
-  colorTransfer?: string
-  data: Uint8Array
-}
-
-/// One in-band message on the per-session export-decode channel. Frames AND
-/// control signals (rangeEnd/ended/error) ride this single tagged union down
-/// ONE ordered path — napi TSFN queue → one `exportSw:msg` IPC channel per
-/// webContents → one renderer listener — so a control signal can NEVER
-/// overtake a frame emitted before it. That ordering IS the contract (an
-/// `ended` arriving before its tail frames would corrupt the export tail);
-/// never split control from frames onto a second channel. Mirrors the napi
-/// `ExportSwMsg`, narrowed to a discriminated union on `kind`.
-export type ExportSwMsg =
-  | { sessionId: string; kind: 'frame'; frame: ExportSwFrameMsg }
-  | { sessionId: string; kind: 'rangeEnd'; aUs: number; bUs: number }
-  | { sessionId: string; kind: 'ended' }
-  | { sessionId: string; kind: 'error'; message: string }
-
-/// Reply of `exportSw.open`: the native session's decoded dimensions, source
-/// color tags, and source-normalized start PTS (the offset already subtracted
-/// from every frame's `ptsUs`). Mirrors the napi `ExportSwOpenInfoJs` 1:1.
-export interface ExportSwOpenReply {
-  width: number
-  height: number
-  colorMatrix?: string
-  colorRange?: string
-  colorPrimaries?: string
-  colorTransfer?: string
-  startPtsUs: number
-}
-
 /// Availability of the optional @weftcut/native-decode component (level-0
 /// gate, ADR 0030). `reason` is the require error when unavailable.
 export interface DecodeComponentStatus {
@@ -602,34 +551,23 @@ export interface WeftcutApi {
     /// replaces the earlier subscriber.
     onFrame(streamId: string, cb: (f: PreviewSwFrameMsg) => void): () => void
   }
-  /// Native SOFTWARE export-decode relay (blind-spot originals: ProRes/DNxHD/
-  /// MPEG-2/VC-1). The EXPORT-side mirror of `previewSw` and the reverse of the
-  /// encode chunk channel: frames AND control signals (rangeEnd/ended/error)
-  /// flow main → renderer here as tagged `ExportSwMsg`s on the ONE dedicated
-  /// `exportSw:msg` channel (surfaced via `onMsg`), while `decodeRange` /
-  /// `returnCredit` / `close` are fire-and-forget renderer → main commands. The
-  /// renderer main thread is a pure relay between the export Worker's
-  /// `NativeExportSourceHandle` and the main-process `NativeDecode` session; the
-  /// Worker itself has no bridge. The single ordered channel is the contract
-  /// (see `ExportSwMsg`); nothing exportSw rides the generic `evt:*` relay.
-  exportSw: {
+  /// Native software export-decode (blind-spot originals: ProRes/DNxHD/MPEG-2/
+  /// VC-1). `open` starts a session and resolves with its open info; the
+  /// session's port arrives separately as a window message
+  /// (`openExportDecode` in the renderer). The session ends on a `close`
+  /// command from its port; `close` here ends one whose port holder is gone.
+  exportDecode: {
     open(args: {
       sessionId: string
       path: string
       /// CPU transport format for the session's frames: NV12 (8-bit) or
-      /// I420P10 (the 10-bit lane; layout documented on `ExportSwFrameMsg`).
+      /// I420P10 (the 10-bit lane; layout on `tenBitFrameFromBytes`).
       outFormat: 'NV12' | 'I420P10'
-      finalizationToken?: string | undefined; creditWindow: number
-    }): Promise<ExportSwOpenReply>
-    decodeRange(args: { sessionId: string; aUs: number; bUs: number }): void
-    returnCredit(args: { sessionId: string; credits: number }): void
+      /// Frames in flight before the session waits for a release.
+      window: number
+      finalizationToken?: string | undefined
+    }): Promise<ExportDecodeOpenInfo>
     close(args: { sessionId: string }): void
-    /// Reap EVERY still-open export session. The renderer calls this when an
-    /// export ends (done / error / cancel): a Worker terminated mid-teardown
-    /// may never send its per-session `close`, so main must be able to close
-    /// them independently or the native decode threads leak. Idempotent.
-    closeAll(): void
-    onMsg(cb: (m: ExportSwMsg) => void): () => void
   }
   /// Availability of the optional @weftcut/native-decode component (level-0
   /// gate). The renderer pulls this once on mount (availability is fixed for a

@@ -1077,7 +1077,7 @@ export class ExportDecoderPool implements DecoderPool {
     let h = this.handles.get(key);
     if (!h) {
       // `nativeExport` (export-only, set by the routed 6a acquire) selects the
-      // native session over the frame relay; otherwise the WebCodecs proxy path.
+      // native session over its own port; otherwise the WebCodecs proxy path.
       h = init.nativeExport ? new NativeExportSourceHandle(init) : new ExportSourceHandle(init);
       this.handles.set(key, h);
     }
