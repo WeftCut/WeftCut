@@ -38,7 +38,10 @@ Measured on this stack
   (registry, thread, bounded close, panic → one terminal error).
 - **One host in main** admits a session (one per id, its reservation held
   until it closes), serves it on one port and ends it once: on `close`, or
-  when the document that asked goes away.
+  when the document that asked goes away. The port is created by the
+  admission, never before it, so an open refused for any reason leaves no
+  port behind. The preload likewise refuses an id it already holds, and a
+  failed open undoes only what it created.
 - **Main sends with `webContents.send`; the preload holds the session's port**
   and posts each message on to the consumer with the frame transferred.
   Nothing crosses `contextBridge`, and frames never ride a `MessagePortMain`.

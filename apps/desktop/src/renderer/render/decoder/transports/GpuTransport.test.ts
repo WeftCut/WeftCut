@@ -10,7 +10,12 @@ import type { PreviewGpuCommand, SlotSessionMsg } from "../../../../shared/frame
 import { GpuTransport } from "./GpuTransport";
 import { nativePlaneColor, resolveSourceColor } from "../ffprobeColorSpace";
 import { hydratePerformanceSettings } from "../../../../shared/performance-settings";
-import { setSlotFenceBackend, sharedSlotFenceQueue, type SlotFenceBackend } from "./slotFenceQueue";
+import {
+  setSlotFenceBackend,
+  sharedSlotFenceQueue,
+  type SlotFenceBackend,
+  type SlotFenceState,
+} from "./slotFenceQueue";
 
 const session = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../../ipc/decodeSession", () => ({ openDecodeSession: session.open }));
@@ -57,25 +62,25 @@ function installApi(): { api: FakeApi; port: FakePort } {
 }
 
 /// A device stand-in for the shared slot-fence queue, with the completion
-/// signal under the test's control.
-function installFakeSlotFenceDevice(): { signalAll: () => void } {
-  const signals: (() => void)[] = [];
+/// signal under the test's control: every pending probe completes, or every
+/// one ends unproven (its device lost first).
+function installFakeSlotFenceDevice(): { signalAll: () => void; loseAll: () => void } {
+  const settles: ((to: SlotFenceState) => void)[] = [];
   const backend: SlotFenceBackend = {
     submit(_bmp, onSignal) {
-      let done = false;
-      signals.push(() => {
-        done = true;
+      let state: SlotFenceState = "pending";
+      settles.push((to) => {
+        state = to;
         onSignal();
       });
-      return { signalled: () => done, dispose: () => {} };
+      return { state: () => state, dispose: () => {} };
     },
   };
   setSlotFenceBackend(backend);
-  return {
-    signalAll: () => {
-      for (const s of signals.splice(0)) s();
-    },
+  const settleAll = (to: SlotFenceState) => {
+    for (const s of settles.splice(0)) s(to);
   };
+  return { signalAll: () => settleAll("complete"), loseAll: () => settleAll("unproven") };
 }
 
 const bitmap = () => ({ width: 1, height: 1, close: vi.fn() }) as unknown as ImageBitmap;
@@ -196,6 +201,21 @@ describe("GpuTransport", () => {
     await vi.waitFor(() => expect(api.close).toHaveBeenCalledWith({ sessionId: "release-failed" }));
     // One report: the source falls back on it; a second would start two switches.
     expect(errors).toEqual(["GPU slot release could not be delivered"]);
+    expect(sharedSlotFenceQueue().pendingCount()).toBe(0);
+  });
+
+  it("releases no slot whose fence ends unproven, reports once and closes the session", async () => {
+    const device = installFakeSlotFenceDevice();
+    const { t, api, port } = await opened("lost-device");
+    const errors: string[] = [];
+    t.onFrame(() => {});
+    t.onError((reason) => errors.push(reason));
+    port.deliver(slot(0));
+    port.deliver(slot(1));
+    device.loseAll();
+    expect(port.releases()).toEqual([]);
+    expect(errors).toEqual(["GPU slot read completion could not be verified"]);
+    expect(api.close).toHaveBeenCalledWith({ sessionId: "lost-device" });
     expect(sharedSlotFenceQueue().pendingCount()).toBe(0);
   });
 

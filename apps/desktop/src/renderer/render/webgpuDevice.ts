@@ -23,7 +23,8 @@ const guarded = new WeakSet<GPUDevice>();
 
 /// Makes `copyExternalImageToTexture` on `device`'s queue a no-op once the
 /// device is lost. A lost device executes nothing, so the copy had no effect to
-/// lose.
+/// lose, and nothing on its queue orders after a read: the slot fence takes no
+/// proof there (`WebgpuSlotFence`).
 ///
 /// LANDMINE (Chromium 152): once the GPU process has restarted, that call on a
 /// device lost with the old process crashes the renderer, a null dereference in

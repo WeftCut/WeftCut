@@ -185,11 +185,13 @@ export class SourceHandle {
   /// Outputs from the current `VideoDecoder` since it was built. Together
   /// with `failurePtsUs`, the progress test of `rebuildAfterError`.
   private outputsSinceBuild = 0;
-  /// Highest source PTS (µs) any of this handle's decoders has output.
-  private maxOutputPtsUs = Number.NEGATIVE_INFINITY;
-  /// `maxOutputPtsUs` at the last error rebuild; cleared by the first output
-  /// past it. Non-null means the rebuilt decoder has not yet got further than
-  /// the one that failed.
+  /// Highest source PTS (µs) the current decoder has output since it was built
+  /// or a seek last reset it: how far its run got. Not the handle's highest
+  /// ever, which a backward seek leaves out of reach.
+  private runMaxPtsUs = Number.NEGATIVE_INFINITY;
+  /// `runMaxPtsUs` of the decoder that failed, at the last error rebuild;
+  /// cleared by the first output past it. Non-null means the rebuilt decoder
+  /// has not yet got further than the one that failed.
   private failurePtsUs: number | null = null;
   /// Set once a decoder failed without getting further than its predecessor.
   /// The handle then builds no further decoder and ignores requests.
@@ -314,7 +316,7 @@ export class SourceHandle {
         // holding the decoder's buffers across many ticks.
         const ptsUs = this.media.decodeClock.sourceUs(frame.timestamp);
         this.outputsSinceBuild += 1;
-        if (ptsUs > this.maxOutputPtsUs) this.maxOutputPtsUs = ptsUs;
+        if (ptsUs > this.runMaxPtsUs) this.runMaxPtsUs = ptsUs;
         if (this.failurePtsUs !== null && ptsUs > this.failurePtsUs) this.failurePtsUs = null;
         const durationUs = frame.duration ?? 0;
         const epoch = this.conversionEpoch;
@@ -426,6 +428,7 @@ export class SourceHandle {
       },
     });
     this.outputsSinceBuild = 0;
+    this.runMaxPtsUs = Number.NEGATIVE_INFINITY;
     this.decoder = dec;
     this.decoder.configure(this.buildConfig());
     if (!this.pump) this.pump = new PacketPump(this.makePumpDeps());
@@ -445,6 +448,7 @@ export class SourceHandle {
           // `conversionEpoch`. Bumped here (the pump's seek path) as well as
           // in `flush()`, so both reset callers agree.
           handle.conversionEpoch += 1;
+          handle.runMaxPtsUs = Number.NEGATIVE_INFINITY;
           handle.decoder?.reset();
         },
         configure: () => {
@@ -525,15 +529,15 @@ export class SourceHandle {
 
   /// Any other error: the codec is closed all the same, and keeping it leaves
   /// the pump gated on a dead decoder with the clip frozen. A rebuilt decoder
-  /// must get further than the one before it, otherwise the handle stops: it
-  /// restarts at the GOP's key, so a packet that fails deterministically
-  /// mid-GOP would otherwise be rebuilt at decode rate. Imprecise on purpose:
-  /// after a backward seek, a second, unrelated error before the playhead
-  /// passes the first failure point also stops the handle (until the pool's
-  /// idle sweep replaces it).
+  /// must get further than the run of the one before it (`runMaxPtsUs`),
+  /// otherwise the handle stops: it restarts at the GOP's key, so a packet
+  /// that fails deterministically mid-GOP would otherwise be rebuilt at decode
+  /// rate. Imprecise on purpose: a second, unrelated error before the rebuilt
+  /// decoder gets past that point also stops the handle (until the pool's idle
+  /// sweep replaces it).
   private rebuildAfterError(err: Error, warn: (msg: string) => void): void {
     if (this.outputsSinceBuild > 0 && this.failurePtsUs === null) {
-      this.failurePtsUs = this.maxOutputPtsUs;
+      this.failurePtsUs = this.runMaxPtsUs;
       warn(`video decoder rebuilt after an error (source ${this.mediaId}): ${err.message}`);
     } else {
       this.failed = true;
@@ -604,6 +608,7 @@ export class SourceHandle {
   /// `ensureReady()`.
   flush(): void {
     this.conversionEpoch += 1;
+    this.runMaxPtsUs = Number.NEGATIVE_INFINITY;
     try {
       this.decoder?.reset();
     } catch {
@@ -635,7 +640,7 @@ export class SourceHandle {
     this.onFirstFrameCb = null;
     this.outputFrameCount = 0;
     this.outputsSinceBuild = 0;
-    this.maxOutputPtsUs = Number.NEGATIVE_INFINITY;
+    this.runMaxPtsUs = Number.NEGATIVE_INFINITY;
     this.failurePtsUs = null;
     this.downgraded = false;
     this._disposed = true;

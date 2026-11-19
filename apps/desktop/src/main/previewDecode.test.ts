@@ -52,7 +52,7 @@ describe('openPreviewDecode', () => {
   it('opens the native session with every open option and its plane colour, returns its shipped size, and closes it by its id', () => {
     const { backend, native } = fakeBackend()
     const { port, consumerCloses } = fakePort()
-    const info = openPreviewDecode(native, contents(), port, request('opened'))
+    const info = openPreviewDecode(native, contents(), () => port, request('opened'))
     expect(info).toEqual({ width: 2, height: 2 })
     expect(backend.previewDecodeOpen).toHaveBeenCalledWith(
       'opened', '/home/u/clip.mov', { lane: 'vaapi', device: '/dev/dri/renderD128', scaleDiv: 2 },
@@ -65,7 +65,7 @@ describe('openPreviewDecode', () => {
   it('routes request and release commands to the native session by its id, and nothing else', () => {
     const { backend, native } = fakeBackend()
     const { port, send } = fakePort()
-    openPreviewDecode(native, contents(), port, request('routed'))
+    openPreviewDecode(native, contents(), () => port, request('routed'))
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     send({ type: 'request', targetUs: 500_000, requestId: 3 })
     send({ type: 'release', lease: 4 })
@@ -80,7 +80,7 @@ describe('openPreviewDecode', () => {
   it('posts what the session delivers in order, and ends the session on a message the addon could not hand over', () => {
     const { native, callbacks } = fakeBackend()
     const { port, posted } = fakePort()
-    openPreviewDecode(native, contents(), port, request('posted'))
+    openPreviewDecode(native, contents(), () => port, request('posted'))
     const onMsg = callbacks.get('posted')!
     onMsg(null, { kind: 'error', message: 'seek failed', terminal: false })
     onMsg(null, { kind: 'end' })

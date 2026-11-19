@@ -26,10 +26,11 @@ function ask(sessionId: string, owner: EventEmitter = contents()) {
   const reserve = vi.fn(() => release)
   const open = vi.fn(() => ({ width: 2 }))
   const close = vi.fn()
+  const connect = vi.fn((_owner: WebContents, _sessionId: string): CarrierPort => port.port)
   const admit = () => admitDecodeSession({
-    sessionId, port: port.port, owner: owner as unknown as WebContents, reserve, open, parse: () => null, command: () => {}, close,
+    sessionId, connect, owner: owner as unknown as WebContents, reserve, open, parse: () => null, command: () => {}, close,
   })
-  return { admit, port, owner, reserve, release, open, close }
+  return { admit, port, owner, reserve, release, open, close, connect }
 }
 
 describe('admitDecodeSession', () => {
@@ -93,7 +94,7 @@ describe('admitDecodeSession', () => {
     expect(ask('bad').admit).not.toThrow()
   })
 
-  it('closes the port of a session it refuses, and leaves the open one alone', () => {
+  it('creates no port for a session it refuses, and leaves the open one alone', () => {
     const live = ask('kept')
     live.admit()
     const duplicate = ask('kept')
@@ -101,9 +102,21 @@ describe('admitDecodeSession', () => {
     const unadmitted = ask('full')
     unadmitted.reserve.mockImplementation(() => { throw new Error('capacity exceeded') })
     expect(unadmitted.admit).toThrow('capacity exceeded')
-    expect([duplicate.port.state.closes, unadmitted.port.state.closes, live.port.state.closes]).toEqual([1, 1, 0])
+    expect(duplicate.connect).not.toHaveBeenCalled()
+    expect(unadmitted.connect).not.toHaveBeenCalled()
+    expect(live.port.state.closes).toBe(0)
     expect(unadmitted.open).not.toHaveBeenCalled()
     expect(ask('full').admit).not.toThrow()
+  })
+
+  it('creates the port for the admitted owner and id, and frees both when it cannot', () => {
+    const session = ask('unconnected')
+    session.connect.mockImplementationOnce(() => { throw new Error('no port') })
+    expect(session.admit).toThrow('no port')
+    expect(session.release).toHaveBeenCalledOnce()
+    expect(session.open).not.toHaveBeenCalled()
+    session.admit()
+    expect(session.connect).toHaveBeenLastCalledWith(session.owner, 'unconnected')
   })
 
   it('closes only the sessions of the document that went away', () => {

@@ -83,7 +83,7 @@ describe('GPU preview sessions', () => {
     const { native } = fakeBackend()
     const { owner, contents } = fakeOwner()
     const port = fakePort()
-    await openPreviewGpu(native, contents, port.port, request('tagged'))
+    await openPreviewGpu(native, contents, () => port.port, request('tagged'))
     const sends = vi.mocked(sharedTexture.sendSharedTexture).mock.calls
     expect(sends.map(([options, tag]) => [options.frame, tag])).toEqual([0, 1, 2].map(slot => [owner.mainFrame, { key: 'tagged', slot }]))
     for (const [{ textureInfo }] of vi.mocked(sharedTexture.importSharedTexture).mock.calls) {
@@ -97,7 +97,7 @@ describe('GPU preview sessions', () => {
     const { backend, native } = fakeBackend()
     const port = fakePort()
     const wide: PreviewGpuColorSpace = { primaries: 'bt2020', transfer: 'bt709', matrix: 'bt2020-ncl', range: 'full' }
-    await openPreviewGpu(native, fakeOwner().contents, port.port, request('wide', { colorSpace: wide }))
+    await openPreviewGpu(native, fakeOwner().contents, () => port.port, request('wide', { colorSpace: wide }))
     expect(backend.previewGpuOpen.mock.calls[0]![3]).toEqual({ matrix: 'bt2020-ncl', fullRange: true, primaries: 'bt2020' })
     port.consumerCloses()
   })
@@ -108,7 +108,7 @@ describe('GPU preview sessions', () => {
     vi.mocked(sharedTexture.sendSharedTexture).mockReturnValueOnce(new Promise(resolve => { deliver = resolve }))
     const port = fakePort()
     let opened = false
-    const opening = openPreviewGpu(native, fakeOwner().contents, port.port, request('arriving')).then(() => { opened = true })
+    const opening = openPreviewGpu(native, fakeOwner().contents, () => port.port, request('arriving')).then(() => { opened = true })
     await settled()
     expect(opened).toBe(false)
     deliver()
@@ -119,7 +119,7 @@ describe('GPU preview sessions', () => {
   it('carries slot, end and error messages on its port, and release and request commands to native', async () => {
     const { backend, native, emit } = fakeBackend()
     const port = fakePort()
-    await openPreviewGpu(native, fakeOwner().contents, port.port, request('wire'))
+    await openPreviewGpu(native, fakeOwner().contents, () => port.port, request('wire'))
     const msgs: DecodeMsg[] = [
       { kind: 'slot', slot: 1, gen: 4, ptsUs: 0, durUs: 33_333 },
       { kind: 'error', message: 'seek failed', terminal: false },
@@ -138,18 +138,18 @@ describe('GPU preview sessions', () => {
 
   it('refuses a pool over the shared buffer budget before native allocates, holding nothing', async () => {
     const { backend, native } = fakeBackend()
-    const port = fakePort()
-    await expect(openPreviewGpu(native, fakeOwner().contents, port.port, request('oversized', { poolSize: 16 }))).rejects.toThrow(HW_BUDGET_EXCEEDED)
+    const connect = vi.fn(() => fakePort().port)
+    await expect(openPreviewGpu(native, fakeOwner().contents, connect, request('oversized', { poolSize: 16 }))).rejects.toThrow(HW_BUDGET_EXCEEDED)
     expect(backend.previewGpuOpen).not.toHaveBeenCalled()
     expect(gpuBufferBudget.snapshot().used_bytes).toBe(0)
     expect(hwSessionCount()).toBe(0)
-    expect(port.state.closed).toBe(true)
+    expect(connect, 'a refused session gets no port').not.toHaveBeenCalled()
   })
 
   it('charges a closed session until all imported slot references are gone', async () => {
     const { backend, native } = fakeBackend()
     const port = fakePort()
-    await openPreviewGpu(native, fakeOwner().contents, port.port, request('charged'))
+    await openPreviewGpu(native, fakeOwner().contents, () => port.port, request('charged'))
     expect(gpuBufferBudget.snapshot().preview_bytes).toBe(POOL_BYTES)
     expect(hwBudget().slotVram.usedBytes).toBe(POOL_BYTES)
     port.consumerCloses()
@@ -173,7 +173,7 @@ describe('GPU preview sessions', () => {
       .mockImplementationOnce(real)
       .mockImplementationOnce(() => { throw new Error('import failed') })
     const port = fakePort()
-    await expect(openPreviewGpu(native, fakeOwner().contents, port.port, request('import-fails'))).rejects.toThrow('import failed')
+    await expect(openPreviewGpu(native, fakeOwner().contents, () => port.port, request('import-fails'))).rejects.toThrow('import failed')
     await settled()
     expect(backend.previewGpuClose).toHaveBeenCalledOnce()
     expect(imports.map(entry => entry.release.mock.calls.length)).toEqual([1, 1])
@@ -192,7 +192,7 @@ describe('GPU preview sessions', () => {
       .mockResolvedValueOnce()
       .mockRejectedValueOnce(new Error('send timed out'))
     const port = fakePort()
-    await expect(openPreviewGpu(native, fakeOwner().contents, port.port, request('send-fails'))).rejects.toThrow('send timed out')
+    await expect(openPreviewGpu(native, fakeOwner().contents, () => port.port, request('send-fails'))).rejects.toThrow('send timed out')
     await settled()
     expect(backend.previewGpuClose).toHaveBeenCalledOnce()
     expect(imports.map(entry => entry.release.mock.calls.length)).toEqual([1, 1, 1])
@@ -203,7 +203,7 @@ describe('GPU preview sessions', () => {
   it('a reservation mismatch closes native and releases the reservation', async () => {
     const { backend, native } = fakeBackend(1920, 1080)
     const port = fakePort()
-    await expect(openPreviewGpu(native, fakeOwner().contents, port.port, request('mismatch'))).rejects.toThrow(HW_BUDGET_RESERVATION_MISMATCH)
+    await expect(openPreviewGpu(native, fakeOwner().contents, () => port.port, request('mismatch'))).rejects.toThrow(HW_BUDGET_RESERVATION_MISMATCH)
     expect(backend.previewGpuClose).toHaveBeenCalledOnce()
     expect(sharedTexture.importSharedTexture).not.toHaveBeenCalled()
     expect(hwSessionCount()).toBe(0)
@@ -215,10 +215,10 @@ describe('GPU preview sessions', () => {
     const page = fakeOwner()
     const other = fakeOwner()
     const small = { codedWidth: 1920, codedHeight: 1080 }
-    await openPreviewGpu(native, page.contents, fakePort().port, request('page-a', small))
-    await openPreviewGpu(native, page.contents, fakePort().port, request('page-b', small))
+    await openPreviewGpu(native, page.contents, () => fakePort().port, request('page-a', small))
+    await openPreviewGpu(native, page.contents, () => fakePort().port, request('page-b', small))
     const kept = fakePort()
-    await openPreviewGpu(native, other.contents, kept.port, request('other', small))
+    await openPreviewGpu(native, other.contents, () => kept.port, request('other', small))
     expect(hwSessionCount()).toBe(3)
     page.reloads()
     expect(backend.previewGpuClose.mock.calls.map(([id]) => id).sort()).toEqual(['page-a', 'page-b'])

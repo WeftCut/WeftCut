@@ -200,6 +200,65 @@ describe('decode session ports', () => {
     await vi.waitFor(() => expect(reads[0]!.bitmap.close).toHaveBeenCalledOnce())
   })
 
+  // The second open must not cost the first its port or, for a GPU session,
+  // the textures its slots are read from.
+  it('refuses a second open of a live session before asking main, and the first keeps working', async () => {
+    const { slots, reads, dropped } = controlledSlots()
+    const commands: [string, DecodeCommand][] = []
+    let commanded!: () => void
+    const released = new Promise<void>(resolve => { commanded = resolve })
+    const closes: string[] = []
+    const { ports, open } = sessionPorts(
+      (sessionId, cmd) => { commands.push([sessionId, cmd]); commanded() },
+      slots,
+      async sessionId => { closes.push(sessionId) },
+    )
+    const consumer = await open('a')
+    const got: SlotSessionMsg[] = []
+    consumer.onmessage = event => { got.push(event.data as SlotSessionMsg) }
+    // Main refuses a live id too; the preload must not get that far.
+    const invoke = vi.fn(() => Promise.reject(new Error("Decode session 'a' already has a port")))
+    await expect(ports.openSession('a', invoke)).rejects.toThrow()
+    expect(dropped, "the first session's textures stay").toEqual([])
+
+    consumer.postMessage({ type: 'release', slot: 0, gen: 10 })
+    await released
+    expect(commands).toEqual([['a', { type: 'release', slot: 0, gen: 10 }]])
+
+    ports.deliver('a', slotMsg(1))
+    expect(reads.map(r => r.key), 'its slots are still read').toEqual(['a'])
+    reads[0]!.settle()
+    await vi.waitFor(() => expect(got).toMatchObject([{ kind: 'slot', slot: 1, gen: 11 }]))
+
+    await ports.close('a')
+    expect(closes).toEqual(['a'])
+    expect(dropped).toEqual(['a'])
+    expect(invoke, 'main is not asked').not.toHaveBeenCalled()
+    consumer.close()
+  })
+
+  it('a failed open undoes only what it created: a later session under the same id is left alone', async () => {
+    const { slots, dropped } = controlledSlots()
+    const { ports, handed } = sessionPorts(() => {}, slots)
+    let fail!: (error: Error) => void
+    const failing = ports.openSession('a', () => new Promise((_resolve, reject) => { fail = reject }))
+    // Main ended the refused session's port before its open replied, and the
+    // id was opened again in between.
+    ports.end('a')
+    const reopened = ports.openSession('a', () => Promise.resolve({ width: 2 }))
+    fail(new Error('codec failed'))
+    await expect(failing).rejects.toThrow('codec failed')
+    await reopened
+    const consumer = handed.get('a')!
+    const got: unknown[] = []
+    consumer.onmessage = event => { got.push(event.data) }
+    ports.deliver('a', { kind: 'end' })
+    await vi.waitFor(() => expect(got).toEqual([{ kind: 'end' }]))
+    expect(dropped, 'only the ended session dropped its textures').toEqual(['a'])
+    ports.end('a')
+    consumer.close()
+  })
+
   it('drops a message for a session that has ended or never opened', async () => {
     const { ports, open } = sessionPorts(vi.fn())
     await open('a')

@@ -15,6 +15,13 @@ vi.mock('electron', () => ({
 }))
 
 const { installMotifFrames } = await import('./motifFrames')
+const { ipcRenderer } = await import('electron')
+
+// The preload's texture read and read barrier, as each test sets them.
+const reading = {
+  readTexture: (_key: string): Promise<ImageBitmap> => Promise.reject(new Error('no texture')),
+  finishRead: async (bitmap: ImageBitmap): Promise<ImageBitmap> => bitmap,
+}
 
 // The page's end of the frame port. The page decodes `{ error, code }` into a
 // MotifError (frameTransport.test.ts); this pins what the preload posts.
@@ -23,7 +30,7 @@ beforeAll(() => {
   let listener: ((event: { source: unknown; data: unknown; ports: MessagePort[] }) => void) | null = null
   const stub = { addEventListener: (_type: string, handler: typeof listener) => { listener = handler } }
   vi.stubGlobal('window', stub)
-  installMotifFrames(() => Promise.reject(new Error('no texture')), async bitmap => bitmap)
+  installMotifFrames(key => reading.readTexture(key), bitmap => reading.finishRead(bitmap))
   const channel = new MessageChannel()
   page = channel.port1
   listener!({ source: stub, data: { type: 'weftcut:motif-frame-port' }, ports: [channel.port2] })
@@ -59,5 +66,15 @@ describe('Motif frame port, main to page', () => {
     expect(await capture()).toEqual({ id: nextId, superseded: true })
     main.answers.push({ error: new Error("Error invoking remote method 'motif:capture': Error: [motif:content] synthetic") })
     expect(await capture()).toEqual({ id: nextId, error: 'synthetic', code: 'content' })
+  })
+
+  it('a texture whose read barrier fails is closed here, and main hears the read failed', async () => {
+    const bitmap = { close: vi.fn() } as unknown as ImageBitmap
+    reading.readTexture = async () => bitmap
+    reading.finishRead = () => Promise.reject(new Error('Motif texture read barrier unavailable'))
+    main.answers.push({ reply: { kind: 'texture', key: 'k', token: 'read-1' } })
+    expect(await capture()).toMatchObject({ id: nextId, error: expect.stringContaining('read barrier unavailable') })
+    expect(bitmap.close).toHaveBeenCalledOnce()
+    expect(ipcRenderer.send).toHaveBeenCalledWith('motif:ack', { token: 'read-1', failed: true })
   })
 })

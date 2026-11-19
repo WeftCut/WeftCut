@@ -30,8 +30,7 @@ import { gpuBufferBudget, retainGpuBufferLease } from './gpuBufferBudget.js'
 import { performanceSettings } from '../shared/performance-settings.js'
 import { reserveResources } from './resources.js'
 import { createPreviewGpuBudget } from './previewGpuBudget.js'
-import { admitDecodeSession } from './frameCarrier/decodeSessionAdmission.js'
-import type { CarrierPort } from './frameCarrier/decodeSessionHost.js'
+import { admitDecodeSession, type ConnectCarrier } from './frameCarrier/decodeSessionAdmission.js'
 import { importAndSend } from './frameCarrier/sharedTextureImport.js'
 
 export interface PreviewGpuRequest {
@@ -88,15 +87,16 @@ export function hwBudget(): PreviewGpuBudgetSnapshot {
   return { ...previewGpuBudget.snapshot(), slotVram: { usedBytes, bytesPerPixel: 4 } }
 }
 
-/** Opens a session served on `port` until its consumer closes it or `owner`'s
- * document goes away, and hands the pool's textures to `owner`'s document.
+/** Opens a session served on the port `connect` creates, until its consumer
+ * closes it or `owner`'s document goes away, and hands the pool's textures to
+ * `owner`'s document.
  * Resolves once every texture has arrived there, so a slot message can never
  * name a texture the preload does not hold yet; slots fill only after the
  * first `request`. Rejects with `HW_BUDGET_EXCEEDED` when admission is full. */
 export async function openPreviewGpu(
   backend: NativeDecode,
   owner: WebContents,
-  port: CarrierPort,
+  connect: ConnectCarrier,
   request: PreviewGpuRequest,
 ): Promise<PreviewGpuOpenReply> {
   const { sessionId, path, poolSize, colorSpace, codedWidth, codedHeight } = request
@@ -105,7 +105,7 @@ export async function openPreviewGpu(
   let sent: Promise<unknown> = Promise.resolve()
   const session = admitDecodeSession({
     sessionId,
-    port,
+    connect,
     owner,
     // Invalid or missing dimensions fail closed in the same transient capacity
     // class: a stale probe must never let main under-count decode load.
