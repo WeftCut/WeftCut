@@ -5,8 +5,8 @@ import { resolveSourceColor } from "./ffprobeColorSpace";
 const base = (over: Partial<VideoDecoderConfig> = {}): VideoDecoderConfig =>
   ({ codec: "avc1.640028", codedWidth: 1920, codedHeight: 1080, ...over }) as VideoDecoderConfig;
 
-const SD = resolveSourceColor({ height: 480 });
-const HD = resolveSourceColor({ height: 1080 });
+const SD = resolveSourceColor({ width: 720, height: 480 });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 const BT601 = { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m", fullRange: false };
 const BT709 = { primaries: "bt709", transfer: "bt709", matrix: "bt709", fullRange: false };
 
@@ -38,7 +38,7 @@ describe("withDefaultColorSpace", () => {
   });
 
   it("carries a full-range sourceColor", () => {
-    const full = resolveSourceColor({ height: 1080, color_range: "pc" });
+    const full = resolveSourceColor({ width: 1920, height: 1080, color_range: "pc" });
     expect(withDefaultColorSpace(base(), full).colorSpace?.fullRange).toBe(true);
   });
 });
@@ -54,7 +54,7 @@ describe("decodesInSoftwareForColour", () => {
     // An absent matrix read as BT.709 is what the hardware does anyway.
     expect(decodesInSoftwareForColour(HD)).toBe(false);
     // A declared matrix is in the bitstream, which the hardware follows.
-    expect(decodesInSoftwareForColour(resolveSourceColor({ height: 480, color_matrix: "smpte170m" }))).toBe(false);
-    expect(decodesInSoftwareForColour(resolveSourceColor({ height: 480, color_matrix: "bt709" }))).toBe(false);
+    expect(decodesInSoftwareForColour(resolveSourceColor({ width: 720, height: 480, color_matrix: "smpte170m" }))).toBe(false);
+    expect(decodesInSoftwareForColour(resolveSourceColor({ width: 720, height: 480, color_matrix: "bt709" }))).toBe(false);
   });
 });

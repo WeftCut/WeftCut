@@ -6,11 +6,11 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, DECODE_A
 import { hardwareGate, hardwareEnvironmentGate } from './helpers/hardwareGate'
 
 // Saturated-chart color gate for the HARDWARE preview lanes — the resident
-// pixel-fidelity gate none of them otherwise has. Six legs per lane, the full
+// pixel-fidelity gate none of them otherwise has. Seven legs per lane, the full
 // matrix a session must honor:
 //   709ltd / 601ltd / 709full / 601full  (H.264 charts, npm run fixtures)
-// plus the two untagged charts (SD BT.601, HD BT.709), which every other lane
-// is held to as well (preview-sw-color, preview-lite-color,
+// plus the three untagged charts (SD BT.601, HD BT.709, 1280x544 BT.709),
+// which every other lane is held to as well (preview-sw-color, preview-lite-color,
 // color-conformance): a lane that reads an absent tag its own way fails
 // here. A matrix swap reads 10–30 8-bit steps on the saturated patches; a range
 // mix-up reads as a global contrast shift; both are far beyond PATCH_TOL.
@@ -82,6 +82,15 @@ const UNTAGGED_LEGS: readonly { title: string; slug: string; leg: ChartLeg }[] =
     title: 'untagged HD chart previews as BT.709',
     slug: 'untagged-hd',
     leg: { fixture: path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_untagged.mp4'), manifest: MANIFEST, canvas: CANVAS },
+  },
+  {
+    title: 'untagged cropped HD chart (1280x544) previews as BT.709',
+    slug: 'untagged-wide',
+    leg: {
+      fixture: path.resolve(MEDIA_DIR, 'test_1280x544_color_709ltd_untagged.mp4'),
+      manifest: path.resolve(MEDIA_DIR, 'color_manifest_1280x544.json'),
+      canvas: { width: 1280, height: 544, fpsNum: 30, fpsDen: 1 },
+    },
   },
 ]
 

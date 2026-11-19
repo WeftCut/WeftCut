@@ -918,10 +918,10 @@ struct ColorReport {
 ///     colorSpace and writes a resolution default), so a faithful export of a
 ///     non-709 source is legitimately bt709-tagged. Decoding it by its own tag
 ///     measures what a player actually shows.
-///   - The SOURCE is decoded under the FORCED `in_matrix`/`in_range`: the test
-///     fixtures carry only a matrix tag (primaries/transfer are `unknown`), so
-///     letting ffmpeg guess would be unstable — we pin the source's intended
-///     interpretation as the reference.
+///   - The SOURCE is decoded under the FORCED `in_matrix`/`in_range`: the
+///     reference is the source's intended interpretation, never what ffmpeg
+///     would infer. For the untagged charts ffmpeg would read BT.601 at every
+///     size, which is not the app's rule.
 ///
 /// So `app_error` answers "does the export show the same colors as the source?"
 /// A 601-source export normalized to 709 with intact colors scores near-zero

@@ -2057,7 +2057,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         duration_us: { type: ['integer', 'null'], description: 'A value pins the duration; `null` unpins it so it follows the layers again, and must be the only field in the patch.' },
         sample_rate: { type: 'integer', description: 'Audio sample rate, Hz.' },
         channels: { type: 'integer', description: 'Audio channel count.' },
-        color_space: { type: 'string', enum: ['Bt709', 'Bt601', 'Bt2020', 'SRgb'], description: 'Working colour space.' },
+        color_space: { type: 'string', enum: ['Bt709', 'Bt601', 'Bt2020', 'SRgb'], description: 'Stored with the composition but not applied: preview and export are always BT.709 SDR.' },
         background: { ...RGBA_SCHEMA, description: 'Canvas background colour.' },
       },
     }, composition_id: { type: 'string', description: 'The composition to patch; omit for the root. fps / sample_rate / channels are one lattice for the whole project and cascade to every composition.' } }, required: ['patch'] },

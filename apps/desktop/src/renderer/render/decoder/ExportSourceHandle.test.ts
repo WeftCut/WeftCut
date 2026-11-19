@@ -13,7 +13,7 @@ import { resolveSourceColor } from "./ffprobeColorSpace";
 
 vi.mock("./mediaInput", () => ({ openMediaInput: vi.fn() }));
 
-const HD = resolveSourceColor({ height: 1080 });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 interface FakePacket {
   timestamp: number; // seconds — mediabunny's EncodedPacket unit
@@ -712,9 +712,9 @@ describe("ExportSourceHandle preferSoftware", () => {
   });
 
   it.each([
-    ["an untagged SD source", resolveSourceColor({ height: 480 }), "prefer-software"],
-    ["an untagged HD source", resolveSourceColor({ height: 1080 }), "prefer-hardware"],
-    ["a 601-tagged SD source", resolveSourceColor({ height: 480, color_matrix: "smpte170m" }), "prefer-hardware"],
+    ["an untagged SD source", resolveSourceColor({ width: 720, height: 480 }), "prefer-software"],
+    ["an untagged HD source", resolveSourceColor({ width: 1920, height: 1080 }), "prefer-hardware"],
+    ["a 601-tagged SD source", resolveSourceColor({ width: 720, height: 480, color_matrix: "smpte170m" }), "prefer-hardware"],
   ] as const)("configures the decoder of %s as its colour needs", async (_name, sourceColor, lane) => {
     sink = makeSink([pkt(0, "key")]);
     const configure = vi.spyOn(FakeVideoDecoder.prototype, "configure");

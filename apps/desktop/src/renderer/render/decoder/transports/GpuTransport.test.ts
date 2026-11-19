@@ -8,14 +8,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PreviewGpuCommand, SlotSessionMsg } from "../../../../shared/frameCarrier/wire";
 import { GpuTransport } from "./GpuTransport";
-import { resolveSourceColor } from "../ffprobeColorSpace";
+import { nativePlaneColor, resolveSourceColor } from "../ffprobeColorSpace";
 import { hydratePerformanceSettings } from "../../../../shared/performance-settings";
 import { setSlotFenceBackend, sharedSlotFenceQueue, type SlotFenceBackend } from "./slotFenceQueue";
 
 const session = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../../ipc/decodeSession", () => ({ openDecodeSession: session.open }));
 
-const HD = resolveSourceColor({ height: 1080 });
+const HD = resolveSourceColor({ width: 1920, height: 1080 });
 
 /// The transport's end of its session port; `deliver` stands in for the preload.
 class FakePort {
@@ -303,7 +303,7 @@ describe("GpuTransport", () => {
     // be opened with it.
     const { api } = installApi();
     const sd = new GpuTransport();
-    await sd.open({ streamId: "sd", path: "C:/sd.mp4", sourceColor: resolveSourceColor({ height: 480 }) });
+    await sd.open({ streamId: "sd", path: "C:/sd.mp4", sourceColor: resolveSourceColor({ width: 720, height: 480 }) });
     expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
       colorSpace: { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m", range: "limited" },
     }));
@@ -313,12 +313,31 @@ describe("GpuTransport", () => {
     await full.open({
       streamId: "full",
       path: "C:/full.mp4",
-      sourceColor: resolveSourceColor({ height: 1080, color_matrix: "smpte170m", color_range: "pc" }),
+      sourceColor: resolveSourceColor({ width: 1920, height: 1080, color_matrix: "smpte170m", color_range: "pc" }),
     });
     expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
       colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "smpte170m", range: "full" },
     }));
     await full.dispose();
+  });
+
+  it("opens an RGB-coded source with the YCbCr colour every native lane's planes carry", async () => {
+    // The native shader converts YCbCr; `rgb` is not a matrix it can be told.
+    const { api } = installApi();
+    const rgbColor = resolveSourceColor({ width: 1920, height: 1080, pix_fmt: "gbrp", color_matrix: "gbr" });
+    const rgb = new GpuTransport();
+    await rgb.open({ streamId: "rgb", path: "C:/rgb.mp4", sourceColor: rgbColor });
+    const planes = nativePlaneColor(rgbColor);
+    expect(planes.matrix).not.toBe("rgb");
+    expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
+      colorSpace: {
+        primaries: planes.primaries,
+        transfer: planes.transfer,
+        matrix: planes.matrix,
+        range: planes.fullRange ? "full" : "limited",
+      },
+    }));
+    await rgb.dispose();
   });
 
   it("records each shown slot's read and completion cost, with no proof fallback under the fence", async () => {

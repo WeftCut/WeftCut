@@ -16,8 +16,9 @@ export type TransportFrame = ImageBitmap | NativeNv12Frame | TenBitFrame;
 export interface DecodeTransportOpen {
   streamId: string;
   path: string;
-  /// The source's resolved colour (`resolveSourceColor`). The GPU transport
-  /// maps it to its wire shape; the SW transport stamps it on every frame.
+  /// The source's resolved colour (`resolveSourceColor`). Both transports
+  /// open their session with the colour its planes carry (`nativePlaneColor`);
+  /// the SW transport also stamps that colour on every frame.
   sourceColor: SourceColor;
   /// Native GPU pool size (GPU transport only; SW ignores). Default 3.
   poolSize?: number;

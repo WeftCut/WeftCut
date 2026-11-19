@@ -108,6 +108,24 @@ pub struct PreviewDecodeOptions {
     pub out_format: Option<String>,
 }
 
+/// The colour of the YCbCr planes a byte session ships, handed in at open: the
+/// renderer's `nativePlaneColor`, which it reads the planes back with. An
+/// RGB-coded source's frames are converted into it; a matrix the planes cannot
+/// carry fails the open (`PlaneColor::parse`).
+#[napi(object)]
+pub struct PlaneColorInit {
+    /// A WebCodecs YCbCr matrix name (`bt709`, `smpte170m`, `bt470bg`).
+    pub matrix: String,
+    pub full_range: bool,
+}
+
+impl PlaneColorInit {
+    fn parse(&self) -> napi::Result<crate::preview_sw::decoder::PlaneColor> {
+        crate::preview_sw::decoder::PlaneColor::parse(&self.matrix, self.full_range)
+            .map_err(napi::Error::from_reason)
+    }
+}
+
 /// Reply of `preview_decode_open`: the dimensions the session's frames will
 /// SHIP at (`scaleDiv` already applied), which can be smaller than the source's.
 #[napi(object)]
@@ -510,7 +528,8 @@ fn session_sink(on_msg: ThreadsafeFunction<DecodeMsg>) -> Sink {
 #[napi]
 impl NativeDecode {
     /// Open `path` for preview: spawn the session's decode thread and return
-    /// the shipped frame dimensions. `on_msg` belongs to the session: every
+    /// the shipped frame dimensions, its planes carrying `color`. `on_msg`
+    /// belongs to the session: every
     /// message goes to it, and it is dropped when the session closes or the
     /// open fails. Fails if the id is already open or the decoder (a hardware
     /// device included) cannot open, so the caller can fall back. Frames flow
@@ -521,6 +540,7 @@ impl NativeDecode {
         session_id: String,
         path: String,
         options: PreviewDecodeOptions,
+        color: PlaneColorInit,
         on_msg: ThreadsafeFunction<DecodeMsg>,
     ) -> napi::Result<PreviewDecodeOpenInfo> {
         use crate::preview_sw::decoder::{DecodeAccel, OutScale, OutputCadence, SwOutFormat};
@@ -539,6 +559,7 @@ impl NativeDecode {
         let options = crate::preview_sw::PreviewOpenOptions {
             accel,
             out_format,
+            plane_color: color.parse()?,
             out_scale: options
                 .scale_div
                 .map_or(OutScale::FULL, OutScale::from_divisor),
@@ -701,7 +722,8 @@ impl NativeDecode {
 #[napi]
 impl NativeDecode {
     /// Open `path` for export decode into `out_format`, with at most `window`
-    /// frames (leases) in flight. `on_msg` belongs to the session: every
+    /// frames (leases) in flight, its planes carrying `color`. `on_msg`
+    /// belongs to the session: every
     /// message goes to it, and it is dropped when the session closes or the
     /// open fails. Fails loudly if the id is already open, the format can't be
     /// emitted or the decoder can't open. Returns dimensions, source color tags,
@@ -713,8 +735,10 @@ impl NativeDecode {
         path: String,
         #[napi(ts_arg_type = "'NV12' | 'I420P10'")] out_format: String,
         window: u32,
+        color: PlaneColorInit,
         on_msg: ThreadsafeFunction<DecodeMsg>,
     ) -> napi::Result<ExportDecodeOpenInfo> {
+        let plane_color = color.parse()?;
         let info = self
             .export_decode
             .open(
@@ -722,6 +746,7 @@ impl NativeDecode {
                 &path,
                 &out_format,
                 window,
+                plane_color,
                 session_sink(on_msg),
             )
             .map_err(napi::Error::from_reason)?;

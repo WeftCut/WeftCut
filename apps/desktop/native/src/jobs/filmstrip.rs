@@ -38,13 +38,24 @@ pub fn validate_lod(lod: u32) -> Result<()> {
     Ok(())
 }
 
+/// Where a tile's picture comes from.
+#[derive(Clone, Copy)]
+pub struct TileSource<'a> {
+    /// The already-resolved decode source: the original or a proxy (the
+    /// command layer applies the proxy-wait rule before calling).
+    pub path: &'a Path,
+    /// Which of those it is; part of the cache key.
+    pub tag: crate::cache::FilmstripSrc,
+    /// The ORIGINAL's video stream whichever file is read, for the colour
+    /// conversion (`jpeg::scale_filter`).
+    pub original: Option<&'a crate::state::VideoStreamMeta>,
+}
+
 /// Extract the tile at grid key `(lod, index)` from `src` and return the
-/// cached JPG path. `src` is the already-resolved decode source (original or
-/// proxy — the command layer applies the proxy-wait rule before calling).
+/// cached JPG path.
 pub async fn extract_tile(
     cache: &CacheLayout,
-    src: &Path,
-    src_tag: crate::cache::FilmstripSrc,
+    src: TileSource<'_>,
     hash: &str,
     duration_us: Option<i64>,
     lod: u32,
@@ -54,7 +65,7 @@ pub async fn extract_tile(
 
     // Cache hit first: an already-extracted tile must stay reachable even
     // when the ffmpeg sidecar is broken — only the miss path needs ffmpeg.
-    let dest = cache.filmstrip_tile(hash, src_tag, lod, index);
+    let dest = cache.filmstrip_tile(hash, src.tag, lod, index);
     if cached_ok(&dest) {
         crate::cache::touch_if_stale(&dest);
         return Ok(dest);
@@ -96,12 +107,12 @@ pub async fn extract_tile(
             &format!("{t_seconds}"),
             "-i",
         ])
-        .arg(src)
+        .arg(src.path)
         .args([
             "-frames:v",
             "1",
             "-vf",
-            &format!("scale=-2:{FILMSTRIP_TILE_HEIGHT}"),
+            &super::jpeg::scale_filter(&format!("scale=-2:{FILMSTRIP_TILE_HEIGHT}"), src.original),
             "-q:v",
             "5",
             "-update",
@@ -207,8 +218,11 @@ mod tests {
         // lod=2 -> spacing_us(2) = 1_000_000; index=1 -> t = 1_000_000 us.
         let p1 = extract_tile(
             &cache,
-            &video,
-            crate::cache::FilmstripSrc::Orig,
+            TileSource {
+                path: &video,
+                tag: crate::cache::FilmstripSrc::Orig,
+                original: None,
+            },
             "filmstrip-test",
             Some(2_000_000),
             2,
@@ -224,8 +238,11 @@ mod tests {
         // but we can observe the file is unchanged.
         let p2 = extract_tile(
             &cache,
-            &video,
-            crate::cache::FilmstripSrc::Orig,
+            TileSource {
+                path: &video,
+                tag: crate::cache::FilmstripSrc::Orig,
+                original: None,
+            },
             "filmstrip-test",
             Some(2_000_000),
             2,
@@ -256,8 +273,11 @@ mod tests {
         // request must clamp into the source instead of erroring.
         let p = extract_tile(
             &cache,
-            &video,
-            crate::cache::FilmstripSrc::Orig,
+            TileSource {
+                path: &video,
+                tag: crate::cache::FilmstripSrc::Orig,
+                original: None,
+            },
             "filmstrip-tail-test",
             Some(2_000_000),
             3,
@@ -294,8 +314,11 @@ mod tests {
         // Hit path returns before any ffmpeg concern: src may not exist.
         let p = extract_tile(
             &cache,
-            Path::new("missing.mp4"),
-            crate::cache::FilmstripSrc::Orig,
+            TileSource {
+                path: Path::new("missing.mp4"),
+                tag: crate::cache::FilmstripSrc::Orig,
+                original: None,
+            },
             "h",
             None,
             2,

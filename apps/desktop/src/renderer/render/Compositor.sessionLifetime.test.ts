@@ -101,7 +101,7 @@ describe("Compositor decode-session lifetime", () => {
       height: 1080,
       mode: "export",
       originalAssetUrl: () => null,
-      sourceColor: () => resolveSourceColor({ height: 1080 }),
+      sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }),
       mediaById: () => undefined,
       pool: { dispose: vi.fn(), release } as unknown as DecoderPool,
     });

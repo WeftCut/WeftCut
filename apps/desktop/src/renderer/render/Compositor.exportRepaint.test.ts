@@ -73,7 +73,7 @@ describe("Compositor repaint ownership", () => {
       mode,
       pool: { dispose: vi.fn() } as unknown as DecoderPool,
       originalAssetUrl: () => "/still.png",
-      sourceColor: () => resolveSourceColor({ height: 1080 }),
+      sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }),
       mediaById: () => undefined,
     });
     compositor.setProject(summary);

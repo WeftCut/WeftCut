@@ -40,8 +40,10 @@ it, a large import would block the timeline for minutes.
 - The master is a lossy CRF-18 intermediate, so its exports are not
   original quality. HDR stays 8-bit in the master. When the Standard engine
   is available, export decodes these originals natively instead (ADR 0033).
-- A master format change bumps `FULL_PROXY_FORMAT_VERSION`. Stale masters are
-  then invalidated on open and regenerated.
+- A master format change bumps the recipe's version
+  (`ProxyRecipe::full_version`). Stale masters are then invalidated on open
+  and regenerated. An RGB-coded source has its own recipe and versions, so a
+  change to one recipe re-encodes only that recipe's proxies.
 
 Rejected: one proxy for both roles (either a 1080p cap degrades exports, or a
 4K cap makes scrubbing heavy); exporting from the quick proxy when the master

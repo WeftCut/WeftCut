@@ -17,7 +17,7 @@ use std::sync::Arc;
 use napi::bindgen_prelude::Buffer;
 
 use crate::carrier::{ByteWindow, DecodeMsg, SessionCtx, SessionRuntime, Sink};
-use crate::preview_sw::decoder::{SwColorTags, SwFrame, SwOutFormat, SwVideoStream};
+use crate::preview_sw::decoder::{PlaneColor, SwColorTags, SwFrame, SwOutFormat, SwVideoStream};
 
 /// Default window (frames in flight): bounds a 4K 10-bit export's main-process
 /// frame memory to ~100–200 MB while keeping the decoder far enough ahead of
@@ -322,8 +322,9 @@ impl ExportSessions {
         }
     }
 
-    /// Open `path` for export decode into `out_format`, with at most `window`
-    /// frames in flight and every message going to `sink`. Fails loudly
+    /// Open `path` for export decode into `out_format`, its planes carrying
+    /// `plane_color`, with at most `window` frames in flight and every message
+    /// going to `sink`. Fails loudly
     /// (before returning) if the requested format cannot be emitted or the
     /// decoder cannot open.
     pub fn open(
@@ -332,6 +333,7 @@ impl ExportSessions {
         path: &str,
         out_format: &str,
         window: u32,
+        plane_color: PlaneColor,
         sink: Sink,
     ) -> Result<ExportOpenInfo, String> {
         // Validate the requested format FIRST — a format the session can't emit
@@ -343,7 +345,7 @@ impl ExportSessions {
         let thread_limit = crate::preview_sw::decoder::configured_decode_threads();
         self.runtime.open(session_id, sink, window, move |ctx, rx| {
             crate::preview_sw::decoder::set_session_threads(thread_limit);
-            let stream = SwVideoStream::open_with_format(&path, fmt.decoder_format())?;
+            let stream = SwVideoStream::open_with_format(&path, fmt.decoder_format(), plane_color)?;
             let info = ExportOpenInfo {
                 width: stream.width,
                 height: stream.height,
@@ -461,7 +463,7 @@ mod tests {
     ) -> Result<(ExportOpenInfo, Arc<Mutex<Collected>>), String> {
         let (sink, got) = collector();
         sessions
-            .open(id, path, format, window, sink)
+            .open(id, path, format, window, PlaneColor::BT709_LIMITED, sink)
             .map(|info| (info, got))
     }
 
@@ -530,7 +532,9 @@ mod tests {
         // never inherit it — an export silently rendered at half res is data
         // loss. `open_with_format` takes the decoder's default out-size policy
         // (`OutScale::FULL`) and this lane has no way to set another.
-        let stream = SwVideoStream::open_with_format(PRORES, SwOutFormat::Nv12).expect("open");
+        let stream =
+            SwVideoStream::open_with_format(PRORES, SwOutFormat::Nv12, PlaneColor::BT709_LIMITED)
+                .expect("open");
         assert_eq!(
             (stream.out_width, stream.out_height),
             (stream.width, stream.height),
@@ -979,7 +983,12 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let (loop_ctx, loop_window) = (ctx.clone(), Arc::clone(&window));
         let session = thread::spawn(move || {
-            let stream = SwVideoStream::open_with_format(MPEG2, SwOutFormat::Nv12).expect("open");
+            let stream = SwVideoStream::open_with_format(
+                MPEG2,
+                SwOutFormat::Nv12,
+                PlaneColor::BT709_LIMITED,
+            )
+            .expect("open");
             run_session(stream, rx, loop_ctx, loop_window);
         });
         tx.send(DecodeRange {
@@ -1038,6 +1047,7 @@ mod tests {
             PRORES,
             "NV12",
             DEFAULT_CREDIT_WINDOW,
+            PlaneColor::BT709_LIMITED,
             Box::new(move |msg| {
                 if calls2.fetch_add(1, Ordering::SeqCst) == 0 {
                     panic!("boom in export-sw sink");

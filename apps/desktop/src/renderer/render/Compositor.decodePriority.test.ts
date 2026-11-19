@@ -104,7 +104,7 @@ describe("Compositor preview decode priority wiring", () => {
       mode: "preview",
       resolveSource: () => ({ engine: "webcodecs", source: "original", status: "unsupported", target: null, key: null }),
       originalAssetUrl: () => null,
-      sourceColor: () => resolveSourceColor({ height: 1080 }),
+      sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }),
       mediaById: () => undefined,
       pool: { dispose: vi.fn(), release: vi.fn() } as unknown as DecoderPool,
       onUnsupported,
@@ -149,7 +149,7 @@ describe("Compositor preview decode priority wiring", () => {
       app: { stage: new Container() } as unknown as Application,
       width: 1920, height: 1080, mode: "preview", pool,
       resolveSource: (id) => ({ engine: "ffmpeg", source: "original", status: "ok", target: id, key: id }),
-      originalAssetUrl: () => null, sourceColor: () => resolveSourceColor({ height: 1080 }), mediaById: () => undefined,
+      originalAssetUrl: () => null, sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }), mediaById: () => undefined,
     });
     const push = (id: string, pts: number) => sessions.get(id)!.ring.push(
       { width: 1, height: 1, close: vi.fn() } as unknown as ImageBitmap, pts, 33_333,
@@ -242,7 +242,7 @@ describe("Compositor preview decode priority wiring", () => {
         key: `ffmpeg:original:${mediaId}`,
       }),
       originalAssetUrl: () => null,
-      sourceColor: () => resolveSourceColor({ height: 1080 }),
+      sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }),
       mediaById: () => undefined,
       pool,
     });
@@ -306,7 +306,7 @@ describe("Compositor preview decode priority wiring", () => {
       app: { stage: new Container() } as unknown as Application,
       width: 1920, height: 1080, mode: "preview", pool,
       resolveSource: () => target, originalAssetUrl: () => null,
-      sourceColor: () => resolveSourceColor({ height: 1080 }), mediaById: () => undefined,
+      sourceColor: () => resolveSourceColor({ width: 1920, height: 1080 }), mediaById: () => undefined,
     });
     const repaint = vi.spyOn(compositor, "scheduleRepaint").mockImplementation(() => {});
     const intervals = vi.spyOn(globalThis, "setInterval");
