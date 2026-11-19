@@ -1,18 +1,14 @@
-use std::sync::Arc;
-
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
 use crate::carrier::{DecodeMsg, Sink};
-use crate::events::{EventSink, TsfnEventSink};
 
 // ── wire structs ────────────────────────────────────────────────────────────
 
-/// One pool slot handed back by `preview_gpu_open`: the LE bytes of the shared
-/// D3D11 texture's NT handle (an `i64` value, not a pointer — see
-/// `preview_gpu::session::OpenInfo`). The main process re-parses these bytes
-/// and passes the handle to `importSharedTexture`.
+/// One pool slot handed back by `preview_gpu_open`: the shared D3D11
+/// texture's NT handle in its wire bytes (`weftcut_d3d::handle_to_bytes`).
+/// The main process passes them to `importSharedTexture`.
 #[napi(object)]
 pub struct PreviewGpuSlot {
     pub handle: Buffer,
@@ -237,76 +233,20 @@ pub fn capabilities() -> Vec<String> {
 #[napi]
 pub struct NativeDecode {
     #[cfg(windows)]
-    preview_gpu: crate::preview_gpu::PreviewGpuRegistry,
+    preview_gpu: crate::preview_gpu::PreviewGpuSessions,
     preview_decode: crate::preview_sw::PreviewSessions,
     export_decode: crate::export_sw::ExportSessions,
 }
 
 #[napi]
 impl NativeDecode {
-    /// `on_event` receives the same `{event, payload}` JSON envelope the core
-    /// Backend's sink emits; main relays both through `evt:*`.
+    /// Every session's messages go to the callback it was opened with; the
+    /// component itself emits nothing.
     #[napi(constructor)]
-    pub fn new(on_event: ThreadsafeFunction<String>) -> Self {
-        // The GPU lane is the only emitter today and exists on Windows only; the
-        // sink itself is platform-neutral and is constructed everywhere so the
-        // next channel can wire in without touching the constructor.
-        #[cfg_attr(
-            not(windows),
-            expect(
-                unused_variables,
-                reason = "only the Windows-only GPU lane emits today"
-            )
-        )]
-        let events: Arc<dyn EventSink> = Arc::new(TsfnEventSink::new(on_event));
-
-        // Wire the registry's poke sink to the same `events` sink every other
-        // channel emits through, so `previewGpu:*` events reach Electron main
-        // the same way `log:entry` / `media:*` / etc. do.
-        #[cfg(windows)]
-        let preview_gpu = {
-            let registry = crate::preview_gpu::PreviewGpuRegistry::new();
-            let sink_events = events.clone();
-            registry.set_poke_sink(Box::new(move |poke| {
-                use crate::preview_gpu::PreviewGpuPoke;
-                match poke {
-                    PreviewGpuPoke::FrameReady {
-                        stream_id,
-                        slot,
-                        gen,
-                        pts_us,
-                        dur_us,
-                    } => {
-                        sink_events.emit(
-                            "previewGpu:frameReady",
-                            serde_json::json!({
-                                "streamId": stream_id,
-                                "slot": slot,
-                                "gen": gen,
-                                "ptsUs": pts_us,
-                                "durUs": dur_us,
-                            }),
-                        );
-                    }
-                    PreviewGpuPoke::Eof { stream_id } => {
-                        sink_events.emit(
-                            "previewGpu:eof",
-                            serde_json::json!({ "streamId": stream_id }),
-                        );
-                    }
-                    PreviewGpuPoke::Error { stream_id, message } => {
-                        sink_events.emit(
-                            "previewGpu:error",
-                            serde_json::json!({ "streamId": stream_id, "message": message }),
-                        );
-                    }
-                }
-            }));
-            registry
-        };
+    pub fn new() -> Self {
         NativeDecode {
             #[cfg(windows)]
-            preview_gpu,
+            preview_gpu: crate::preview_gpu::PreviewGpuSessions::new(),
             preview_decode: crate::preview_sw::PreviewSessions::new(),
             export_decode: crate::export_sw::ExportSessions::new(),
         }
@@ -316,30 +256,41 @@ impl NativeDecode {
 // ── GPU methods (Windows) ────────────────────────────────────────────────────
 
 /// Native GPU-decode preview command surface. Backed by
-/// `NativeDecode::preview_gpu`; pokes (`FrameReady`/`Eof`/`Error`) surface as
-/// `previewGpu:*` events through the same `events` sink every other channel
-/// uses (wired in the constructor).
+/// `NativeDecode::preview_gpu`; filled slots, the end of the material and
+/// errors reach JS in band as [`DecodeMsg`] on the callback the session was
+/// opened with.
 #[cfg(windows)]
 #[napi]
 impl NativeDecode {
     /// Open `path` for GPU preview: spawns the session's decode thread and
     /// returns the shared RGBA8 pool's slot handles + frame dimensions.
-    /// `matrix`/`full_range` are the stream's color tags (same derivation the
-    /// renderer ships in `previewGpu:open`'s colorSpace) — they select the
-    /// native NV12→RGBA conversion constants, so the shared texture is already
+    /// `matrix`/`full_range` are the stream's color tags (the same derivation
+    /// the renderer ships with the open request) — they select the native
+    /// NV12→RGBA conversion constants, so the shared texture is already
     /// working-space RGBA and main imports it tagged sRGB-passthrough.
+    /// `on_msg` belongs to the session: every message goes to it, and it is
+    /// dropped when the session closes or the open fails. Slots fill only
+    /// after the first `preview_gpu_request_frame_at`.
     #[napi]
     pub fn preview_gpu_open(
         &self,
-        stream_id: String,
+        session_id: String,
         path: String,
         pool_size: u32,
         matrix: String,
         full_range: bool,
+        on_msg: ThreadsafeFunction<DecodeMsg>,
     ) -> napi::Result<PreviewGpuOpenInfo> {
         let info = self
             .preview_gpu
-            .open(&stream_id, &path, pool_size, &matrix, full_range)
+            .open(
+                &session_id,
+                &path,
+                pool_size,
+                &matrix,
+                full_range,
+                session_sink(on_msg),
+            )
             .map_err(napi::Error::from_reason)?;
         Ok(PreviewGpuOpenInfo {
             width: info.width,
@@ -354,7 +305,7 @@ impl NativeDecode {
                 .slot_handles
                 .into_iter()
                 .map(|h| PreviewGpuSlot {
-                    handle: Buffer::from(h.to_le_bytes().to_vec()),
+                    handle: Buffer::from(h.to_vec()),
                 })
                 .collect(),
         })
@@ -362,51 +313,46 @@ impl NativeDecode {
 
     /// Move the session's decode anchor. `target_us` is an `f64` (napi has no
     /// ergonomic `i64` param binding) carrying source microseconds; cast down
-    /// to the `i64` the registry expects.
+    /// to the `i64` the session expects.
     #[napi]
     pub fn preview_gpu_request_frame_at(
         &self,
-        stream_id: String,
+        session_id: String,
         target_us: f64,
     ) -> napi::Result<()> {
         self.preview_gpu
-            .request_frame_at(&stream_id, target_us as i64)
+            .request_frame_at(&session_id, target_us as i64)
             .map_err(napi::Error::from_reason)
     }
 
-    /// Release a slot back to the pool after the renderer drops its last
-    /// cross-process reference to the shared texture. `gen` echoes the
-    /// `frameReady` that delivered the slot (fencing token — a mismatch is
-    /// dropped native-side as stale).
+    /// Hand a slot back to the pool once the consumer's read of it has
+    /// completed. `gen` echoes the `slot` message that delivered it (fencing
+    /// token — a mismatch is dropped native-side as stale).
     #[napi]
-    pub fn preview_gpu_consume_ack(
-        &self,
-        stream_id: String,
-        slot: u32,
-        gen: u32,
-    ) -> napi::Result<()> {
+    pub fn preview_gpu_release(&self, session_id: String, slot: u32, gen: u32) -> napi::Result<()> {
         self.preview_gpu
-            .consume_ack(&stream_id, slot, gen)
+            .release(&session_id, slot, gen)
             .map_err(napi::Error::from_reason)
     }
 
-    /// Tear down a session: signals its decode thread to close and joins it.
+    /// Tear down a session within a bounded grace. The session emits nothing
+    /// after this returns; messages it had already queued for JS still arrive.
     #[napi]
-    pub fn preview_gpu_close(&self, stream_id: String) -> napi::Result<()> {
+    pub fn preview_gpu_close(&self, session_id: String) -> napi::Result<()> {
         self.preview_gpu
-            .close(&stream_id)
+            .close(&session_id)
             .map_err(napi::Error::from_reason)
     }
 
     /// One-frame HW decode probe: does d3d11va yield a decodable D3D11
     /// surface for this codec on this GPU? Calls the decoder-level primitive
-    /// directly (no session, no pool, no poke sink) — a throwaway open +
-    /// one-frame decode is self-contained and self-bounding, unlike the
-    /// streaming `preview_gpu_open` session. The `D3d11Frame` on success is
-    /// dropped immediately (its `Drop` releases the GPU texture); only the
-    /// ok/err verdict is returned. `timeout_ms` is advisory (kept for API
-    /// symmetry with `preview_hw_probe`) — this synchronous primitive has no
-    /// internal deadline machinery to wire it to.
+    /// directly (no session, no pool) — a throwaway open + one-frame decode is
+    /// self-contained and self-bounding, unlike the streaming
+    /// `preview_gpu_open` session. The `D3d11Frame` on success is dropped
+    /// immediately (its `Drop` releases the GPU texture); only the ok/err
+    /// verdict is returned. `timeout_ms` is advisory (kept for API symmetry
+    /// with `preview_hw_probe`) — this synchronous primitive has no internal
+    /// deadline machinery to wire it to.
     #[napi]
     pub fn preview_gpu_probe(
         &self,
@@ -429,11 +375,11 @@ impl NativeDecode {
     #[napi]
     pub fn preview_gpu_take_timings(
         &self,
-        stream_id: String,
+        session_id: String,
     ) -> napi::Result<PreviewGpuTimingReport> {
         let rep = self
             .preview_gpu
-            .take_timings(&stream_id)
+            .take_timings(&session_id)
             .map_err(napi::Error::from_reason)?;
         // Counts stay far under u32 in a bench window (see `note_lookahead_gated_skip`);
         // saturate defensively rather than silently wrap on the cast.
@@ -483,11 +429,12 @@ impl NativeDecode {
     #[napi]
     pub fn preview_gpu_open(
         &self,
-        _stream_id: String,
+        _session_id: String,
         _path: String,
         _pool_size: u32,
         _matrix: String,
         _full_range: bool,
+        _on_msg: ThreadsafeFunction<DecodeMsg>,
     ) -> napi::Result<PreviewGpuOpenInfo> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
@@ -495,16 +442,16 @@ impl NativeDecode {
     #[napi]
     pub fn preview_gpu_request_frame_at(
         &self,
-        _stream_id: String,
+        _session_id: String,
         _target_us: f64,
     ) -> napi::Result<()> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
 
     #[napi]
-    pub fn preview_gpu_consume_ack(
+    pub fn preview_gpu_release(
         &self,
-        _stream_id: String,
+        _session_id: String,
         _slot: u32,
         _gen: u32,
     ) -> napi::Result<()> {
@@ -512,14 +459,14 @@ impl NativeDecode {
     }
 
     #[napi]
-    pub fn preview_gpu_close(&self, _stream_id: String) -> napi::Result<()> {
+    pub fn preview_gpu_close(&self, _session_id: String) -> napi::Result<()> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
 
     #[napi]
     pub fn preview_gpu_take_timings(
         &self,
-        _stream_id: String,
+        _session_id: String,
     ) -> napi::Result<PreviewGpuTimingReport> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }

@@ -1,21 +1,16 @@
-// The editor and isolated calibration host install the same GPU transport IPC.
-import { BrowserWindow, ipcMain } from 'electron'
+// The editor and the isolated calibration host install the same GPU preview
+// IPC. A session's commands and close travel the decode-session channels
+// (frameCarrier/ipcCarrierPort.ts, installed beside this); what is here opens
+// sessions and reads the diagnostics that belong to no one session.
+import { ipcMain } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
-import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu, hwBudget } from './previewGpu'
-import { recordConsumeAck, takeMainTimings } from './previewGpuTiming'
+import { openPreviewGpu, takeTimingsPreviewGpu, hwBudget, type PreviewGpuRequest } from './previewGpu'
+import { takeMainTimings } from './previewGpuTiming'
+import { ipcCarrierPort } from './frameCarrier/ipcCarrierPort'
 
-export function installPreviewGpuIpc(backend: () => NativeDecode, fallbackWindow: () => BrowserWindow | null): void {
-  ipcMain.handle('previewGpu:open', (e, a: { streamId: string; path: string; poolSize: number; colorSpace: Electron.ColorSpace; codedWidth: number; codedHeight: number }) => {
-    const win = BrowserWindow.fromWebContents(e.sender) ?? fallbackWindow()
-    if (!win) throw new Error('previewGpu:open — no window for sender')
-    return openPreviewGpu(backend(), win, a.streamId, a.path, a.poolSize, a.colorSpace, a.codedWidth, a.codedHeight)
-  })
-  ipcMain.handle('previewGpu:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) => requestFrameAtPreviewGpu(backend(), a.streamId, a.targetUs))
-  ipcMain.handle('previewGpu:consumeAck', (_e, a: { streamId: string; slot: number; gen: number }) => {
-    recordConsumeAck(a.streamId, a.slot, performance.now())
-    return consumeAckPreviewGpu(backend(), a.streamId, a.slot, a.gen)
-  })
-  ipcMain.handle('previewGpu:close', (_e, a: { streamId: string }) => closePreviewGpu(backend(), a.streamId))
+export function installPreviewGpuIpc(backend: () => NativeDecode): void {
+  ipcMain.handle('previewGpu:open', (event, a: PreviewGpuRequest) =>
+    openPreviewGpu(backend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), a))
   ipcMain.handle('previewGpu:budget', () => hwBudget())
   ipcMain.handle('previewGpu:takeTimings', (_e, a: { streamId: string }) => takeTimingsPreviewGpu(backend(), a.streamId))
   ipcMain.handle('previewGpu:takeMainTimings', () => takeMainTimings())

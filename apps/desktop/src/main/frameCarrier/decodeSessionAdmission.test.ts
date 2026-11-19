@@ -5,15 +5,16 @@ import type { CarrierPort } from './decodeSessionHost'
 import { admitDecodeSession } from './decodeSessionAdmission'
 
 function fakePort() {
-  const listeners: { message?: (e: { data: unknown }) => void } = {}
+  const listeners: { message?: (e: { data: unknown }) => void; close?: () => void } = {}
   const state = { closes: 0 }
   const port: CarrierPort = {
-    on: ((event: 'message' | 'close', listener: never) => { listeners[event as 'message'] = listener }) as CarrierPort['on'],
+    on: ((event: 'message' | 'close', listener: never) => { listeners[event] = listener }) as CarrierPort['on'],
     postMessage: () => {},
     start: () => {},
     close: () => { state.closes += 1 },
   }
-  return { port, state, send: (data: unknown) => listeners.message!({ data }) }
+  // The consumer closed the session (the preload's `decodeSession:close`).
+  return { port, state, consumerCloses: () => listeners.close!() }
 }
 
 const contents = () => new EventEmitter()
@@ -33,7 +34,7 @@ function ask(sessionId: string, owner: EventEmitter = contents()) {
 
 describe('admitDecodeSession', () => {
   it('returns what the session opened with', () => {
-    expect(ask('opened').admit()).toEqual({ width: 2 })
+    expect(ask('opened').admit().info).toEqual({ width: 2 })
   })
 
   it('refuses an id that is already open before reserving anything, and frees the id when the session closes', () => {
@@ -46,7 +47,7 @@ describe('admitDecodeSession', () => {
     // The refusal did not take the live session's id or reservation with it.
     expect(live.release).not.toHaveBeenCalled()
     expect(ask('held').admit).toThrow('already open')
-    live.port.send({ type: 'close' })
+    live.port.consumerCloses()
     expect(ask('held').admit).not.toThrow()
   })
 
@@ -54,10 +55,21 @@ describe('admitDecodeSession', () => {
     const session = ask('released')
     session.admit()
     expect(session.release).not.toHaveBeenCalled()
-    session.port.send({ type: 'close' })
-    session.port.send({ type: 'close' })
+    session.port.consumerCloses()
+    session.port.consumerCloses()
     expect(session.close).toHaveBeenCalledOnce()
     expect(session.release).toHaveBeenCalledOnce()
+  })
+
+  it('releases the reservation once when main closes the session, whoever closes it after', () => {
+    const session = ask('main-closed')
+    const admitted = session.admit()
+    admitted.close()
+    session.port.consumerCloses()
+    admitted.close()
+    expect(session.close).toHaveBeenCalledOnce()
+    expect(session.release).toHaveBeenCalledOnce()
+    expect(ask('main-closed').admit).not.toThrow()
   })
 
   it('releases the reservation when the pipeline close throws', () => {
@@ -65,7 +77,7 @@ describe('admitDecodeSession', () => {
     session.close.mockImplementation(() => { throw new Error('already gone natively') })
     session.admit()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    session.port.send({ type: 'close' })
+    session.port.consumerCloses()
     expect(session.release).toHaveBeenCalledOnce()
     expect(ask('close-throws').admit).not.toThrow()
   })

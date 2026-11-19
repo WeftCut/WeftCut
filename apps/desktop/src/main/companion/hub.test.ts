@@ -300,7 +300,7 @@ describe('what the page hears from main', () => {
     hub.observe('project:changed', { publication: {} })
     hub.observe('export:status', { job_id: 'j', state: 'rendering', progress: 0.5, filename: 'cut.mp4' })
     hub.observe(AGENT_ACTIVITY_EVENT, { activities: [{ client: 'agent', tool: 'add_track', state: 'done' }, { client: 'agent', tool: 'add_layers', state: 'running' }] })
-    hub.observe('previewGpu:frameReady', {})
+    hub.observe('media:derivatives', {})
     expect(events.map(([e]) => e)).toEqual(['project', 'export', 'activity'])
     expect(hub.state()).toMatchObject({
       export: { job_id: 'j', state: 'rendering', progress: 0.5, filename: 'cut.mp4' },

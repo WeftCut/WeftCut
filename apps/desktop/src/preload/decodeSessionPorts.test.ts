@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDecodeSessionPorts } from './decodeSessionPorts'
-import type { DecodeCommand, DecodeWireMsg } from '../shared/frameCarrier/wire'
+import type { SlotReader } from './slotReader'
+import type { DecodeCommand, DecodeWireMsg, SlotSessionMsg } from '../shared/frameCarrier/wire'
 
 const frame = (lease: number, data: Uint8Array): DecodeWireMsg =>
   ({ kind: 'bytes', lease, ptsUs: lease * 10, durUs: 1, width: 2, height: 2, format: 'NV12', data })
@@ -16,10 +17,33 @@ function received(port: MessagePort, count: number): Promise<DecodeWireMsg[]> {
   })
 }
 
+/** A bitmap stand-in that a port can transfer. */
+const fakeBitmap = () => Object.assign(new ArrayBuffer(4), { close: vi.fn() }) as unknown as ImageBitmap & { close: ReturnType<typeof vi.fn> }
+
+/** A slot reader whose reads the test settles, in any order it likes. */
+function controlledSlots() {
+  const reads: { key: string; slot: number; bitmap: ReturnType<typeof fakeBitmap>; settle: (failure?: Error) => void }[] = []
+  const dropped: string[] = []
+  const slots: Pick<SlotReader, 'read' | 'drop'> = {
+    read: (key, slot) => new Promise((resolve, reject) => {
+      const bitmap = fakeBitmap()
+      reads.push({ key, slot, bitmap, settle: failure => failure ? reject(failure) : resolve({ bitmap, gvfMs: 0, cibMs: 0 }) })
+    }),
+    drop: key => { dropped.push(key) },
+  }
+  return { slots, reads, dropped }
+}
+
+const slotMsg = (slot: number): DecodeWireMsg => ({ kind: 'slot', slot, gen: slot + 10, ptsUs: slot * 10, durUs: 10 })
+
 /** Ports whose consumer ends are kept by session id as they are handed over. */
-function sessionPorts(sendCommand: (sessionId: string, cmd: DecodeCommand) => void = () => {}) {
+function sessionPorts(
+  sendCommand: (sessionId: string, cmd: DecodeCommand) => void = () => {},
+  slots: Pick<SlotReader, 'read' | 'drop'> = controlledSlots().slots,
+  closeSession: (sessionId: string) => Promise<void> = async () => {},
+) {
   const handed = new Map<string, MessagePort>()
-  const ports = createDecodeSessionPorts(sendCommand, (sessionId, port) => { handed.set(sessionId, port) })
+  const ports = createDecodeSessionPorts(sendCommand, closeSession, (sessionId, port) => { handed.set(sessionId, port) }, slots)
   /** Opens `sessionId` with an open that succeeds, and returns its consumer port. */
   const open = async (sessionId: string): Promise<MessagePort> => {
     await ports.openSession(sessionId, () => Promise.resolve({ width: 2 }))
@@ -115,15 +139,65 @@ describe('decode session ports', () => {
     ])
   })
 
-  it('sends close straight to main, ahead of commands still queued on the port', async () => {
-    const sent: [string, DecodeCommand][] = []
-    const { ports, open } = sessionPorts((sessionId, cmd) => { sent.push([sessionId, cmd]) })
+  it('closes in main straight away, ahead of commands still queued on the port, and delivers nothing more', async () => {
+    const order: string[] = []
+    const { slots, dropped } = controlledSlots()
+    const { ports, open } = sessionPorts(
+      (_sessionId, cmd) => { order.push(cmd.type) },
+      slots,
+      async sessionId => { order.push(`close ${sessionId}`) },
+    )
     const consumer = await open('a')
+    const got = vi.fn()
+    consumer.onmessage = got
     consumer.postMessage({ type: 'release', lease: 3 })
-    ports.close('a')
-    expect(sent, 'close went out before the port delivered anything').toEqual([['a', { type: 'close' }]])
-    ports.end('a')
+    await ports.close('a')
+    expect(order, 'close went out before the port delivered anything').toEqual(['close a'])
+    expect(dropped, "the session's textures go with it").toEqual(['a'])
+    ports.deliver('a', { kind: 'end' })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(got).not.toHaveBeenCalled()
     consumer.close()
+  })
+
+  it("drops a session's textures when main ends it, or its open fails", async () => {
+    const { slots, dropped } = controlledSlots()
+    const { ports, open } = sessionPorts(() => {}, slots)
+    await open('a')
+    ports.end('a')
+    await expect(ports.openSession('b', () => Promise.reject(new Error('hw-budget-exceeded')))).rejects.toThrow()
+    expect(dropped).toEqual(['a', 'b'])
+  })
+
+  it('posts each slot as the bitmap its read made, in the session order, whatever order the reads finish in', async () => {
+    const { slots, reads } = controlledSlots()
+    const { ports, open } = sessionPorts(() => {}, slots)
+    const arrived = received(await open('a'), 4) as unknown as Promise<SlotSessionMsg[]>
+    ports.deliver('a', slotMsg(0))
+    ports.deliver('a', slotMsg(1))
+    ports.deliver('a', slotMsg(2))
+    // `end` and `error` must not overtake a slot still being read.
+    ports.deliver('a', { kind: 'end' })
+    expect(reads.map(r => [r.key, r.slot]), 'reads start at once, not one after another').toEqual([['a', 0], ['a', 1], ['a', 2]])
+    reads[2]!.settle()
+    reads[1]!.settle(new Error('getVideoFrame failed'))
+    reads[0]!.settle()
+    const got = await arrived
+    expect(got.map(m => m.kind === 'slot' ? `slot ${m.slot}/${m.gen}` : m.kind)).toEqual(['slot 0/10', 'slot 1/11', 'slot 2/12', 'end'])
+    expect(got[0]).toMatchObject({ timing: { gvfMs: 0, cibMs: 0 } })
+    expect(got[0]!.kind === 'slot' && got[0]!.bitmap, 'the bitmap travels with its slot').toBeTruthy()
+    expect(got[1], 'a failed read still reaches the consumer, which owns the slot').toMatchObject({ kind: 'slot', slot: 1, gen: 11, error: 'getVideoFrame failed' })
+    ports.end('a')
+  })
+
+  it('closes a bitmap whose read finishes after its session closed, instead of posting it', async () => {
+    const { slots, reads } = controlledSlots()
+    const { ports, open } = sessionPorts(() => {}, slots)
+    await open('a')
+    ports.deliver('a', slotMsg(0))
+    await ports.close('a')
+    reads[0]!.settle()
+    await vi.waitFor(() => expect(reads[0]!.bitmap.close).toHaveBeenCalledOnce())
   })
 
   it('drops a message for a session that has ended or never opened', async () => {

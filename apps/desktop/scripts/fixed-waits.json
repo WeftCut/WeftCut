@@ -49,7 +49,6 @@
   "src/renderer/render/decoder/ExportSourceHandle.test.ts": 6,
   "src/renderer/render/decoder/FfmpegSource.test.ts": 13,
   "src/renderer/render/decoder/PacketPump.test.ts": 1,
-  "src/renderer/render/decoder/transports/GpuTransport.test.ts": 3,
   "src/renderer/render/decoder/transports/slotFenceQueue.test.ts": 1,
   "src/renderer/render/motifs/MotifPrewarmer.test.ts": 1,
   "src/renderer/render/motifs/__tests__/runtime.test.ts": 2,

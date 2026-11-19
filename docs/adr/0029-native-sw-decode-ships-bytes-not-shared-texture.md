@@ -19,6 +19,9 @@ Date: 2026-10-31
   `webContents.send` moved ~1 GB/s (327 fps 1080p, 86 fps 4K NV12).
   `MessageChannelMain` was slower, `MessagePortMain` cannot transfer an
   `ArrayBuffer`, and no CPU zero-copy exists across main↔renderer.
+  The spike ran without context isolation, so it never paid the copy a frame
+  takes crossing `contextBridge`; the product does, which is why the last hop
+  is a port the preload holds (ADR 0175).
 - Linux zero-copy (DMA-BUF import through Electron's native-pixmap shared
   texture) carries three unmeasured risk surfaces: DRM format-modifier
   negotiation, multi-GPU import, NVIDIA DMA-BUF export.

@@ -15,9 +15,21 @@ function fakeContents() {
 
 /** The renderer side: sends `decodeSession:cmd` as `sender`. */
 function installed() {
-  let handler!: (event: { sender: WebContents }, sessionId: string, cmd: unknown) => void
-  installDecodeSessionIpc({ on: ((_channel: string, listener: typeof handler) => { handler = listener }) as never })
-  return (sender: WebContents, sessionId: string, cmd: unknown) => handler({ sender }, sessionId, cmd)
+  return installedIpc().command
+}
+
+/** The renderer side: `decodeSession:cmd` sends and `decodeSession:close` invokes as `sender`. */
+function installedIpc() {
+  let command!: (event: { sender: WebContents }, sessionId: string, cmd: unknown) => void
+  let close!: (event: { sender: WebContents }, sessionId: string) => unknown
+  installDecodeSessionIpc({
+    on: ((_channel: string, listener: typeof command) => { command = listener }) as never,
+    handle: ((_channel: string, listener: typeof close) => { close = listener }) as never,
+  })
+  return {
+    command: (sender: WebContents, sessionId: string, cmd: unknown) => command({ sender }, sessionId, cmd),
+    close: (sender: WebContents, sessionId: string) => close({ sender }, sessionId),
+  }
 }
 
 const frame: DecodeMsg = { kind: 'bytes', lease: 1, ptsUs: 0, durUs: 1, width: 2, height: 2, format: 'NV12', data: Buffer.alloc(6) }
@@ -58,8 +70,23 @@ describe('ipcCarrierPort', () => {
     const port = ipcCarrierPort(owner.contents, 'own-a')
     const got = vi.fn()
     port.on('message', got)
-    command(other.contents, 'own-a', { type: 'close' })
+    command(other.contents, 'own-a', { type: 'release', lease: 0 })
     expect(got).not.toHaveBeenCalled()
+    port.close()
+  })
+
+  it('reports the far end closing when its own document closes the session, and answers after it', () => {
+    const ipc = installedIpc()
+    const owner = fakeContents()
+    const other = fakeContents()
+    const port = ipcCarrierPort(owner.contents, 'close-a')
+    const order: string[] = []
+    port.on('close', () => { order.push('closed') })
+    ipc.close(other.contents, 'close-a')
+    expect(order, 'another document cannot close it').toEqual([])
+    ipc.close(owner.contents, 'close-a')
+    order.push('answered')
+    expect(order).toEqual(['closed', 'answered'])
     port.close()
   })
 

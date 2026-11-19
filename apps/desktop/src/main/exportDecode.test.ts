@@ -16,7 +16,9 @@ function fakePort() {
     start: () => {},
     close: () => {},
   }
-  return { port, posted, send: (data: unknown) => listeners.message!({ data }) }
+  return { port, posted, send: (data: unknown) => listeners.message!({ data }),
+    // The consumer closed the session (the preload's `decodeSession:close`).
+    consumerCloses: () => listeners.close!() }
 }
 
 type OnMsg = (err: Error | null, msg: DecodeMsg) => void
@@ -46,11 +48,11 @@ beforeEach(() => {
 describe('openExportDecode', () => {
   it('reserves the decoder memory against the export it belongs to, and closes the native session by its id', () => {
     const { backend, native } = fakeBackend()
-    const { port, send } = fakePort()
+    const { port, consumerCloses } = fakePort()
     const info = openExportDecode(native, contents(), port, { ...request('reserved'), finalizationId: 7 })
     expect(info).toEqual({ width: 2, height: 2, startPtsUs: 0 })
     expect(resources.reserve).toHaveBeenCalledWith('/home/u/clip.mov', 7)
-    send({ type: 'close' })
+    consumerCloses()
     expect(backend.exportDecodeClose.mock.calls).toEqual([['reserved']])
   })
 

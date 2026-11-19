@@ -11,8 +11,6 @@ import path from 'node:path'
 import os from 'node:os'
 import type { NativeDecode } from '@weftcut/native-decode'
 
-export type OnComponentEvent = (err: Error | null, json: string) => void
-
 export interface NativeDecodeComponent {
   backend: NativeDecode | null
   reason: string | null
@@ -35,7 +33,6 @@ type ComponentModule = typeof import('@weftcut/native-decode')
 /// failure so a broken component can't pollute sidecar ffmpeg resolution.
 export function loadNativeDecodeWith(
   requireFn: () => ComponentModule,
-  onEvent: OnComponentEvent,
   dllDir: string | null,
 ): NativeDecodeComponent {
   const prevPath = process.env.PATH
@@ -43,7 +40,7 @@ export function loadNativeDecodeWith(
   try {
     const mod = requireFn()
     return {
-      backend: new mod.NativeDecode(onEvent),
+      backend: new mod.NativeDecode(),
       reason: null,
       version: mod.versionInfo(),
       lanes: mod.capabilities(),
@@ -58,10 +55,10 @@ let cached: NativeDecodeComponent | null = null
 
 /// Production entry — resolves the DLL dir for the current run mode and
 /// memoizes (the component is a singleton like the core backend).
-export function loadNativeDecode(onEvent: OnComponentEvent): NativeDecodeComponent {
+export function loadNativeDecode(): NativeDecodeComponent {
   if (cached) return cached
   const require_ = createRequire(import.meta.url)
-  cached = loadNativeDecodeWith(requireComponent(require_), onEvent, resolveDllDir())
+  cached = loadNativeDecodeWith(requireComponent(require_), resolveDllDir())
   return cached
 }
 

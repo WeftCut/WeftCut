@@ -1,4 +1,4 @@
-import { ipcRenderer, type SharedTextureImported } from 'electron'
+import { ipcRenderer } from 'electron'
 import type { MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifPresence, MotifReadUnavailable, MotifTextureReadRequest } from '../shared/motifs/frameTransport'
 import { MOTIF_READER_CONNECT, MOTIF_READER_PORT, MOTIF_READER_RESET, MOTIF_TEXTURE_LANE_RESET, type MotifReaderDiv } from '../shared/motifs/readerProtocol'
 import { decodeMotifError, MotifError } from '../shared/motifs/errors'
@@ -6,7 +6,7 @@ import { decodeMotifError, MotifError } from '../shared/motifs/errors'
 // ImageBitmap cannot cross contextBridge. A same-renderer MessagePort transfers
 // ownership to the main world without serializing pixels or changing isolation.
 export function installMotifFrames(
-  imported: (key: string) => SharedTextureImported | undefined,
+  readTexture: (key: string) => Promise<ImageBitmap>,
   finishRead: (bitmap: ImageBitmap) => Promise<ImageBitmap>,
 ): void {
   // The Motif reader utility's port goes to the page, which hands it to its
@@ -50,11 +50,7 @@ export function installMotifFrames(
         let importMs: number | undefined
         if (frame?.kind === 'texture') {
           const start = performance.now()
-          const texture = imported(frame.key)
-          if (!texture) throw new Error('Motif texture import missing')
-          const vf = texture.getVideoFrame()
-          try { bitmap = await createImageBitmap(vf) } finally { vf.close() }
-          bitmap = await finishRead(bitmap)
+          bitmap = await finishRead(await readTexture(frame.key))
           importMs = performance.now() - start
         } else if (frame?.kind === 'pixels') {
           const rgba = new Uint8ClampedArray(frame.bytes.buffer as ArrayBuffer, frame.bytes.byteOffset, frame.bytes.byteLength)

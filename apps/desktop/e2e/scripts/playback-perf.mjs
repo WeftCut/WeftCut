@@ -13,15 +13,14 @@
 // table reports the other half — where each decoded frame WENT — from
 // `FrameRing`'s `fate` (see `FrameRingFate`).
 //
-// Two crossed axes, both PINNED per cell and VERIFIED per layer via
-// `activeClipProbe` before and after the measured window rather than trusted: a
-// cell whose clips drifted off either pin reports the run invalid, so a
-// downgraded lane can never be published under the label it drifted from.
-//   route   — the three decode paths (`ROUTE_SPEC` below), all measured on ONE
-//             fixture so a route comparison is never codec-confounded.
-//   barrier — `--barrier`, pinned by WEFTCUT_HW_BARRIER and meaningful on the
-//             hardware route ONLY. What each mode waits on, and which one the
-//             product ships: `HwBarrierMode` in `src/shared/ipc.ts`.
+// One axis, PINNED per cell and VERIFIED per layer via `activeClipProbe` before
+// and after the measured window rather than trusted: a cell whose clips drifted
+// off the pin reports the run invalid, so a downgraded lane can never be
+// published under the label it drifted from.
+//   route — the three decode paths (`ROUTE_SPEC` below), all measured on ONE
+//           fixture so a route comparison is never codec-confounded.
+// The hardware route's read completion is verified too: a clip whose frames
+// fell back from the slot fence to the one-pixel proof invalidates the cell.
 //
 // Every cell measures the ORIGINAL at full size, and pins that rather than
 // assuming it: the composition is created at the fixture's own resolution,
@@ -74,15 +73,6 @@ const arg = (name, dflt) => {
 const CODECS = arg("codec", "h264").split(",");
 const RESOLUTIONS = arg("resolution", "1080,2160").split(",");
 const ROUTES = arg("route", "hw,sw,webcodecs").split(",");
-/// `null` — the single element when the flag is absent — means "launch with
-/// WEFTCUT_HW_BARRIER unset", which is not the same leg as an explicit
-/// `rendererFence` even though both resolve to it: this is the path the app
-/// takes with nobody experimenting on it. A leg axis rather than something
-/// flipped between invocations because absolute numbers on this box drift
-/// 15–25% across sittings — wider than the effect being measured — so only
-/// variants run back to back inside one sitting compare.
-const BARRIER_FLAG = arg("barrier", "");
-const BARRIERS = BARRIER_FLAG ? BARRIER_FLAG.split(",") : [null];
 const MAX_TRACKS = Number(arg("max-tracks", "8"));
 const EXPLICIT_TRACKS = arg("tracks", "") ? arg("tracks", "").split(",").map(Number) : null;
 const WINDOW_S = Number(arg("window-s", "20"));
@@ -180,29 +170,6 @@ if (!fs.existsSync(MAIN)) {
   process.exit(2);
 }
 
-const BARRIER_MODES = ["readback", "fence", "gpuflush", "none", "rendererFence"];
-for (const b of BARRIERS) {
-  if (b !== null && !BARRIER_MODES.includes(b)) {
-    console.error(`[playback-perf] unknown barrier ${b} (${BARRIER_MODES.join("|")})`);
-    process.exit(2);
-  }
-}
-// An ambient value would ride into the leg labelled as the unset control and be
-// published under a label that does not name it — the same dishonesty the
-// per-layer route verification exists to prevent, one level up.
-if (!BARRIER_FLAG && process.env.WEFTCUT_HW_BARRIER) {
-  console.error(
-    `[playback-perf] WEFTCUT_HW_BARRIER=${process.env.WEFTCUT_HW_BARRIER} is set in this shell — pass it as --barrier so the leg labels name it, or unset it.`,
-  );
-  process.exit(2);
-}
-// Sweeping the barrier across the software and WebCodecs routes would spend a
-// second sitting-slot per cell re-measuring an identical lane under two labels:
-// nothing outside the hardware transport reads the variable.
-const nonHwRoutes = ROUTES.filter((r) => r !== "hw" && ROUTE_SPEC[r]);
-if (BARRIER_FLAG && nonHwRoutes.length > 0)
-  log(`note: the barrier axis exists on the hw route only — ${nonHwRoutes.join(", ")} run once each with WEFTCUT_HW_BARRIER unset, not once per --barrier value.`);
-
 const legs = [];
 for (const codec of CODECS) {
   for (const res of RESOLUTIONS) {
@@ -223,8 +190,7 @@ for (const codec of CODECS) {
         console.error(`[playback-perf] unknown route ${route} (hw|sw|webcodecs)`);
         process.exit(2);
       }
-      for (const barrier of route === "hw" ? BARRIERS : [null])
-        legs.push({ codec, res: Number(res), route, fixture, file, barrier });
+      legs.push({ codec, res: Number(res), route, fixture, file });
     }
   }
 }
@@ -642,7 +608,6 @@ async function runCell(leg, tracks) {
     args: [`--user-data-dir=${userData}`, MAIN],
     env: {
       ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1", ...spec.env,
-      ...(leg.barrier ? { WEFTCUT_HW_BARRIER: leg.barrier } : {}),
     },
   });
   const consoleErrors = [];
@@ -685,7 +650,7 @@ async function runCell(leg, tracks) {
 
     await page.evaluate(
       (o) => window.__weftcutTest.newProjectAndEnter(o),
-      { parentFolder: projectParent, name: `pbperf-${leg.fixture}-${leg.route}${leg.barrier ? `-${leg.barrier}` : ""}-${tracks}t`,
+      { parentFolder: projectParent, name: `pbperf-${leg.fixture}-${leg.route}-${tracks}t`,
         canvas: { width, height, fpsNum: COMP_FPS, fpsDen: 1 } },
     );
     await page.waitForSelector('[data-testid="timeline-ruler"]', { timeout: 60_000 });
@@ -929,7 +894,7 @@ async function runCell(leg, tracks) {
       const tag = arg("tag", "") ? `-${arg("tag", "")}` : "";
       tracePath = path.join(
         RESULTS_DIR,
-        `trace-${leg.fixture}-${leg.route}${leg.barrier ? `-${leg.barrier}` : ""}-${tracks}t${tag}-${Date.now()}.json`,
+        `trace-${leg.fixture}-${leg.route}-${tracks}t${tag}-${Date.now()}.json`,
       );
       await app.evaluate(({ contentTracing }, cfg) => contentTracing.startRecording(cfg), TRACE_CONFIG);
       const traceMs = Math.min(TRACE_S, WINDOW_S) * 1000;
@@ -992,10 +957,10 @@ async function runCell(leg, tracks) {
         ringSize: c.ringSize,
         lookaheadFull: c.lookaheadFull,
         decodeQueueSize: c.decodeQueueSize,
-        // Which barrier this clip's frames ACTUALLY took, as opposed to the one
-        // the leg pinned. Null until an instrumented frame lands, and on every
-        // transport that has no barrier at all. Checked below.
-        barrierModeObserved: c.handoff?.barrierModeObserved ?? null,
+        // Frames whose read completion fell back from the slot fence to the
+        // one-pixel proof. Null until a slot is read, and on every transport
+        // that reads no slot. Checked below.
+        proofFallbacks: c.handoff?.proofFallbacks ?? null,
         barrierN: c.handoff?.n ?? null,
         barrierP50: c.handoff?.barrierP50 ?? null,
         barrierP95: c.handoff?.barrierP95 ?? null,
@@ -1005,7 +970,7 @@ async function runCell(leg, tracks) {
         // absent-means-no-column treatment the fields above get.
         barrierDrawP50: c.handoff?.barrierDrawP50 ?? null,
         barrierReadP50: c.handoff?.barrierReadP50 ?? null,
-        // `fence` only: the wait it deferred rather than removed. `fenceWaitP50`
+        // The fence's wait, deferred rather than removed. `fenceWaitP50`
         // rides its own sample ring — only some frames carry a wait — so it is
         // NOT aligned with the frame window the percentiles above cover and the
         // two cannot be added. `fencePendingQueuePeak` nearing the pool size
@@ -1037,33 +1002,16 @@ async function runCell(leg, tracks) {
         conversionPeak: c.conversionBacklog?.peak ?? null,
       };
     });
-    // ── Barrier verification ───────────────────────────────────────────────
+    // ── Read-completion verification ───────────────────────────────────────
     // Held to the same standard as the route pin, and invalid on the same
-    // terms: a variant that cannot get the GL context it needs degrades to
-    // `readback` — deliberately, correctly, and silently — so a leg can run a
-    // variant it is not named after. That failure is worse than a missing cell:
-    // a `none` leg secretly running `readback` publishes "removing the barrier
-    // buys nothing" and retires the question on an artefact. An unpinned leg is
-    // held to the product default because that is what main resolves an unset env
-    // to — keep this in step with `HW_BARRIER_DEFAULT` in
-    // src/main/previewGpu.ts or every unpinned cell invalidates itself on a
-    // stale expectation.
-    const expectedBarrier = leg.barrier ?? "rendererFence";
-    const barrierObserved = perClip.map((p) => p.barrierModeObserved).filter(Boolean);
-    const barrierDrift = perClip
-      .filter((p) => p.barrierModeObserved && p.barrierModeObserved !== expectedBarrier)
-      .map((p) => `${p.layerId}: ${p.barrierModeObserved}`);
-    if (barrierDrift.length > 0)
-      throw new InvalidRun(`barrier pin did not hold, expected ${expectedBarrier} — ${barrierDrift.join("; ")}`);
-    // Distinct from a mismatch: a clip with no observation never delivered an
-    // instrumented frame, or sits on a transport with no barrier (the software
-    // clips a hardware leg grows past its live admission budget), and neither
-    // is drift.
-    // Nothing observed ANYWHERE under a pin is the case that must not pass — the
-    // cell cannot say which variant produced it, and an unattributable cell in a
-    // variant comparison is the artefact this whole check exists to exclude.
-    if (leg.barrier && barrierObserved.length === 0)
-      throw new InvalidRun(`barrier ${leg.barrier} pinned but no clip reported one — the pin cannot be confirmed`);
+    // terms: with no device to take a fence on, the slot fence degrades to the
+    // one-pixel proof — deliberately, correctly, and silently — so a hardware
+    // cell can measure a read completion the product does not ship.
+    const proofDrift = perClip
+      .filter((p) => p.proofFallbacks)
+      .map((p) => `${p.layerId}: ${p.proofFallbacks} frame(s)`);
+    if (proofDrift.length > 0)
+      throw new InvalidRun(`read completion fell back to the one-pixel proof — ${proofDrift.join("; ")}`);
 
     // Thread-seconds the renderer spends held up by the barrier, per
     // wall-second, summed over every hardware session (each blocks
@@ -1071,14 +1019,10 @@ async function runCell(leg, tracks) {
     // barrier is on the critical path — 20 ms at 2 fps is free, 20 ms at 30 fps
     // is not — and this is the figure that can.
     //
-    // It spans TWO mechanisms, so a `fence` row and a `readback` row reaching
-    // the same value do NOT mean the same thing: the synchronous per-frame drain
-    // (priced from `barrierP50`, which on the `fence` path is submit-only), plus
-    // the wall-clock the deferred path spent spinning in its deadline fallback.
-    // The second term is not optional bookkeeping — a forced spin blocks the
-    // main thread and contributes nothing to `barrierP50`, so without it this
-    // number reads near zero for a `fence` leg that is burning the loop, which
-    // is precisely the direction that flatters the candidate.
+    // It spans TWO terms: the synchronous per-frame cost (priced from
+    // `barrierP50`, which for the fence is submit-only), plus the wall-clock
+    // spent spinning in forced waits. The second is structurally zero for the
+    // signal-only fence; it stays so a forced wait can never hide in a p50.
     const fenceSpinShare = perClip.reduce(
       (s, p) => s + (p.fenceForcedWaitMs !== null ? p.fenceForcedWaitMs / 1000 / wallS : 0),
       0,
@@ -1196,7 +1140,7 @@ function verdict(cell, baseline) {
 // ── Main ────────────────────────────────────────────────────────────────────
 const env = await envBlock();
 log(`env: Electron ${env.electron} / Chromium ${env.chrome} · ${env.gpuNames ?? env.gpu.join(",")} · ${env.cpus}`);
-log(`legs: ${legs.map((l) => `${l.fixture}/${l.route}${l.barrier ? `+${l.barrier}` : ""}`).join(", ")} · window ${WINDOW_S}s warmup ${WARMUP_S}s`);
+log(`legs: ${legs.map((l) => `${l.fixture}/${l.route}`).join(", ")} · window ${WINDOW_S}s warmup ${WARMUP_S}s`);
 if (REPLAY_AFTER_WARMUP)
   log("replay-after-warmup: enabled (seek 2s, re-prove clock + four consecutive ring-coverage polls, then reset counters)");
 
@@ -1205,7 +1149,7 @@ const report = {
   env,
   config: { windowS: WINDOW_S, warmupS: WARMUP_S, maxTracks: MAX_TRACKS, compFps: COMP_FPS,
     dropBudget: DROP_BUDGET, presentFloor: PRESENT_FLOOR, tracks: EXPLICIT_TRACKS,
-    playbackResolution: PLAYBACK_RESOLUTION, barriers: BARRIERS,
+    playbackResolution: PLAYBACK_RESOLUTION,
     replayUsed: REPLAY_AFTER_WARMUP, trace: TRACE, traceS: TRACE_S, uiProbe: UI_PROBE },
   legs: [],
 };
@@ -1217,12 +1161,8 @@ const outFile = path.join(RESULTS_DIR, `playback-perf-${env.date.slice(0, 10)}-$
 
 for (const leg of legs) {
   const spec = ROUTE_SPEC[leg.route];
-  // The label is what every table row is keyed by, so the variant has to live
-  // IN it: two legs differing only by barrier are otherwise indistinguishable
-  // once the run is read back from JSON.
   const entry = { fixture: leg.fixture, codec: leg.codec, res: leg.res, route: leg.route,
-    barrier: leg.barrier,
-    label: `${leg.fixture} · ${spec.label}${leg.barrier ? ` · barrier=${leg.barrier}` : ""}`, cells: [] };
+    label: `${leg.fixture} · ${spec.label}`, cells: [] };
   report.legs.push(entry);
   let baseline = null;
   let failStreak = 0;

@@ -63,7 +63,7 @@ natively decoded frames to the export compositor (routing:
 2. The session's messages are the addon's generated `DecodeMsg` (`bytes`,
    `mark`, `end`, `error`). Main sends each on `decodeSession:msg` as
    delivered (`main/frameCarrier/decodeSessionHost.ts` over
-   `ipcCarrierPort.ts`, which carry every byte pipeline; each pipeline parses
+   `ipcCarrierPort.ts`, which carry every decode session; each pipeline parses
    its own commands): the one cross-process copy. The preload posts it on
    the session's port with the frame's buffer transferred, so the bytes cross
    no `contextBridge`. `mark` carries the completed `[aUs, bUs]` and, since
@@ -83,7 +83,8 @@ natively decoded frames to the export compositor (routing:
    the session directly, so it lands mid-range.
 5. A `close` by session id ends the session. The handle asks for it on
    dispose and on a terminal error as `nd:close`, which the page passes to
-   `exportDecode.close`. It does not go up the session's port: the export
+   `exportDecode.close` (the `decodeSession:close` every pipeline uses). It
+   does not go up the session's port: the export
    releases one phase's handle and opens the next phase's in the same turn,
    and only the route `nd:open` takes keeps that close ahead of that open in
    main, where the old session still holds its decoder memory. When an export

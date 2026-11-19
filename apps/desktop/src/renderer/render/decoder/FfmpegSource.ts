@@ -33,6 +33,10 @@ const CAPACITY_RETRY_MS = 1_000;
 // their target is not cached, and capacity remains the independent upper bound.
 const REFILL_LOOKAHEAD_US = 150_000;
 let nextStreamSeq = 0;
+/// Makes this document's session ids its own. Main keys every decode session
+/// by id across all documents, and two windows can hold the same layer; a
+/// second open under a live id is refused as a failure, not as "busy".
+const DOCUMENT_TAG = crypto.randomUUID().slice(0, 8);
 
 /// The HW lanes that COPY BACK to CPU frames and ship bytes over `SwTransport`
 /// (Linux NVDEC/VAAPI — ADR 0029; macOS VideoToolbox — issue #10), as
@@ -351,7 +355,7 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.lane = lane;
     // A fresh streamId per open so late frames from a swapped-out transport
     // (still draining on the old streamId) can never land in the ring.
-    const streamId = `ffmpeg:${lane}:${this.layerId}:${nextStreamSeq++}`;
+    const streamId = `ffmpeg:${DOCUMENT_TAG}:${lane}:${this.layerId}:${nextStreamSeq++}`;
     let failure: { error: unknown } | null = null;
     try {
       // Conditional spreads — exactOptionalPropertyTypes rejects an explicit

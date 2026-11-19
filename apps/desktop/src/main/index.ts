@@ -92,7 +92,6 @@ import { createAudioFxBaker, exportWindowFromArgs, type AudioFxBaker } from './a
 import { createFxCacheLayout, createNodeAudioFxFs, fxCacheRoot } from './audioFx/fxPaths.js'
 import { fxWaveformKey } from '../shared/audioEffects/status.js'
 import { installPreviewGpuIpc } from './previewGpuIpc.js'
-import { recordFrameReadySent } from './previewGpuTiming.js'
 import { openPreviewDecode, type PreviewDecodeRequest } from './previewDecode.js'
 import { openExportDecode } from './exportDecode.js'
 import { installDecodeSessionIpc, ipcCarrierPort } from './frameCarrier/ipcCarrierPort.js'
@@ -798,21 +797,9 @@ app.whenReady().then(async () => {
   await backend.init()
   console.log('[main] backend init OK')
 
-  // Optional native-decode component (level-0 gate). Its events use the same
-  // {event, payload} envelope as the core backend; relay through evt:* so the
-  // preload's existing previewGpu listeners keep working unchanged.
-  const nd = loadNativeDecode((_err, json) => {
-    try {
-      const { event, payload } = JSON.parse(json) as { event: string; payload: unknown }
-      if (event === 'previewGpu:frameReady') {
-        const p = payload as { streamId: string; slot: number }
-        recordFrameReadySent(p.streamId, p.slot, performance.now())
-      }
-      emitToRenderer(event, payload)
-    } catch (e) {
-      console.warn('[main] native-decode event parse failed', e)
-    }
-  })
+  // Optional native-decode component (level-0 gate). Every session's messages
+  // go to the session's own port; the component emits no events.
+  const nd = loadNativeDecode()
   if (!nd.backend) {
     console.warn('[main] native-decode component unavailable:', nd.reason)
     startupNotices.push({ level: 'info', code: 'native_decode_unavailable' })
@@ -2202,16 +2189,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('backend:invokePublished', (event, request) =>
     tsHost!.published(() => invokeBackend(event, request)))
 
-  // Native GPU-decode preview (Windows). Session lifecycle + the persistent
-  // shared-texture handoff live in ./previewGpu; the per-frame
-  // frameReady/eof/error pokes reach the renderer already, via the Backend
-  // onEvent relay above (they fall through to `evt:previewGpu:*`). consumeAck is
-  // driven by the preload's per-frame loop AFTER createImageBitmap resolves (the
-  // ack-after-read contract) — never earlier, or native could reuse the slot
-  // mid-read (tearing / a dropped frame). Native's AcquireSync on a still-held
-  // slot now backstops this with a finite timeout (Error-poke + skip) rather
-  // than hanging, but the ack ordering still exists to avoid paying that cost.
-  installPreviewGpuIpc(ndBackend, () => mainWindow)
+  // Native GPU-decode preview (Windows): a decode session whose frames stay in
+  // shared-texture slots (./previewGpu). Its commands and close travel the
+  // decode-session channels installed below.
+  installPreviewGpuIpc(ndBackend)
   installPerformanceCalibration(dataRoot.cacheDir)
   // Complete GPU identity initializes lazily when diagnostics are requested;
   // basic info on macOS can contain only a vendor ID before GPU startup.

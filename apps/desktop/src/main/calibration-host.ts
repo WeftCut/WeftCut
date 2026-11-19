@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { loadNativeDecodeWith } from './native-decode';
 import { installPreviewGpuIpc } from './previewGpuIpc';
+import { installDecodeSessionIpc } from './frameCarrier/ipcCarrierPort';
 import { previewGpuDevices, hwBudget } from './previewGpu';
-import { recordFrameReadySent } from './previewGpuTiming';
 import { hydratePerformanceSettings } from '../shared/performance-settings';
 import { PLAYBACK_CALIBRATION } from '../shared/playback-calibration';
 
@@ -22,17 +22,14 @@ let win: BrowserWindow | null = null;
 app.on('window-all-closed', () => app.quit());
 void app.whenReady().then(async () => {
   const require_ = createRequire(import.meta.url);
-  const component = loadNativeDecodeWith(() => require_('@weftcut/native-decode'), (_error, json) => {
-    const { event, payload } = JSON.parse(json);
-    if (event === 'previewGpu:frameReady') recordFrameReadySent(payload.streamId, payload.slot, performance.now());
-    if (win && !win.isDestroyed()) win.webContents.send(`evt:${event}`, payload);
-  }, app.isPackaged ? path.join(process.resourcesPath, 'native-decode')
+  const component = loadNativeDecodeWith(() => require_('@weftcut/native-decode'), app.isPackaged ? path.join(process.resourcesPath, 'native-decode')
     : path.resolve(import.meta.dirname, '../../resources/ffmpeg-lgpl/win/bin'));
   const backend = () => {
     if (!component.backend) throw new Error(component.reason ?? 'Native decode unavailable');
     return component.backend;
   };
-  installPreviewGpuIpc(backend, () => win);
+  installDecodeSessionIpc(ipcMain);
+  installPreviewGpuIpc(backend);
   // Fresh per-process probe, reused only within this run. Never read capability history.
   let probe: ReturnType<ReturnType<typeof backend>['previewGpuProbe']> | undefined;
   ipcMain.handle('decodeCap:probeHw', (_e, args: { path: string }) => {

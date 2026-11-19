@@ -46,7 +46,7 @@ export function openExportDecode(
       else backend.exportDecodeRelease(sessionId, cmd.lease)
     },
     close: () => backend.exportDecodeClose(sessionId),
-  })
+  }).info
 }
 
 function exportCommand(data: Record<string, unknown>): ExportDecodeCommand | null {

@@ -17,7 +17,9 @@ function fakePort() {
     start: () => {},
     close: () => { state.closed = true },
   }
-  return { port, posted, state, send: (data: unknown) => listeners.message!({ data }) }
+  return { port, posted, state, send: (data: unknown) => listeners.message!({ data }),
+    // The consumer closed the session (the preload's `decodeSession:close`).
+    consumerCloses: () => listeners.close!() }
 }
 
 type OnMsg = (err: Error | null, msg: DecodeMsg) => void
@@ -48,13 +50,13 @@ beforeEach(() => {
 describe('openPreviewDecode', () => {
   it('opens the native session with every open option, returns its shipped size, and closes it by its id', () => {
     const { backend, native } = fakeBackend()
-    const { port, send } = fakePort()
+    const { port, consumerCloses } = fakePort()
     const info = openPreviewDecode(native, contents(), port, request('opened'))
     expect(info).toEqual({ width: 2, height: 2 })
     expect(backend.previewDecodeOpen).toHaveBeenCalledWith(
       'opened', '/home/u/clip.mov', { lane: 'vaapi', device: '/dev/dri/renderD128', scaleDiv: 2 }, expect.any(Function))
     expect(resources.reserve).toHaveBeenCalledWith('/home/u/clip.mov')
-    send({ type: 'close' })
+    consumerCloses()
     expect(backend.previewDecodeClose.mock.calls).toEqual([['opened']])
   })
 
