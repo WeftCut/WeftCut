@@ -34,8 +34,8 @@ const CAPACITY_RETRY_MS = 1_000;
 const REFILL_LOOKAHEAD_US = 150_000;
 let nextStreamSeq = 0;
 
-/// The HW lanes that COPY BACK to CPU frames and ship bytes over the previewSw
-/// transport (Linux NVDEC/VAAPI — ADR 0029; macOS VideoToolbox — issue #10), as
+/// The HW lanes that COPY BACK to CPU frames and ship bytes over `SwTransport`
+/// (Linux NVDEC/VAAPI — ADR 0029; macOS VideoToolbox — issue #10), as
 /// opposed to the Windows shared-texture lane (d3d11va → GpuTransport). One
 /// predicate so `makeHardwareTransport` and `usesSwTransport` cannot drift.
 function isCopyBackHwLane(lane: string): boolean {
@@ -183,7 +183,7 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// True while this source actually HOLDS a main-process admission lease — a
   /// transport on the shared-texture hardware lane. A source between
   /// transports holds none, and the copy-back lanes (nvdec/vaapi/videotoolbox)
-  /// ride `previewSw`: they hold global memory credits but no shared-texture
+  /// ride `SwTransport`: they hold global memory credits but no shared-texture
   /// HW session slot. This reclaim only targets that HW slot.
   holdsHwSessionLease(): boolean {
     const attempt = this.held();
@@ -420,7 +420,7 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// Pick the hardware transport by the resolved HW lane: the copy-back lanes
   /// (Linux nvdec/vaapi, macOS videotoolbox) ride the SW transport with a hw
   /// accel — decode happens on the GPU/OS media engine but frames ship as CPU
-  /// NV12 over the SAME previewSw transport; the Windows shared-texture lane
+  /// NV12 over the SAME byte transport; the Windows shared-texture lane
   /// (d3d11va) rides the GPU transport. A forced lane (bench) has no hwPlan and
   /// falls to the GPU transport.
   private makeHardwareTransport(): DecodeTransport {

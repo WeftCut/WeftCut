@@ -10,20 +10,21 @@
 // Backpressure is a lease window: the session parks once `window` frames are
 // out, and each frame's lease goes back when that frame leaves the ring.
 
-import type { DecodeCommand, DecodeWireFrame, DecodeWireMsg, ExportDecodeOpenInfo } from "../../../shared/frameCarrier/wire";
+import type { DecodeWireFrame, DecodeWireMsg, ExportDecodeCommand, ExportDecodeOpenInfo } from "../../../shared/frameCarrier/wire";
 import type { ExportColorDiag } from "../decoder/ExportDecoderPool";
 import { ExportFrameStore } from "../decoder/ExportDecoderPool";
-import { nv12FrameFromBytes, type NativeNv12Frame } from "../decoder/nv12Frame";
 import type { SourceColor } from "../decoder/ffprobeColorSpace";
 import type { ExportDecodeSession, SourceHandleInit } from "../decoder/session";
-import { tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
+import type { TenBitFrame } from "../decoder/tenBitFrame";
+import type { NativeNv12Frame } from "../decoder/nv12Frame";
+import { cpuPlaneFrame } from "../frameCarrier/cpuPlaneFrame";
 import type { ExportTransportFormat } from "../exportDecodeRouting";
 import type { ExportEvent, ExportRequest } from "./protocol";
 
 /// The handle's end of its session port (a `MessagePort` in the Worker).
 export interface DecodePort {
   onmessage: ((event: MessageEvent<DecodeWireMsg>) => void) | null;
-  postMessage(cmd: Exclude<DecodeCommand, { type: "close" }>): void;
+  postMessage(cmd: ExportDecodeCommand): void;
   close(): void;
 }
 
@@ -234,14 +235,9 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
       return;
     }
     const colorSpace = this.frameColorSpace;
-    const layout = { data: msg.data, width: msg.width, height: msg.height, timestamp: msg.ptsUs, duration: msg.durUs, colorSpace };
-    // Both lanes wrap the bytes zero-copy as CPU-plane frames the Compositor
-    // converts in its own shaders. LANDMINE: never `new VideoFrame` + drawImage
-    // — Chromium converts buffer-defined NV12 as BT.601 (see nv12Frame.ts).
-    // The builders throw on a byte-length/layout mismatch (Rust/TS drift).
     let built: NativeNv12Frame | TenBitFrame;
     try {
-      built = msg.format === "I420P10" ? tenBitFrameFromBytes(layout) : nv12FrameFromBytes(layout);
+      built = cpuPlaneFrame(msg, colorSpace);
     } catch (e) {
       release();
       this.ring.fail(e instanceof Error ? e.message : String(e));

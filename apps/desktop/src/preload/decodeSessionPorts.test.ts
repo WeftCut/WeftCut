@@ -16,10 +16,22 @@ function received(port: MessagePort, count: number): Promise<DecodeWireMsg[]> {
   })
 }
 
+/** Ports whose consumer ends are kept by session id as they are handed over. */
+function sessionPorts(sendCommand: (sessionId: string, cmd: DecodeCommand) => void = () => {}) {
+  const handed = new Map<string, MessagePort>()
+  const ports = createDecodeSessionPorts(sendCommand, (sessionId, port) => { handed.set(sessionId, port) })
+  /** Opens `sessionId` with an open that succeeds, and returns its consumer port. */
+  const open = async (sessionId: string): Promise<MessagePort> => {
+    await ports.openSession(sessionId, () => Promise.resolve({ width: 2 }))
+    return handed.get(sessionId)!
+  }
+  return { ports, handed, open }
+}
+
 describe('decode session ports', () => {
   it('hands the consumer every message of its session in the order main sent them', async () => {
-    const ports = createDecodeSessionPorts(() => {})
-    const consumer = ports.open('a')
+    const { ports, open } = sessionPorts()
+    const consumer = await open('a')
     const arrived = received(consumer, 4)
     ports.deliver('a', frame(1, new Uint8Array([1, 2, 3, 4, 5, 6])))
     ports.deliver('a', { kind: 'mark', aUs: 0, bUs: 10 })
@@ -31,10 +43,29 @@ describe('decode session ports', () => {
     ports.end('a')
   })
 
+  it('keeps what main delivers while the open is in flight for the consumer', async () => {
+    const { ports, handed } = sessionPorts()
+    let answer!: (info: { width: number }) => void
+    const opening = ports.openSession('a', () => new Promise<{ width: number }>(resolve => { answer = resolve }))
+    // Main has opened the session and sent its first message before the open
+    // reply reaches the preload.
+    ports.deliver('a', { kind: 'error', message: 'seek failed', terminal: false })
+    answer({ width: 2 })
+    await expect(opening).resolves.toEqual({ width: 2 })
+    expect(await received(handed.get('a')!, 1)).toEqual([{ kind: 'error', message: 'seek failed', terminal: false }])
+    ports.end('a')
+  })
+
+  it('hands no port over when the open fails, and drops what main sends for it', async () => {
+    const { ports, handed } = sessionPorts()
+    await expect(ports.openSession('a', () => Promise.reject(new Error('codec failed')))).rejects.toThrow('codec failed')
+    expect(handed.size).toBe(0)
+    expect(() => ports.deliver('a', { kind: 'end' })).not.toThrow()
+  })
+
   it("moves a frame's buffer to the consumer instead of copying it", async () => {
-    const ports = createDecodeSessionPorts(() => {})
-    const consumer = ports.open('a')
-    const arrived = received(consumer, 1)
+    const { ports, open } = sessionPorts()
+    const arrived = received(await open('a'), 1)
     const data = new Uint8Array([9, 8, 7, 6, 5, 4])
     ports.deliver('a', frame(1, data))
     expect(data.byteLength, 'the sender no longer holds the bytes').toBe(0)
@@ -43,9 +74,8 @@ describe('decode session ports', () => {
   })
 
   it('sends only its own bytes when a frame is a view into a larger buffer', async () => {
-    const ports = createDecodeSessionPorts(() => {})
-    const consumer = ports.open('a')
-    const arrived = received(consumer, 1)
+    const { ports, open } = sessionPorts()
+    const arrived = received(await open('a'), 1)
     const pool = new Uint8Array([0, 0, 1, 2, 3, 4, 5, 6, 0, 0])
     ports.deliver('a', frame(1, pool.subarray(2, 8)))
     const [msg] = await arrived
@@ -55,9 +85,9 @@ describe('decode session ports', () => {
   })
 
   it("keeps each session's messages on its own port", async () => {
-    const ports = createDecodeSessionPorts(() => {})
-    const a = received(ports.open('a'), 1)
-    const b = received(ports.open('b'), 1)
+    const { ports, open } = sessionPorts()
+    const a = received(await open('a'), 1)
+    const b = received(await open('b'), 1)
     ports.deliver('b', { kind: 'mark', aUs: 5, bUs: 6 })
     ports.deliver('a', { kind: 'end' })
     expect(await a).toEqual([{ kind: 'end' }])
@@ -68,26 +98,37 @@ describe('decode session ports', () => {
 
   it("forwards a consumer's commands tagged with its session", async () => {
     const sent: [string, DecodeCommand][] = []
-    const done = new Promise<void>(resolve => {
-      const ports = createDecodeSessionPorts((sessionId, cmd) => {
-        sent.push([sessionId, cmd])
-        if (sent.length === 2) { ports.end('a'); resolve() }
-      })
-      const consumer = ports.open('a')
-      consumer.postMessage({ type: 'range', aUs: 0, bUs: 100 })
-      consumer.postMessage({ type: 'release', lease: 3 })
-      consumer.close()
+    let finished!: () => void
+    const done = new Promise<void>(resolve => { finished = resolve })
+    const { ports, open } = sessionPorts((sessionId, cmd) => {
+      sent.push([sessionId, cmd])
+      if (sent.length === 2) { ports.end('a'); finished() }
     })
+    const consumer = await open('a')
+    consumer.postMessage({ type: 'request', targetUs: 0, requestId: 1 })
+    consumer.postMessage({ type: 'release', lease: 3 })
+    consumer.close()
     await done
     expect(sent).toEqual([
-      ['a', { type: 'range', aUs: 0, bUs: 100 }],
+      ['a', { type: 'request', targetUs: 0, requestId: 1 }],
       ['a', { type: 'release', lease: 3 }],
     ])
   })
 
-  it('drops a message for a session that has ended or never opened', () => {
-    const ports = createDecodeSessionPorts(vi.fn())
-    ports.open('a')
+  it('sends close straight to main, ahead of commands still queued on the port', async () => {
+    const sent: [string, DecodeCommand][] = []
+    const { ports, open } = sessionPorts((sessionId, cmd) => { sent.push([sessionId, cmd]) })
+    const consumer = await open('a')
+    consumer.postMessage({ type: 'release', lease: 3 })
+    ports.close('a')
+    expect(sent, 'close went out before the port delivered anything').toEqual([['a', { type: 'close' }]])
+    ports.end('a')
+    consumer.close()
+  })
+
+  it('drops a message for a session that has ended or never opened', async () => {
+    const { ports, open } = sessionPorts(vi.fn())
+    await open('a')
     ports.end('a')
     expect(() => {
       ports.deliver('a', { kind: 'end' })

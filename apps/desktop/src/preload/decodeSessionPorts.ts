@@ -1,15 +1,21 @@
 // The renderer end of each decode session's port (main/frameCarrier/
-// ipcCarrierPort.ts). The preload holds one end and gives the other to the
-// session's consumer, usually a Worker: a message from main is posted on with
-// its frame buffer transferred, so the bytes cross no context bridge and no
-// page code handles them.
+// ipcCarrierPort.ts), for preview and export sessions alike. The preload holds
+// one end and gives the other to the session's consumer (the page's preview
+// transport, or an export Worker): a message from main is posted on with its
+// frame buffer transferred, so the bytes cross no context bridge.
 
 import type { DecodeCommand, DecodeWireMsg } from '../shared/frameCarrier/wire'
 
 export interface DecodeSessionPorts {
-  /** Creates the session's port pair, keeps one end and returns the other for
-   * the consumer. Commands the consumer posts go to `sendCommand`. */
-  open(sessionId: string): MessagePort
+  /** Opens session `sessionId` with `invoke` (main's open handler) and, once it
+   * resolves, hands the consumer its port through `handOver`. The port exists
+   * before main opens the session, and a port queues what it receives until its
+   * consumer listens, so no message is lost in between. A failed open closes
+   * the port and rejects. */
+  openSession<Info>(sessionId: string, invoke: () => Promise<Info>): Promise<Info>
+  /** Ends session `sessionId` in main. Sent on IPC directly, not up the port,
+   * so it reaches main before any open the caller starts after it. */
+  close(sessionId: string): void
   /** One message from main for `sessionId`, in main's order. */
   deliver(sessionId: string, msg: DecodeWireMsg): void
   /** The session is over in main: close the kept end. */
@@ -18,15 +24,29 @@ export interface DecodeSessionPorts {
 
 export function createDecodeSessionPorts(
   sendCommand: (sessionId: string, cmd: DecodeCommand) => void,
+  handOver: (sessionId: string, port: MessagePort) => void,
 ): DecodeSessionPorts {
   const kept = new Map<string, MessagePort>()
+  const end = (sessionId: string) => {
+    kept.get(sessionId)?.close()
+    kept.delete(sessionId)
+  }
   return {
-    open(sessionId) {
+    async openSession(sessionId, invoke) {
       const { port1, port2 } = new MessageChannel()
       kept.set(sessionId, port1)
       port1.onmessage = event => sendCommand(sessionId, event.data as DecodeCommand)
-      return port2
+      try {
+        const info = await invoke()
+        handOver(sessionId, port2)
+        return info
+      } catch (error) {
+        end(sessionId)
+        port2.close()
+        throw error
+      }
     },
+    close(sessionId) { sendCommand(sessionId, { type: 'close' }) },
     deliver(sessionId, msg) {
       const port = kept.get(sessionId)
       if (!port) return
@@ -38,9 +58,6 @@ export function createDecodeSessionPorts(
         : msg.data.slice()
       port.postMessage({ ...msg, data }, [data.buffer])
     },
-    end(sessionId) {
-      kept.get(sessionId)?.close()
-      kept.delete(sessionId)
-    },
+    end,
   }
 }

@@ -1,33 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExportDecodeOpenInfo } from "../../shared/frameCarrier/wire";
-import { openExportDecode, type ExportDecodeOpenArgs } from "./exportDecode";
+import { openDecodeSession } from "./decodeSession";
 
-/// The page's window as the helper sees it: message listeners, and the
-/// preload's `exportDecode.open`, answered by the test.
+type Info = { width: number };
+
+/// The page's window as the helper sees it: message listeners, and an open
+/// call answered by the test.
 function fakeWindow() {
   const listeners = new Set<(event: MessageEvent) => void>();
-  const opens = new Map<string, { resolve: (info: ExportDecodeOpenInfo) => void; reject: (e: Error) => void }>();
+  const opens = new Map<string, { resolve: (info: Info) => void; reject: (e: Error) => void }>();
   const win = {
     addEventListener: (_type: string, l: (event: MessageEvent) => void) => { listeners.add(l); },
     removeEventListener: (_type: string, l: (event: MessageEvent) => void) => { listeners.delete(l); },
-    api: {
-      exportDecode: {
-        open: (args: ExportDecodeOpenArgs) =>
-          new Promise<ExportDecodeOpenInfo>((resolve, reject) => { opens.set(args.sessionId, { resolve, reject }); }),
-      },
-    },
   };
+  const open = (sessionId: string) => () =>
+    new Promise<Info>((resolve, reject) => { opens.set(sessionId, { resolve, reject }); });
   /// The preload relaying session `sessionId`'s port as a window message.
   const portArrives = (sessionId: string, source: unknown = win) => {
     const port = { sessionId, close: vi.fn() } as unknown as MessagePort;
-    for (const l of [...listeners]) l({ source, data: { weftcutExportDecodePort: sessionId }, ports: [port] } as unknown as MessageEvent);
+    for (const l of [...listeners]) l({ source, data: { weftcutDecodeSessionPort: sessionId }, ports: [port] } as unknown as MessageEvent);
     return port;
   };
-  return { win, listeners, opens, portArrives };
+  return { win, listeners, opens, open, portArrives };
 }
 
-const info = (width: number): ExportDecodeOpenInfo => ({ width, height: 2, startPtsUs: 0 });
-const args = (sessionId: string): ExportDecodeOpenArgs => ({ sessionId, path: "/home/u/a.mov", outFormat: "NV12", window: 6 });
+const info = (width: number): Info => ({ width });
 
 let page: ReturnType<typeof fakeWindow>;
 beforeEach(() => {
@@ -36,14 +32,14 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
-describe("openExportDecode", () => {
+describe("openDecodeSession", () => {
   it("resolves once the open info and the session's own port have both arrived, in either order", async () => {
-    const first = openExportDecode(args("a"));
+    const first = openDecodeSession("a", page.open("a"));
     const portA = page.portArrives("a");
     page.opens.get("a")!.resolve(info(1));
     await expect(first).resolves.toEqual({ info: info(1), port: portA });
 
-    const second = openExportDecode(args("b"));
+    const second = openDecodeSession("b", page.open("b"));
     page.opens.get("b")!.resolve(info(2));
     const portB = page.portArrives("b");
     await expect(second).resolves.toEqual({ info: info(2), port: portB });
@@ -51,8 +47,8 @@ describe("openExportDecode", () => {
   });
 
   it("matches each port to its session by id, not by arrival order", async () => {
-    const a = openExportDecode(args("a"));
-    const b = openExportDecode(args("b"));
+    const a = openDecodeSession("a", page.open("a"));
+    const b = openDecodeSession("b", page.open("b"));
     const portB = page.portArrives("b");
     const portA = page.portArrives("a");
     page.opens.get("a")!.resolve(info(1));
@@ -62,7 +58,7 @@ describe("openExportDecode", () => {
   });
 
   it("ignores a port posted by anything but the page's own window", async () => {
-    const a = openExportDecode(args("a"));
+    const a = openDecodeSession("a", page.open("a"));
     page.portArrives("a", {});
     page.opens.get("a")!.resolve(info(1));
     const portA = page.portArrives("a");
@@ -70,7 +66,7 @@ describe("openExportDecode", () => {
   });
 
   it("rejects with the open's failure and stops listening", async () => {
-    const a = openExportDecode(args("a"));
+    const a = openDecodeSession("a", page.open("a"));
     page.opens.get("a")!.reject(new Error("codec failed"));
     await expect(a).rejects.toThrow("codec failed");
     expect(page.listeners.size).toBe(0);

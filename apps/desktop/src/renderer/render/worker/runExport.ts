@@ -11,7 +11,7 @@
 
 import { convertFileSrc } from "@/bridge/ipc";
 import { openVideoSinkPort } from "../../ipc";
-import { openExportDecode } from "../../ipc/exportDecode";
+import { openDecodeSession } from "../../ipc/decodeSession";
 import { loadBundledFontBytes, resolveFontsForFamilies } from "../fonts/registry";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
@@ -414,13 +414,13 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         // open failure reaches the Worker's handle (`ensureReady` rejects →
         // the export aborts).
         decodeSessions.add(ev.sessionId);
-        openExportDecode({
+        openDecodeSession(ev.sessionId, () => window.api.exportDecode.open({
           sessionId: ev.sessionId,
           path: ev.path,
           outFormat: ev.outFormat,
           window: ev.window,
           finalizationToken: init.finalizationToken,
-        }).then(
+        })).then(
           ({ info, port }) => {
             // The export ended while this open was in flight, so its cleanup
             // could not reach the session yet.

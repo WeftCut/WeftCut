@@ -11,7 +11,7 @@
 // contexts); this file is never imported by the non-DOM main process.
 
 import type { UpdateDownloadResult, UpdateRestartResult, UpdateResume, UpdateStatus } from './updates'
-import type { ExportDecodeOpenInfo } from './frameCarrier/wire'
+import type { ExportDecodeOpenInfo, PreviewDecodeOpenInfo, PreviewDecodeOptions } from './frameCarrier/wire'
 
 export type DialogOpenOpts = {
   title?: string
@@ -279,40 +279,6 @@ export type PreviewGpuTimingReport = {
 /// main<->renderer transit + renderer work, measured in main's own clock.
 export type PreviewGpuMainTiming = { rendererRoundTripMs: PreviewGpuTimingSummary }
 
-/// One software-decoded frame relayed to the renderer over the dedicated
-/// `previewSw:frame` channel (native SW-decode preview: ProRes/DNxHD/MPEG-2/
-/// VC-1 — the WebCodecs-blind-format path). Mirrors the napi `PreviewSwFrame`
-/// shape 1:1 (already camelCase); `data` is the Rust `Buffer` structured-cloned
-/// to the renderer as a `Uint8Array` (the one main→renderer copy). Color tags
-/// are canonical FFmpeg string names or absent where the stream leaves them
-/// unspecified.
-///
-/// `format` discriminates the packed layout — NV12 (8-bit, every session
-/// historically) or I420P10 (tightly-packed u16LE Y then U then V planes, the
-/// `copyToTenBit` layout — the 10-bit VideoToolbox-lane sessions). The
-/// transport dispatches PER FRAME on this tag, never on what it asked for at
-/// open.
-///
-/// `width`/`height` are the SHIPPED dimensions, which are the media's ONLY at
-/// `scaleDiv` 1 — a downscaled preview frame is smaller, and `data.byteLength`
-/// follows these two, never the media's. The Compositor renormalizes with
-/// `media.width / textureW`, so the on-canvas rect is unchanged either way.
-export type PreviewSwFrameMsg = {
-  receipt?: number
-  requestId?: number
-  streamId: string
-  ptsUs: number
-  durUs: number
-  width: number
-  height: number
-  format: 'NV12' | 'I420P10'
-  colorMatrix?: string
-  colorRange?: string
-  colorPrimaries?: string
-  colorTransfer?: string
-  data: Uint8Array
-}
-
 /// Availability of the optional @weftcut/native-decode component (level-0
 /// gate, ADR 0030). `reason` is the require error when unavailable.
 export interface DecodeComponentStatus {
@@ -517,44 +483,21 @@ export interface WeftcutApi {
     /// E2E/bench-only: drain the MAIN-measured renderer round-trip samples.
     takeMainTimings(): Promise<PreviewGpuMainTiming>
   }
-  /// Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
-  /// WebCodecs-blind-format path). Unlike previewGpu, decoded frames DO cross
-  /// the contextBridge directly: each is a plain NV12 buffer (no shared
-  /// texture / MessagePort dance needed), delivered on the dedicated
-  /// `previewSw:frame` channel (NOT the generic `evt:*` relay) and surfaced via
-  /// `onFrame`.
-  previewSw: {
-    /// `lane`/`device` select the Standard engine's hardware copy-back lane
-    /// (Linux NVDEC/VAAPI, macOS VideoToolbox; `device` = the DRM node for
-    /// VAAPI, null otherwise). Absent/null = software. This is the private
-    /// HW-vs-SW choice — the frame contract the session emits is unchanged
-    /// NV12 either way.
-    ///
-    /// `scaleDiv` is the playback-resolution divisor (1 | 2 | 4; absent = 1 =
-    /// full): native downscales each frame BEFORE it crosses IPC, so the reply
-    /// and every `PreviewSwFrameMsg` carry the SHIPPED dimensions, which can be
-    /// smaller than the media's.
-    ///
-    /// `cadenceDiv` is preview-only (absent = 1 = every frame). Native decodes
-    /// every frame for reference correctness, then skips unselected frames
-    /// before copy-back/scale/packing and IPC.
-    ///
-    /// `outFormat` selects the session's CPU transport format (absent = NV12 =
-    /// today's path byte-for-byte): 'I420P10' opens 10-bit output for a 10-bit
-    /// source on the videotoolbox lane; every frame then carries the matching
-    /// `format` tag.
-    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null; outFormat?: 'NV12' | 'I420P10' | null }): Promise<{ width: number; height: number }>
-    requestFrameAt(args: { streamId: string; targetUs: number; requestId?: number }): void
-    consume(args: { streamId: string; receipt: number }): void
-    close(args: { streamId: string }): void
-    /// `cb` gets `streamId`'s frames only; a later call for the same stream
-    /// replaces the earlier subscriber.
-    onFrame(streamId: string, cb: (f: PreviewSwFrameMsg) => void): () => void
+  /// Native preview decode: the Standard engine's software lane and its
+  /// copy-back hardware lanes (Linux NVDEC/VAAPI, macOS VideoToolbox), which
+  /// ship the same frame bytes. `open` starts a session and resolves with its
+  /// shipped frame size; the session's port arrives separately as a window
+  /// message (`openDecodeSession` in the renderer) and carries its frames, end
+  /// and errors down and its `request`/`release` commands up. `close` ends the
+  /// session; it goes to main ahead of any open started after it.
+  previewDecode: {
+    open(args: { sessionId: string; path: string; options: PreviewDecodeOptions }): Promise<PreviewDecodeOpenInfo>
+    close(args: { sessionId: string }): void
   }
   /// Native software export-decode (blind-spot originals: ProRes/DNxHD/MPEG-2/
   /// VC-1). `open` starts a session and resolves with its open info; the
   /// session's port arrives separately as a window message
-  /// (`openExportDecode` in the renderer). The session ends on a `close`
+  /// (`openDecodeSession` in the renderer). The session ends on a `close`
   /// command from its port; `close` here ends one whose port holder is gone.
   exportDecode: {
     open(args: {

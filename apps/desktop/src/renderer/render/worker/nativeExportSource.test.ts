@@ -15,7 +15,7 @@ import {
   type NativeDecodeSessions,
   type OpenScope,
 } from "./nativeExportSource";
-import type { DecodeCommand, DecodeWireFrame, DecodeWireMsg } from "../../../shared/frameCarrier/wire";
+import type { DecodeWireFrame, DecodeWireMsg, ExportDecodeCommand } from "../../../shared/frameCarrier/wire";
 import type { ExportEvent, ExportRequest } from "./protocol";
 import type { SourceHandleInit } from "../decoder/session";
 import { resolveSourceColor, type SourceColor } from "../decoder/ffprobeColorSpace";
@@ -27,7 +27,7 @@ import { isTenBitFrame, tenBitFrameFromBytes, type TenBitFrame } from "../decode
 // buffer-defined NV12 `VideoFrame` as BT.601 regardless of its stamped
 // colorSpace. A test that reintroduces `new VideoFrame` here is a regression.
 
-type PortCommand = Exclude<DecodeCommand, { type: "close" }>;
+type PortCommand = ExportDecodeCommand;
 
 /// The handle's end of a session port. Records what the handle posts and
 /// delivers the session's messages synchronously, in the order given.

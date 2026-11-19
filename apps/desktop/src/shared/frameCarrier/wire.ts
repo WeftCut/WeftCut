@@ -3,7 +3,12 @@
 // their one source); this module only adapts them to what arrives on the far
 // side of a port. Transport: docs/export-ipc-transport.md § Decode-in.
 
-import type { DecodeMsg, ExportDecodeOpenInfo } from '@weftcut/native-decode'
+import type {
+  DecodeMsg,
+  ExportDecodeOpenInfo,
+  PreviewDecodeOpenInfo,
+  PreviewDecodeOptions,
+} from '@weftcut/native-decode'
 
 /** A `DecodeMsg` after structured clone: the addon's `Buffer` arrives as a
  * plain `Uint8Array`. Keyed on the field, not the `Buffer` type, because the
@@ -19,10 +24,25 @@ export type DecodeWireFrame = Extract<DecodeWireMsg, { kind: 'bytes' }>
 /** Reply of an export decode open: dimensions, source colour, start PTS. */
 export type { ExportDecodeOpenInfo }
 
-/** One command up a decode session's port. `range` asks for every frame in
- * `[aUs, bUs]`; `release` hands back the lease of a frame that has left the
- * consumer; `close` ends the session. */
-export type DecodeCommand =
-  | { type: 'range'; aUs: number; bUs: number }
-  | { type: 'release'; lease: number }
-  | { type: 'close' }
+/** How a preview session decodes and what it ships, and its open reply. */
+export type { PreviewDecodeOpenInfo, PreviewDecodeOptions }
+
+/** Hands back the lease of a frame that has left the consumer. */
+export type ReleaseCommand = { type: 'release'; lease: number }
+
+/** Ends the session, for every pipeline; the session host handles it. The
+ * preload sends it by session id (`decodeSessionPorts.close`), never a
+ * consumer up its port: it must reach main ahead of any open asked for after
+ * it, and only the route opens take guarantees that. */
+export type CloseCommand = { type: 'close' }
+
+/** Up an export session's port: `range` asks for every frame in `[aUs, bUs]`. */
+export type ExportDecodeCommand = { type: 'range'; aUs: number; bUs: number } | ReleaseCommand
+
+/** Up a preview session's port: `request` asks for every frame from `targetUs`
+ * through the session's horizon, in answer to `requestId`. A new id is a
+ * discontinuity; frames name the request they answer. */
+export type PreviewDecodeCommand = { type: 'request'; targetUs: number; requestId: number } | ReleaseCommand
+
+/** Anything main takes for a decode session on `decodeSession:cmd`. */
+export type DecodeCommand = ExportDecodeCommand | PreviewDecodeCommand | CloseCommand

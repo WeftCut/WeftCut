@@ -51,14 +51,20 @@ natively decoded frames to the export compositor (routing:
    `exportDecode.open`. The preload creates the session's `MessageChannel`
    and keeps one end (`preload/decodeSessionPorts.ts`); main
    (`src/main/exportDecode.ts`) reserves the decoder's memory and opens the
-   `export_sw` session. The other end reaches the page as a window message
-   tagged with its session id, and the page transfers it to the Worker in
-   `nd:openResult` (`renderer/ipc/exportDecode.ts`). No page code handles a
-   frame or a per-frame message.
+   `export_sw` session, through the admission every byte pipeline shares
+   (`main/frameCarrier/decodeSessionAdmission.ts`: one session per id, the
+   reservation released once, a refused session leaves nothing). The other
+   end reaches the page as a window message tagged with its session id
+   (`renderer/ipc/decodeSession.ts`), and the page transfers it to the Worker
+   in `nd:openResult`. No page code handles a frame or a per-frame message.
+   Preview's software lane opens its sessions the same way and keeps the port
+   on the page
+   ([`preview.md`](preview.md#the-standard-engine-ffmpegsource)).
 2. The session's messages are the addon's generated `DecodeMsg` (`bytes`,
    `mark`, `end`, `error`). Main sends each on `decodeSession:msg` as
    delivered (`main/frameCarrier/decodeSessionHost.ts` over
-   `ipcCarrierPort.ts`): the one cross-process copy. The preload posts it on
+   `ipcCarrierPort.ts`, which carry every byte pipeline; each pipeline parses
+   its own commands): the one cross-process copy. The preload posts it on
    the session's port with the frame's buffer transferred, so the bytes cross
    no `contextBridge`. `mark` carries the completed `[aUs, bUs]` and, since
    every earlier frame has arrived, proves presentation finality for pending

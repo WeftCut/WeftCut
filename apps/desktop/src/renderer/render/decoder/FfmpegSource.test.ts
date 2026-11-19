@@ -425,7 +425,7 @@ describe("FfmpegSource — hardware transport routing by HW lane", () => {
       },
     );
     await src.ensureReady();
-    // Copy-back: decode on the GPU, frames ship over the SAME previewSw transport.
+    // Copy-back: decode on the GPU, frames ship over the SAME byte transport.
     expect(src.currentLane()).toBe("hardware");
     expect(src.currentDecodeDevice()).toEqual({ kind: 'hardware', backend: 'nvdec', device: null });
     expect(sw.t.open).toHaveBeenCalled();
@@ -463,7 +463,7 @@ describe("FfmpegSource — hardware transport routing by HW lane", () => {
     );
     await src.ensureReady();
     // Same posture as nvdec/vaapi: decode on the OS media engine, frames ship
-    // NV12 over the SAME previewSw transport (ADR 0029).
+    // NV12 over the SAME byte transport (ADR 0029).
     expect(src.currentLane()).toBe("hardware");
     expect(sw.t.open).toHaveBeenCalled();
     expect(gpu.t.open).not.toHaveBeenCalled();

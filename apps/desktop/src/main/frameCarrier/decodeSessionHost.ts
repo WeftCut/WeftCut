@@ -2,7 +2,6 @@
 // one close. Transport: docs/export-ipc-transport.md § Decode-in.
 
 import type { DecodeMsg } from '@weftcut/native-decode'
-import type { DecodeCommand } from '../../shared/frameCarrier/wire'
 import type { DocumentOwner } from './documentOwner'
 
 /** The port a session is served on, as its host sees it. `ipcCarrierPort`
@@ -16,14 +15,19 @@ export interface CarrierPort {
   close(): void
 }
 
-export interface DecodeSessionSpec<Info> {
+/** One session for the host to carry. `Cmd` is the pipeline's own command
+ * set; the host knows only `close`, which it handles itself. */
+export interface DecodeSessionSpec<Info, Cmd> {
   port: CarrierPort
   /** The document that asked for the session; the session ends with it. */
   owner: DocumentOwner
   /** Opens the native session, delivering its messages to `onMsg` in the order
    * the session produced them. Throws to refuse the session. */
   open(onMsg: (msg: DecodeMsg) => void): Info
-  command(cmd: Exclude<DecodeCommand, { type: 'close' }>): void
+  /** One message from the port as this pipeline's command, or null when it is
+   * not one. Never sees `close`. */
+  parse(data: Record<string, unknown>): Cmd | null
+  command(cmd: Cmd): void
   /** Closes the native session. Called once, and only after `open` returned. */
   close(): void
 }
@@ -31,7 +35,7 @@ export interface DecodeSessionSpec<Info> {
 /** Opens `spec`'s session and serves it on its port until a `close` command,
  * the port closing or the owner going away, whichever comes first; each closes
  * the session once. A failed open registers nothing and closes the port. */
-export function hostDecodeSession<Info>(spec: DecodeSessionSpec<Info>): Info {
+export function hostDecodeSession<Info, Cmd extends { type: string }>(spec: DecodeSessionSpec<Info, Cmd>): Info {
   const { port } = spec
   let closed = false
   let info: Info
@@ -54,9 +58,11 @@ export function hostDecodeSession<Info>(spec: DecodeSessionSpec<Info>): Info {
   const stopOwner = spec.owner.onGone(shutdown)
   port.on('message', ({ data }) => {
     if (closed) return
-    const cmd = decodeCommand(data)
+    if (typeof data !== 'object' || data === null) { console.warn('[main] decode session: unknown command', data); return }
+    const fields = data as Record<string, unknown>
+    if (fields.type === 'close') { shutdown(); return }
+    const cmd = spec.parse(fields)
     if (!cmd) { console.warn('[main] decode session: unknown command', data); return }
-    if (cmd.type === 'close') { shutdown(); return }
     // The session may already be gone natively (a terminal error); a command
     // racing that must not throw out of the port's listener.
     try { spec.command(cmd) }
@@ -69,13 +75,9 @@ export function hostDecodeSession<Info>(spec: DecodeSessionSpec<Info>): Info {
   return info
 }
 
-function decodeCommand(data: unknown): DecodeCommand | null {
-  if (typeof data !== 'object' || data === null) return null
-  const cmd = data as Record<string, unknown>
-  if (cmd.type === 'range' && Number.isFinite(cmd.aUs) && Number.isFinite(cmd.bUs))
-    return { type: 'range', aUs: cmd.aUs as number, bUs: cmd.bUs as number }
-  if (cmd.type === 'release' && Number.isInteger(cmd.lease) && (cmd.lease as number) >= 0)
-    return { type: 'release', lease: cmd.lease as number }
-  if (cmd.type === 'close') return { type: 'close' }
-  return null
+/** A `release` command, the one every byte pipeline takes, or null. */
+export function parseRelease(data: Record<string, unknown>): { type: 'release'; lease: number } | null {
+  return data.type === 'release' && Number.isInteger(data.lease) && (data.lease as number) >= 0
+    ? { type: 'release', lease: data.lease as number }
+    : null
 }
