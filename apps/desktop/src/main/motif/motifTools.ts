@@ -22,16 +22,20 @@ import type { BuiltinMotif } from './authoring'
 import { libraryIdDiagnostic, libraryRows, projectDirOf, projectRows, type MotifGroup } from './catalogRows'
 import { fileChanges } from './fileChanges'
 import { readMotifDirectory, type MotifFile } from './packageFiles'
+import { emptyPackageFiles } from './motifPackage'
 import { libraryPackage, type CreateSource, type ProjectMotifStore } from './projectStore'
 import { LibraryPublications, type Fork, type PublicationSource } from './publications'
 import { MotifRefusal, revisionConflict } from './refusal'
 import type { UserMotifStore } from './store'
+import { effectiveState, UNTRUSTED_DIAGNOSTIC, type ProjectTrustView } from './trust'
 
 export interface MotifToolDeps {
   store: UserMotifStore
   builtins: BuiltinMotif[]
   /** The open project's Motifs; null with none open. */
   project: () => ProjectMotifStore | null
+  /** Which project revisions may run on this machine. */
+  trust: ProjectTrustView
   /** The open project's recorded state: its Motif table, and the commits
    *  that change it. */
   actor: Pick<ActorHandle, 'snapshot' | 'dispatch'>
@@ -86,13 +90,16 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
     if (!entry) throw new MotifRefusal(`No Motif '${id}' in this project — list_motifs lists its Motifs; group: "library" reads the library's`, { error: 'MotifNotFound', id })
     return { project, entry }
   }
-  /** Project Motif `id` as its folder holds it now; refuses one that cannot render. */
-  const projectPackage = (id: string) => {
+  /** Project Motif `id` as its folder holds it now; refuses one that cannot
+   *  render, and an untrusted one unless `untrusted` lets its files be
+   *  written out as they are. */
+  const projectPackage = (id: string, untrusted: 'refuse' | 'allow' = 'refuse') => {
     const { project, entry } = projectMotif(id)
     const state = project.status(id)
     const snapshot = state.status === 'ok' ? project.snapshot(id) : null
     if (!snapshot)
       throw new MotifRefusal(`Motif '${id}' is ${state.status}: ${state.diagnostic ?? `Motifs/${id}/ is gone`}`, { error: 'MotifUnavailable', id, status: state.status })
+    if (untrusted === 'refuse' && !deps.trust.trusted(snapshot.revision, id)) throw untrustedRefusal(id, snapshot.revision)
     return { project, entry, snapshot }
   }
   const libraryMotif = (id: string) => {
@@ -129,7 +136,7 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
       // project's Motif is the one its layers render.
       return [
         ...(group !== 'project' ? libraryRows(deps.store, deps.builtins, motifs) : []),
-        ...(proposed ? projectRows(project!, motifs!, deps.store, deps.builtins).map(row => {
+        ...(proposed ? projectRows(project!, motifs!, deps.store, deps.builtins, deps.trust).map(row => {
           const publication = proposed.get(row.id as string)
           return publication ? { ...row, publication } : row
         }) : []),
@@ -147,11 +154,13 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
           extra: { group: 'library', status: diagnostic ? 'invalid' : builtinLineage(id) ? 'builtin' : 'installed', version: pkg.version, ...(diagnostic ? { diagnostic } : {}) } }
       } else {
         const { project, entry } = projectMotif(id)
-        const state = project.status(id)
+        // An untrusted Motif is read too: its text is how an agent looks
+        // before the user trusts it, and nothing read here runs.
+        const state = effectiveState(id, project.status(id), deps.trust)
         const extra = { group: 'project', status: state.status, from: entry.from, path: project.folder(id), ...(state.diagnostic ? { diagnostic: state.diagnostic } : {}) }
         if (state.status === 'missing') throw new MotifRefusal(`Motif '${id}' has no folder in this project (Motifs/${id}/)`, { error: 'MotifUnavailable', id, status: 'missing' })
         // An invalid folder is read too: its files are how it gets fixed.
-        const described = state.status === 'ok' ? project.describe(id) : null
+        const described = state.status === 'ok' || state.status === 'untrusted' ? project.describe(id) : null
         read = { manifest: described?.manifest ?? null, revision: state.revision, files: () => readMotifDirectory(project.folder(id)),
           file: rel => project.readFile(id, rel), extra }
       }
@@ -189,8 +198,9 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
     case 'update_motif_files': {
       const id = subject(a)
       const { project } = projectMotif(id)
-      if (typeof a.expected_revision !== 'string' || !a.expected_revision)
-        throw revisionConflict(project.status(id).revision ?? 'none', 'send the revision read_motif answers as expected_revision')
+      // null repairs a folder whose files make no package (`applyChanges`).
+      if (a.expected_revision !== null && (typeof a.expected_revision !== 'string' || !a.expected_revision))
+        throw revisionConflict(project.status(id).revision, 'send the revision read_motif answers as expected_revision, or null when it answers none')
       const revision = project.applyChanges(id, a.expected_revision, files => fileChanges(files, a.files))
       commit(deps, 'set_project_motif', { motif_id: id, revision }, by)
       changed()
@@ -210,7 +220,8 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
         const { pkg } = libraryMotif(id)
         files = pkg.files; revision = pkg.revision; lineage = pkg.uid
       } else {
-        const { entry, snapshot } = projectPackage(id)
+        // Written out as they are, never run: an untrusted Motif exports.
+        const { entry, snapshot } = projectPackage(id, 'allow')
         files = snapshot.files; revision = snapshot.revision; lineage = entry.uid
       }
       if (a.expected_revision !== undefined && a.expected_revision !== revision)
@@ -274,8 +285,14 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
   }
 }
 
+/** A project Motif refused because its revision is not trusted here. */
+export function untrustedRefusal(id: string, revision: string): MotifRefusal {
+  return new MotifRefusal(`Motif '${id}' is ${UNTRUSTED_DIAGNOSTIC}: the user trusts it in the Motifs panel; read_motif reads it as text`,
+    { error: 'MotifUntrusted', id, revision })
+}
+
 const SOURCE_KEYS: Record<string, readonly string[]> = {
-  empty: ['kind', 'name'], copy: ['kind', 'motif_id', 'group'], zip: ['kind', 'path'], directory: ['kind', 'path'],
+  empty: ['kind', 'name', 'files'], copy: ['kind', 'motif_id', 'group'], zip: ['kind', 'path'], directory: ['kind', 'path'],
 }
 
 /** `create_motif`'s source, checked; `copied` reads the files a copy names. */
@@ -283,15 +300,20 @@ function createSource(raw: unknown, copied: (source: Record<string, unknown>) =>
   const source = raw as Record<string, unknown> | null
   const kind = source && typeof source === 'object' ? source.kind : undefined
   if (typeof kind !== 'string' || !Object.hasOwn(SOURCE_KEYS, kind))
-    throw new Error("source must be one of {kind:'empty', name}, {kind:'copy', motif_id, group?}, {kind:'zip', path}, {kind:'directory', path}")
+    throw new Error("source must be one of {kind:'empty', name?, files?}, {kind:'copy', motif_id, group?}, {kind:'zip', path}, {kind:'directory', path}")
   if (kind === 'zip' && 'file_id' in source!)
     throw new Error("A ZIP source is {kind:'zip', path} with an absolute app-machine path; file_id uploads are gone")
   const extra = Object.keys(source!).filter(k => !SOURCE_KEYS[kind]!.includes(k))
   if (extra.length) throw new Error(`A ${kind} source takes ${SOURCE_KEYS[kind]!.slice(1).join(', ')} only, not ${extra.join(', ')}`)
   switch (kind) {
-    case 'empty':
+    case 'empty': {
       if (source!.name !== undefined && typeof source!.name !== 'string') throw new Error('name must be a string')
-      return { kind, ...(typeof source!.name === 'string' ? { name: source!.name } : {}) }
+      const name = typeof source!.name === 'string' ? source!.name : undefined
+      // The first files, in update_motif_files' form, laid over the empty
+      // package: the Motif is made with them in one commit.
+      const changes = source!.files === undefined ? undefined : fileChanges(emptyPackageFiles(name), source!.files)
+      return { kind, ...(name !== undefined ? { name } : {}), ...(changes ? { changes } : {}) }
+    }
     case 'copy': return { kind, files: copied(source!) }
     default:
       if (typeof source!.path !== 'string' || !path.isAbsolute(source!.path)) throw new Error('Source path must be absolute')

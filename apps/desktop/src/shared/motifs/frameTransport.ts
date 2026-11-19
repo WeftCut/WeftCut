@@ -1,3 +1,4 @@
+import type { MotifErrorCode } from './errors'
 import type { MotifReaderDiv, MotifReadTiming } from './readerProtocol'
 
 /** Native stage times of one texture-lane read, in milliseconds. */
@@ -17,13 +18,14 @@ export type StoredMotifFrame = (
 ) & { persisted?: boolean }
 
 /** `motif:capture`'s answer: a frame; `superseded` when the request was
- * withdrawn (a cancel, a closed document, a project switch); or `capacity`
- * when a resource admission refused its capture, with the refusal's detail.
- * Both are replies, not throws: `ipcMain.handle` logs every rejection with its
- * stack, a cancelled capture is routine, and so is an editor capture refused
- * while an export holds its plan. The renderer's transport turns each back
- * into its MotifError; every other failure still throws. */
-export type MotifCaptureReply = StoredMotifFrame | { kind: 'superseded' } | { kind: 'capacity'; detail: string }
+ * withdrawn (a cancel, a closed document, a project switch); or `refused`,
+ * with the failure's code and detail, when a resource admission refused its
+ * capture (`capacity`) or its Motif is in a state that does not render
+ * (`content`: a folder deleted while its captures were in flight). These are
+ * replies, not throws: `ipcMain.handle` logs every rejection as an error with
+ * its stack, and each of these is routine. The preload turns each back into
+ * its MotifError; every other failure still throws. */
+export type MotifCaptureReply = StoredMotifFrame | { kind: 'superseded' } | { kind: 'refused'; code: MotifErrorCode; detail: string }
 
 /** `motif:read` (ADR 0154): the Windows texture lane at a Playback Resolution
  * divisor. Export and finalization reads use 1. */

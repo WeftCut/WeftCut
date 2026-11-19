@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { groupDisplayName, groupOrdinals, layerDisplayName } from "./layerName";
 import { TEXT_NAME_MAX } from "../../shared/textSnippet";
+import { setProjectMotifs } from "../render/motifs/catalog";
 import en from "../i18n/locales/en-US";
 import zh from "../i18n/locales/zh-CN";
 import type {
@@ -146,6 +147,35 @@ function groupLayer(
   };
 }
 
+function motifLayer(motifId: string, label: string | null = null): LayerSummary {
+  return {
+    id: `L-${motifId}`,
+    label,
+    t_start_us: 0,
+    t_end_us: 1_000_000,
+    kind: "Motif",
+    color_hint: "#000000",
+    enabled: true,
+    locked: false,
+    params: {
+      kind: "Motif",
+      motif_id: motifId,
+      x: num(0),
+      y: num(0),
+      scale_x: num(1),
+      scale_y: num(1),
+      scale_linked: true,
+      rotation_deg: num(0),
+      anchor_x: num(0.5),
+      anchor_y: num(0.5),
+      opacity: num(1),
+      src_in_us: 0,
+      props: {},
+    },
+    effects: [],
+  } as LayerSummary;
+}
+
 /// Only the field the ordinals read. Key order is deliberately NOT meaningful
 /// here — the number comes off the composition, not off its position.
 const comps = (
@@ -282,6 +312,24 @@ describe("layerDisplayName", () => {
     expect(
       layerDisplayName(groupLayer("g-a", "Intro build", "Take 2"), tEn, ordinals),
     ).toBe("Take 2");
+  });
+
+  describe("a Motif layer", () => {
+    afterEach(() => setProjectMotifs());
+    const manifest = { id: "end-slate", name: "End Slate", version: 1, size: [1920, 1080] as [number, number],
+      default_duration_s: 3, status: "installed" as const, props_schema: {} };
+
+    it("is named after its Motif, as the project catalog reads it", () => {
+      setProjectMotifs([manifest]);
+      expect(layerDisplayName(motifLayer("end-slate"), tEn)).toBe("End Slate");
+      // The layer's own label still wins.
+      expect(layerDisplayName(motifLayer("end-slate", "Outro card"), tEn)).toBe("Outro card");
+    });
+
+    it("falls back to its folder's id while the Motif cannot render", () => {
+      setProjectMotifs([], [{ motif_id: "end-slate", status: "missing", diagnostic: "Motifs/end-slate/ is missing" }]);
+      expect(layerDisplayName(motifLayer("end-slate"), tEn)).toBe("end-slate");
+    });
   });
 
   it("never returns the uuid", () => {

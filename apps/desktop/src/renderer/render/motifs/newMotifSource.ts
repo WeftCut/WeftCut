@@ -20,7 +20,7 @@ export function newMotifSource(name: string): { manifest: MotifManifest; html: s
   };
   const html = [
     "<!doctype html><html><head><meta charset=\"utf-8\"><style>",
-    "  html,body{margin:0;background:transparent}",
+    "  html,body{margin:0;overflow:hidden;background:transparent}",
     "  .bar{position:absolute;left:48px;bottom:48px;padding:18px 28px;border-radius:12px;",
     "       background:var(--accent,#2266ff);color:#fff;font:700 56px/1 system-ui,sans-serif}",
     "</style></head><body>",
