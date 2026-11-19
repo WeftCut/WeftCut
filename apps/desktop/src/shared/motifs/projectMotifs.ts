@@ -23,13 +23,16 @@ export function motifEntry(table: Readonly<ProjectMotifs>, id: string): ProjectM
 }
 
 /** Whether a project Motif can render: `missing` when its folder is gone,
- *  `invalid` when its files make no package. Derived from the folder, never
- *  stored. */
-export type MotifStatus = 'ok' | 'missing' | 'invalid'
+ *  `invalid` when its files make no package, `untrusted` when they do but
+ *  that revision is not trusted on this machine. Derived from the folder and
+ *  the machine's trust record, never stored; the project's own reads of its
+ *  folders answer the first three alone. */
+export type MotifStatus = 'ok' | 'missing' | 'invalid' | 'untrusted'
 
 /** A project Motif that cannot render, and why: what `project://session`
- *  lists and an export refuses. */
-export interface UnavailableMotif { motif_id: string; status: Exclude<MotifStatus, 'ok'>; diagnostic: string }
+ *  lists and an export refuses. An untrusted one names the revision the
+ *  user would trust. */
+export interface UnavailableMotif { motif_id: string; status: Exclude<MotifStatus, 'ok'>; diagnostic: string; revision?: string }
 
 /** A Motif's id is the label of its `motif://` host. */
 export const MOTIF_HOST_LABEL_CHARS = 63

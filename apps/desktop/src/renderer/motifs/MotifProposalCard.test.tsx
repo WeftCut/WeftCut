@@ -64,7 +64,7 @@ const emitChanged = () => { for (const h of bridge.changed) h(); };
 function renderPanel() {
   render(
     <MotifPicker
-      onClose={vi.fn()} onAdded={vi.fn()} onNewPlaced={vi.fn()} compositionId="comp"
+      onClose={vi.fn()} onAdded={vi.fn()} onPlaced={vi.fn()} compositionId="comp"
       currentTimeUs={0} tracks={[]} fpsNum={30} fpsDen={1} compWidth={1920} compHeight={1080}
     />,
   );

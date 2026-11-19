@@ -201,6 +201,8 @@ describe('null arms are advertised only where null means something omission does
     'update_layer_params.patch.crop', 'update_layer_params.patch.box_w', 'update_layer_params.patch.box_h', 'update_layer_params.patch.shadow',
     // null clears the role.
     'update_layer_params.patch.graphic_role',
+    // null repairs a folder whose files make no package: it has no revision.
+    'update_motif_files.expected_revision',
     'update_layer_params.patch.intro', 'update_layer_params.patch.outro',
     'update_effect.patch.params.*',
     // null selects the untagged Text and Motif layers.

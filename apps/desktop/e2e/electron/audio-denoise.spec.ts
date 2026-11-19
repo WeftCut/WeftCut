@@ -132,7 +132,7 @@ async function connectMcp(page: Page): Promise<Client> {
 /// `add_effect`'s answer is the new effect's record; `effect_id` is what the next call needs.
 async function addEffect(mcp: Client, layerId: string, kind: string): Promise<string> {
   const res = await mcp.callTool({ name: 'add_effect', arguments: { layer_id: layerId, kind } })
-  const effectId = (JSON.parse(structuredClone(res.content)[0].text as string) as { effect_id: string }).effect_id
+  const effectId = (JSON.parse(structuredClone(res.content as Array<{ text: string }>)[0].text) as { effect_id: string }).effect_id
   expect(effectId.length).toBeGreaterThan(0)
   return effectId
 }

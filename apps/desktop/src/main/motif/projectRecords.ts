@@ -138,6 +138,9 @@ export class ProjectMotifRecords {
         const current = state.status === 'ok' ? project.snapshot(id) : null
         if (current) backups.backup(id, current.files, current.revision)
         backups.restore(id, entry.revision)
+        // Bytes put back were not made here: found, never an edit (Motif
+        // trust), and what the next edit of the folder is judged from.
+        project.found(id)
         // An edit landing again on the revision the watcher last told is
         // still an edit of the folder just put back.
         this.deps.rewatch?.(id)
@@ -150,8 +153,9 @@ export class ProjectMotifRecords {
     if (this.unrecorded.size) queueMicrotask(() => this.retry())
   }
 
-  /** A folder the watcher saw change. One the table records and that makes
-   *  a package becomes a `set_project_motif` commit (`FILE_EDITS`), its
+  /** A folder the watcher saw change, and observed (Motif trust is the
+   *  store's: `ProjectMotifStore.observe`). One the table records and that
+   *  makes a package becomes a `set_project_motif` commit (`FILE_EDITS`), its
    *  revision backed up first; any other change is status alone. One the
    *  project refuses to record now (an export or a project switch under way)
    *  waits for `retry`. */
@@ -160,7 +164,7 @@ export class ProjectMotifRecords {
     const entry = motifEntry(this.deps.actor.snapshot().motifs, id)
     if (!project || !entry || state.status !== 'ok') return
     // Called from the watcher's timer, where a throw would escape the app.
-    try { if (this.record(project, id, entry.revision)) project.seen(id, 'edited-while-open') }
+    try { this.record(project, id, entry.revision) }
     catch (error) {
       this.notRecorded(id)
       this.warn(`The edit to Motif '${id}' could not be recorded`, { motif_id: id, error: String(error) })
@@ -183,25 +187,24 @@ export class ProjectMotifRecords {
     this.deps.rewatch?.(id)
   }
 
-  /** Records what `id`'s folder holds when it is not `recorded`; answers
-   *  whether a commit did. */
-  private record(project: ProjectMotifStore, id: string, recorded: string | null): boolean {
+  /** Records what `id`'s folder holds when it is not `recorded`. */
+  private record(project: ProjectMotifStore, id: string, recorded: string | null): void {
     let snapshot
-    try { snapshot = project.snapshot(id) } catch { return false }
-    if (!snapshot || snapshot.revision === recorded) return false
+    try { snapshot = project.snapshot(id) } catch { return }
+    if (!snapshot || snapshot.revision === recorded) return
     this.backups(project).backup(id, snapshot.files, snapshot.revision)
     const result = this.deps.actor.dispatch('set_project_motif', { motif_id: id, revision: snapshot.revision }, FILE_EDITS)
     if (!result.ok) {
       this.notRecorded(id)
       this.warn(`The edit to Motif '${id}' could not be recorded`, { motif_id: id, error: result.error })
     }
-    return result.ok
   }
 
-  /** A project open settled: each Motif's revision is seen as found, one
-   *  changed while the project was closed is recorded like an edit, and the
-   *  backups keep only what the table records (undo history starts empty at
-   *  an open, and is never stored). */
+  /** A project open settled: a Motif changed while the project was closed
+   *  is recorded like an edit, and the backups keep only what the table
+   *  records (undo history starts empty at an open, and is never stored).
+   *  Recording trusts nothing: its folders were found when the project
+   *  became the open one (`MotifResolver.setProject`). */
   opened(): void {
     const project = this.deps.project()
     if (!project) return
@@ -211,8 +214,7 @@ export class ProjectMotifRecords {
     kept()
     for (const [id, entry] of Object.entries(this.deps.actor.snapshot().motifs)) {
       try {
-        // Seen as found at the open, never as an edit made here (Motif trust).
-        if (project.seen(id, 'opened').status === 'ok') this.record(project, id, entry.revision)
+        if (project.status(id).status === 'ok') this.record(project, id, entry.revision)
       } catch (error) {
         this.warn(`Motif '${id}' could not be checked`, { motif_id: id, error: String(error) })
       }
@@ -250,8 +252,10 @@ export class ProjectMotifRecords {
     // Files that make no package are an edit in progress: kept, never replaced.
     const unfinished = state.status === 'invalid' ? backups.setAside(id) : null
     const putBack = () => {
-      if (before) backups.restore(id, before.revision)
-      else if (unfinished) backups.putBack(id, unfinished)
+      if (before) {
+        backups.restore(id, before.revision)
+        project.found(id)
+      } else if (unfinished) backups.putBack(id, unfinished)
       else rmSync(project.folder(id), { recursive: true, force: true })
     }
     let revision: string

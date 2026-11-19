@@ -40,7 +40,7 @@ import {
   type LinkSummary,
   type TrackSummary,
 } from "../ipc";
-import { layerDisplayName } from "../lib/layerName";
+import { layerDisplayName, useLayerDisplayName } from "../lib/layerName";
 import { resolveAnimatedColor } from "../render/animated";
 import {
   setAppSettings,
@@ -603,7 +603,7 @@ function PlayheadReferenceRow({ row, rowClassName, rowRef }: {
   const { t } = useTranslation();
   const groupOrdinals = useGroupOrdinals();
   const layer = row.filtered ? null : row.layer;
-  const label = layer ? layerDisplayName(layer, t, groupOrdinals) : t(
+  const label = useLayerDisplayName(layer, t, groupOrdinals) ?? t(
     row.filtered ? "playhead_panel.reference_filtered" : "playhead_panel.reference_empty",
   );
   return (
@@ -671,7 +671,7 @@ function PlayheadRow({
         { r: 0, g: 0, b: 0, a: 255 },
       )
     : null;
-  const primaryLabel = rowLabel(item, t, groupOrdinals);
+  const primaryLabel = useLayerDisplayName(item.layer, t, groupOrdinals);
   const accent = item.linkId !== null ? linkAccent(item.linkId) : null;
 
   // Inline rename. Enter commits, Escape cancels, click-away commits — all

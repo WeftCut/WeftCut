@@ -16,6 +16,15 @@ describe("a project Motif that cannot render, as the app says it", () => {
     expect(screen.getByText("Motifs/end-slate/ 不存在")).toBeTruthy();
   });
 
+  it("words an untrusted Motif as not trusted on this machine, in the user's language", async () => {
+    render(<MotifProblem id="received" status="untrusted" diagnostic="not trusted on this machine" />);
+    expect(screen.getByText("Not trusted on this machine")).toBeTruthy();
+    cleanup();
+    await i18n.changeLanguage("zh-CN");
+    render(<MotifProblem id="received" status="untrusted" />);
+    expect(screen.getByText("未在此设备上信任")).toBeTruthy();
+  });
+
   it("keeps an invalid package's error as written, under a localized lead", async () => {
     await i18n.changeLanguage("zh-CN");
     render(<MotifProblem id="torn" status="invalid" diagnostic="manifest.json: Unexpected token" />);
