@@ -230,7 +230,7 @@ fn serve_range(
                     // been drained + delivered above. Signal end-of-stream, then
                     // close the range.
                     state.ended = true;
-                    ctx.emit(DecodeMsg::End);
+                    ctx.emit(DecodeMsg::End { request_id: None });
                     ctx.emit(mark(a, b));
                     return;
                 }
@@ -436,7 +436,7 @@ mod tests {
                 c.range_ends += 1;
                 c.completed_ranges.push((a_us as i64, b_us as i64));
             }
-            DecodeMsg::End => c.ended += 1,
+            DecodeMsg::End { .. } => c.ended += 1,
             DecodeMsg::Error { message, terminal } => c.errors.push((message, terminal)),
             DecodeMsg::Slot { .. } => c
                 .errors

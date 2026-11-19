@@ -171,7 +171,7 @@ export async function openPreviewGpu(
       if (cmd.type === 'request') {
         // `targetUs` is source microseconds; the addon takes it as f64 (napi
         // has no ergonomic i64 parameter) and casts it down.
-        backend.previewGpuRequestFrameAt(sessionId, cmd.targetUs)
+        backend.previewGpuRequestFrameAt(sessionId, cmd.targetUs, cmd.requestId)
         return
       }
       recordConsumeAck(sessionId, cmd.slot, performance.now())
@@ -206,7 +206,8 @@ function releaseImport(imported: SharedTextureImported): void {
 }
 
 function gpuCommand(data: Record<string, unknown>): PreviewGpuCommand | null {
-  if (data.type === 'request' && Number.isFinite(data.targetUs)) return { type: 'request', targetUs: data.targetUs as number }
+  if (data.type === 'request' && Number.isFinite(data.targetUs) && isU32(data.requestId))
+    return { type: 'request', targetUs: data.targetUs as number, requestId: data.requestId as number }
   if (data.type === 'release' && isU32(data.slot) && isU32(data.gen))
     return { type: 'release', slot: data.slot as number, gen: data.gen as number }
   return null

@@ -184,8 +184,13 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   `decodeSession:msg`; the preload reads that slot into an `ImageBitmap`
   (`getVideoFrame` → `createImageBitmap`) and posts it on the session's port,
   keeping the session's order: an `end` or `error` never overtakes a slot still
-  being read. `GpuTransport` posts `request` and `release{slot, gen}` up the
-  port. Slot textures are imported as RGBA tagged sRGB passthrough: the native
+  being read. `GpuTransport` posts `request{targetUs, requestId}` and
+  `release{slot, gen}` up the port. Every request carries a new id, and an
+  `end` names the newest request the session had served when it sent it:
+  `GpuTransport` reports only an end naming its last request, since an older
+  one may be in flight while the playhead jumps back from the tail, and
+  latching it would stop the requests at the new position. A session still at
+  its end repeats `end` to each newer request. Slot textures are imported as RGBA tagged sRGB passthrough: the native
   shader already converted to working-space RGB, so `createImageBitmap` is a
   byte copy. Motif's GPU frames use the same import and the same reader
   ([`motifs.md`](motifs.md#reading-stored-frames)).
@@ -207,16 +212,18 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   The release does not depend on painting, and the page never releases on
   elapsed time. Each slot goes back at most once: after its fence or proof,
   at once when its read failed, and never when nothing proved its read or
-  after dispose: the session's close reclaims those. Native reclaims a slot
-  left unreleased for 3 s (`LEASE_TIMEOUT`, `preview_gpu/session.rs`) with a
-  generation bump: a wedged consumer costs one possibly-torn frame instead of
-  a stalled session, and its late release fails the generation check (a
-  routine non-zero `lease_timeouts` counter means the consumer is stalling).
+  after dispose: the session's close reclaims those. Native never reuses a
+  slot its consumer has not released: a slot left unreleased for 3 s
+  (`LEASE_TIMEOUT`, `preview_gpu/session.rs`) ends the session with a
+  terminal error, so a wedged consumer costs the lane (`FfmpegSource` falls
+  back), never a frame shown under another frame's PTS. Any non-zero
+  `lease_timeouts` counter means the consumer stopped releasing.
   `preview-gpu-order.spec.ts` checks the ordering with per-frame barcodes, on
   one session and on three concurrent sessions (Windows), and on the
   copy-back lanes with one session.
 - **Every GPU session error is a transport failure.** Native sends `error`
-  with `terminal` set only when the session thread stopped (a panic); a failed
+  with `terminal` set only when the session thread stopped (a panic, or an
+  expired lease); a failed
   seek, decode, keyed-mutex acquire or conversion is non-terminal and the
   session survives. `GpuTransport` reports both through `onError`, as it does
   a slot the preload failed to read, and `FfmpegSource`'s failure table falls

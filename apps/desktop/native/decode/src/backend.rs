@@ -351,15 +351,17 @@ impl NativeDecode {
 
     /// Move the session's decode anchor. `target_us` is an `f64` (napi has no
     /// ergonomic `i64` param binding) carrying source microseconds; cast down
-    /// to the `i64` the session expects.
+    /// to the `i64` the session expects. An `end` answering this request
+    /// names `request_id`.
     #[napi]
     pub fn preview_gpu_request_frame_at(
         &self,
         session_id: String,
         target_us: f64,
+        request_id: u32,
     ) -> napi::Result<()> {
         self.preview_gpu
-            .request_frame_at(&session_id, target_us as i64)
+            .request_frame_at(&session_id, target_us as i64, request_id)
             .map_err(napi::Error::from_reason)
     }
 
@@ -481,6 +483,7 @@ impl NativeDecode {
         &self,
         _session_id: String,
         _target_us: f64,
+        _request_id: u32,
     ) -> napi::Result<()> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }

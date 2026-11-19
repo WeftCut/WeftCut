@@ -30,7 +30,10 @@
 // release is deliberately independent of PAINT: a frame the ring evicts, or one
 // that arrives while the compositor is suspended, still holds a slot and still
 // releases. A slot never released is reclaimed by the native session's close
-// (`dropFor`, then `GpuTransport.dispose`), never by a release into it.
+// (`dropFor`, then `GpuTransport.dispose`), never by a release into it. Native
+// does not reuse it either: a lease unanswered past its timeout ends the
+// session with a terminal error (session.rs `LEASE_TIMEOUT`), and the owner
+// falls back as on any transport failure.
 
 import type { FenceHandoffStats } from "./handoffTimings";
 import { webgpuDeviceOf } from "../../webgpuDevice";

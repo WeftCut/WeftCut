@@ -68,7 +68,10 @@ pub enum DecodeMsg {
     /// Every frame intersecting `[a_us, b_us]` (b inclusive) has been sent.
     Mark { a_us: f64, b_us: f64 },
     /// The stream reached its end; its final frames were sent before this.
-    End,
+    /// `request_id`: the newest request this end answers, for a consumer that
+    /// must tell an end it has since moved away from from a current one (GPU
+    /// preview). `None` where nothing reads it (software preview, export).
+    End { request_id: Option<u32> },
     /// A failure. `terminal`: the session's thread is gone and nothing
     /// follows; otherwise the session stays usable and can be asked again.
     Error { message: String, terminal: bool },

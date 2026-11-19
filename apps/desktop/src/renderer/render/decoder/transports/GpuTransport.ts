@@ -65,6 +65,11 @@ export class GpuTransport implements DecodeTransport {
   private eofCb: (() => void) | null = null;
 
   private lastRequestedTargetUs: number | null = null;
+  /// The id of the last request sent. An `end` counts only when it names
+  /// this one: an end the session sent before it served a newer request
+  /// (a seek back from the tail) is stale, and latching it would stop
+  /// `FfmpegSource`'s requests at the new position.
+  private requestId = 0;
 
   /// Open the native session and take its port. Throws on failure (most
   /// commonly `hw-budget-exceeded`); the caller (`FfmpegSource`) decides
@@ -105,7 +110,7 @@ export class GpuTransport implements DecodeTransport {
         this.onSlot(msg);
         return;
       case "end":
-        if (!this._disposed) this.eofCb?.();
+        if (!this._disposed && msg.requestId === this.requestId) this.eofCb?.();
         return;
       // Terminal or not, an error is a transport failure: `FfmpegSource`
       // falls back to software (ADR 0162). A terminal one also means the
@@ -208,7 +213,8 @@ export class GpuTransport implements DecodeTransport {
     if (this._disposed || !this.port) return;
     if (this.lastRequestedTargetUs === tUs) return;
     this.lastRequestedTargetUs = tUs;
-    this.port.postMessage({ type: "request", targetUs: tUs });
+    this.requestId = (this.requestId + 1) >>> 0;
+    this.port.postMessage({ type: "request", targetUs: tUs, requestId: this.requestId } satisfies PreviewGpuCommand);
   }
 
   resetRequestDedup(): void {

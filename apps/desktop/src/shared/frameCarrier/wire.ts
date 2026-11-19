@@ -80,8 +80,10 @@ export type ExportDecodeCommand = { type: 'range'; aUs: number; bUs: number } | 
 export type PreviewDecodeCommand = { type: 'request'; targetUs: number; requestId: number } | ReleaseCommand
 
 /** Up a GPU preview session's port: `request` moves the decode anchor to
- * `targetUs`; the session fills slots from there through its lookahead. */
-export type PreviewGpuCommand = { type: 'request'; targetUs: number } | SlotReleaseCommand
+ * `targetUs`; the session fills slots from there through its lookahead. Each
+ * request carries a new `requestId`, and an `end` names the newest request it
+ * answers. */
+export type PreviewGpuCommand = { type: 'request'; targetUs: number; requestId: number } | SlotReleaseCommand
 
 /** Anything a consumer sends up a decode session's port (`decodeSession:cmd`).
  *

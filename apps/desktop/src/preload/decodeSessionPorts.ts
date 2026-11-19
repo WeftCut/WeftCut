@@ -15,7 +15,8 @@ export interface DecodeSessionPorts {
    * before main opens the session, and a port queues what it receives until its
    * consumer listens, so no message is lost in between. Rejects at once, and
    * touches nothing, when `sessionId` is already open or opening here. A
-   * failed open ends only the session it created, and rejects. */
+   * failed open ends only the session it created, in main too when main had
+   * opened it, and rejects once that close has answered. */
   openSession<Info>(sessionId: string, invoke: () => Promise<Info>): Promise<Info>
   /** Ends session `sessionId`: nothing more reaches its consumer, and main
    * closes it. Resolves once main has. Goes to main on IPC directly, not up the
@@ -87,15 +88,25 @@ export function createDecodeSessionPorts(
       const session: Kept = { port: port1, queued: 0, tail: Promise.resolve() }
       kept.set(sessionId, session)
       port1.onmessage = event => sendCommand(sessionId, event.data as DecodeCommand)
+      let opened = false
       try {
         const info = await invoke()
+        opened = true
         handOver(sessionId, port2)
         return info
       } catch (error) {
         // Main may have ended this session already, and the id opened again.
-        if (kept.get(sessionId) === session) end(sessionId)
+        const ours = kept.get(sessionId) === session
+        if (ours) end(sessionId)
         port1.close()
         port2.close()
+        // Main opened it and only the hand-over failed: close it there too,
+        // and before rejecting, so a fallback the caller opens next finds its
+        // reservation released.
+        if (opened && ours) {
+          await closeSession(sessionId).catch((closeErr: unknown) =>
+            console.warn(`[preload] decode session ${sessionId} rollback close failed`, closeErr))
+        }
         throw error
       }
     },
