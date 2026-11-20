@@ -6,6 +6,7 @@ import { TimeMappingError } from '../../shared/timeMapping'
 import { cropProblem } from '../../shared/crop'
 import { graphicRoleProblem } from '../../shared/graphicRole'
 import { isProjectMotifKey } from '../../shared/motifs/projectMotifs'
+import { excludedFontsProblem } from './excludedFonts'
 import { CommandFailure } from './errors'
 // apps/desktop/src/main/state/validate.ts
 import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
@@ -37,6 +38,10 @@ function pairKey(a: Uuid, b: Uuid): string { return a < b ? `${a}|${b}` : `${b}|
 export function validate(project: Project): void {
   validateProjectShape(project)
   for (const id of Object.keys(project.motifs)) if (!isProjectMotifKey(id)) fail({ rule: 'InvalidMotifKey', motif_id: id })
+  // Refused, never rewritten: the open repairs a hand-edited list
+  // (`parseProject`) and the host op writes a normalized one.
+  const excluded = excludedFontsProblem(project.settings.excluded_fonts)
+  if (excluded) fail({ rule: 'InvalidExcludedFonts', ...excluded })
   const root = project.compositions[project.root_id]
   // PROJECT-wide: a layer id names one layer in the whole project (every
   // layer-addressed op derives its composition from the id), so the duplicate

@@ -415,6 +415,9 @@ const VALIDATION_COPY: { [R in ValidationRule]: Spec<ValidationOf<R>> } = {
   // a hand-edited project or a rebind to an id it lacks can raise either.
   MotifNotInProject: { tier: "generic" },
   InvalidMotifKey: { tier: "generic" },
+  // Its host op normalizes before writing and an open repairs a hand-edited
+  // list, so this names a writer's bug rather than a user's edit.
+  InvalidExcludedFonts: { tier: "generic" },
 };
 
 // ── Composition ─────────────────────────────────────────────────────────────

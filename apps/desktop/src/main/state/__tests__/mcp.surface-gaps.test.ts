@@ -171,6 +171,17 @@ describe('set_project_settings', () => {
     expect(a.snapshot().settings.history_capacity).toBe(200)
   })
 
+  it('cannot write the font exclusion list, which only its own host op changes', () => {
+    const gen = seededGen()
+    const p: Project = blankProject(gen, 'excluded-fonts')
+    p.settings.excluded_fonts = ['Example Serif']
+    const a = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    expect(errorOf(call(a, 'set_project_settings', { patch: { excluded_fonts: [] } }))).toContain('excluded_fonts')
+    // The renderer's settings channel reads only the fields it knows.
+    a.dispatch('update_project_settings', { patch: { excluded_fonts: [] } })
+    expect(a.snapshot().settings.excluded_fonts).toEqual(['Example Serif'])
+  })
+
   it('refuses an empty patch', () => {
     const a = actorWithPool()
     expect(errorOf(call(a, 'set_project_settings', { patch: {} }))).toContain('names no setting')
