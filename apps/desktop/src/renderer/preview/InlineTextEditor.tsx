@@ -13,6 +13,8 @@ import {
 import { layerFrameAt } from "./centerInFrame";
 import { containFit, compToClient, layerQuad } from "./gizmoGeometry";
 import { getGizmoProbe } from "./gizmoProbeRegistry";
+import { useFontIndex } from "../render/fonts/fontIndexStore";
+import { renderFamilyStack } from "../render/fonts/textFaces";
 
 type TextLayer = LayerSummary & { params: Extract<LayerSummary["params"], { kind: "Text" }> };
 
@@ -56,6 +58,9 @@ export function InlineTextEditor({ layer, composition, onDone }: {
   const { t } = useTranslation();
   const [initial] = useState(() => ({ layer, timeUs: focusedPlayheadUs() }));
   const params = initial.layer.params;
+  // The faces the preview drew the layer with: it registers them in this
+  // document under the same aliases.
+  const fontFamily = renderFamilyStack(params, useFontIndex());
   const textarea = useRef<HTMLTextAreaElement>(null);
   const wrapper = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
@@ -187,7 +192,7 @@ export function InlineTextEditor({ layer, composition, onDone }: {
       readOnly={pending}
       spellCheck={false}
       wrap={params.box_w == null ? "off" : "soft"}
-      style={{ fontFamily: params.font_family, fontWeight: params.weight,
+      style={{ fontFamily, fontWeight: params.weight,
         fontStyle: params.italic ? "italic" : "normal",
         textAlign: params.align === "Left" ? "left" : params.align === "Right" ? "right" : "center" }}
       onCompositionStart={() => { composing.current = true; }}

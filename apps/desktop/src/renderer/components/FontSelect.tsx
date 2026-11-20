@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_CAPTION_FONT_FAMILY, BUNDLED_FONT_FAMILIES } from "../../shared/fonts";
 import { AppSelect } from "./AppSelect";
-import { getSystemFontFamilies } from "./fontFamilies";
+import { getFontFamilies } from "./fontFamilies";
+import { useFontIndex } from "../render/fonts/fontIndexStore";
 
 export function FontSelect({ value, onValueChange, ariaLabel, defaultValue = DEFAULT_CAPTION_FONT_FAMILY }: {
   value: string;
@@ -15,14 +16,17 @@ export function FontSelect({ value, onValueChange, ariaLabel, defaultValue = DEF
   const [families, setFamilies] = useState<string[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [attempt, setAttempt] = useState(0);
+  // The project's and the system's families change with the face index.
+  const revision = useFontIndex().revision;
   useEffect(() => {
     let active = true;
-    setStatus("loading");
-    getSystemFontFamilies().then((names) => {
+    // A list already shown stays up while a newer index's list loads.
+    setStatus((s) => (s === "ready" ? s : "loading"));
+    getFontFamilies(revision).then((names) => {
       if (active) { setFamilies(names); setStatus("ready"); }
     }).catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
-  }, [attempt]);
+  }, [attempt, revision]);
 
   const names = new Map<string, string>();
   for (const family of [...BUNDLED_FONT_FAMILIES, ...families]) {
