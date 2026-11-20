@@ -26,13 +26,13 @@ import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
 import { BITMAP_CANVAS_RUNTIME_SOURCE } from './motif/bitmapCanvasRuntime.js'
 import { builtinMotifs } from './motif/authoring.js'
-import { loadAllKeys, setKey, clearKey, onKeyringChecked } from './keys.js'
+import { loadAllKeys, setKey, onKeyringChecked } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates, macSelfUpdateBlocked } from './updates.js'
 import { createUpdateResume } from './updateResume.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { nodeAtomicWriteIo, writeFileAtomic } from './atomicWrite.js'
-import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
+import { VLM_ENDPOINT_KEY_TAG, type VlmDescribeSettings } from '../shared/vlm-config.js'
 import { PLAYHEAD_READ_EVENT, PLAYHEAD_REPORT } from '../shared/editorPlayhead.js'
 import { stdioEntry } from '../shared/agentHosts.js'
 import { registerMotifProtocol } from './motif/protocol.js'
@@ -684,7 +684,7 @@ app.whenReady().then(async () => {
   // the non-secret sibling of the endpoint key. Like speech's (ADR 0036), VLM
   // config is injected per-call into describe_clip / media://{id}/description
   // (stateless, ADR 0024) via the provider passed to startMcpHost below.
-  const { createVlmConfigStore, toVlmBackendSnapshot, modelProfileToVlmSnapshot } = await import('./vlm-config.js')
+  const { createVlmConfigStore, modelProfileToVlmSnapshot } = await import('./vlm-config.js')
   const vlmConfig = createVlmConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'vlm_config.json'), dir: app.getPath('userData') })
 
   // Resolve the user-configurable data root BEFORE the Backend cache dir
@@ -1841,13 +1841,6 @@ app.whenReady().then(async () => {
       const buf = Buffer.from(b64, 'base64')
       return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
     }
-    // API-key writes need safeStorage (main-only), so they are intercepted
-    // here. The next speech call reads the key through `getSpeech`.
-    if (channel === 'settings_set_api_key') {
-      const { provider, key } = (args ?? {}) as { provider: string; key: string }
-      setKey(provider, key)
-      return null
-    }
     if (channel === 'models_unselect') { models!.unselect((args as { family: ModelFamily }).family); return null }
     if (channel === 'models_clear_downloads') { models!.clearDownloads((args as { id: string }).id); return null }
     if (channel === 'models_list') return models!.view()
@@ -1855,163 +1848,18 @@ app.whenReady().then(async () => {
     if (channel === 'models_cancel') { models!.cancel((args as { id: string }).id); return null }
     if (channel === 'models_install_components') { await models!.installComponents((args as { id: string }).id); return null }
     if (channel === 'models_remove_custom') { models!.removeCustom((args as { id: string }).id); return null }
-    if (channel === 'settings_clear_api_key') {
-      const { provider } = (args ?? {}) as { provider: string }
-      clearKey(provider)
-      return null
+    // The describe run's two parameters. One channel for both because they are
+    // one panel row group and the store applies a patch atomically; either field
+    // may be omitted, and the store's own coercion clamps the sampling rate.
+    if (channel === 'vlm_describe_get') {
+      const { describe_fps, describe_focus } = vlmConfig.get()
+      return { fps: describe_fps, focus: describe_focus } satisfies VlmDescribeSettings
     }
-    // Speech backends. Like the API-key writes above, these are intercepted
-    // here — the reads carry the same per-call config snapshot transcribe_clip
-    // gets (ADR 0036), so the panel and the resolver cannot disagree, and the
-    // writes persist non-secret local config to the TS store, which IS the
-    // apply. Intercepted BEFORE the router, so they never route to Rust bare.
-    if (channel === 'settings_get_api_key_status' || channel === 'settings_test_provider') {
-      const json = await backend!.invoke(channel, JSON.stringify({
-        ...((args ?? {}) as Record<string, unknown>),
-        speechConfig: getSpeech().config,
-      }))
-      return JSON.parse(json)
-    }
-    if (channel === 'settings_get_speech_backends') {
-      const sc = speechConfig.get()
-      const json = await backend!.invoke('settings_get_speech_backends', JSON.stringify({
-        preferred: sc.preferred_engine === 'auto' ? null : sc.preferred_engine,
-        speechConfig: getSpeech().config,
-      }))
-      const rows = JSON.parse(json) as Array<{ backend: string; locality: string } & Record<string, unknown>>
-      // Merge each LOCAL backend's stored paths/hints so the UI can populate its
-      // picker fields; cloud rows carry no local config.
-      return {
-        preferred_engine: sc.preferred_engine,
-        backends: rows.map((r) =>
-          r.locality === 'local' && sc.local[r.backend]
-            ? { ...r, local: sc.local[r.backend] }
-            : r,
-        ),
-      }
-    }
-    if (channel === 'settings_set_speech_preferred') {
-      const { engine } = (args ?? {}) as { engine: import('../shared/speech-config.js').PreferredEngine }
-      speechConfig.apply({ preferred_engine: engine })
-      return null
-    }
-    if (channel === 'settings_set_local_backend') {
-      const a = (args ?? {}) as { backend: string; binary: string; model: string; tokens?: string; device?: string; threads?: number }
-      // The store sanitizes (trims paths, drops bogus threads, clears an entry
-      // with both paths blank), and the next call's snapshot reads that.
-      speechConfig.apply({
-        local: {
-          backend: a.backend,
-          config: {
-            binary: a.binary,
-            model: a.model,
-            ...(a.tokens ? { tokens: a.tokens } : {}),
-            ...(a.device ? { device: a.device } : {}),
-            ...(a.threads != null ? { threads: a.threads } : {}),
-          },
-        },
-      })
-      return null
-    }
-    if (channel === 'settings_clear_local_backend') {
-      const { backend: tag } = (args ?? {}) as { backend: string }
-      speechConfig.apply({ local: { backend: tag, config: null } })
-      return null
-    }
-    // Video-understanding backends. Same interception rationale as the speech
-    // block above: the VLM subsystem holds NO resident Rust config (ADR 0024),
-    // so persisting to the store IS the apply — the next describe_clip gets the
-    // merged snapshot injected from it.
-    if (channel === 'settings_get_vlm_backends') {
-      const vc = vlmConfig.get()
-      const endpointKey = loadAllKeys()[VLM_ENDPOINT_KEY_TAG] ?? null
-      const json = await backend!.invoke('settings_get_vlm_backends', JSON.stringify({
-        preferred: vc.preferred_engine === 'auto' ? null : vc.preferred_engine,
-        // The SAME merge describe_clip receives, so the panel's availability
-        // badges and the resolver's actual verdict cannot disagree.
-        vlmConfig: toVlmBackendSnapshot(vc, endpointKey),
-      }))
-      const rows = JSON.parse(json) as Array<{ backend: string; locality: string } & Record<string, unknown>>
-      // Merge each row's stored NON-secret config so the UI can populate its
-      // fields: local engines get their paths, the endpoint row its URL/model.
-      return {
-        preferred_engine: vc.preferred_engine,
-        // The two run params ride back with the backends so the panel stays ONE
-        // fetch: same store, same section, same refresh-after-mutation cycle.
-        describe_fps: vc.describe_fps,
-        describe_focus: vc.describe_focus,
-        backends: rows.map((r) => {
-          if (r.locality === 'local' && vc.local[r.backend]) return { ...r, local: vc.local[r.backend] }
-          if (r.locality === 'endpoint' && vc.endpoint) {
-            // The key is a credential in safeStorage, so it is not on `vc` at
-            // all: send presence read from the keyring, never the material.
-            return { ...r, endpoint: { ...vc.endpoint, has_api_key: (endpointKey ?? '') !== '' } }
-          }
-          return r
-        }),
-      }
-    }
-    if (channel === 'settings_set_vlm_preferred') {
-      const { engine } = (args ?? {}) as { engine: import('../shared/vlm-config.js').VlmPreferredEngine }
-      vlmConfig.apply({ preferred_engine: engine })
-      return null
-    }
-    // The two describe run params. One channel for both because they are one
-    // panel row group and the store applies a patch atomically; either field may
-    // be omitted, and the store's own coercion clamps the sampling rate.
-    if (channel === 'settings_set_vlm_describe') {
-      const a = (args ?? {}) as {
-        fps?: number
-        focus?: import('../shared/vlm-config.js').VlmDescribeFocus
-      }
+    if (channel === 'vlm_describe_set') {
+      const a = (args ?? {}) as Partial<VlmDescribeSettings>
       vlmConfig.apply({
         ...(a.fps === undefined ? {} : { describe_fps: a.fps }),
         ...(a.focus === undefined ? {} : { describe_focus: a.focus }),
-      })
-      return null
-    }
-    if (channel === 'settings_set_vlm_local') {
-      const a = (args ?? {}) as { backend: string; binary: string; model: string; mmproj: string; device?: string }
-      vlmConfig.apply({
-        local: {
-          backend: a.backend,
-          config: {
-            binary: a.binary,
-            model: a.model,
-            mmproj: a.mmproj,
-            ...(a.device ? { device: a.device } : {}),
-          },
-        },
-      })
-      return null
-    }
-    if (channel === 'settings_clear_vlm_local') {
-      const { backend: tag } = (args ?? {}) as { backend: string }
-      vlmConfig.apply({ local: { backend: tag, config: null } })
-      return null
-    }
-    if (channel === 'settings_set_vlm_endpoint') {
-      const a = (args ?? {}) as { url: string; model?: string; apiKey?: string | null }
-      if (a.url.trim() === '') {
-        // Clearing the endpoint takes its key with it — a credential with no URL
-        // to send it to is a secret kept for nothing.
-        vlmConfig.apply({ endpoint: null })
-        clearKey(VLM_ENDPOINT_KEY_TAG)
-        return null
-      }
-      // The key goes to safeStorage, the URL/model to the store — same split as
-      // `settings_set_api_key` + `settings_set_local_backend` on the speech side.
-      // `apiKey: undefined` KEEPS the stored key (the UI never round-trips it, so
-      // an unedited field must not silently erase it); `null` or '' clears it.
-      if (a.apiKey !== undefined) {
-        // setKey treats an empty string as a clear, so both cases are one call.
-        setKey(VLM_ENDPOINT_KEY_TAG, a.apiKey ?? '')
-      }
-      vlmConfig.apply({
-        endpoint: {
-          url: a.url,
-          ...(a.model ? { model: a.model } : {}),
-        },
       })
       return null
     }
@@ -2723,8 +2571,7 @@ app.whenReady().then(async () => {
   // Fill blank speech-config fields from installed managed content — the ADR
   // 0039 consumer. The only-if-blank / whole-pair rules live in the pure
   // speechAutofillPlan (unit-tested); this closure just applies the plan — the
-  // next speech call's snapshot reads the store, as after the
-  // settings_set_local_backend intercept above.
+  // next speech call's snapshot reads the store.
   const autofillSpeechFromContent = (): void => {
     const plan = speechAutofillPlan(
       CONTENT_CATALOG,

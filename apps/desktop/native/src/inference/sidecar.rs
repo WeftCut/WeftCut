@@ -137,38 +137,6 @@ pub async fn run_child(
     Ok(output)
 }
 
-/// Liveness probe for a local engine: spawn `<program> <args>` (typically
-/// `--help`) and treat "the process started and finished within `timeout`" as
-/// alive. The exit code is **ignored on purpose** — `--help` / `--version`
-/// conventions differ across engines and builds, so this only distinguishes a
-/// runnable binary from a bad path / wrong arch ([`SidecarFailure::Spawn`]) or
-/// a wedged binary ([`SidecarFailure::Timeout`]).
-pub async fn probe_liveness(
-    program: &Path,
-    args: &[OsString],
-    timeout: Duration,
-) -> Result<(), SidecarFailure> {
-    let child = Command::new(program)
-        .no_console_window()
-        .kill_on_drop(true)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| SidecarFailure::Spawn {
-            program: program.display().to_string(),
-            cause: e.to_string(),
-        })?;
-    match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(e)) => Err(SidecarFailure::Io(e)),
-        Err(_elapsed) => Err(SidecarFailure::Timeout {
-            secs: timeout.as_secs(),
-        }),
-    }
-}
-
 /// Classify a finished child's status into success or [`SidecarFailure::Exit`].
 /// Pure so the mapping is unit-testable without spawning a real engine.
 fn exit_result(success: bool, code: Option<i32>, stderr: &[u8]) -> Result<(), SidecarFailure> {
@@ -209,15 +177,5 @@ mod tests {
             exit_result(false, None, b"killed"),
             Err(SidecarFailure::Exit { code: None, .. })
         ));
-    }
-
-    #[tokio::test]
-    async fn a_missing_program_is_a_spawn_failure_naming_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let program = dir.path().join("no-such-engine");
-        match probe_liveness(&program, &[], Duration::from_secs(5)).await {
-            Err(SidecarFailure::Spawn { program: p, .. }) => assert!(p.contains("no-such-engine")),
-            other => panic!("expected Spawn, got {other:?}"),
-        }
     }
 }

@@ -139,7 +139,7 @@ pub enum Availability {
 ///   if the model path is missing, then — for FunASR only — `NeedsModel` again
 ///   if its `tokens.txt` is unset/absent (tokens are part of the model bundle,
 ///   so they reuse `NeedsModel` rather than a new variant), then `Available`.
-///   Checks **file existence only**; the liveness spawn is [`super::probe_backend`].
+///   Checks **file existence only**; nothing is spawned.
 ///
 /// - **Endpoint** → `Available` iff an [`BackendConfig::Endpoint`] with a
 ///   non-blank URL is present, else `NeedsEndpoint`. The key never gates it: a

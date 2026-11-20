@@ -12,12 +12,9 @@
 // a migration. Bad-config recovery: a missing / empty / corrupt file, or one from
 // an older build lacking a field, degrades to defaults.
 //
-// `toVlmBackendSnapshot` is the pure merge that turns this store's config + the
-// safeStorage endpoint key into the tagged `HashMap<String, BackendConfig>` JSON
-// the stateless Rust describe_clip resolver reads (via the injected `vlm_config`
-// arg). `modelProfileToVlmSnapshot` is the same wire shape produced from the
-// ACTIVE MODEL PROFILE, which is what a describe request actually runs against
-// (ADR 0064) — both live here so the one shape has one definition.
+// `modelProfileToVlmSnapshot` turns the ACTIVE MODEL PROFILE and its key into
+// the tagged `HashMap<String, BackendConfig>` JSON the stateless Rust
+// describe_clip resolver reads (via the injected `vlm_config` arg, ADR 0064).
 
 import type { ModelProfile } from "../shared/inference-models";
 import {
@@ -228,48 +225,10 @@ export type BackendConfigJson =
   | { kind: "local"; binary: string; model: string; mmproj: string; device?: string }
   | { kind: "endpoint"; url: string; api_key?: string; model?: string; timeout_s?: number; frames_per_request?: number; concurrency?: number };
 
-/// Merge the non-secret store config + the secret endpoint key into the
-/// `Record<backendTag, BackendConfig>` snapshot the stateless describe_clip
-/// resolver reads. Keyed by the Rust `VlmBackend::as_str` tags. Pure — the
-/// caller supplies `endpointKey` from safeStorage (keys.ts, tag
-/// `VLM_ENDPOINT_KEY_TAG`). index.ts feeds the result to the MCP host's
-/// vlm-config callback, which injects it per call into `describe_clip` /
-/// `media://{id}/description`.
-///
-/// The key rides the `byo_endpoint` ENTRY rather than an entry of its own: a key
-/// without a URL configures nothing, so it must never make a backend look
-/// available on its own.
-export function toVlmBackendSnapshot(
-  cfg: VlmConfig,
-  endpointKey?: string | null,
-): Record<string, BackendConfigJson> {
-  const out: Record<string, BackendConfigJson> = {};
-  for (const [tag, lc] of Object.entries(cfg.local)) {
-    out[tag] = {
-      kind: "local",
-      binary: lc.binary,
-      model: lc.model,
-      mmproj: lc.mmproj,
-      ...(lc.device ? { device: lc.device } : {}),
-    };
-  }
-  if (cfg.endpoint && cfg.endpoint.url.trim() !== "") {
-    const key = endpointKey?.trim() ?? "";
-    out.byo_endpoint = {
-      kind: "endpoint",
-      url: cfg.endpoint.url,
-      ...(key !== "" ? { api_key: key } : {}),
-      ...(cfg.endpoint.model ? { model: cfg.endpoint.model } : {}),
-    };
-  }
-  return out;
-}
-
-/// The same snapshot, produced from the ACTIVE MODEL PROFILE — the model store
-/// owns the selection (`model-manager.ts`), so this is what a describe request
-/// actually runs against, while `toVlmBackendSnapshot` above still serves the
-/// legacy store's own readers. One producer per wire shape on purpose: the two
-/// disagreed once, and the disagreement was invisible until a request failed.
+/// The `Record<backendTag, BackendConfig>` snapshot the stateless describe_clip
+/// resolver reads, keyed by the Rust `VlmBackend::as_str` tags and produced from
+/// the ACTIVE MODEL PROFILE — the model store owns the selection
+/// (`model-manager.ts`), so this is what a describe request runs against.
 ///
 /// Two conversions are NOT cosmetic:
 /// - `mmproj` is optional on a `ModelLocalConfig` but REQUIRED by the Rust

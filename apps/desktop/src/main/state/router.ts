@@ -155,7 +155,7 @@ export const SLICE_INJECTED_READS: ReadonlySet<string> = new Set([
  *  channel nobody listed is a channel nobody checked. */
 export const PURE_NATIVE: ReadonlySet<string> = new Set([
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish', 'export_video_sink_cancel',
-  'import_cancel', 'import_queue_list', 'report_audio_meter', 'settings_get_api_key_status', 'settings_test_provider',
+  'import_cancel', 'import_queue_list', 'report_audio_meter',
   'measure_conform_rms', 'bake_audio_fx', 'cancel_audio_fx', 'build_peaks_for_vconf',
 ])
 

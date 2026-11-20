@@ -53,6 +53,13 @@ export const VLM_DESCRIBE_FPS_MIN = 0.1;
 export const VLM_DESCRIBE_FPS_MAX = 30;
 export const VLM_DESCRIBE_FPS_STEP = 0.5;
 
+/// The describe run's parameters as `vlm_describe_get` returns them and
+/// `vlm_describe_set` patches them.
+export interface VlmDescribeSettings {
+  fps: number;
+  focus: VlmDescribeFocus;
+}
+
 /// The `cloud_keys.json` provider tag the endpoint's optional API key is stored
 /// under. Its own tag, not the speech section's `"openai"` entry: one secret,
 /// one editor — a key the user typed under Video understanding must not change
@@ -92,8 +99,8 @@ export interface VlmConfig {
   /// How densely to sample frames, and what to bias `tags` toward. NOT backend
   /// config — they are the run parameters every describe gesture uses, and they
   /// live here beside `preferred_engine` because this file is what the Video
-  /// understanding panel owns. `toVlmBackendSnapshot` projects only the backend
-  /// half of this store, so neither reaches the Rust resolver's config map.
+  /// understanding panel owns. Each describe call passes them to Rust as their
+  /// own arguments, never inside the resolver's backend config map.
   ///
   /// Both are part of the description cache key, so changing either switches
   /// which cached view every read resolves to (`native/src/vlm/description.rs`

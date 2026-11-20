@@ -56,7 +56,7 @@ impl Locality {
 }
 
 /// The order speech synthesis walks after honoring the caller's `preferred`
-/// hint, and the order of [`SpeechBackend::all`]. Transcription does not walk
+/// hint. Transcription does not walk
 /// it: it runs only the selected model (selection is strict). OpenAI leads:
 /// with both a key and a local engine configured and no preference set, cloud
 /// wins — it needs no local model download and its quality is the known
@@ -85,21 +85,6 @@ impl SpeechBackend {
             SpeechBackend::FunAsr => "funasr",
             SpeechBackend::ByoEndpoint => "byo_endpoint",
         }
-    }
-
-    /// Human-facing label for the Settings row / Test button.
-    pub fn label(self) -> &'static str {
-        match self {
-            SpeechBackend::OpenAi => "OpenAI (Whisper)",
-            SpeechBackend::WhisperCpp => "whisper.cpp (local)",
-            SpeechBackend::FunAsr => "FunASR (local)",
-            SpeechBackend::ByoEndpoint => "OpenAI-compatible endpoint",
-        }
-    }
-
-    /// Every backend we know about, in the default resolution order.
-    pub fn all() -> &'static [SpeechBackend] {
-        DEFAULT_ORDER
     }
 
     /// Cloud (HTTP, key-gated) vs Local (spawned CLI, file-gated) vs Endpoint
@@ -164,7 +149,7 @@ pub struct Capabilities {
 
 impl crate::inference::EngineTag for SpeechBackend {
     fn catalog() -> &'static [Self] {
-        Self::all()
+        DEFAULT_ORDER
     }
     fn wire_tag(self) -> &'static str {
         self.as_str()
@@ -224,6 +209,5 @@ mod tests {
     #[test]
     fn default_order_leads_with_openai() {
         assert_eq!(DEFAULT_ORDER.first(), Some(&SpeechBackend::OpenAi));
-        assert_eq!(SpeechBackend::all(), DEFAULT_ORDER);
     }
 }
