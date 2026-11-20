@@ -1942,9 +1942,9 @@ const zhCN: Resources = {
   app_notice: {
     dismiss: "知道了",
     keyring_unavailable: {
-      title: "云 API 密钥未加密",
+      title: "无法存储云 API 密钥",
       action: "打开 API 密钥设置",
-      body: "系统没有可用的密钥环，云 API 密钥将以未加密方式写入磁盘（cloud_keys.json）。请安装密钥环（如 GNOME Keyring / KWallet），或妥善保护你的用户数据目录。",
+      body: "系统没有可用的钥匙串或密钥环，云 API 密钥无法保存或读取。请允许 WeftCut 访问它，Linux 上可安装一个（如 GNOME Keyring 或 KWallet），然后重试。",
     },
     native_decode_unavailable: {
       title: "原生解码引擎不可用",

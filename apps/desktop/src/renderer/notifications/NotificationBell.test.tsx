@@ -103,7 +103,7 @@ describe("notices", () => {
     await act(async () => {});
     const center = openCenter();
     const row = center.querySelector<HTMLElement>('[data-attention="notice:keyring_unavailable"]')!;
-    expect(row.textContent).toContain("Cloud API keys aren't encrypted");
+    expect(row.textContent).toContain("Cloud API keys can't be stored");
     const gotIt = within(row).getByRole("button", { name: "Got it" });
     // The state keeps a home; the link says which, before it is pressed.
     expect(gotIt.getAttribute("title")).toBe("Hides it here; it stays in Settings · Transcription");

@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
 import { BITMAP_CANVAS_RUNTIME_SOURCE } from './motif/bitmapCanvasRuntime.js'
 import { builtinMotifs } from './motif/authoring.js'
-import { loadAllKeys, setKey, clearKey } from './keys.js'
+import { loadAllKeys, setKey, clearKey, onKeyringChecked } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates, macSelfUpdateBlocked } from './updates.js'
 import { createUpdateResume } from './updateResume.js'
@@ -809,20 +809,31 @@ app.whenReady().then(async () => {
     return nd.backend
   }
 
-  const { encryptionAvailable } = await import('./keys.js')
-  if (!encryptionAvailable()) {
-    console.warn('[main] OS keyring unavailable — cloud API keys persist in PLAINTEXT (cloud_keys.json). Secure your userData dir or install a keyring (libsecret/kwallet).')
-    // Listed in the renderer's notification center (pulled via app:notices).
-    startupNotices.push({ level: 'warn', code: 'keyring_unavailable' })
-  }
+  // The keyring is checked where a key is encrypted or decrypted (keys.ts), so
+  // its notice appears when the user first saves or uses a cloud key rather
+  // than at launch. A dismissal of it lasts the session only: the startup prune
+  // below forgets it whenever launch itself did not need the keyring.
+  onKeyringChecked((available) => {
+    const at = startupNotices.findIndex((n) => n.code === 'keyring_unavailable')
+    const standing = at >= 0
+    if (standing !== available) return // already in step
+    if (available) startupNotices.splice(at, 1)
+    else {
+      console.warn('[main] OS keyring unavailable — cloud API keys cannot be saved or read.')
+      startupNotices.push({ level: 'warn', code: 'keyring_unavailable' })
+    }
+    emitToRenderer('app:notices', startupNotices)
+  })
 
   // One-shot: an endpoint key an older build wrote to vlm_config.json in
-  // PLAINTEXT moves into safeStorage and is scrubbed from the file. Placed here
-  // (not at the store's construction) so safeStorage is known usable, and well
-  // ahead of the first `getVlm()` / Settings read below. No-op on every launch
-  // after the first, and on every profile that never had one.
+  // PLAINTEXT moves into safeStorage and is scrubbed from the file, ahead of
+  // the first `getVlm()` / Settings read below. No-op on every launch after
+  // the first, and on every profile that never had one. Without a keyring the
+  // key cannot be kept; the user enters it again once one is available.
   const legacyVlmKey = vlmConfig.takeLegacyEndpointKey()
-  if (legacyVlmKey) setKey(VLM_ENDPOINT_KEY_TAG, legacyVlmKey)
+  if (legacyVlmKey) {
+    try { setKey(VLM_ENDPOINT_KEY_TAG, legacyVlmKey) } catch (error) { console.warn('[main] legacy VLM endpoint key not moved:', error) }
+  }
 
   // Nothing to push into the backend: speech keys and local paths travel with
   // each call, merged by `getSpeech` below (ADR 0036).

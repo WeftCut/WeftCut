@@ -59,7 +59,7 @@ describe("model settings", () => {
     // The bell's row may have been dismissed; this home shows the state regardless.
     useAppNoticesStore.setState({ notices: [{ level: "warn", code: "keyring_unavailable" }] });
     render(<ModelSection family="speech" onError={vi.fn()} />);
-    expect((await screen.findByTestId("keys-unencrypted")).textContent).toContain("No OS keyring is available");
+    expect((await screen.findByTestId("keys-unencrypted")).textContent).toContain("No system keychain or keyring is available");
   });
   it("starts with a genuine empty state and performs no model preparation", async () => {
     const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);

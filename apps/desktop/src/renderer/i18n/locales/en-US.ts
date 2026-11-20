@@ -2172,9 +2172,9 @@ const enUS = {
   app_notice: {
     dismiss: "Got it",
     keyring_unavailable: {
-      title: "Cloud API keys aren't encrypted",
+      title: "Cloud API keys can't be stored",
       action: "Open API key settings",
-      body: "No OS keyring is available, so cloud API keys are saved to disk without encryption (cloud_keys.json). Install a keyring (e.g. GNOME Keyring / KWallet), or protect your user-data folder.",
+      body: "No system keychain or keyring is available, so cloud API keys can't be saved or read. Allow WeftCut access to it, or on Linux install one (such as GNOME Keyring or KWallet), then try again.",
     },
     native_decode_unavailable: {
       title: "Native decode engine unavailable",
