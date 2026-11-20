@@ -64,14 +64,16 @@ settings ignored).
 
 ## Fonts
 
-Liberation Sans and Noto Sans SC are bundled and loaded into the preview
-(`document.fonts`) and the export Worker (`self.fonts`) before compositing
-(`renderer/render/fonts/registry.ts`). The default caption family is the chain
-`"Liberation Sans, Noto Sans SC"`. Other families are resolved best-effort
-before the Worker starts (`resolveFontsForFamilies` → `font:resolve` →
-`main/fonts/resolveSystemFont.ts`, an sfnt `name`-table scan) and passed in as
-bytes; the Worker never resolves fonts. Unresolved families fall back to the
-bundled chain. Only the bundled fonts are deterministic across machines.
+Liberation Sans and Noto Sans SC are bundled. The default caption family is
+the chain `"Liberation Sans, Noto Sans SC"`. Captions are Text layers, so their
+fonts follow Text's: each family in the list resolves to a face (family, weight,
+italic) in the project's `Fonts/`, then the system, then the bundled fonts,
+through one resolver (`shared/fonts/resolve.ts`) over main's face index
+(`main/fonts/catalog.ts`). Preview and the export Worker register the same
+faces, so they draw alike; the Worker never resolves fonts itself. The faces a
+caption draws are copied into `Fonts/` (ADR 0176), so a project renders the same
+captions on a machine without them. A family that resolves nowhere is a missing
+font, shown on the layer.
 
 ## Caption panel
 

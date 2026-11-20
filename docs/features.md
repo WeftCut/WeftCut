@@ -1275,11 +1275,11 @@ draft.
 (`default_text_font`) sets the family for newly authored Text layers (Insert
 menu, Text tool, MCP creation); empty means the bundled `Liberation Sans, Noto
 Sans SC` chain. Existing, pasted and imported layers keep their fonts. The picker
-lists OS-installed families from one lazy main-process scan
-(`main/fonts/resolveSystemFont.ts`; TTF/OTF and the first TTC face) exposed as
-`font.listFamilies()`; the renderer never receives font paths. Install fonts
-through the OS and restart to refresh. User-chosen fonts carry no cross-machine
-guarantee.
+lists the project's `Fonts/` families and OS-installed families from one lazy
+main-process scan (`main/fonts/catalog.ts`; TTF/OTF and every TTC face) exposed
+as `font.listFamilies()`; the renderer never receives font paths. Install fonts
+through the OS and restart to refresh. The faces a project draws are copied
+into its `Fonts/` (ADR 0176), so a chosen font travels with the project folder.
 
 ## Rectangular video crop
 
