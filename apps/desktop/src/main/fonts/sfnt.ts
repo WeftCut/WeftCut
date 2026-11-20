@@ -251,8 +251,18 @@ export function readIdentity(face: SfntFace): FaceIdentity | null {
  *  inclusive `[start, end]` pairs. */
 export interface Coverage { ranges: Uint32Array }
 
-/** Coverage from every Unicode cmap subtable in format 4 (BMP) or 12 (full
- *  range); other formats are ignored. Null without a readable `cmap`. */
+/** The private-use block a Windows symbol cmap (platform 3, encoding 0) maps
+ *  its glyphs into. */
+const SYMBOL_BASE = 0xf000
+
+/** Coverage from every Unicode or Windows symbol cmap subtable in format 4
+ *  (BMP) or 12 (full range); other formats are ignored. Null without a
+ *  readable `cmap`.
+ *
+ *  A symbol subtable covers its own codes, and each code U+F000–F0FF it maps
+ *  also covers the low byte it stands for (U+F041 covers U+0041): Chromium's
+ *  shaper (HarfBuzz) looks a code point up to U+00FF at U+F000 + it in a
+ *  symbol font, so text typed as plain letters draws its symbols. */
 export function readCoverage(face: SfntFace): Coverage | null {
   const cmap = tableBytes(face, 'cmap', 4)
   if (!cmap) return null
@@ -265,12 +275,22 @@ export function readCoverage(face: SfntFace): Coverage | null {
       const platformId = cmap.readUInt16BE(rec)
       const encodingId = cmap.readUInt16BE(rec + 2)
       const unicode = (platformId === 0 && encodingId !== 5) || (platformId === 3 && (encodingId === 1 || encodingId === 10))
-      if (!unicode) continue
+      const symbol = platformId === 3 && encodingId === 0
+      if (!unicode && !symbol) continue
       const at = cmap.readUInt32BE(rec + 4)
       if (at + 2 > cmap.length) continue
       const format = cmap.readUInt16BE(at)
-      if (format === 4) readFormat4(cmap, at, pairs)
-      else if (format === 12) readFormat12(cmap, at, pairs)
+      const subtable: [number, number][] = []
+      if (format === 4) readFormat4(cmap, at, subtable)
+      else if (format === 12) readFormat12(cmap, at, subtable)
+      pairs.push(...subtable)
+      if (symbol) {
+        for (const [start, end] of subtable) {
+          const lo = Math.max(start, SYMBOL_BASE)
+          const hi = Math.min(end, SYMBOL_BASE + 0xff)
+          if (lo <= hi) pairs.push([lo - SYMBOL_BASE, hi - SYMBOL_BASE])
+        }
+      }
     }
     return { ranges: mergeRanges(pairs) }
   } catch {

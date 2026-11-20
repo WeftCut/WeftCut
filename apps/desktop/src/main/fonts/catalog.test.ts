@@ -1,12 +1,21 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { resolveFace } from '../../shared/fonts/resolve.js'
+import { STAMP_SETTLE_MS } from '../motif/packageRevisions.js'
 import { FontCatalog, systemFontDirs } from './catalog.js'
 import { hasGlyph, readFaces, readIdentity } from './sfnt.js'
 import { cmapFormat12, cmapTable, faceTables, font, ttc } from './testing/syntheticFonts.js'
+
+// Every hash the catalog takes goes through here, so a test can tell that
+// none was taken.
+vi.mock('node:crypto', async importOriginal => {
+  const crypto = await importOriginal<typeof import('node:crypto')>()
+  return { ...crypto, createHash: vi.fn(crypto.createHash) }
+})
 
 let root: string
 let systemDir: string
@@ -160,6 +169,17 @@ describe('project fonts', () => {
     expect(catalog.index().revision).toBeGreaterThan(first)
   })
 
+  it('a rescan overtaken by a later one resolves once the later folder state has landed', async () => {
+    write(projectDir, 'A.ttf', font({ family: 'A' }))
+    const catalog = new FontCatalog({ systemDirs: [] })
+    catalog.setProjectDir(projectDir)
+    const first = catalog.rescanProject()
+    write(projectDir, 'B.ttf', font({ family: 'B' }))
+    void catalog.rescanProject()
+    await first
+    expect(catalog.index().faces.map(f => f.families[0]).sort()).toEqual(['A', 'B'])
+  })
+
   it("switching projects drops the old project's faces, even from a scan still running", async () => {
     write(projectDir, 'Old.ttf', font({ family: 'Old' }))
     const catalog = new FontCatalog({ systemDirs: [] })
@@ -168,6 +188,83 @@ describe('project fonts', () => {
     catalog.setProjectDir(null)
     await stale
     expect(catalog.index().faces).toEqual([])
+  })
+})
+
+describe('file records', () => {
+  /** A clock past the settle window of every file the test wrote. */
+  const settledClock = (): number => Date.now() + STAMP_SETTLE_MS + 1000
+  /** A clock at the moment `file` was last written: its stamp has not settled. */
+  const writtenClock = (file: string) => {
+    const s = fs.statSync(file)
+    return () => Math.max(s.mtimeMs, s.ctimeMs)
+  }
+  const recordFile = () => path.join(root, 'cache', 'font-records.json')
+  const systemCatalog = (now: () => number) =>
+    new FontCatalog({ systemDirs: [systemDir], recordFile: recordFile(), generation: 'test', now })
+  const reads = (spy: MockInstance, file: string) => spy.mock.calls.filter(([p]) => String(p) === file).length
+
+  it('a second catalog on the same record file indexes an unchanged file without reading or hashing it', async () => {
+    const file = write(systemDir, 'Pair.ttc', ttc([faceTables({ family: 'Pair', weight: 400 }), faceTables({ family: 'Pair', weight: 700 })]))
+    const first = systemCatalog(settledClock)
+    await first.scanSystem()
+    const open = vi.spyOn(fs.promises, 'open')
+    const readFile = vi.spyOn(fs.promises, 'readFile')
+    vi.mocked(createHash).mockClear()
+    const second = systemCatalog(settledClock)
+    await second.scanSystem()
+    expect(second.index().faces).toEqual(first.index().faces)
+    expect(reads(open, file) + reads(readFile, file)).toBe(0)
+    expect(createHash).not.toHaveBeenCalled()
+  })
+
+  it('a record of another generation is not believed', async () => {
+    const file = write(systemDir, 'Example.ttf', font({ family: 'Example' }))
+    await systemCatalog(settledClock).scanSystem()
+    const open = vi.spyOn(fs.promises, 'open')
+    await new FontCatalog({ systemDirs: [systemDir], recordFile: recordFile(), generation: 'other', now: settledClock }).scanSystem()
+    expect(reads(open, file)).toBe(1)
+  })
+
+  it('a stamp within the settle window is neither recorded nor believed', async () => {
+    const file = write(systemDir, 'Example.ttf', font({ family: 'Example' }))
+    const open = vi.spyOn(fs.promises, 'open')
+    await systemCatalog(writtenClock(file)).scanSystem()
+    await systemCatalog(settledClock).scanSystem()
+    expect(reads(open, file), 'an unsettled stamp leaves no record').toBe(2)
+    await systemCatalog(writtenClock(file)).scanSystem()
+    expect(reads(open, file), 'a recorded stamp that has not settled is read again').toBe(3)
+  })
+
+  it('a project file whose stamp changed is read and hashed once, under a new key', async () => {
+    const file = write(projectDir, 'A.ttf', font({ family: 'A', weight: 400 }))
+    const catalog = new FontCatalog({ systemDirs: [], now: settledClock })
+    catalog.setProjectDir(projectDir)
+    await catalog.rescanProject()
+    const before = catalog.index()
+    fs.writeFileSync(file, font({ family: 'A', weight: 500 }))
+    const open = vi.spyOn(fs.promises, 'open')
+    await catalog.rescanProject()
+    await catalog.rescanProject()
+    expect(reads(open, file)).toBe(1)
+    const after = catalog.index()
+    expect(after.faces[0]!.sha256).not.toBe(before.faces[0]!.sha256)
+    expect(after.revision).toBeGreaterThan(before.revision)
+  })
+
+  it('serves a face of an unchanged file without hashing it, and no bytes once the file changed', async () => {
+    const cmap = cmapTable([{ platform: 3, encoding: 10, data: cmapFormat12([{ start: 0x41, end: 0x5a, glyph: 1 }]) }])
+    const file = write(systemDir, 'Pair.ttc', ttc([faceTables({ family: 'Pair', weight: 400 }), faceTables({ family: 'Pair', weight: 700, cmap })]))
+    const catalog = new FontCatalog({ systemDirs: [systemDir], now: settledClock })
+    await catalog.scanSystem()
+    const bold = catalog.index().faces.find(f => f.weight === 700)!
+    vi.mocked(createHash).mockClear()
+    const bytes = (await catalog.faceBytes(bold.sha256))!
+    expect(readIdentity(readFaces(bytes)[0]!)?.weight).toBe(700)
+    expect(hasGlyph((await catalog.faceCoverage(bold.sha256))!, 0x41)).toBe(true)
+    expect(createHash).not.toHaveBeenCalled()
+    fs.writeFileSync(file, font({ family: 'Pair', weight: 700 }))
+    expect(await catalog.faceBytes(bold.sha256)).toBeNull()
   })
 })
 

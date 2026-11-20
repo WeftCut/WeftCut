@@ -1,7 +1,8 @@
 // Which catalog face draws a (family, weight, italic) request: one pure rule
 // shared by main (what to copy into Fonts/) and the renderer (what to register
-// and draw), so both pick the same face. Bundled families (../fonts.ts) are
-// never resolved here; callers fall back to them.
+// and draw), so both pick the same face. Bundled families (../fonts.ts) and
+// CSS generic families are never resolved here; callers fall back to them.
+// Which leaves count as missing is ./missing.ts.
 
 import { BUNDLED_FONT_FAMILIES } from '../fonts'
 import type { FaceSource, FaceWeight } from './types'
@@ -48,6 +49,32 @@ export function isBundledFamily(family: string): boolean {
   return BUNDLED.has(family.trim().toLowerCase())
 }
 
+/** The CSS generic families. They name no catalog face, so they are never
+ *  collected and never missing: in a Text layer the bundled chain draws in
+ *  their place, and in a Motif the capture browser maps them. A walk through
+ *  a family list stops at one, as at a bundled family. */
+export const GENERIC_FONT_FAMILIES: readonly string[] = [
+  'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'math', 'emoji', 'fangsong',
+  'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded',
+]
+
+const GENERIC = new Set(GENERIC_FONT_FAMILIES)
+
+export function isGenericFamily(family: string): boolean {
+  return GENERIC.has(family.trim().toLowerCase())
+}
+
+/** The weight a request asks for: a stored 0 (unset) is Regular. Every
+ *  caller of `resolveFace` passes a layer's weight through here. */
+export function requestWeight(weight: number | null | undefined): number {
+  return weight || 400
+}
+
+/** The italic a request asks for: anything but `true` is upright. */
+export function requestItalic(italic: boolean | null | undefined): boolean {
+  return italic === true
+}
+
 /** The family name a renderer registers a catalog face under: one alias per
  *  face, so faces of one family from different sources never merge in a
  *  FontFaceSet. */
@@ -68,13 +95,13 @@ function sameIdentity(a: Matchable, b: Matchable): boolean {
 
 /** Every face that answers to `family`: the project's faces, then each system
  *  face no project face of the same weight and italic replaces. Empty for a
- *  bundled or unknown family.
+ *  bundled, generic or unknown family.
  *
  *  Sources merge rather than the project shadowing the whole family: a project
  *  holding only some faces of a family still reaches the system's others, so
  *  the copier sees them as used and collects them. */
 export function familyFaces<F extends Matchable>(faces: readonly F[], family: string): F[] {
-  if (isBundledFamily(family)) return []
+  if (isBundledFamily(family) || isGenericFamily(family)) return []
   const matching = faces.filter(f => hasFamily(f, family))
   const project = matching.filter(f => f.source === 'project')
   const system = matching.filter(f => f.source === 'system' && !project.some(p => sameIdentity(p, f)))

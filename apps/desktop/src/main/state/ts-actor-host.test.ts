@@ -456,6 +456,33 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.stop()
   })
 
+  it('close waits for the font copy in flight before it lets the folder go, then tells the font store no folder is open', async () => {
+    const { deps } = makeInMemoryDeps()
+    const order: string[] = []
+    let copyLands!: () => void
+    const fonts = {
+      drain: vi.fn(() => new Promise<void>(r => { copyLands = () => { order.push('copy landed'); r() } })),
+      projectChanged: vi.fn((dir: string | null) => { order.push(`folder ${dir}`) }),
+      published: vi.fn(),
+      missing: () => [],
+    }
+    const endWorkspace = vi.fn(async () => { order.push('workspace ended') })
+    fonts.drain.mockImplementationOnce(async () => {})
+    const host = createTsActorHost({ ...deps, napi: { ...deps.napi, endWorkspace }, fonts })
+    const dir = await host.handleInvoke('project_new_workspace', publicationProject)
+    expect(fonts.projectChanged).toHaveBeenLastCalledWith(dir)
+    expect(fonts.published).toHaveBeenCalled()
+    let closed = false
+    const closing = (host.handleInvoke('project_close', {}) as Promise<unknown>).then(() => { closed = true })
+    await vi.waitFor(() => expect(fonts.drain).toHaveBeenCalledTimes(2))
+    expect(closed).toBe(false)
+    expect(endWorkspace).not.toHaveBeenCalled()
+    copyLands()
+    await closing
+    expect(order).toEqual([`folder ${dir}`, 'copy landed', 'workspace ended', 'folder null'])
+    host.stop()
+  })
+
   it('project_open flushes pending edits to the current workspace before switching', async () => {
     vi.useFakeTimers()
     const { deps, vfs } = makeInMemoryDeps()

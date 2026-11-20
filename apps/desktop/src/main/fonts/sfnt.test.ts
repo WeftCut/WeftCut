@@ -85,9 +85,16 @@ describe('cmap coverage', () => {
     expect([0x61, 0x62].filter(c => hasGlyph(coverage, c))).toEqual([0x62])
   })
 
-  it('non-Unicode subtables are ignored', () => {
+  it('non-Unicode subtables other than the Windows symbol one are ignored', () => {
     const cmap = cmapTable([{ platform: 1, encoding: 0, data: cmapFormat4([{ start: 0x41, end: 0x41 }]) }])
     expect(hasGlyph(readCoverage(only(font({ family: 'A', cmap })))!, 0x41)).toBe(false)
+  })
+
+  it('a symbol font covers its U+F0xx codes and the low bytes they stand for', () => {
+    const cmap = cmapTable([{ platform: 3, encoding: 0, data: cmapFormat4([{ start: 0xf041, end: 0xf042 }]) }])
+    const coverage = readCoverage(only(font({ family: 'Symbols', cmap })))!
+    expect([0xf041, 0xf042, 0x41, 0x42].every(c => hasGlyph(coverage, c))).toBe(true)
+    expect([0xf043, 0x43].some(c => hasGlyph(coverage, c))).toBe(false)
   })
 })
 

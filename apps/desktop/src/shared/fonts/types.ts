@@ -56,3 +56,25 @@ export interface FaceRef {
   weight: FaceWeight
   italic: boolean
 }
+
+/** Settings > Project > Fonts: what `Fonts/` holds, by family, and the
+ *  exclusion list. */
+export interface ProjectFontsView {
+  /** Absolute path of the project's `Fonts/`, for Show in folder: the
+   *  renderer holds no project path of its own. */
+  dir: string
+  /** Families with at least one face in `Fonts/`, sorted by name. */
+  copied: { family: string; files: number; bytes: number }[]
+  /** `settings.excluded_fonts`, in list order. `installed` is whether this
+   *  machine has the family, so Allow copying can copy it now; the panel
+   *  shows only installed ones. */
+  excluded: { family: string; installed: boolean }[]
+}
+
+/** Copies into `Fonts/` in flight. `closing` is set while a close, quit or
+ *  project switch waits for them. */
+export interface FontCopyProgress {
+  done: number
+  total: number
+  closing: boolean
+}

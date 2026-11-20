@@ -9,12 +9,14 @@
 // made in place to one file changes the other too, and the folder that did
 // not make the edit then reports its file as changed (ADR 0153). Media files
 // are never edited in place by the app, so only files under `Media/` are
-// linked; `TASTE.md` and the other files people edit are always copied.
+// linked; `TASTE.md`, style packages, fonts and the other files people may
+// replace or edit are always copied.
 import { constants } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { MEDIA, parseProjectPath, type ProjectPath } from '../../shared/projectPath'
-import { TASTE_FILE } from '../taste/packages'
+import { STYLES_DIR, TASTE_FILE } from '../taste/packages'
+import { FONTS_DIR } from '../fonts/projectFonts'
 import type { FilePlan } from './migrate'
 import { toNative, type PathPlatform } from './projectPathNative'
 
@@ -23,7 +25,8 @@ import { toNative, type PathPlatform } from './projectPathNative'
  *  is this machine's (`Cache/`, `Backups/`, `Logs/`, the pre-upgrade
  *  `project.pre-v*.json` files, exports under `output/`) and stays behind. */
 export const PROJECT_CONTENT: readonly ProjectPath[] = [
-  MEDIA, parseProjectPath(TASTE_FILE), parseProjectPath('export.json'), parseProjectPath('view.json'),
+  MEDIA, parseProjectPath(FONTS_DIR), parseProjectPath(STYLES_DIR), parseProjectPath(TASTE_FILE),
+  parseProjectPath('export.json'), parseProjectPath('view.json'),
 ]
 
 /** The node:fs/promises calls a copy makes; node:fs/promises itself in
