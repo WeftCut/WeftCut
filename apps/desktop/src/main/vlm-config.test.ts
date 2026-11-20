@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   createVlmConfigStore,
-  toVlmBackendSnapshot,
   modelProfileToVlmSnapshot,
   type VlmConfigFs,
 } from "./vlm-config";
@@ -154,66 +153,6 @@ describe("takeLegacyEndpointKey", () => {
     const s = createVlmConfigStore({ fs, path: PATH, dir: DIR });
     expect(s.takeLegacyEndpointKey()).toBeNull();
     expect(files.get(PATH)).not.toContain("api_key");
-  });
-});
-
-describe("toVlmBackendSnapshot", () => {
-  it("maps local + endpoint into the Rust-tagged BackendConfig shapes, key folded into the endpoint entry", () => {
-    const snap = toVlmBackendSnapshot(
-      cfg({
-        local: { qwen3_vl: { binary: "/b/cli", model: "/m/q.gguf", mmproj: "/m/mm.gguf" } },
-        endpoint: { url: "http://h/v1/chat/completions", model: "m" },
-      }),
-      "  sk-endpoint  ",
-    );
-    expect(snap.qwen3_vl).toEqual({ kind: "local", binary: "/b/cli", model: "/m/q.gguf", mmproj: "/m/mm.gguf" });
-    expect(snap.byo_endpoint).toEqual({
-      kind: "endpoint",
-      url: "http://h/v1/chat/completions",
-      api_key: "sk-endpoint",
-      model: "m",
-    });
-    expect(Object.keys(snap)).toHaveLength(2);
-  });
-
-  it("omits the endpoint entry when the URL is blank, key or no key", () => {
-    const snap = toVlmBackendSnapshot(
-      cfg({ endpoint: { url: "   " } }),
-      "sk-endpoint",
-    );
-    expect(snap.byo_endpoint).toBeUndefined();
-    expect(Object.keys(snap)).toHaveLength(0);
-  });
-
-  // A key alone configures nothing — availability is URL-gated, so a stored key
-  // with no endpoint must not put an entry in the snapshot at all.
-  it("a key with no endpoint configured yields no entry", () => {
-    const snap = toVlmBackendSnapshot(cfg(), "sk-endpoint");
-    expect(Object.keys(snap)).toHaveLength(0);
-  });
-
-  it("omits api_key when the endpoint has none, so a self-hosted server sends no header", () => {
-    const snap = toVlmBackendSnapshot(
-      cfg({ endpoint: { url: "http://h/v1" } }),
-      null,
-    );
-    expect(snap.byo_endpoint).toEqual({ kind: "endpoint", url: "http://h/v1" });
-  });
-
-  // The two describe run params live in this store but are NOT backend config:
-  // the snapshot IS the Rust resolver's `HashMap<String, BackendConfig>`, and a
-  // stray field in it would be a config entry for a backend that does not exist.
-  it("projects the backend half only — the describe params never reach the snapshot", () => {
-    const snap = toVlmBackendSnapshot(
-      cfg({
-        describe_fps: 2.5,
-        describe_focus: "shot-type",
-        endpoint: { url: "http://h/v1" },
-      }),
-      null,
-    );
-    expect(Object.keys(snap)).toEqual(["byo_endpoint"]);
-    expect(JSON.stringify(snap)).not.toContain("describe_");
   });
 });
 

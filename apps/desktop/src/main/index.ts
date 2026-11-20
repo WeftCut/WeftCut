@@ -684,7 +684,7 @@ app.whenReady().then(async () => {
   // the non-secret sibling of the endpoint key. Like speech's (ADR 0036), VLM
   // config is injected per-call into describe_clip / media://{id}/description
   // (stateless, ADR 0024) via the provider passed to startMcpHost below.
-  const { createVlmConfigStore, toVlmBackendSnapshot, modelProfileToVlmSnapshot } = await import('./vlm-config.js')
+  const { createVlmConfigStore, modelProfileToVlmSnapshot } = await import('./vlm-config.js')
   const vlmConfig = createVlmConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'vlm_config.json'), dir: app.getPath('userData') })
 
   // Resolve the user-configurable data root BEFORE the Backend cache dir

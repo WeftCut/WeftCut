@@ -99,8 +99,8 @@ export interface VlmConfig {
   /// How densely to sample frames, and what to bias `tags` toward. NOT backend
   /// config — they are the run parameters every describe gesture uses, and they
   /// live here beside `preferred_engine` because this file is what the Video
-  /// understanding panel owns. `toVlmBackendSnapshot` projects only the backend
-  /// half of this store, so neither reaches the Rust resolver's config map.
+  /// understanding panel owns. Each describe call passes them to Rust as their
+  /// own arguments, never inside the resolver's backend config map.
   ///
   /// Both are part of the description cache key, so changing either switches
   /// which cached view every read resolves to (`native/src/vlm/description.rs`
