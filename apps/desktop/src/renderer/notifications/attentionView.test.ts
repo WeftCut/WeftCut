@@ -59,6 +59,15 @@ describe("attentionView", () => {
     expect(attentionView(input({ unreviewed: 0 })).active).toEqual([]);
   });
 
+  it("leaves an item whose home is on screen out of the list and the dot, keeping the rest", () => {
+    const notices: AppNotice[] = [{ level: "info", code: "native_decode_unavailable" }];
+    const onScreen = new Set(["review"]);
+    expect(attentionView(input({ unreviewed: 2, onScreen }))).toEqual({ active: [], level: null });
+    const view = attentionView(input({ notices, unreviewed: 2, update: offered, onScreen }));
+    expect(keys(view.active)).toEqual(["notice:native_decode_unavailable", "update"]);
+    expect(view.level).toBe("info");
+  });
+
   it("shows no dot when every item is dismissed", () => {
     // A skipped update never arrives here (`useNoticedUpdate` drops it).
     const view = attentionView(input({

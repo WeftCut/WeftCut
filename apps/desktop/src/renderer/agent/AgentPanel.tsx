@@ -10,7 +10,7 @@ import { revealAffected } from '../history/historyLinkage'
 import { formatClock } from '../history/historyRows'
 import { AppDialog } from '../components/AppDialog'
 import { AgentSection } from '../settings/AgentSection'
-import { AGENT_PANEL_TABS, useAgentActivity, type AgentPanelTab } from './activityStore'
+import { AGENT_PANEL_TABS, useAgentActivity, useAgentPanelShown, type AgentPanelTab } from './activityStore'
 import { escapeFocus, useReviewFocus } from './reviewFocus'
 import { RangeBar } from './RangeBar'
 import { TacksTab } from './TacksTab'
@@ -26,9 +26,13 @@ import { isWaiting, type ComputeJobSubject } from '../compute/computeJobView'
 import { useComputeJobsStore } from '../compute/computeJobsStore'
 import { COMPUTE_TOOLS, type ComputeJob, type ComputeTool } from '../../shared/compute-jobs'
 
-/** Shared activity surface; only the editor offers object navigation. */
-export function AgentPanel({ editor = false }: { editor?: boolean }) {
+/** Shared activity surface; only the editor offers object navigation.
+ *  `onScreen`: the panel is on screen. A host that keeps it mounted while hidden
+ *  (a dock tab behind another) passes false then; while a shown panel is on
+ *  Changes, the bell leaves the review out (`attentionView`). */
+export function AgentPanel({ editor = false, onScreen = true }: { editor?: boolean; onScreen?: boolean }) {
   const { t } = useTranslation()
+  useAgentPanelShown(onScreen)
   const snapshot = useAgentActivity(s => s.snapshot)
   const ready = useAgentActivity(s => s.ready)
   const filter = useAgentActivity(s => s.filter)

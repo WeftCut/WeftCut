@@ -27,6 +27,8 @@ afterEach(async () => {
   resetAppNoticesForTests();
   const { resetReviewForTests } = await import("../agent/reviewStore");
   resetReviewForTests();
+  const { useAgentActivity } = await import("../agent/activityStore");
+  useAgentActivity.setState({ tab: "activity" });
 });
 
 /// Main's side of the settings write, as far as the bell reads it back.
@@ -146,6 +148,38 @@ describe("agent changes to review", () => {
     expect(open).toHaveBeenCalledOnce();
     expect(screen.queryByTestId("attention-center")).toBeNull();
     unregister();
+  });
+
+  it("leaves the review out while an agent panel on screen shows Changes, and brings it back when not", async () => {
+    setup();
+    const { useAgentActivity, useAgentPanelShown } = await import("../agent/activityStore");
+    // A panel host, reduced to what the bell reads of it.
+    const Panel = ({ shown }: { shown: boolean }) => { useAgentPanelShown(shown); return null; };
+    act(() => useAgentActivity.setState({ tab: "changes" }));
+    const { bell, openCenter } = renderBell();
+    await act(async () => {});
+    await reviewWith(2);
+    // Changes is the open tab, but no panel shows it.
+    expect(bell().dataset.level).toBe("info");
+
+    const panel = render(<Panel shown />);
+    expect(bell().dataset.level).toBe("none");
+    expect(openCenter().querySelector('[data-attention="review"]')).toBeNull();
+    fireEvent.click(bell());
+
+    // The panel switched tabs, then back to Changes.
+    act(() => useAgentActivity.setState({ tab: "activity" }));
+    expect(bell().dataset.level).toBe("info");
+    act(() => useAgentActivity.setState({ tab: "changes" }));
+    expect(bell().dataset.level).toBe("none");
+
+    // The panel went behind another dock tab, came back, then closed.
+    panel.rerender(<Panel shown={false} />);
+    expect(bell().dataset.level).toBe("info");
+    panel.rerender(<Panel shown />);
+    expect(bell().dataset.level).toBe("none");
+    panel.unmount();
+    expect(bell().dataset.level).toBe("info");
   });
 });
 

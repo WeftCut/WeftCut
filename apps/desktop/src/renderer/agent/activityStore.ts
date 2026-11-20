@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { create } from 'zustand'
 import { listen } from '@/bridge/events'
 import { invoke } from '@/bridge/ipc'
@@ -27,6 +28,9 @@ interface AgentPanelState {
    *  Runtime-only like the material it shows: on by default, kept across
    *  project openings within one app run, not persisted. */
   reviewOverlay: boolean
+  /** How many agent panels are on screen now (`useAgentPanelShown`): the
+   *  agent view's record pane, the editor's Agent panel while its tab shows. */
+  shownPanels: number
   receive: (snapshot: AgentActivitySnapshot) => void
   toggle: (id: string, defaultValue?: boolean) => void
 }
@@ -34,7 +38,7 @@ interface AgentPanelState {
 export const useAgentActivity = create<AgentPanelState>((set) => ({
   snapshot: null, ready: false, mode: 'editor', seenSession: null,
   filter: 'all', expanded: {}, anchor: null, following: true,
-  tab: 'activity', reviewOverlay: true,
+  tab: 'activity', reviewOverlay: true, shownPanels: 0,
   receive: snapshot => set(s => {
     // Revisions are monotonically increasing across project-open instances.
     if (s.snapshot && snapshot.revision <= s.snapshot.revision) return s
@@ -54,6 +58,20 @@ export const useAgentActivity = create<AgentPanelState>((set) => ({
   }),
   toggle: (id, defaultValue = false) => set(s => ({ expanded: { ...s.expanded, [id]: !(s.expanded[id] ?? defaultValue) } })),
 }))
+
+/** Count the calling panel as on screen while `shown`. */
+export function useAgentPanelShown(shown: boolean): void {
+  useEffect(() => {
+    if (!shown) return
+    useAgentActivity.setState(s => ({ shownPanels: s.shownPanels + 1 }))
+    return () => useAgentActivity.setState(s => ({ shownPanels: s.shownPanels - 1 }))
+  }, [shown])
+}
+
+/** The review's own list is in front of the user: an agent panel on screen,
+ *  showing its Changes tab. Every panel shows the one shared tab. */
+export const useChangesOnScreen = (): boolean =>
+  useAgentActivity(s => s.shownPanels > 0 && s.tab === 'changes')
 
 // The agent view watches the film: the preview and the review's surfaces
 // read the root while it holds the window (`filmView`).

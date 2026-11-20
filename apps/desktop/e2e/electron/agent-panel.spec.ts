@@ -195,13 +195,22 @@ test('changes: an agent edit is listed, highlighted and counted until reverted o
     await expect(page.locator('[data-testid="review-clip-mark"][data-review-mark="added"]')).toHaveCount(1)
     const bell = page.locator('.status-bar').getByTestId('status-bar-bell')
     const reviewRow = page.getByTestId('attention-center').locator('[data-attention="review"]')
+    const agentTab = (name: string | RegExp) => page.locator('.agent-panel-tabs').getByRole('tab', { name })
     /** The review row as the bell lists it now; the popover is closed again after. */
-    const expectReviewRows = async (count: number) => {
+    const bellReviewRows = async (count: number) => {
       await bell.click()
       await expect(page.getByTestId('attention-center')).toBeVisible()
       await expect(reviewRow).toHaveCount(count)
       await page.keyboard.press('Escape')
       await expect(page.getByTestId('attention-center')).toHaveCount(0)
+    }
+    /** The bell's count with the review off screen: the bell leaves the review
+     *  out while the Changes list shows, so look from Activity, then go back. */
+    const expectReviewRows = async (count: number) => {
+      await agentTab('Activity').click()
+      await bellReviewRows(count)
+      await agentTab(/Changes/).click()
+      await expect(agentTab(/Changes/)).toHaveAttribute('aria-selected', 'true')
     }
     await bell.click()
     await expect(reviewRow).toContainText('1 agent change to review')
@@ -211,6 +220,8 @@ test('changes: an agent edit is listed, highlighted and counted until reverted o
     await expect(page.getByRole('tab', { name: /Changes/ })).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.agent-change')).toHaveCount(1)
     await expect(page.locator('.agent-change')).toContainText('Added')
+    // The list is on screen now, so the bell no longer points at it.
+    await bellReviewRows(0)
 
     // A row click focuses the change: its clip is ringed and its range washed.
     await page.locator('.agent-change .agent-change-main').click()
