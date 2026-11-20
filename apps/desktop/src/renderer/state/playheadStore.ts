@@ -57,6 +57,31 @@ export function setPlayheadTimeUs(tUs: number): void {
   }
 }
 
+/// How many times the user has asked for a playhead move — a seek, a step, a
+/// scrub, a timecode entry — as against the engine's per-frame advance. A
+/// module counter rather than store state: it changes alongside a `timeUs`
+/// write, so a subscriber reads it inside that write's callback and no second
+/// notification is needed. `timeline/hooks/useFollowPlayhead.ts` reads it to
+/// tell "the user went somewhere" (bring the view along) from "playback moved
+/// on" (leave alone a view the user scrolled away).
+let seekCount = 0;
+
+/// Count a user-requested playhead move. Call BEFORE the write the move causes,
+/// so that write's subscribers already see it.
+export function notePlayheadSeek(): void {
+  seekCount += 1;
+}
+
+/// A user-requested playhead move: counted, then written.
+export function seekPlayheadTimeUs(tUs: number): void {
+  notePlayheadSeek();
+  setPlayheadTimeUs(tUs);
+}
+
+export function playheadSeekCount(): number {
+  return seekCount;
+}
+
 /// Imperative read for event-time consumers (tier 1).
 export function playheadTimeUs(): number {
   return usePlayheadStore.getState().timeUs;

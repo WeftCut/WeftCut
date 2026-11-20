@@ -7,7 +7,7 @@ import {
   focusedRootUs,
   previewLocalUs,
 } from "./playheadProjection";
-import { setPlayheadTimeUs } from "./playheadStore";
+import { seekPlayheadTimeUs } from "./playheadStore";
 import { currentOpenComposition, useProjectStore } from "./projectStore";
 import { setLayerSelection } from "./selectionStore";
 
@@ -117,7 +117,7 @@ export function clampSeekUs(tUs: number): number {
 /// draws one composition and reads one number, and only the store's number is
 /// the film's (`playheadProjection.ts`).
 function seekExact(clampedUs: number): void {
-  setPlayheadTimeUs(clampedUs);
+  seekPlayheadTimeUs(clampedUs);
   transportSeek(previewLocalUs(clampedUs));
 }
 
