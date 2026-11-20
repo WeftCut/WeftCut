@@ -1839,8 +1839,10 @@ mod tests {
         };
         let (cached, cold) = (item("cached-hash"), item("cold-hash"));
         for path in [
-            b.cache.quick_proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr),
-            b.cache.proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr),
+            b.cache
+                .quick_proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr),
+            b.cache
+                .proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr),
         ] {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, include_bytes!("../../fixtures/media/tiny.mp4")).unwrap();
@@ -1863,11 +1865,15 @@ mod tests {
         let patch = &patches[cached_id];
         assert_eq!(
             patch["quick_proxy_landed"],
-            serde_json::json!(b.cache.quick_proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr))
+            serde_json::json!(b
+                .cache
+                .quick_proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr))
         );
         assert_eq!(
             patch["full_proxy_landed"],
-            serde_json::json!(b.cache.proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr))
+            serde_json::json!(b
+                .cache
+                .proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr))
         );
         assert!(patch.get("set_route").is_none());
         let job_events = [

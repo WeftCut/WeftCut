@@ -1390,7 +1390,10 @@ mod tests {
             .unwrap()
             .get("full_proxy_landed")
             .unwrap();
-        assert_eq!(landed, &serde_json::json!(cache.proxy(hash, ProxyRecipe::Ycbcr)));
+        assert_eq!(
+            landed,
+            &serde_json::json!(cache.proxy(hash, ProxyRecipe::Ycbcr))
+        );
 
         // No re-decision: nothing may carry a set_route reset.
         let recorded = sink.events.lock().unwrap().clone();
@@ -1487,7 +1490,10 @@ mod tests {
             )
             .unwrap();
         }
-        for path in [cache.quick_proxy(&hash, media.proxy_recipe()), cache.proxy(&hash, media.proxy_recipe())] {
+        for path in [
+            cache.quick_proxy(&hash, media.proxy_recipe()),
+            cache.proxy(&hash, media.proxy_recipe()),
+        ] {
             std::fs::write(path, include_bytes!("../../../fixtures/media/tiny.mp4")).unwrap();
         }
 
@@ -1521,7 +1527,10 @@ mod tests {
         cache.ensure_dirs().unwrap();
         let mut media = media_named(None, "/nonexistent/source.mp4");
         let hash = media.file_hash_blake3.clone();
-        for path in [cache.quick_proxy(&hash, media.proxy_recipe()), cache.proxy(&hash, media.proxy_recipe())] {
+        for path in [
+            cache.quick_proxy(&hash, media.proxy_recipe()),
+            cache.proxy(&hash, media.proxy_recipe()),
+        ] {
             std::fs::write(path, include_bytes!("../../../fixtures/media/tiny.mp4")).unwrap();
         }
         let bypass = cached_patch(&cache, &media);
