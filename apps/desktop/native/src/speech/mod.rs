@@ -31,7 +31,7 @@ pub mod synthesizer;
 pub mod transcriber;
 pub mod transcript;
 
-pub use backend::{Capabilities, Locality, SpeechBackend, DEFAULT_ORDER};
+pub use backend::{SpeechBackend, DEFAULT_ORDER};
 pub use config::{availability, Availability, BackendConfig};
 pub use error::SpeechError;
 // `parse_raw` is the tool-layer chokepoint; `Segment`/`WordTiming` name the
@@ -210,27 +210,6 @@ pub fn resolve_synthesizer(
     construct_synthesizer(chosen, cfg.get(chosen.as_str()))
 }
 
-/// Which transcription backend is selected and can run, WITHOUT constructing
-/// it — the Settings "which engine is active" (`selected`) marker; `None` when
-/// the selected backend is unavailable.
-pub fn resolve_selected_transcriber_backend(
-    preferred: Option<SpeechBackend>,
-    cfg: &HashMap<String, BackendConfig>,
-) -> Option<SpeechBackend> {
-    select_backend(preferred, cfg, |c| c.transcription)
-}
-
-/// Use only the selected backend when it provides the capability and is available.
-fn select_backend(
-    preferred: Option<SpeechBackend>,
-    cfg: &HashMap<String, BackendConfig>,
-    wants: impl Fn(Capabilities) -> bool,
-) -> Option<SpeechBackend> {
-    preferred.filter(|b| {
-        wants(b.capabilities()) && availability(*b, cfg.get(b.as_str())) == Availability::Available
-    })
-}
-
 /// Build the concrete transcriber for an already-selected, `Available` backend.
 /// OpenAI (cloud), whisper.cpp and FunASR (local sidecars) and the
 /// OpenAI-compatible endpoint all have real `impl`s. FunASR additionally requires its `tokens.txt` to be present — the
@@ -298,7 +277,7 @@ fn construct_transcriber(
 }
 
 /// TTS counterpart to [`construct_transcriber`]. Only OpenAI advertises `tts`,
-/// so `select_backend` only ever hands this `OpenAi`.
+/// so [`resolve_synthesizer`] only ever hands this `OpenAi`.
 fn construct_synthesizer(
     b: SpeechBackend,
     cfg: Option<&BackendConfig>,
@@ -308,176 +287,6 @@ fn construct_synthesizer(
             Some(Box::new(backends::openai::OpenAiTts::new(key.clone())))
         }
         _ => None,
-    }
-}
-
-/// Result of [`probe_backend`] — provider-agnostic shape for the Settings
-/// "Test" button. Fields stay shallow so the IPC layer can serde-pass them
-/// without per-backend type juggling; the wire shape is frozen — TS Settings
-/// parses it.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ConnectionTestInfo {
-    /// The backend tag (`"openai"`, etc.) so the UI can attribute the result
-    /// to the right row when multiple backends exist.
-    pub provider: String,
-    /// One-line success summary for the user (e.g., `"42 models available"`).
-    pub summary: String,
-}
-
-/// Probe whether a backend can serve requests, for the Settings "Test" button.
-/// The availability verdict is conveyed through the `Ok`/`Err` split:
-///
-/// - **Cloud** — no key in [`BackendConfig::ApiKey`] → `SpeechError::MissingKey`
-///   (its message hints Settings); with a key, a live smoke check reports what
-///   it found.
-/// - **Local** — GUARD: the [`availability`] (file-existence) verdict errors
-///   early, naming the missing binary/model (incl. FunASR's tokens), with **no
-///   spawn**. Only once the files exist does the engine get a liveness spawn.
-/// - **Endpoint** — no URL → an error naming it; with one, a one-second
-///   synthetic silence is transcribed (there is no `/models` a whisper-server
-///   is guaranteed to serve), so the answer covers URL, key and format.
-pub async fn probe_backend(
-    backend: SpeechBackend,
-    cfg: Option<&BackendConfig>,
-) -> Result<ConnectionTestInfo, SpeechError> {
-    match backend.locality() {
-        Locality::Cloud => {
-            let key = match cfg {
-                Some(BackendConfig::ApiKey(k)) => k.clone(),
-                // Missing or shape-mismatched config → a clean MissingKey.
-                _ => return Err(SpeechError::MissingKey { provider: backend }),
-            };
-            match backend {
-                SpeechBackend::OpenAi => {
-                    let info = backends::openai::test_connection(&key).await?;
-                    Ok(ConnectionTestInfo {
-                        provider: backend.as_str().to_string(),
-                        summary: format!("{} models available", info.model_count),
-                    })
-                }
-                // No other cloud backend exists yet.
-                _ => Err(SpeechError::MissingKey { provider: backend }),
-            }
-        }
-        Locality::Endpoint => {
-            let Some(cfg @ BackendConfig::Endpoint { .. }) = cfg else {
-                return Err(SpeechError::Provider {
-                    provider: backend,
-                    message: "no endpoint URL configured — set it in Settings".into(),
-                });
-            };
-            let transcriber =
-                construct_transcriber(backend, Some(cfg)).ok_or_else(|| SpeechError::Provider {
-                    provider: backend,
-                    message: "no endpoint URL configured — set it in Settings".into(),
-                })?;
-            let dir = tempfile::tempdir()?;
-            let wav = dir.path().join("probe.wav");
-            tokio::fs::write(&wav, split::wav_bytes(&vec![0i16; 16_000])).await?;
-            let raw = transcriber
-                .transcribe(TranscribeRequest {
-                    audio_path: wav,
-                    language: Some("en".into()),
-                    want_word_timing: true,
-                })
-                .await?;
-            parse_raw(raw)?;
-            Ok(ConnectionTestInfo {
-                provider: backend.as_str().to_string(),
-                summary: "endpoint answered a transcription request".to_string(),
-            })
-        }
-        Locality::Local => {
-            // GUARD: bail on the file-existence verdict BEFORE any spawn, so a
-            // missing binary/model reports NeedsBinary/NeedsModel with no child
-            // process ever started.
-            match availability(backend, cfg) {
-                Availability::Available => {}
-                Availability::NeedsBinary => {
-                    return Err(SpeechError::Provider {
-                        provider: backend,
-                        message: "local engine binary not found — set its path in Settings".into(),
-                    })
-                }
-                Availability::NeedsModel => {
-                    return Err(SpeechError::Provider {
-                        provider: backend,
-                        message: "local engine model file not found — set its path in Settings"
-                            .into(),
-                    })
-                }
-                // Locality::Local never yields NeedsKey / NeedsEndpoint.
-                Availability::NeedsKey | Availability::NeedsEndpoint => {
-                    return Err(SpeechError::Provider {
-                        provider: backend,
-                        message: "local engine is not configured".into(),
-                    })
-                }
-            }
-            // Available ⇒ both files exist ⇒ the config is `Local`. Extract the
-            // binary for the liveness spawn.
-            let binary = match cfg {
-                Some(BackendConfig::Local { binary, .. }) => binary,
-                // Unreachable given Available above; degrade to a clean error.
-                _ => {
-                    return Err(SpeechError::Provider {
-                        provider: backend,
-                        message: "local engine is not configured".into(),
-                    })
-                }
-            };
-            match backend {
-                SpeechBackend::WhisperCpp => {
-                    // `--help` liveness: exit code is ignored; we only care that
-                    // the binary is runnable. 15 s is a generous ceiling for a
-                    // help/usage print.
-                    let args = [std::ffi::OsString::from("--help")];
-                    match backends::sidecar::probe_liveness(
-                        binary,
-                        &args,
-                        std::time::Duration::from_secs(15),
-                    )
-                    .await
-                    {
-                        Ok(()) => Ok(ConnectionTestInfo {
-                            provider: backend.as_str().to_string(),
-                            summary: "whisper.cpp binary responds; model present".to_string(),
-                        }),
-                        Err(e) => Err(SpeechError::Provider {
-                            provider: backend,
-                            message: format!("whisper.cpp binary failed to run: {e}"),
-                        }),
-                    }
-                }
-                SpeechBackend::FunAsr => {
-                    // Same `--help` liveness as whisper.cpp; the availability
-                    // guard above already proved binary + model + tokens exist.
-                    let args = [std::ffi::OsString::from("--help")];
-                    match backends::sidecar::probe_liveness(
-                        binary,
-                        &args,
-                        std::time::Duration::from_secs(15),
-                    )
-                    .await
-                    {
-                        Ok(()) => Ok(ConnectionTestInfo {
-                            provider: backend.as_str().to_string(),
-                            summary: "sherpa-onnx binary responds; model + tokens present"
-                                .to_string(),
-                        }),
-                        Err(e) => Err(SpeechError::Provider {
-                            provider: backend,
-                            message: format!("sherpa-onnx binary failed to run: {e}"),
-                        }),
-                    }
-                }
-                // OpenAI / the endpoint never reach this Local arm.
-                _ => Ok(ConnectionTestInfo {
-                    provider: backend.as_str().to_string(),
-                    summary: "binary and model present".to_string(),
-                }),
-            }
-        }
     }
 }
 
@@ -567,9 +376,6 @@ mod tests {
             err.contains("`backend: \"openai\"` (uploads the audio"),
             "{err}"
         );
-        assert!(
-            resolve_selected_transcriber_backend(Some(SpeechBackend::WhisperCpp), &cfg).is_none()
-        );
     }
 
     #[test]
@@ -616,77 +422,6 @@ mod tests {
             panic!("no key must not resolve");
         };
         assert!(matches!(err, SpeechError::MissingKey { .. }));
-    }
-
-    #[tokio::test]
-    async fn probe_whisper_cpp_with_no_config_reports_needs_binary_without_spawning() {
-        // No config at all → availability is NeedsBinary → probe returns the
-        // "binary not found" error BEFORE reaching any spawn (there is nothing
-        // to spawn, which is the structural guarantee we assert).
-        let err = probe_backend(SpeechBackend::WhisperCpp, None)
-            .await
-            .expect_err("no binary");
-        let msg = format!("{err}");
-        assert!(msg.contains("binary not found"), "unexpected: {msg}");
-    }
-
-    #[tokio::test]
-    async fn probe_whisper_cpp_missing_binary_needs_binary_no_spawn() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = BackendConfig::Local {
-            binary: dir.path().join("whisper-cli"), // does not exist
-            model: dir.path().join("ggml.bin"),
-            tokens: None,
-            device: None,
-            threads: None,
-        };
-        let err = probe_backend(SpeechBackend::WhisperCpp, Some(&cfg))
-            .await
-            .expect_err("missing binary");
-        assert!(format!("{err}").contains("binary not found"));
-    }
-
-    #[tokio::test]
-    async fn probe_whisper_cpp_binary_present_model_missing_needs_model_no_spawn() {
-        let dir = tempfile::tempdir().unwrap();
-        let binary = dir.path().join("whisper-cli");
-        std::fs::write(&binary, b"not a real binary").unwrap();
-        let cfg = BackendConfig::Local {
-            binary,
-            model: dir.path().join("ggml.bin"), // does not exist
-            tokens: None,
-            device: None,
-            threads: None,
-        };
-        // Model gap is detected by availability() → error before the liveness
-        // spawn is ever attempted (so the bogus non-binary file is never run).
-        let err = probe_backend(SpeechBackend::WhisperCpp, Some(&cfg))
-            .await
-            .expect_err("missing model");
-        assert!(format!("{err}").contains("model file not found"));
-    }
-
-    /// FunASR with a present binary + model but missing tokens reports the
-    /// model-bundle gap (tokens → NeedsModel) BEFORE any spawn — the same
-    /// no-spawn structural guarantee as whisper.cpp, extended to the tokens file.
-    #[tokio::test]
-    async fn probe_funasr_binary_and_model_present_tokens_missing_no_spawn() {
-        let dir = tempfile::tempdir().unwrap();
-        let binary = dir.path().join("sherpa-onnx-offline");
-        let model = dir.path().join("model.onnx");
-        std::fs::write(&binary, b"not a real binary").unwrap();
-        std::fs::write(&model, b"\x00").unwrap();
-        let cfg = BackendConfig::Local {
-            binary,
-            model,
-            tokens: Some(dir.path().join("tokens.txt")), // does not exist
-            device: None,
-            threads: None,
-        };
-        let err = probe_backend(SpeechBackend::FunAsr, Some(&cfg))
-            .await
-            .expect_err("missing tokens");
-        assert!(format!("{err}").contains("model file not found"));
     }
 
     #[test]

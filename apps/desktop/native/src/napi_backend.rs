@@ -843,8 +843,8 @@ impl Backend {
         // PERSISTENCE ∪ SLICE_INJECTED_READS — the latter take their state slice as
         // a call argument) PLUS the channels Electron main forwards straight to
         // `invoke` without consulting the router: SINGLE_MEDIA_CHANNELS
-        // (state/single-media-forward.ts) and the settings_get_speech_backends arm
-        // special-cased in main/index.ts. The hybrid compute halves are dispatched
+        // (state/single-media-forward.ts) and the model-verification arms
+        // main/model-feature.ts invokes. The hybrid compute halves are dispatched
         // via dedicated napi methods (probe_media / parse_subtitles /
         // synthesize_speech_compute / …), not this match.
         match cmd {
@@ -1113,23 +1113,6 @@ impl Backend {
             "export_video_sink_cancel" => {
                 ser(crate::export::videosink::export_video_sink_cancel(&self.video_sink).await)
             }
-            // The speech arms take their config in `args` like the VLM ones
-            // below (ADR 0036): Electron main injects `speechConfig` per call.
-            #[cfg(feature = "speech")]
-            "settings_get_api_key_status" => {
-                let a: crate::commands::speech::SpeechConfigArgs =
-                    serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::speech::settings_get_api_key_status(&a.speech_config).await)
-            }
-            #[cfg(feature = "speech")]
-            "settings_test_provider" => {
-                let a: crate::commands::speech::SettingsTestProviderArgs =
-                    serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(
-                    crate::commands::speech::settings_test_provider(&a.speech_config, a.provider)
-                        .await,
-                )
-            }
             #[cfg(feature = "speech")]
             "settings_verify_model" => {
                 let a = serde_json::from_str(args).map_err(|e| e.to_string())?;
@@ -1142,28 +1125,6 @@ impl Backend {
                 ser(crate::commands::model_verify::cancel_verification(
                     &a.request_id,
                 ))
-            }
-            #[cfg(feature = "speech")]
-            "settings_get_speech_backends" => {
-                let a: crate::commands::speech::SpeechBackendsArgs =
-                    serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::speech::settings_get_speech_backends(
-                    &a.speech_config,
-                    a.preferred,
-                )
-                .await)
-            }
-            // Takes no `&self`: the video-understanding subsystem is stateless
-            // (ADR 0024), so its config arrives in `args` exactly as it does for
-            // `describe_clip`, rather than off a `Backend` field.
-            #[cfg(feature = "speech")]
-            "settings_get_vlm_backends" => {
-                let a: crate::commands::vlm::VlmBackendsArgs =
-                    serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(
-                    crate::commands::vlm::settings_get_vlm_backends(a.preferred, a.vlm_config)
-                        .await,
-                )
             }
             other => Err(format!("unknown command: '{other}'")),
         }
@@ -1538,65 +1499,6 @@ mod tests {
         }
     }
 
-    /// The status reads the config injected with THIS call and nothing else:
-    /// a key in one call's `speechConfig` is gone from the next call that does
-    /// not carry it — there is no resident cache to remember it (ADR 0036).
-    #[cfg(feature = "speech")]
-    #[tokio::test]
-    async fn settings_status_reflects_the_injected_config_only() {
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b.init().await.unwrap();
-        let openai = |out: String| {
-            let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-            v.as_array()
-                .unwrap()
-                .iter()
-                .find(|e| e["provider"] == "openai")
-                .unwrap()
-                .clone()
-        };
-        // Unconfigured (and a bare `{}`): openai listed, configured=false.
-        let row = openai(
-            b.dispatch("settings_get_api_key_status", "{}")
-                .await
-                .unwrap(),
-        );
-        assert_eq!(row["configured"], false);
-        assert!(row["label"].as_str().unwrap().contains("OpenAI"));
-        // A key in the call: configured=true.
-        let row = openai(
-            b.dispatch(
-                "settings_get_api_key_status",
-                r#"{"speechConfig":{"openai":{"kind":"api_key","key":"sk-x"}}}"#,
-            )
-            .await
-            .unwrap(),
-        );
-        assert_eq!(row["configured"], true);
-        // The next call without it: nothing was kept.
-        let row = openai(
-            b.dispatch("settings_get_api_key_status", "{}")
-                .await
-                .unwrap(),
-        );
-        assert_eq!(row["configured"], false);
-    }
-
-    #[cfg(feature = "speech")]
-    #[tokio::test]
-    async fn settings_test_provider_missing_key_is_clean_error() {
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b.init().await.unwrap();
-        let err = b
-            .dispatch("settings_test_provider", r#"{"provider":"openai"}"#)
-            .await
-            .unwrap_err();
-        assert!(
-            err.contains("Settings"),
-            "missing-key error should hint Settings, got: {err}"
-        );
-    }
-
     #[cfg(feature = "mcp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn mcp_call_tool_unknown_is_not_found() {
@@ -1610,57 +1512,6 @@ mod tests {
         .unwrap();
         assert_eq!(reply["ok"], false);
         assert_eq!(reply["error"]["code"], "not_found");
-    }
-
-    /// `settings_get_speech_backends` lists EVERY backend with its live
-    /// availability and marks the one the resolver would use. With an OpenAI key
-    /// injected and no `preferred`, OpenAI is `available` + `selected`; the
-    /// unconfigured local engines report `needs_binary`. Proves the wire shape
-    /// the Settings UI consumes and that `selected` tracks the resolver.
-    #[cfg(feature = "speech")]
-    #[tokio::test]
-    async fn settings_get_speech_backends_reports_availability_and_selected() {
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b.init().await.unwrap();
-        let out = b
-            .dispatch(
-                "settings_get_speech_backends",
-                r#"{"preferred":null,"speechConfig":{"openai":{"kind":"api_key","key":"sk-x"}}}"#,
-            )
-            .await
-            .unwrap();
-        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
-        let rows = rows.as_array().unwrap();
-        // Every known backend is listed.
-        assert_eq!(
-            rows.len(),
-            crate::speech::SpeechBackend::all().len(),
-            "every backend listed"
-        );
-        let openai = rows.iter().find(|r| r["backend"] == "openai").unwrap();
-        assert_eq!(openai["locality"], "cloud");
-        assert_eq!(openai["availability"], "available");
-        assert_eq!(
-            openai["selected"], false,
-            "an available key does not activate a model without a selection"
-        );
-        assert_eq!(openai["capabilities"]["transcription"], true);
-        assert_eq!(openai["capabilities"]["tts"], true);
-        // SRT-only cloud → interpolated word times; the Settings badge keys
-        // off this camelCase field.
-        assert_eq!(openai["capabilities"]["exactWordTiming"], false);
-        let whisper = rows.iter().find(|r| r["backend"] == "whisper_cpp").unwrap();
-        assert_eq!(whisper["locality"], "local");
-        assert_eq!(whisper["availability"], "needs_binary");
-        assert_eq!(whisper["selected"], false);
-        assert_eq!(whisper["capabilities"]["exactWordTiming"], true);
-        // The endpoint is URL-gated, so unconfigured it names that gap.
-        let endpoint = rows
-            .iter()
-            .find(|r| r["backend"] == "byo_endpoint")
-            .unwrap();
-        assert_eq!(endpoint["availability"], "needs_endpoint");
-        assert_eq!(endpoint["selected"], false);
     }
 
     /// A `log_emit` dispatch after a workspace is installed (via `commit_workspace`,

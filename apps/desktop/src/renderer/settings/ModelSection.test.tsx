@@ -4,7 +4,7 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import "../i18n";
 import { MODEL_DEFINITIONS, type ModelsView } from "../../shared/inference-models";
-const ipc = vi.hoisted(() => ({ modelsUnselect: vi.fn(), modelsClearDownloads: vi.fn(), modelsList: vi.fn(), modelsUse: vi.fn(), modelsCancel: vi.fn(), modelsInstallComponents: vi.fn(), modelsRemoveCustom: vi.fn(), settingsGetVlmBackends: vi.fn(), settingsSetVlmDescribe: vi.fn() }));
+const ipc = vi.hoisted(() => ({ modelsUnselect: vi.fn(), modelsClearDownloads: vi.fn(), modelsList: vi.fn(), modelsUse: vi.fn(), modelsCancel: vi.fn(), modelsInstallComponents: vi.fn(), modelsRemoveCustom: vi.fn(), vlmDescribeGet: vi.fn(), vlmDescribeSet: vi.fn() }));
 const events = vi.hoisted(() => ({ refresh: (() => {}) as () => void }));
 vi.mock("../ipc", () => ipc);
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async (_event: string, callback: () => void) => { events.refresh = callback; return () => {}; }) }));
@@ -255,13 +255,13 @@ describe("model settings", () => {
     expect(ipc.modelsClearDownloads).toHaveBeenCalledWith("whisper-base");
   });
   it("keeps video analysis options outside model editors, including when None is selected", async () => {
-    ipc.settingsGetVlmBackends.mockResolvedValue({ describe_fps: 1, describe_focus: "general" });
-    ipc.settingsSetVlmDescribe.mockResolvedValue(undefined);
+    ipc.vlmDescribeGet.mockResolvedValue({ fps: 1, focus: "general" });
+    ipc.vlmDescribeSet.mockResolvedValue(undefined);
     const user = userEvent.setup(); render(<VlmSection onError={vi.fn()} />);
     expect(await screen.findByText("Video analysis options")).toBeTruthy();
     const input = await screen.findByLabelText("Sample", { exact: true });
     await user.clear(input); await user.type(input, "2"); await user.tab();
-    await waitFor(() => expect(ipc.settingsSetVlmDescribe).toHaveBeenCalledWith({ fps: 2 }));
+    await waitFor(() => expect(ipc.vlmDescribeSet).toHaveBeenCalledWith({ fps: 2 }));
     expect(onDescribeViewChanged).toHaveBeenCalled();
     await choose(user, /Online model/);
     expect(screen.queryByRole("dialog")).toBeNull();

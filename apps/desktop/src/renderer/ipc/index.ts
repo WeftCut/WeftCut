@@ -1984,84 +1984,26 @@ export async function reinstallSkills(): Promise<SkillsInstallView> {
 }
 
 // ============================================================
-// Video-understanding (VLM) backends — the Settings surface for `describe_clip`.
-// Shaped like speech's backends; the differences all follow from
-// the subsystem being STATELESS (ADR 0024) and from vision needing an `mmproj`:
-//   * an `endpoint` locality (any OpenAI-compatible server, self-hosted or
-//     hosted) in place of speech's hosted-provider row — one HTTP describer
-//     covers both, so there is no cloud-provider backend here,
-//   * a third required local path, `mmproj` (the vision projector),
-//   * no Rust-side push on write — the store IS the state.
-// Every channel here is intercepted in Electron main. VlmPreferredEngine /
-// VlmLocalEngineConfig / VlmDescribeFocus are single-sourced in
-// src/shared/vlm-config.ts — the focus union in particular, because it is both a
-// persisted setting and a `describe_clip` wire tag and two spellings of it would
-// drift.
+// Video understanding — the describe run's parameters, which Settings → Video
+// understanding edits beside the model picker (the models_* channels). Both
+// channels are intercepted in Electron main. VlmDescribeFocus is single-sourced
+// in src/shared/vlm-config.ts because it is both a persisted setting and a
+// `describe_clip` wire tag, and two spellings of it would drift.
 // ============================================================
 
-import type {
-  VlmPreferredEngine,
-  VlmLocalEngineConfig,
-  VlmDescribeFocus,
-} from "../../shared/vlm-config";
-export type { VlmPreferredEngine, VlmLocalEngineConfig, VlmDescribeFocus };
+import type { VlmDescribeFocus, VlmDescribeSettings } from "../../shared/vlm-config";
+export type { VlmDescribeFocus, VlmDescribeSettings };
 
-/// Availability verdict tags mirroring Rust `vlm::config::Availability`. No
-/// `needs_key` twin: nothing here is key-gated — the endpoint's key is optional,
-/// so its URL is what decides availability.
-export type VlmAvailability =
-  | "available"
-  | "needs_binary"
-  | "needs_model"
-  | "needs_endpoint";
-
-/// The endpoint row's stored config as the panel sees it. The API key lives in
-/// safeStorage, so it reaches the renderer only as `has_api_key`: main never
-/// echoes credential material back, and the field renders as "set" or blank.
-export interface VlmEndpointInfo {
-  url: string;
-  model?: string;
-  has_api_key: boolean;
-}
-
-/// One backend row for the Settings → Video understanding panel. `local` is
-/// present only for local backends with stored config; `endpoint` only for the
-/// endpoint row once configured.
-export interface VlmBackendInfo {
-  backend: string;
-  label: string;
-  locality: "local" | "endpoint";
-  availability: VlmAvailability;
-  /// The one backend the resolver would use right now (preference + what is
-  /// available). `false` on every row when nothing is configured.
-  selected: boolean;
-  local?: VlmLocalEngineConfig;
-  endpoint?: VlmEndpointInfo;
-}
-
-export interface VlmBackendsView {
-  preferred_engine: VlmPreferredEngine;
-  /// The two describe run params, alongside the backends because Settings →
-  /// Video understanding owns all three and reads them in one fetch.
-  describe_fps: number;
-  describe_focus: VlmDescribeFocus;
-  backends: VlmBackendInfo[];
-}
-
-/// Full backend listing + the user's preferred engine, for the Settings panel.
-export async function settingsGetVlmBackends(): Promise<VlmBackendsView> {
-  return invoke<VlmBackendsView>("settings_get_vlm_backends");
+export async function vlmDescribeGet(): Promise<VlmDescribeSettings> {
+  return invoke<VlmDescribeSettings>("vlm_describe_get");
 }
 
 /// Persist the sampling rate and/or the prompt focus every describe gesture
 /// uses. Either may be omitted; main clamps the rate to the legal range.
-export async function settingsSetVlmDescribe(args: {
-  fps?: number;
-  focus?: VlmDescribeFocus;
-}): Promise<void> {
-  return invoke<void>("settings_set_vlm_describe", {
-    ...(args.fps === undefined ? {} : { fps: args.fps }),
-    ...(args.focus === undefined ? {} : { focus: args.focus }),
+export async function vlmDescribeSet(patch: Partial<VlmDescribeSettings>): Promise<void> {
+  return invoke<void>("vlm_describe_set", {
+    ...(patch.fps === undefined ? {} : { fps: patch.fps }),
+    ...(patch.focus === undefined ? {} : { focus: patch.focus }),
   });
 }
 

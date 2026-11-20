@@ -53,6 +53,13 @@ export const VLM_DESCRIBE_FPS_MIN = 0.1;
 export const VLM_DESCRIBE_FPS_MAX = 30;
 export const VLM_DESCRIBE_FPS_STEP = 0.5;
 
+/// The describe run's parameters as `vlm_describe_get` returns them and
+/// `vlm_describe_set` patches them.
+export interface VlmDescribeSettings {
+  fps: number;
+  focus: VlmDescribeFocus;
+}
+
 /// The `cloud_keys.json` provider tag the endpoint's optional API key is stored
 /// under. Its own tag, not the speech section's `"openai"` entry: one secret,
 /// one editor — a key the user typed under Video understanding must not change

@@ -39,7 +39,6 @@ const ALL_CHANNELS: readonly string[] = [
   // pure native (no project actor)
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
-  'settings_get_api_key_status', 'settings_test_provider',
   'measure_conform_rms', 'bake_audio_fx', 'cancel_audio_fx', 'build_peaks_for_vconf',
   // audio-fx baker route (main-served: the baker holds the derived bake state)
   'audio_fx_snapshot', 'ensure_export_audio_fx', 'audio_fx_reverify',
@@ -176,7 +175,7 @@ describe('routeChannel', () => {
     expect(PRODUCTION_OPS.has('project_history_view')).toBe(false)
   })
   it('forwards independent stores + media/jobs/export to rust', () => {
-    for (const ch of ['agent_session_get','log_list','ensure_full_proxy','generate_quick_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
+    for (const ch of ['agent_session_get','log_list','ensure_full_proxy','generate_quick_proxy','export_video_sink_start','workspace_dir','ping'])
       expect(routeChannel(ch).kind).toBe('rust')
   })
   it('routes export_settings_get/set to the exportSettings TS handler (migrated off rust)', () => {

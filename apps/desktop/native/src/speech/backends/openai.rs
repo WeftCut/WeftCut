@@ -235,42 +235,6 @@ pub fn tts_cache_key(text: &str, voice: &str, speed: Option<f32>) -> String {
 }
 
 // ============================================================
-// Test connection — Settings "Test" button
-// ============================================================
-
-const MODELS_ENDPOINT: &str = "https://api.openai.com/v1/models";
-
-#[derive(Debug, Clone, Serialize)]
-pub struct OpenAiConnectionInfo {
-    /// Number of models the configured key can list. Acts as a smoke check:
-    /// a working key sees dozens of models, an invalid key gets 401 (mapped
-    /// to `SpeechError::InvalidKey` before we reach here).
-    pub model_count: usize,
-}
-
-/// Validate the given OpenAI API key with a cheap GET /v1/models call.
-/// Returns model count on success; surfaces InvalidKey / RateLimited /
-/// network errors per the shared mapping. Used by the Settings → "Test"
-/// button so users learn about a bad key BEFORE the first agent call.
-pub async fn test_connection(key: &str) -> Result<OpenAiConnectionInfo, SpeechError> {
-    let auth = bearer_auth(key);
-    let response = shared_client()
-        .get(MODELS_ENDPOINT)
-        .header("Authorization", auth)
-        .timeout(REQUEST_TIMEOUT)
-        .send()
-        .await?;
-    let response = ok_or_speech_error(response).await?;
-    let json: serde_json::Value = response.json().await?;
-    let model_count = json
-        .get("data")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.len())
-        .unwrap_or(0);
-    Ok(OpenAiConnectionInfo { model_count })
-}
-
-// ============================================================
 // Shared HTTP-status mapping (Whisper + tts-1)
 // ============================================================
 

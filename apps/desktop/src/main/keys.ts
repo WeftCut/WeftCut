@@ -69,7 +69,7 @@ export function loadAllKeys(): Record<string, string> {
   return out
 }
 
-/// Encrypt + persist one provider key. Trims; empty key is a no-op clear.
+/// Encrypt + persist one provider key. Trims; an empty key clears the entry.
 /// Throws, writing nothing, when no keyring can encrypt it.
 export function setKey(provider: string, key: string): void {
   const trimmed = (key ?? '').trim()
@@ -80,12 +80,5 @@ export function setKey(provider: string, key: string): void {
   } else {
     stored[provider] = safeStorage.encryptString(trimmed).toString('base64')
   }
-  writeStored(stored)
-}
-
-/// Remove one provider key (idempotent).
-export function clearKey(provider: string): void {
-  const stored = readStored()
-  delete stored[provider]
   writeStored(stored)
 }

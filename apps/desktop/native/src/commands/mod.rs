@@ -4,31 +4,14 @@
 //! persistence handlers live here — only the native / compute handlers +
 //! their args.
 
-#[cfg(feature = "speech")]
-use serde::Serialize;
-
-#[cfg(feature = "speech")]
-pub mod model_verify;
-#[cfg(feature = "speech")]
-pub mod speech;
-// Gated on `speech` for the same reason `vlm/` itself is: the video-understanding
-// subsystem reuses that feature's ffmpeg frame sampling + HTTP client.
 pub mod content;
 #[cfg(feature = "export")]
 pub mod export;
 #[cfg(feature = "jobs")]
 pub mod media;
+#[cfg(feature = "speech")]
+pub mod model_verify;
 pub mod prefs;
-#[cfg(feature = "speech")]
-pub mod vlm;
-
-#[cfg(feature = "speech")]
-#[derive(Serialize, Clone)]
-pub struct ApiKeyStatus {
-    pub provider: String,
-    pub label: String,
-    pub configured: bool,
-}
 
 // ---- Command args structs ----
 

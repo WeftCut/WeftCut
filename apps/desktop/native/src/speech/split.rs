@@ -165,7 +165,8 @@ pub fn wav_of_pcm(pcm: &[u8]) -> Vec<u8> {
     wav
 }
 
-/// [`wav_of_pcm`] over samples — for synthetic probe audio.
+/// [`wav_of_pcm`] over samples — for synthetic test audio.
+#[cfg(test)]
 pub fn wav_bytes(samples: &[i16]) -> Vec<u8> {
     let pcm: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
     wav_of_pcm(&pcm)

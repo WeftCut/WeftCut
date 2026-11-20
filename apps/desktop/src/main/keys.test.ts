@@ -27,7 +27,7 @@ vi.mock("node:fs", () => ({ default: {
     disk.files.set(to, disk.files.get(from)!); disk.files.delete(from);
   },
 } }));
-import { clearKey, loadAllKeys, onKeyringChecked, setKey } from "./keys";
+import { loadAllKeys, onKeyringChecked, setKey } from "./keys";
 const target = path.join("/test-credentials", "cloud_keys.json");
 const reports: boolean[] = [];
 onKeyringChecked(available => { reports.push(available); });
@@ -40,7 +40,7 @@ describe("credential persistence", () => {
   it("persists keys independently and clears only the requested credential", () => {
     setKey("openai", " first "); setKey("model-custom-test", "second");
     expect(loadAllKeys()).toEqual({ openai: "first", "model-custom-test": "second" });
-    clearKey("model-custom-test");
+    setKey("model-custom-test", "");
     expect(loadAllKeys()).toEqual({ openai: "first" });
   });
   it("reports a failed atomic replacement and preserves all previous keys", () => {
@@ -61,7 +61,6 @@ describe("keyring access", () => {
   it("leaves the keyring alone while no key is stored, saved or decrypted", () => {
     expect(loadAllKeys()).toEqual({});
     setKey("openai", "  ");
-    clearKey("openai");
     expect(keyring.checks).toBe(0);
     expect(reports).toEqual([]);
   });

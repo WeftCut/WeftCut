@@ -13,7 +13,7 @@
 //!
 //! A backend supplies only the binary, the built argument vector, where the
 //! body lands ([`OutputSink`]), and which [`RawTranscript`] variant to tag it
-//! as — both engines reuse [`SidecarRun`] and [`probe_liveness`] verbatim.
+//! as — both engines reuse [`SidecarRun`] verbatim.
 //!
 //! Parsing/normalization is deliberately NOT here — the returned
 //! [`RawTranscript`] is handed to [`parse_raw`](crate::speech::parse::parse_raw)
@@ -144,17 +144,6 @@ fn clamp_threads(args: &mut [OsString], threads: u32) {
             args[index] = format!("--num-threads={}", requested.clamp(1, threads)).into();
         }
     }
-}
-
-/// Liveness probe for a local speech engine: the shared
-/// [`inference::sidecar::probe_liveness`](crate::inference::sidecar::probe_liveness)
-/// with speech's errors. Used by `probe_backend`'s Settings "Test" button.
-pub async fn probe_liveness(
-    program: &Path,
-    args: &[OsString],
-    timeout: Duration,
-) -> Result<(), SpeechError> {
-    Ok(crate::inference::sidecar::probe_liveness(program, args, timeout).await?)
 }
 
 /// The engine's own fallback line, if any marker appears in `stderr` — returned

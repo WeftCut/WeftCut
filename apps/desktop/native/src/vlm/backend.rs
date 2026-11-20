@@ -77,21 +77,6 @@ impl VlmBackend {
         }
     }
 
-    /// Human-facing label for the Settings row, same as `SpeechBackend::label`.
-    /// Read by `commands::vlm::settings_get_vlm_backends`.
-    pub fn label(self) -> &'static str {
-        match self {
-            VlmBackend::Qwen3Vl => "Qwen3-VL (local)",
-            VlmBackend::MiniCpmV => "MiniCPM-V (local)",
-            VlmBackend::ByoEndpoint => "OpenAI-compatible endpoint",
-        }
-    }
-
-    /// Every backend we know about, in the default resolution order.
-    pub fn all() -> &'static [VlmBackend] {
-        DEFAULT_ORDER
-    }
-
     /// Local (spawned CLI) vs Endpoint (OpenAI-compatible HTTP).
     pub fn locality(self) -> Locality {
         match self {
@@ -103,7 +88,7 @@ impl VlmBackend {
 
 impl crate::inference::EngineTag for VlmBackend {
     fn catalog() -> &'static [Self] {
-        Self::all()
+        DEFAULT_ORDER
     }
     fn wire_tag(self) -> &'static str {
         self.as_str()
@@ -128,7 +113,6 @@ mod tests {
         // The network engine is last so it is never a silent substitute for a
         // configured local one.
         assert_eq!(DEFAULT_ORDER.last(), Some(&VlmBackend::ByoEndpoint));
-        assert_eq!(VlmBackend::all(), DEFAULT_ORDER);
     }
 
     #[test]
