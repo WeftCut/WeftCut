@@ -2,11 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
 
 const disk = vi.hoisted(() => ({ files: new Map<string, string>(), failRename: false }));
+const keyring = vi.hoisted(() => ({ available: true, checks: 0 }));
 vi.mock("electron", () => ({
   app: { getPath: () => "/test-credentials" },
   safeStorage: {
-    encryptString: (value: string) => Buffer.from(`encrypted:${value}`),
+    isEncryptionAvailable: () => { keyring.checks++; return keyring.available; },
+    encryptString: (value: string) => {
+      if (!keyring.available) throw new Error("Encryption is not available.");
+      return Buffer.from(`encrypted:${value}`);
+    },
     decryptString: (value: Buffer) => {
+      if (!keyring.available) throw new Error("Decryption is not available.");
       const text = value.toString();
       if (!text.startsWith("encrypted:")) throw new Error("Invalid encrypted key");
       return text.slice(10);
@@ -21,9 +27,14 @@ vi.mock("node:fs", () => ({ default: {
     disk.files.set(to, disk.files.get(from)!); disk.files.delete(from);
   },
 } }));
-import { clearKey, loadAllKeys, setKey } from "./keys";
+import { clearKey, loadAllKeys, onKeyringChecked, setKey } from "./keys";
 const target = path.join("/test-credentials", "cloud_keys.json");
-beforeEach(() => { disk.files.clear(); disk.failRename = false; });
+const reports: boolean[] = [];
+onKeyringChecked(available => { reports.push(available); });
+beforeEach(() => {
+  disk.files.clear(); disk.failRename = false;
+  keyring.available = true; keyring.checks = 0; reports.length = 0;
+});
 
 describe("credential persistence", () => {
   it("persists keys independently and clears only the requested credential", () => {
@@ -43,5 +54,29 @@ describe("credential persistence", () => {
     disk.files.set(target, JSON.stringify({ ...JSON.parse(disk.files.get(target)!), corrupt: "invalid" }));
     disk.failRename = true;
     expect(loadAllKeys()).toEqual({ openai: "valid" });
+  });
+});
+
+describe("keyring access", () => {
+  it("leaves the keyring alone while no key is stored, saved or decrypted", () => {
+    expect(loadAllKeys()).toEqual({});
+    setKey("openai", "  ");
+    clearKey("openai");
+    expect(keyring.checks).toBe(0);
+    expect(reports).toEqual([]);
+  });
+  it("refuses a key it cannot encrypt, writes nothing and reports the keyring missing", () => {
+    keyring.available = false;
+    expect(() => setKey("openai", "secret")).toThrow("No system keyring");
+    expect(disk.files.has(target)).toBe(false);
+    expect(reports).toEqual([false]);
+  });
+  it("keeps stored keys while the keyring is gone and reads them once it is back", () => {
+    setKey("openai", "kept");
+    keyring.available = false;
+    expect(loadAllKeys()).toEqual({});
+    keyring.available = true;
+    expect(loadAllKeys()).toEqual({ openai: "kept" });
+    expect(reports).toEqual([true, false, true]);
   });
 });

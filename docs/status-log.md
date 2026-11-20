@@ -284,7 +284,7 @@ Dismissing takes a row out of the center, nothing more: the center only
 points. Each state keeps a home where it always shows and can be acted on,
 and the dismiss link's tooltip names it — the native decode engine on
 Settings · General (its engine marked unavailable), the agent Skill on
-Settings · Agent (with Reinstall), unencrypted cloud keys on the model pages
+Settings · Agent (with Reinstall), cloud keys without a keyring on the model pages
 where keys are entered, an offered update under Help · Check for Updates.
 
 | Item | Level | Dismiss | Shows again when |

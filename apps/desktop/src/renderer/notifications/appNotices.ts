@@ -33,7 +33,7 @@ const NOTICES: Record<AppNoticeCode, NoticeEntry> = {
   },
   keyring_unavailable: {
     page: "speech",
-    logMessage: "OS keyring unavailable; cloud API keys may be stored unencrypted.",
+    logMessage: "OS keyring unavailable; cloud API keys cannot be saved or read.",
   },
   agent_skill_unavailable: {
     page: "agent",

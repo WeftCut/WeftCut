@@ -2,11 +2,27 @@ import { app, safeStorage } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 
-/// True when the OS keyring backs safeStorage. False on Linux without a
-/// keyring (headless CI, minimal containers) → key material persists in
-/// plaintext. Callers should warn + degrade, never hard-fail.
-export function encryptionAvailable(): boolean {
-  try { return safeStorage.isEncryptionAvailable() } catch { return false }
+/// Told the outcome of every keyring check, so main can raise or retract the
+/// `keyring_unavailable` notice.
+let reportKeyring: (available: boolean) => void = () => {}
+
+export function onKeyringChecked(listener: (available: boolean) => void): void {
+  reportKeyring = listener
+}
+
+/// Whether the OS keyring backs safeStorage right now. Asked only when a key
+/// is about to be encrypted or decrypted, never at launch: on macOS the check
+/// reads the app's Keychain item and on Linux it reaches libsecret or KWallet,
+/// either of which can put a system prompt in front of a user who has not
+/// touched a cloud model yet. A failed check stays failed until restart:
+/// Chromium caches the failed Keychain / keyring lookup for the process (a
+/// denied macOS prompt is not asked again), which is why the notice says to
+/// restart.
+function keyringAvailable(): boolean {
+  let available = false
+  try { available = safeStorage.isEncryptionAvailable() } catch { /* stays false */ }
+  reportKeyring(available)
+  return available
 }
 
 const KEYS_FILE = () => path.join(app.getPath('userData'), 'cloud_keys.json')
@@ -31,9 +47,12 @@ function writeStored(s: Stored): void {
 }
 
 /// Decrypt every stored key. A blob that fails to decrypt (OS backend rotated,
-/// corrupt entry) is dropped from the file and skipped — never throws.
+/// corrupt entry) is dropped from the file and skipped — never throws. With no
+/// keyring nothing is decrypted and nothing is dropped: the blobs are intact
+/// and read again once the keyring is back.
 export function loadAllKeys(): Record<string, string> {
   const stored = readStored()
+  if (Object.keys(stored).length === 0 || !keyringAvailable()) return {}
   const out: Record<string, string> = {}
   let mutated = false
   for (const [provider, b64] of Object.entries(stored)) {
@@ -51,8 +70,10 @@ export function loadAllKeys(): Record<string, string> {
 }
 
 /// Encrypt + persist one provider key. Trims; empty key is a no-op clear.
+/// Throws, writing nothing, when no keyring can encrypt it.
 export function setKey(provider: string, key: string): void {
   const trimmed = (key ?? '').trim()
+  if (trimmed && !keyringAvailable()) throw new Error('No system keyring is available, so the key was not saved.')
   const stored = readStored()
   if (!trimmed) {
     delete stored[provider]
