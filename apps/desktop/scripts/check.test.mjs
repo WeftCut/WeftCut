@@ -88,7 +88,7 @@ test('--skip-rust leaves the Go and TypeScript gates and no cargo step', () => {
   const plan = checkPlan({ platform: 'linux', root: '/d', skipRust: true })
   assert.deepEqual(
     plan.map(({ name }) => name),
-    ['gofmt', 'go vet', 'go test', 'typecheck', 'test:scripts', 'mcp:catalog:check', 'build:cli', 'test'],
+    ['gofmt', 'go vet', 'go test', 'typecheck', 'knip', 'test:scripts', 'mcp:catalog:check', 'build:cli', 'test'],
   )
 })
 

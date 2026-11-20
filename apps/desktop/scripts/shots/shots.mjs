@@ -56,7 +56,7 @@ async function mainPage(context) {
  *  theme and language are written to a scratch profile before launch, since
  *  the layout theme only applies at launch. */
 async function openApp(appOpts = {}) {
-  const pw = await import('playwright-core')
+  const pw = await import('@playwright/test')
   const chromium = pw.chromium ?? pw.default.chromium
   if (opt.cdp) {
     const url = /^\d+$/.test(opt.cdp) ? `http://127.0.0.1:${opt.cdp}` : opt.cdp

@@ -1,40 +1,56 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "$schema": "https://unpkg.com/knip@6/schema.json",
   // Report an export only when it's used NOWHERE (truly dead). Exports that are
   // referenced within their own file are live-but-over-exposed — a style nit,
   // not dead code — so we don't flag them. Keeps the report to actionable signal.
   "ignoreExportsUsedInFile": true,
+  // Throwaway prototypes, each run by hand on its own; nothing imports them.
+  "ignore": ["poc/**"],
+  // Host tools the scripts and tests spawn, not npm packages: the bundled or
+  // system ffmpeg, the Go and C toolchains, and OS utilities.
+  "ignoreBinaries": [
+    "ffmpeg",
+    "ffprobe",
+    "go",
+    "make",
+    "otool",
+    "install_name_tool",
+    "objdump",
+    "move",
+    "tasklist",
+    "xdg-open"
+  ],
+  // ffmpeg's own configure script, run by fetch-ffmpeg-lgpl.mjs in the unpacked
+  // source tree.
+  "ignoreUnresolved": ["./configure"],
   "workspaces": {
     "apps/desktop": {
+      // The electron-vite plugin reads the build entries from
+      // electron.vite.config.ts; these are the ones it cannot see.
       "entry": [
-        "src/main/index.ts",
-        "src/preload/index.ts",
-        "src/renderer/main.tsx",
+        // Built only under VITE_WEFTCUT_E2E.
+        "src/main/calibration-host.ts",
         "src/renderer/index.html",
+        "src/renderer/screen-pick.html",
+        "src/renderer/calibration.html",
         "src/renderer/public/render-play.html",
         "src/main/mcp/**/*.ts",
         "src/shared/motifs/builtin/**/*.{ts,html}",
-        "scripts/*.mjs",
-        "electron.vite.config.ts"
+        "scripts/*.mjs"
       ],
-      "project": ["src/**/*.{ts,tsx}"],
-      // Ambient Vite type-augmentation file: consumed by tsc via `include`,
-      // never `import`ed, so Knip's static graph can't see its use.
-      "ignore": ["src/renderer/vite-env.d.ts", "src/main/companion/raw.d.ts"],
+      "project": ["src/**/*.{ts,tsx,css}"],
       "ignoreDependencies": [
-        // napi-rs native module: `file:native` resolves to a .node binary
-        // Knip can't follow. Imported by main/index.ts + mcp/*.
-        "@weftcut/core",
-        // Tailwind v4 + animate plugin are pulled in via CSS `@import` in
-        // app.css, which Knip's dependency resolver doesn't trace.
-        "tailwindcss",
-        "tw-animate-css",
-        // Used by the e2e SSIM harness (e2e/lib/image-ssim.mjs), outside the
-        // src-only `project` scan scope.
-        "pngjs",
-        // shadcn/ui is a scaffolding CLI run on demand via `npx shadcn add`,
-        // not a runtime import. Kept as a devDependency to pin the version.
-        "shadcn"
+        // Reached only through `/// <reference types>` in vite-env.d.ts and
+        // bench/tsconfig.json.
+        "@webgpu/types",
+        // JSDoc type import in stryker.config.mjs; ships with @stryker-mutator/core.
+        "@stryker-mutator/api",
+        // package-macos-release.test.mjs validates the release config with
+        // electron-builder's own internals. They must be the copy
+        // electron-builder resolves, so they stay its transitive dependencies
+        // rather than separately pinned ones that could drift from it.
+        "app-builder-lib",
+        "builder-util"
       ]
     }
   }

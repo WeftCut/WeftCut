@@ -62,6 +62,8 @@ export function checkPlan({ platform, root, env = {}, skipRust = false }) {
 
   const typescript = [
     npmStep('typecheck'),
+    // Unused files, exports and dependencies; config in the repo-root knip.json.
+    npmStep('knip'),
     npmStep('test:scripts'),
     npmStep('mcp:catalog:check'),
     // The unit suite runs the binary as a client would (src/cli), and nothing

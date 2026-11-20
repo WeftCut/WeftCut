@@ -28,7 +28,7 @@
     "e2e": "npm --workspace apps/desktop run e2e --",
     "build:e2e": "npm --workspace apps/desktop run build:e2e",
     "package": "npm --workspace apps/desktop run package",
-    "knip": "npx --yes knip"
+    "knip": "npm --workspace apps/desktop run knip"
   },
   "overrides": {
     "typed-rest-client": {
