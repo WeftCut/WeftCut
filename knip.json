@@ -30,9 +30,12 @@
       "entry": [
         // Built only under VITE_WEFTCUT_E2E.
         "src/main/calibration-host.ts",
-        "src/renderer/index.html",
-        "src/renderer/screen-pick.html",
-        "src/renderer/calibration.html",
+        // The renderer pages' module scripts, named directly: their HTML
+        // references them root-relative (`/main.tsx`), which knip resolves on
+        // Linux but not on Windows, where every page then reads as unused.
+        "src/renderer/main.tsx",
+        "src/renderer/calibration/host.ts",
+        "src/renderer/colorpick/desktopOverlay.ts",
         "src/renderer/public/render-play.html",
         "src/main/mcp/**/*.ts",
         "src/shared/motifs/builtin/**/*.{ts,html}",
