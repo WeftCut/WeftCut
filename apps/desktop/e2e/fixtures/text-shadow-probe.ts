@@ -5,7 +5,11 @@ import type { ResolvedTextView } from '../../src/renderer/render/resolveView'
 // Real Canvas2D pixels, because style assertions cannot catch the black source
 // glyphs leaking from Pixi's off-canvas shadow pass at reduced resolutions.
 export function runTextShadowProbe() {
-  const sprite = new TextSprite({ layerId: 'synthetic-title', snapToPixels: true })
+  // No catalog faces: the probe reads shadow pixels, which any font shows.
+  const sprite = new TextSprite({
+    layerId: 'synthetic-title', snapToPixels: true,
+    fontIndex: () => ({ revision: 0, systemScanned: false, faces: [] }),
+  })
   const view: ResolvedTextView = {
     content: 'Sample video title', font_family: 'Arial', font_size_px: 80,
     weight: 500, italic: false, align: 'Center', color: { r: 255, g: 255, b: 255, a: 255 },

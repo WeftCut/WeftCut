@@ -3,6 +3,7 @@ import { PARAMS_PAGE_FILE } from '../../shared/motifs/catalog.js'
 import { CAPTURE_HOST_FILE } from '../../shared/motifs/frameMarker.js'
 import fs from 'node:fs'
 import { contentTypeFor } from './builtinAssets.js'
+import { isMotifFontPath, servedMotifFont } from './fontProps.js'
 import { servedMotifMedia } from './mediaProps.js'
 import type { MotifResolver } from './resolver.js'
 
@@ -85,6 +86,15 @@ export function registerMotifProtocol(resolver: Pick<MotifResolver, 'readFile'>)
           headers: { 'Content-Type': picture.mime, 'Content-Security-Policy': MOTIF_CSP, 'Cache-Control': 'no-store' },
         })
       } catch { return new Response('not found: ' + id + '/' + rest, { status: 404 }) }
+    }
+    // A face a font prop resolves to (./fontProps.ts), on the Motif's own origin.
+    if (isMotifFontPath(rest)) {
+      const face = await servedMotifFont(id, rest)
+      if (!face) return new Response('not found: ' + id + '/' + rest, { status: 404 })
+      return new Response(new Uint8Array(face.bytes), {
+        status: 200,
+        headers: { 'Content-Type': face.mime, 'Content-Security-Policy': MOTIF_CSP, 'Cache-Control': 'no-store' },
+      })
     }
     if (rest.replace(/^\.revisions\/[0-9a-f]{64}\//, '') === CAPTURE_HOST_FILE) {
       return new Response(captureHostPage(), {

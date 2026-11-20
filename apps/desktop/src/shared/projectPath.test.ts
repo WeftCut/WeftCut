@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest'
-// Shared with the Rust twin (native/src/state/project_path.rs); its
-// `portableFileName` vectors test the Rust import namer only.
+// Shared with the Rust twin (native/src/state/project_path.rs).
 import vectors from '../../fixtures/project-paths.json'
 import {
-  MEDIA, foldCase, isPortableSegment, isProjectPath, parseProjectPath, projectPathBase, projectPathOf,
-  projectPathSegments,
+  MEDIA, foldCase, isPortableSegment, isProjectPath, parseProjectPath, portableFileName, projectPathBase,
+  projectPathOf, projectPathSegments,
 } from './projectPath'
 
 describe('parseProjectPath', () => {
@@ -72,5 +71,29 @@ describe('foldCase', () => {
     expect(foldCase('CAFÉ.mp4')).toBe(foldCase('café.mp4'))
     expect(foldCase('Ä.wav')).toBe(foldCase('ä.wav'))
     expect(foldCase('clip.mp4')).not.toBe(foldCase('clip-2.mp4'))
+  })
+})
+
+describe('portableFileName', () => {
+  it.each(vectors.portableFileName)('names $name with $taken taken as $out', ({ name, taken, out }) => {
+    const folded = new Set(taken.map(foldCase))
+    expect(portableFileName(name, (f) => folded.has(f))).toBe(out)
+  })
+
+  it('suffixes past every case-folded name taken, and the result is never taken', () => {
+    const folded = new Set(['font.ttf', 'FONT-2.TTF', 'font-3.ttf'].map(foldCase))
+    const got = portableFileName('Font.ttf', (f) => folded.has(f))
+    expect(got).toBe('Font-4.ttf')
+    expect(folded.has(foldCase(got))).toBe(false)
+  })
+
+  it('always yields a portable segment, suffixed or not', () => {
+    for (const name of ['a\u0001b', '...', 'nul.x.y', `a.${'e'.repeat(200)}`, `COM1${' '.repeat(300)}x`, `${'视'.repeat(100)}.mp4`]) {
+      const got = portableFileName(name, () => false)
+      expect(isPortableSegment(got), `${JSON.stringify(name)} → ${got}`).toBe(true)
+      const suffixed = portableFileName(name, (f) => f === foldCase(got))
+      expect(isPortableSegment(suffixed), `${JSON.stringify(name)} → ${suffixed}`).toBe(true)
+      expect(foldCase(suffixed)).not.toBe(foldCase(got))
+    }
   })
 })

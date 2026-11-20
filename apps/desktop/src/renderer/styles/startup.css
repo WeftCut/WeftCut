@@ -948,6 +948,14 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
   text-overflow: ellipsis;
 }
 
+/* What the project folder collects, under the Save-in row and its path. */
+.new-project-hint {
+  margin: calc(-6 * var(--ui-px)) 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+}
+
 .new-project-actions {
   display: flex;
   justify-content: flex-end;

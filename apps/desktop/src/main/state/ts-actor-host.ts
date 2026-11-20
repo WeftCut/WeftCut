@@ -50,11 +50,17 @@ import type { ExportSettingsStore } from '../export-settings'
 import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
 import { tasteView } from '../taste/view'
+import { collectExtendedStyle } from '../taste/projectStyles'
 import { AuditStore } from '../lint/audits'
 import { playheadView } from '../mcp/playheadView'
 import type { WorkspaceStore } from '../workspace'
 import { ExportJobError } from '../exportJobs'
 import type { PathPlatform } from './projectPathNative'
+import type { ProjectFontStore } from '../fonts/projectFonts'
+import type { MissingFontUse } from '../fonts/uses'
+
+/** What the host asks of the project font store. */
+export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'projectChanged' | 'published' | 'missing'>
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -63,9 +69,13 @@ export interface TsActorHostDeps {
   /** Ask the editor window where the user is (`mcp/playheadView.ts`). Absent
    *  (tests, no window) → `project://playhead` refuses as not ready. */
   readEditorPlayhead?: () => Promise<import("../../shared/editorPlayhead").EditorPlayheadReport>
-  /** Installed font families, lowercased; null until the system scan lands.
-   *  A style's font slots resolve against it (spec H2-D4). */
-  installedFonts?: () => ReadonlySet<string> | null
+  /** The font catalog's families (project `Fonts/` and system), lowercased;
+   *  null until the system scan lands. The taste view tells which of a style
+   *  slot's families resolve against it. */
+  fontFamilies?: () => ReadonlySet<string> | null
+  /** The open project's font collector (fonts/projectFonts.ts). Absent
+   *  (tests) → nothing is collected and no font is reported missing. */
+  fonts?: ProjectFontsHost
   /** The clip-compute job registry (ADR 0121). Absent → plain calls. */
   computeJobs?: import("../compute/jobs").ComputeJobs
   beginImport?: HybridDeps['beginImport']
@@ -256,6 +266,9 @@ export interface TsActorHost {
    *  gone, whose files make no package, or whose revision is not trusted on
    *  this machine. Empty with no project open. */
   unavailableMotifs: () => UnavailableMotif[]
+  /** Families the open project asks for that resolve nowhere
+   *  (`project://session` `fonts.missing`). Empty with no project open. */
+  missingFonts?: () => MissingFontUse[]
   /** The open project's `Motifs/<id>/` changed on disk (`watchProjectMotifs`):
    *  a new revision of a Motif the project records becomes a recorded edit
    *  (`ProjectMotifRecords.folderChanged`). */
@@ -325,8 +338,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     defaultTextFont: () => deps.appSettings?.get().default_text_font,
     // Read at each creation, so an edit to TASTE.md reaches the next layer
     // without a reload. `opened` is assigned below; this runs only later.
-    tasteTokens: () => (deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: libraryManifest }).tokens : null),
-    installedFonts: () => deps.installedFonts?.() ?? null,
+    tasteTokens: () => { collectStyle(); return deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: libraryManifest }).tokens : null },
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
     // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
@@ -564,6 +576,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     const openAtRequest = opened
     if (closing) opened = null
     const next = persistenceTail.then(async () => {
+      // Copies into `Fonts/` finish before the folder is let go (ADR 0176).
+      // Awaited before `replacing`, so an edit made meanwhile is in the flush.
+      await deps.fonts?.drain()
       // LANDMINE: from `replacing = true` to onWorkspaceChanging nothing may
       // await. The flush then holds every edit made before it, none can land
       // between it and the swap, and a failed one is undone by clearing one
@@ -616,6 +631,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       }
     })
     const settled = next.finally(() => {
+      // However it ended: the folder now open (or none) takes copies again.
+      deps.fonts?.projectChanged(opened?.dir ?? null)
       workspaceTransitions--
       if (workspaceTransitions === 0) {
         deps.exportJobs?.workspaceSettled()
@@ -627,6 +644,17 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   let opened: OpenedProject | null = null
+  /** Copies the user style the open project's TASTE.md extends into its
+   *  `Styles/` (ADR 0176). There is no TASTE.md watch, so it runs at open and
+   *  at each read of the tokens; it does nothing once the copy is there. */
+  const collectStyle = (): void => {
+    const dir = opened?.dir
+    if (!deps.styleDirs || !dir) return
+    collectExtendedStyle(deps.styleDirs, dir).catch((error: unknown) => {
+      try { deps.emitLog?.({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message: `The style TASTE.md extends was not copied into Styles/: ${String(error)}`, details: { kind: 'ProjectStyles' } }) }
+      catch (err) { console.warn('[ts-actor-host] emitLog failed (project style)', err) }
+    })
+  }
   /** Set while the app quits: nothing opens after it. A quit that fails to
    *  close the project (Cancel, a failed update restart) clears it again. */
   let quitting = false
@@ -642,6 +670,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     open: async (dir) => {
       await replaceWorkspace(async () => { await openProject(orchestratorDeps, dir); opens(dir) })
       motifRecords.opened()
+      collectStyle()
     },
     saveAs: (dir) => replaceWorkspace(async () => {
       try { await saveProjectAs(orchestratorDeps, dir, deps.workspaceDir()) }
@@ -785,6 +814,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (settledWorkspace) publishedDir = opened?.dir ?? null
     publishedProject = publishedDir === null ? null : actor.snapshot()
     publishedHistory = actor.historyStatus()
+    if (publishedProject !== null) deps.fonts?.published(publishedProject, projectManifest)
     if (emitting) {
       try {
         deps.send('project:changed', {
@@ -1189,7 +1219,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       if (opened === null || replacing || !autosave.unsaved()) return
       autosave.forceFlush()
     },
-    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: libraryManifest, fonts: deps.installedFonts?.() ?? null }) } : {}),
+    ...(deps.styleDirs ? { taste: () => { collectStyle(); return tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: libraryManifest, fonts: deps.fontFamilies?.() ?? null }) } } : {}),
     // The project is read once the editor has answered: an edit made while the
     // question was out is in both halves of the answer, not only the editor's.
     ...(deps.readEditorPlayhead ? { playhead: async () => { const report = await deps.readEditorPlayhead!(); return playheadView(actor.snapshot(), report) } } : {}),
@@ -1209,6 +1239,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     poolFiles,
     motifTool: runMotif,
     unavailableMotifs,
+    missingFonts: () => (opened ? deps.fonts?.missing() ?? [] : []),
     motifFolderChanged: (id, state) => motifRecords.folderChanged(id, state),
     start() {
       agent.start()

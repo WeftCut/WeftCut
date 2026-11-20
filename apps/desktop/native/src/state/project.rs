@@ -150,6 +150,11 @@ pub struct ProjectSettings {
     /// `shot_review` is declared here.
     #[serde(default)]
     pub pause_review: Option<PauseReviewSettings>,
+    /// Font families the user keeps out of the project's `Fonts/` folder.
+    /// **TS owns and reads it** (`state/model.ts` `ProjectSettings`); Rust only
+    /// round-trips it, for the same reason `shot_review` is declared here.
+    #[serde(default)]
+    pub excluded_fonts: Vec<String>,
 }
 
 /// Twin of TS `ShotReviewSettings`: the threshold and minimum shot length a
@@ -219,6 +224,7 @@ impl Default for ProjectSettings {
             proxy_overrides: Default::default(),
             shot_review: None,
             pause_review: None,
+            excluded_fonts: Vec::new(),
         }
     }
 }
@@ -282,6 +288,35 @@ mod pause_review_tests {
         let json = serde_json::to_string(&p).unwrap();
         let back: Project = serde_json::from_str(&json).unwrap();
         assert_eq!(back.settings.pause_review, Some(reviewed));
+    }
+}
+
+#[cfg(test)]
+mod excluded_fonts_tests {
+    use super::*;
+
+    /// A project written before the field carries no `excluded_fonts`; it
+    /// reads as excluding nothing, the same empty list TS backfills.
+    #[test]
+    fn missing_excluded_fonts_reads_as_empty() {
+        let p = Project::new_blank("t");
+        let mut v = serde_json::to_value(&p).unwrap();
+        v["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("excluded_fonts");
+        let back: Project = serde_json::from_value(v).unwrap();
+        assert!(back.settings.excluded_fonts.is_empty());
+    }
+
+    #[test]
+    fn excluded_fonts_round_trip_in_order() {
+        let mut p = Project::new_blank("t");
+        let families = vec!["Example Serif".to_owned(), "Noto Sans CJK SC".to_owned()];
+        p.settings.excluded_fonts = families.clone();
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.settings.excluded_fonts, families);
     }
 }
 

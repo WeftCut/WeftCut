@@ -828,9 +828,10 @@ function historyLockedRefusal(err: McpToolErrorJson, tsHost: TsActorHost): McpTo
  *  is the project the user has open (null on the start screen), with the Recents
  *  list and default parent folder `open_project` / `create_project` draw on.
  *  `motifs` names the open project's Motifs that cannot render, an untrusted
- *  one with the revision the user would trust. The resource defs themselves
- *  live in `hostResources.ts`. */
-export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsActorHost, 'projectStatus' | 'unavailableMotifs'>>): Record<string, unknown> {
+ *  one with the revision the user would trust; `fonts.missing` the families
+ *  its layers ask for that resolve nowhere (ADR 0176). The resource defs
+ *  themselves live in `hostResources.ts`. */
+export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsActorHost, 'projectStatus' | 'unavailableMotifs' | 'missingFonts'>>): Record<string, unknown> {
   const snap = host.agent.snapshot()
   const unavailable = host.unavailableMotifs?.() ?? []
   const motifs = (status: 'missing' | 'invalid') => unavailable.filter(m => m.status === status).map(({ motif_id, diagnostic }) => ({ motif_id, diagnostic }))
@@ -839,6 +840,7 @@ export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsAc
     active: snap.session, sessions: snap.sessions.slice(-10), lock_reason: snap.lock_reason,
     ...(host.projectStatus ? host.projectStatus() : {}),
     motifs: { missing: motifs('missing'), invalid: motifs('invalid'), untrusted },
+    fonts: { missing: host.missingFonts?.() ?? [] },
   }
 }
 

@@ -10,6 +10,7 @@ function projectAt(dir: string) {
   const content = {
     [`${dir}/Media/clip.mp4`]: 'clip', [`${dir}/Media/sub/x.wav`]: 'x', [`${dir}/Media/sub/deeper/y.png`]: 'y',
     [`${dir}/TASTE.md`]: 'taste', [`${dir}/export.json`]: '{}', [`${dir}/view.json`]: '{}',
+    [`${dir}/Fonts/Example-Bold.ttf`]: 'font', [`${dir}/Styles/mine/STYLE.md`]: 'style',
   }
   const local = {
     [`${dir}/project.json`]: '{}', [`${dir}/project.pre-v6.json`]: '{}',
@@ -126,7 +127,7 @@ describe('copyProjectContent on volumes that refuse', () => {
     const { disk } = projectAt('/from')
     disk.refuse.clone = 'ENOSYS'
     await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
-    for (const name of ['TASTE.md', 'export.json', 'view.json']) {
+    for (const name of ['TASTE.md', 'export.json', 'view.json', 'Fonts/Example-Bold.ttf', 'Styles/mine/STYLE.md']) {
       expect(disk.linked(`/from/${name}`, `/to/${name}`), name).toBe(false)
       expect(disk.read(`/to/${name}`), name).toBe(disk.read(`/from/${name}`))
     }
@@ -145,9 +146,11 @@ describe('copyProjectContent on volumes that refuse', () => {
     const { disk } = projectAt('/from')
     disk.put('/from/Media/.DS_Store', 'finder')
     disk.put('/from/Media/new.mp4.tmp', 'half an import')
+    disk.put('/from/Fonts/.Example-Bold.ttf.0f1e.part', 'half a font copy')
     await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
     expect(disk.read('/to/Media/.DS_Store')).toBeUndefined()
     expect(disk.read('/to/Media/new.mp4.tmp')).toBeUndefined()
+    expect(disk.read('/to/Fonts/.Example-Bold.ttf.0f1e.part')).toBeUndefined()
   })
 })
 

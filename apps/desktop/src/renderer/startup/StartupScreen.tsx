@@ -599,6 +599,7 @@ export function NewProjectForm({
             {previewPath}
           </p>
         )}
+        <p className="new-project-hint">{t("new_project.collects_hint")}</p>
 
         <div className="new-project-row">
           <span>{t("new_project.resolution")}</span>

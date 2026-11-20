@@ -3,6 +3,9 @@ import { contentAtUs } from '../../layerTiming';
 import type { MotifView } from "../../ipc";
 import { canonicalizePropsLenient, resolveMotifContentDurationUs, type Motif } from "./catalog";
 import { overlayMotifProps } from "./previewOverlay";
+import { getFontIndex } from "../fonts/fontIndexStore";
+import { motifFonts } from "../../../shared/motifs/fontProps";
+import type { MotifFontFace } from "../../../shared/motifs/frameTransport";
 import {
   frameTimeSec,
   motifContentFrame,
@@ -27,6 +30,9 @@ export interface MotifFrameDescriptor {
   renderW: number;
   renderH: number;
   canonicalProps: Record<string, unknown>;
+  /// The faces the font props resolved to when the key was made; the capture
+  /// registers exactly these. Absent for a Motif without font props.
+  fonts?: MotifFontFace[];
   tSec: number;
   /// True when a pending params-page patch was folded into this descriptor
   /// (layerId given AND the layer has one). The sprite routes such frames to
@@ -85,6 +91,9 @@ export function motifFrameDescriptor(
     view.time_map ? tInLayerUs * view.time_map.rate.num / view.time_map.rate.den : tInLayerUs, srcInUs, contentDurationUs, fpsNum, fpsDen,
   );
   const [renderW, renderH] = motif.manifest.size;
+  // Resolved here, from the props the key is made of, so a frame keyed with
+  // one set of faces is never captured with another.
+  const fonts = motifFonts(motif.manifest, canonicalProps, getFontIndex().faces);
   const cacheKey = motifFrameCacheKey({
     motifId: motif.manifest.id,
     version: motif.manifest.version,
@@ -92,11 +101,13 @@ export function motifFrameDescriptor(
     canonicalProps, renderW, renderH, fpsNum, fpsDen,
     durationFrames: contentDurationFrames,
     ...(view.media_keys && { mediaKeys: view.media_keys }),
+    ...(fonts && { fontKeys: fonts.keys }),
   });
   return {
     cacheKey, motifId: motif.manifest.id, contentHash: motif.manifest.content_hash ?? '', fpsNum, fpsDen,
     contentFrame: frame, contentDurationFrames, contentDurationUs, srcInUs,
     renderW, renderH, canonicalProps,
+    ...(fonts && { fonts: fonts.faces }),
     tSec: frameTimeSec(frame, fpsNum, fpsDen),
     overlayActive,
   };

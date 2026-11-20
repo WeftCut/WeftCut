@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { FaceIndexEntry, FontIndex } from '../../../shared/fonts/types';
+import { motifFrameDescriptor } from './motifFrameDescriptor';
 import type { AnimTrack, LayerSummary, ProjectSummary, TrackSummary } from '../../ipc';
 import type { LayerBakeStatus } from '../../timeline/motifBakeStatusStore';
 import { compositionFixture, groupLayerFixture, ROOT_ID, summaryFixture } from '../../testing/summaryFixture';
@@ -13,6 +15,10 @@ import { holdBuiltinMotifs } from '../../testing/projectMotifs';
 
 // The project these tests render holds the built-ins.
 holdBuiltinMotifs();
+
+const anton = (sha: string): FaceIndexEntry => ({ families: ['Anton'], weight: 400, italic: false, source: 'system', sha256: sha.repeat(64), size: 1, ttcIndex: null });
+const fontIndex = vi.hoisted(() => ({ current: { revision: 1, systemScanned: true, faces: [] } as FontIndex }));
+vi.mock('../fonts/fontIndexStore', () => ({ getFontIndex: () => fontIndex.current }));
 
 const stat = (value: number): AnimTrack<number> => ({ mode: 'Static', value });
 const motif = (id: string, start: number, end: number, props: Record<string, unknown> = { seconds: 5 }): LayerSummary => ({
@@ -43,6 +49,20 @@ const statuses = (summary: ProjectSummary, demand: ReturnType<typeof prepare>, o
 });
 
 describe('planMotifPreparation', () => {
+  it('bakes a Motif with font props under the preview\'s key and with the faces its capture sends', () => {
+    fontIndex.current = { revision: 2, systemScanned: true, faces: [anton('a')] };
+    const layer = motif('headline', 0, 2_000_000, {});
+    if (layer.params.kind !== 'Motif') throw new Error('fixture');
+    layer.params.motif_id = 'clipping-headline';
+    const { plan } = prepare(summaryFixture({ root: { tracks: [track([layer])] } }));
+    const preview = motifFrameDescriptor(layer.params, 0, 2_000_000, 30, 1, getMotif('clipping-headline')!)!;
+    expect(preview.fonts?.map(f => f.sha256)).toEqual(['a'.repeat(64)]);
+    expect(plan.contents[0]!.cacheKey).toBe(preview.cacheKey);
+    expect(plan.contents[0]!.capture.fonts).toEqual(preview.fonts);
+    // A Motif without font props sends none, as its preview capture does not.
+    expect(prepare(summaryFixture({ root: { tracks: [track([motif('clock', 0, 1_000_000)])] } })).plan.contents[0]!.capture).not.toHaveProperty('fonts');
+  });
+
   it('declares each clip\'s used range of shared content and every live key', () => {
     const summary = summaryFixture({ root: { tracks: [track([
       motif('past', 0, 1_000_000), motif('current', 1_000_000, 3_000_000),

@@ -10,12 +10,18 @@ function pageRuntime(status = 200) {
     terminate = vi.fn();
     constructor(public url: string) { super(); workers.push(this); }
   }
-  const document = { fonts: { ready: Promise.resolve() }, getAnimations: () => [], body: {} };
-  const window: any = { Worker, SharedWorker: Worker, document, addEventListener: vi.fn(),
+  // The page's FontFaceSet, as the faces in it.
+  const faces = new Set<FontFace>();
+  class FontFace {
+    load = vi.fn();
+    constructor(public family: string, public source: string, public descriptors: Record<string, string>) {}
+  }
+  const document = { fonts: { ready: Promise.resolve(), add: (f: FontFace) => faces.add(f), delete: (f: FontFace) => faces.delete(f) }, getAnimations: () => [], body: {} };
+  const window: any = { Worker, SharedWorker: Worker, FontFace, document, addEventListener: vi.fn(),
     requestAnimationFrame: (cb: () => void) => queueMicrotask(cb),
     performance: { getEntriesByType: (type: string) => type === 'navigation' ? [{ responseStatus: status }] : [] } };
   runInNewContext(MOTIF_RUNTIME_SOURCE, { window, document, console });
-  return { window, workers };
+  return { window, workers, faces };
 }
 
 describe('Motif setup decoder workers', () => {
@@ -67,6 +73,35 @@ describe('Motif setup decoder workers', () => {
     window.motif.define({ frame() { new window.Worker('blob:animation'); } });
     await expect(window.__motifRender(0, {}, {})).rejects.toThrow(/setup/);
     expect(() => new window.SharedWorker('./persistent.js')).toThrow(/SharedWorker/);
+  });
+});
+
+describe('Motif font faces', () => {
+  const anton = (url: string, weight = '400') => ({ family: 'Anton', weight, style: 'normal', url });
+
+  it('registers the served faces under their family before setup, and sets up again when only the faces change', async () => {
+    const { window, faces } = pageRuntime();
+    const seen: string[][] = [];
+    const setup = vi.fn(() => { seen.push([...faces].map((f: any) => `${f.family} ${f.descriptors.weight} ${f.source}`)); });
+    window.motif.define({ setup });
+    await window.__motifRender(0, { font_title: "'Anton'" }, { fonts: [anton('motif://m/.fonts/a.ttf')] });
+    await window.__motifRender(1, { font_title: "'Anton'" }, { fonts: [anton('motif://m/.fonts/a.ttf')] });
+    expect(setup).toHaveBeenCalledOnce();
+    expect(seen[0]).toEqual(['Anton 400 url("motif://m/.fonts/a.ttf")']);
+
+    // Another file behind the same descriptor replaces the face; nothing else changed.
+    await window.__motifRender(1, { font_title: "'Anton'" }, { fonts: [anton('motif://m/.fonts/b.ttf'), anton('motif://m/.fonts/c.ttf', '700')] });
+    expect(setup).toHaveBeenCalledTimes(2);
+    expect(seen[1]).toEqual(['Anton 400 url("motif://m/.fonts/b.ttf")', 'Anton 700 url("motif://m/.fonts/c.ttf")']);
+    // Chromium fetches a face when text draws with it; the runtime never loads one.
+    for (const face of faces) expect((face as any).load).not.toHaveBeenCalled();
+  });
+
+  it('keeps the first of two faces with one descriptor, as resolveFace does', async () => {
+    const { window, faces } = pageRuntime();
+    window.motif.define({ setup: vi.fn() });
+    await window.__motifRender(0, {}, { fonts: [anton('motif://m/.fonts/project.ttf'), anton('motif://m/.fonts/system.ttf')] });
+    expect([...faces].map((f: any) => f.source)).toEqual(['url("motif://m/.fonts/project.ttf")']);
   });
 });
 

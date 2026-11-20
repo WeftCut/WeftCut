@@ -1,18 +1,21 @@
-// THE font authority: all runtime font acquisition — bundled bytes, OS
-// resolution, and the hand-out-copies transfer policy — lives in this module.
+// THE font authority: all runtime font acquisition — bundled bytes, catalog
+// face bytes, and the hand-out-copies transfer policy — lives in this module.
 // Don't grow private font loaders at use sites. Deliberate exception: motif
 // capture host pages load their own fonts via explicit document.fonts.load
 // (they run in a separate CDP browser context this module can't reach, and
 // their explicit-load discipline carries the deterministic-capture guarantee).
 //
-// Bundled fonts are loaded into BOTH the preview Compositor (main thread,
-// document.fonts) and the export Worker (self.fonts) so burned-in captions
-// render identically — this carries the cross-OS determinism guarantee.
+// Bundled fonts and the catalog faces Text layers resolve to
+// (./textFaces.ts) are loaded into BOTH the preview Compositor (main thread,
+// document.fonts) and the export Worker (self.fonts), so burned-in text
+// renders like the preview. See docs/render.md "Fonts".
+
 // Vite `?url` resolves each asset to a same-origin URL at build time.
 import notoCjkUrl from "../../../../assets/fonts/NotoSansSC-VF.ttf?url";
 import liberationUrl from "../../../../assets/fonts/LiberationSans-Regular.woff2?url";
 
-import { BUNDLED_FONT_FAMILIES } from "../../../shared/fonts";
+import type { FaceRef } from "../../../shared/fonts/types";
+import { syncFaces } from "./loadFontsIntoFaceSet";
 export { BUNDLED_FONT_FAMILIES } from "../../../shared/fonts";
 
 // Re-exported, not defined here: the main process stamps this family onto every
@@ -64,48 +67,23 @@ async function fetchBundledFontBytes(): Promise<Record<string, ArrayBuffer>> {
   return out;
 }
 
-/// Per-family OS-resolution cache (main-thread realm). A session's verdict for
-/// a family is stable, so hits cache the pristine bytes and misses cache the
-/// null verdict — an absent font stops re-paying the IPC round-trip on every
-/// export. Rejections reset the slot (a transient IPC failure must not poison
-/// the session). Same hand-out-copies LANDMINE as the bundled cache above.
-const resolvedFontCache = new Map<string, Promise<ArrayBuffer | null>>();
-
-/// Resolve OS fonts for non-bundled families used in a project (best-effort).
-/// Bundled families are skipped (already loaded). Unresolved families are
-/// omitted so the renderer falls back to the bundled default chain (no tofu).
-/// MAIN-THREAD ONLY: touches window.api — never call from the export Worker
-/// (which has no window; the Worker only consumes the already-resolved bytes).
-export async function resolveFontsForFamilies(families: string[]): Promise<Record<string, ArrayBuffer>> {
-  const bundled = new Set(BUNDLED_FONT_FAMILIES as readonly string[]);
-  const out: Record<string, ArrayBuffer> = {};
-  const seen = new Set<string>();
-  for (const family of families) {
-    // A family field may be a comma fallback chain; resolve each leaf.
-    for (const leaf of family.split(",").map((s) => s.trim()).filter(Boolean)) {
-      if (bundled.has(leaf) || seen.has(leaf)) continue;
-      seen.add(leaf);
-      let p = resolvedFontCache.get(leaf);
-      if (!p) {
-        const attempt: Promise<ArrayBuffer | null> = resolveOsFontBytes(leaf).catch((err: unknown) => {
-          // Only clear if no newer attempt has replaced the slot meanwhile.
-          if (resolvedFontCache.get(leaf) === attempt) resolvedFontCache.delete(leaf);
-          throw err;
-        });
-        resolvedFontCache.set(leaf, attempt);
-        p = attempt;
-      }
-      const pristine = await p;
-      if (pristine) out[leaf] = pristine.slice(0);
-    }
-  }
-  return out;
+/// One catalog face as a standalone font file, or null when the face is gone.
+/// Asked of main on every call and kept nowhere: a registered face lives in
+/// its face set, and export asks again, which main answers from the file's
+/// stamp without hashing. Each answer is a buffer only its caller holds, so
+/// export may transfer it (the bundled cache's LANDMINE does not arise).
+/// MAIN-THREAD ONLY: touches window.api — the export Worker receives bytes
+/// fetched here in its start request.
+export async function faceBytes(sha256: string): Promise<ArrayBuffer | null> {
+  const bytes = await window.api.font.bytes(sha256);
+  if (!bytes || bytes.byteLength === 0) return null;
+  const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+  return (whole ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)) as ArrayBuffer;
 }
 
-async function resolveOsFontBytes(leaf: string): Promise<ArrayBuffer | null> {
-  const bytes = await window.api.font.resolve(leaf);
-  if (bytes && bytes.byteLength > 0) {
-    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  }
-  return null;
+/// Make `faceSet`'s catalog faces exactly `refs` (`syncFaces`), bytes from
+/// `faceBytes`. Resolves with the hashes that could not be registered.
+/// MAIN-THREAD ONLY.
+export function ensureFaces(faceSet: FontFaceSet, refs: readonly FaceRef[]): Promise<string[]> {
+  return syncFaces(faceSet, refs.map((ref) => ({ ref, bytes: () => faceBytes(ref.sha256) })));
 }

@@ -684,7 +684,8 @@
       "00000000-0000-0000-0000-0000000000aa": false
     },
     "shot_review": null,
-    "pause_review": null
+    "pause_review": null,
+    "excluded_fonts": []
   },
   "motifs": {
     "lower-third": {

@@ -141,6 +141,14 @@
   flex: 1 1 auto;
 }
 
+/* An excluded family's name in Settings > Project > Fonts: body text, not a
+ * label, so the rows read as a list under their label. */
+.settings-control-row > .settings-font-family {
+  flex: 1 1 auto;
+  font-size: var(--font-size-body);
+  color: var(--foreground);
+}
+
 /* Performance uses the same label/hint and compact controls as General. Keep
  * a stable value column without allowing the numeric input to fill the row. */
 .settings-performance-row {
