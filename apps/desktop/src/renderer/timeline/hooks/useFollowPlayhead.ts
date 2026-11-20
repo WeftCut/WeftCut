@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import type { AnchorFrame } from "../../render/timeProjection";
+import { usePlaybackStore } from "../../state/playbackStore";
 import { subscribeLocalPlayhead } from "../../state/playheadProjection";
+import { playheadSeekCount } from "../../state/playheadStore";
 import {
   setTimelineScrollLeftPx,
   timelineScrollLeftPx,
@@ -19,6 +21,16 @@ import { followPageScrollLeft } from "../followPlayhead";
 /// The same rule is why every input arrives pre-measured instead of being read
 /// off the node: a per-frame `clientWidth` read would force a synchronous
 /// layout right after the playhead component dirtied `style.left`.
+///
+/// YIELDS to the user's view. Once something other than this hook moves the
+/// view — a wheel or trackpad scroll, a scrollbar drag, a zoom — playback stops
+/// paging until one of: the playhead is comfortably inside a view that held
+/// still for a frame (it has caught up with where the user looked ahead), a
+/// user seek (`playheadSeekCount`), or playback starting. Without it every
+/// composition frame paged back a view the user had just scrolled off the
+/// playhead, and the two alternated each frame — a flicker. No timer resumes
+/// it: a view pulled away from what the user is reading is the same fight,
+/// only later.
 ///
 /// PROJECTED: it pages against this Panel's own reading of the moment, so a
 /// scrub in one timeline pages the others by their own geometry. A moment this
@@ -65,27 +77,61 @@ export function useFollowPlayhead(opts: {
     geomRef.current = { pxPerSec, viewportWidthPx, contentWidthPx };
   }, [pxPerSec, viewportWidthPx, contentWidthPx]);
 
+  // Where the view, the seek count and the playhead stood at this hook's last
+  // look, and whether it is yielding. Reset on every (re)subscribe below.
+  const followRef = useRef<{
+    scrollLeftPx: number;
+    seeks: number;
+    lastUs: number | null;
+    yielded: boolean;
+  }>({ scrollLeftPx: 0, seeks: 0, lastUs: null, yielded: false });
+
   const apply = useCallback(
     (tUs: number | null) => {
       const root = rootRef.current;
-      if (!root || scrubbingRef.current || tUs === null) return;
+      if (!root || tUs === null) return;
+      const follow = followRef.current;
+      // Tracked through a scrub too: the first move after it is measured from
+      // where the scrub left the playhead.
+      const backwardUs = follow.lastUs === null ? 0 : Math.max(0, follow.lastUs - tUs);
+      follow.lastUs = tUs;
+      if (scrubbingRef.current) return;
       const geom = geomRef.current;
+      // The store, not `root.scrollLeft` — see the layout-read note above. It
+      // tracks the node because the scroll event publishes to it and because
+      // this hook publishes its own writes below.
+      const scrollLeftPx = timelineScrollLeftPx(compositionId);
+      const seeks = playheadSeekCount();
+      // A user seek outranks a moved view: `jumpToTimeUs` seeks AND scrolls.
+      const viewMoved = seeks === follow.seeks && scrollLeftPx !== follow.scrollLeftPx;
+      if (seeks !== follow.seeks) follow.yielded = false;
+      else if (viewMoved) follow.yielded = true;
+      follow.seeks = seeks;
+      follow.scrollLeftPx = scrollLeftPx;
+
       const target = followPageScrollLeft({
         playheadPx: (tUs / 1_000_000) * geom.pxPerSec,
-        // The store, not `root.scrollLeft` — see the layout-read note above. It
-        // tracks the node because the scroll event publishes to it and because
-        // this hook publishes its own writes below.
-        scrollLeftPx: timelineScrollLeftPx(compositionId),
+        scrollLeftPx,
         viewportPx: geom.viewportWidthPx,
         maxScrollLeftPx: geom.contentWidthPx - geom.viewportWidthPx,
+        backwardPx: (backwardUs / 1_000_000) * geom.pxPerSec,
       });
+      if (follow.yielded) {
+        // Re-arm only on a still view: mid-gesture the playhead can sit
+        // comfortably inside for a frame before the next scroll step lands.
+        if (!viewMoved && target === null) follow.yielded = false;
+        return;
+      }
       if (target === null) return;
       root.scrollLeft = target;
       // Publish now instead of waiting for the scroll event's rAF: the ruler's
       // tick window is a subscriber, and one frame of the pre-jump region under
-      // a post-jump playhead reads as a glitch. The event still fires and
-      // reconciles against whatever the DOM actually clamped to.
-      setTimelineScrollLeftPx(compositionId, target);
+      // a post-jump playhead reads as a glitch. Read back (once per page, not
+      // per frame) rather than publish `target`: the DOM snaps the offset to
+      // device pixels, and the scroll event's later publish of the snapped
+      // value would read as a user scroll and stop the follow after one page.
+      setTimelineScrollLeftPx(compositionId, root.scrollLeft);
+      follow.scrollLeftPx = timelineScrollLeftPx(compositionId);
     },
     [compositionId, rootRef],
   );
@@ -107,7 +153,27 @@ export function useFollowPlayhead(opts: {
     // unchanged. Re-subscribing in that case immediately applies the parked
     // playhead and steals the user's horizontal window during track edits.
     // Subscribe to the clock's values, not the summary's object identity.
-    return subscribeLocalPlayhead(compositionId, anchorFrame, apply);
+    //
+    // A (re)subscribe starts un-yielded against the view as it stands: turning
+    // the follow on is the user asking for it. No last playhead: a new
+    // projection reads the moment on a different clock.
+    const rearm = (lastUs: number | null) => {
+      followRef.current = {
+        scrollLeftPx: timelineScrollLeftPx(compositionId),
+        seeks: playheadSeekCount(),
+        lastUs,
+        yielded: false,
+      };
+    };
+    rearm(null);
+    const unsubPlayback = usePlaybackStore.subscribe((s, prev) => {
+      if (s.playing && !prev.playing) rearm(followRef.current.lastUs);
+    });
+    const unsubPlayhead = subscribeLocalPlayhead(compositionId, anchorFrame, apply);
+    return () => {
+      unsubPlayback();
+      unsubPlayhead();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     anchorFrame?.offsetUs, anchorFrame?.windowStartUs, anchorFrame?.windowEndUs,

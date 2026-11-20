@@ -112,8 +112,10 @@ export interface AppSettings {
   /// about a project.
   timeline_wheel_axis: TimelineWheelAxis;
   /// Keep the playhead inside the timeline's visible span by paging the view
-  /// when it reaches an edge (`renderer/timeline/followPlayhead.ts`). Off means
-  /// the view only ever moves because the user moved it.
+  /// when it reaches an edge (`renderer/timeline/followPlayhead.ts`). On, it
+  /// still yields while the user has scrolled the view away
+  /// (`renderer/timeline/hooks/useFollowPlayhead.ts`). Off means the view only
+  /// ever moves because the user moved it.
   timeline_follow_playhead: boolean;
   /// Remove an unlocked, non-reserved track when an edit empties it. App-level;
   /// changing this preference does not sweep tracks that are already empty.

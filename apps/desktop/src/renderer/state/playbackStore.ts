@@ -4,6 +4,7 @@
 
 import { create } from "zustand";
 import type { PlaybackPhase, PlaybackSnapshot } from "../render/audio/PreviewAudioEngine";
+import { notePlayheadSeek } from "./playheadStore";
 
 /// Commands exposed by the editor session. Preview edits may borrow the
 /// monitor with mode="preview" without changing the session Moment.
@@ -66,7 +67,11 @@ export function transportPause(): void {
   usePlaybackStore.getState().transport?.pause();
 }
 
+/// Counted as a user seek (`playheadStore.ts`): some callers (a keyframe click,
+/// the preview surface) seek the transport directly and let the engine's emit
+/// move the playhead, so the count has to be taken here for them too.
 export function transportSeek(tUs: number): void {
+  notePlayheadSeek();
   usePlaybackStore.getState().transport?.seek(tUs);
 }
 

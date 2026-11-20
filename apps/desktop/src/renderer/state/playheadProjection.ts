@@ -44,6 +44,7 @@ import {
 } from "./compositionAnchorStore";
 import { seekToClamped } from "./navigation";
 import {
+  notePlayheadSeek,
   playheadTimeUs,
   setPlayheadTimeUs,
   usePlayheadStore,
@@ -227,6 +228,7 @@ function seekIn(
 ): void {
   if (frame === null) {
     if (compositionId === null) return;
+    notePlayheadSeek();
     setOrphanPlayheadUs(compositionId, clampOrphanUs(compositionId, localUs));
     return;
   }

@@ -1,7 +1,7 @@
 import { startPreviewAudioSession } from "./render/audio/previewAudioSession";
 import { installCompanionBridge } from "./companion/companionBridge";
 import { installPlayheadReport } from "./state/playheadReport";
-import { transportPlay, transportPause, transportSeek, usePlaybackStore } from "./state/playbackStore";
+import { transportPlay, transportPause, usePlaybackStore } from "./state/playbackStore";
 import { save as saveDialog } from "@/bridge/dialog";
 import { listen } from "@/bridge/events";
 import { invoke } from "@/bridge/ipc";
@@ -49,7 +49,6 @@ import {
 import {
   focusedPlayheadUs,
   focusedRootUs,
-  previewLocalUs,
 } from "./state/playheadProjection";
 import {
   playheadTimeUs,
@@ -66,10 +65,10 @@ import {
   type GapSelection,
 } from "./state/selectionStore";
 import {
-  clampSeekUs,
   registerOpenMediaPoolPanel,
   registerRevealCollapse,
   registerRevealTrack,
+  seekToClamped,
   seekToNextEdit,
   seekToNextMarker,
   seekToPrevEdit,
@@ -321,23 +320,10 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     return startPreviewAudioSession();
   }, []);
 
-  // Centralised playhead clamp — see "Boundary semantics" in docs/data-model.md.
-  // Every UI seek funnels through here so callers can pass raw boundary
-  // values (`duration_us`, `playheadTimeUs() + step`, parsed timecode) and
-  // the upper bound is enforced once. Lower bound at 0; upper at
-  // `lastFrameAnchorUs` so the playhead can never sit on the
-  // post-last-frame slot.
-  //
-  // `tUs` is ROOT time. A caller holding a composition's own clock projects
-  // first (`focusedRootUs`); the preview gets the projection back down, because
-  // it draws one composition and reads one number.
-  const seekTo = useCallback((tUs: number) => {
-    const clamped = clampSeekUs(tUs);
-    // Optimistic store write also covers the brief session initialization
-    // window before the transport is registered.
-    setPlayheadTimeUs(clamped);
-    transportSeek(previewLocalUs(clamped));
-  }, []);
+  // Every UI seek, ROOT time: `seekToClamped` owns the clamp ("Boundary
+  // semantics" in docs/data-model.md), the optimistic store write and the
+  // projection down to the preview's clock.
+  const seekTo = seekToClamped;
 
   // The companion page's player controls and transport, while a page is open
   // (`companion/companionBridge.ts`).
