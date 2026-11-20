@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { upgradeWire } from './migrate'
-import { parseProjectJson, serializeProjectToJson } from './persistence'
+import { loadProjectFromJson, serializeProjectToJson } from './persistence'
 import { validate } from './validate'
 import { SCHEMA_VERSION } from './model'
 
@@ -33,7 +33,7 @@ describe('v4 → v5 graphic role migration', () => {
   })
 
   it('loads the v4 fixture, saves v5 and reopens without a second migration', () => {
-    const { project, upgradedFrom } = parseProjectJson(readFileSync('fixtures/projects/v4.json', 'utf8'), { migration: { mediaSize: () => [640, 360] } })
+    const { project, upgradedFrom } = loadProjectFromJson(readFileSync('fixtures/projects/v4.json', 'utf8'), { dir: '/home/u/Film', migration: { mediaSize: () => [640, 360] } })
     expect(upgradedFrom).toBe(4)
     expect(() => validate(project)).not.toThrow()
     const text = Object.values(project.compositions).flatMap((c) => c.tracks.flatMap((t) => t.layers)).filter((l) => l.params.kind === 'Text')
@@ -41,7 +41,7 @@ describe('v4 → v5 graphic role migration', () => {
     for (const l of text) expect(l.params).toMatchObject({ kind: 'Text', graphic_role: null })
     const saved = serializeProjectToJson(project)
     expect(JSON.parse(saved).schema_version).toBe(SCHEMA_VERSION)
-    const reopened = parseProjectJson(saved)
+    const reopened = loadProjectFromJson(saved, { dir: '/home/u/Film' })
     expect(reopened.upgradedFrom).toBeNull()
     expect(serializeProjectToJson(reopened.project)).toBe(saved)
   })

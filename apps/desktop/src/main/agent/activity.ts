@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import type { ActorHandle, ChangeEvent } from '../state/actor'
 import { resolveEntityLabels } from '../state/history-labels'
 import type { EntityRef } from '../state/history'
 import { eachLayer } from '../state/model'
+import { projectPathBase } from '../../shared/projectPath'
 import type { AgentActivity, AgentActivityCompute, AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
 import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT, TACK_CAPACITY } from '../../shared/agent-activity'
 import { appendToolResultField } from '../state/mcp-results'
@@ -193,7 +195,7 @@ export class AgentActivityService {
     const entityLabels = resolveEntityLabels(project, null, affected)
     const mediaId = typeof input.media_id === 'string' ? input.media_id : typeof input.uri === 'string' ? /^media:\/\/([^/]+)/.exec(input.uri)?.[1] : undefined
     const media = mediaId ? project.media_pool[mediaId] : undefined
-    if (media) entityLabels.push({ text: media.path_abs.split(/[\\/]/).at(-1) ?? media.path_abs })
+    if (media) entityLabels.push({ text: media.path_rel ? projectPathBase(media.path_rel) : path.basename(media.path_abs) })
     const activity: AgentActivity = {
       id: randomUUID(), session_id: this.active?.connection_id === connection ? this.active.id : null,
       connection_id: connection, client, tool, kind: read ? 'read' : 'operation',

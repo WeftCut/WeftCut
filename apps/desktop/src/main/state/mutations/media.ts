@@ -1,10 +1,13 @@
 import type { AudioParams, LayerParams, MediaItem, Project, Track, Uuid } from '../model'
 import type { DecodeRoute } from '../../../shared/decode-route'
+import type { ProjectPath } from '../../../shared/projectPath'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { defaultTransform } from './add'
 import { pruneEmptiedTrack, requireLayer } from './helpers'
 import { eachLayer } from '../model'
+import { mediaAtFolder } from '../projectFile'
+import type { PathPlatform } from '../projectPathNative'
 
 /** The canonical VideoClip layer shape. blend_mode
  *  default = Normal, transform default per defaultTransform. */
@@ -51,19 +54,19 @@ export function mediaItemTemplate(id: Uuid, kind: MediaItem['kind'], durationUs:
  *   - `quick_proxy_landed` is the tri-state quick-proxy slot (Option<Option<P>>
  *     in Rust → `'quick_proxy_landed' in patch` here; null = cleared); folded
  *     into DirectExport/Proxied, ignored on Bypass.
- *   - `full_proxy_landed` is a NAMED object `{ path, format_version }` (Rust
- *     `FullProxyLanded`, not a tuple/array); folded into Proxied only.
+ *   - `full_proxy_landed` is the same tri-state for the full export master;
+ *     folded into Proxied/NativeSw only.
  *  waveform/conform/thumbnails are plain Option<T> (set-or-leave; never cleared). */
 export interface MediaDerivativesPatch {
   set_route?: DecodeRoute
   quick_proxy_landed?: string | null
-  full_proxy_landed?: { path: string; format_version: number } | null
+  full_proxy_landed?: string | null
   waveform_path?: string | null
   conform_path?: string | null
   thumbnails_dir?: string | null
 }
 export interface WorkspacePaths {
-  path_abs: string; path_rel: string | null; file_hash_blake3: string; file_size: number; file_mtime: number
+  path_abs: string; path_rel: ProjectPath | null; file_hash_blake3: string; file_size: number; file_mtime: number
 }
 
 /** set_media_derivatives — patch one pool item's derivative fields, returning
@@ -84,10 +87,8 @@ export function applySetMediaDerivatives(pool: Record<string, MediaItem>, id: Uu
     // Bypass: no quick slot — ignore (Rust never emits this; defensive).
   }
   if ('full_proxy_landed' in patch) {
-    const f = patch.full_proxy_landed
-    if (route.route === 'proxied' || route.route === 'native-sw') {
-      route = { ...route, full_proxy: f?.path ?? null, format_version: f?.format_version ?? route.format_version }
-    }
+    const f = patch.full_proxy_landed ?? null
+    if (route.route === 'proxied' || route.route === 'native-sw') route = { ...route, full_proxy: f }
   }
   next.decode_route = route
   // plain Option<PathBuf> (Rust `if let Some(p)`): set only when present-and-non-null.
@@ -105,6 +106,24 @@ export function applySetMediaWorkspacePaths(pool: Record<string, MediaItem>, id:
   if (!item) throw new CommandFailure({ error: 'MediaNotFound', media: id })
   return { ...pool, [id]: { ...item, path_abs: paths.path_abs, path_rel: paths.path_rel,
     file_hash_blake3: paths.file_hash_blake3, file_size: paths.file_size, file_mtime: paths.file_mtime } }
+}
+
+/** rebase_media — the pool of the project now in `projectDir` (Save As):
+ *  each item inside the folder at its path there, an external one where it
+ *  was, and the derivatives `derivatives` holds for it as the only ready
+ *  ones: a derivative of the old folder's cache is not this folder's. */
+export function applyRebaseMedia(pool: Record<string, MediaItem>, projectDir: string, derivatives: Record<string, MediaDerivativesPatch>, platform: PathPlatform = process.platform): Record<string, MediaItem> {
+  return foldDerivatives(mediaAtFolder(pool, projectDir, platform), derivatives)
+}
+
+/** `pool` with each patch of `derivatives` folded in as `set_media_derivatives`
+ *  would; an entry for an id the pool does not hold is ignored. */
+export function foldDerivatives(pool: Record<string, MediaItem>, derivatives: Record<string, MediaDerivativesPatch>): Record<string, MediaItem> {
+  const next = { ...pool }
+  for (const [id, patch] of Object.entries(derivatives)) {
+    if (Object.hasOwn(next, id)) next[id] = applySetMediaDerivatives({ [id]: next[id]! }, id, patch)[id]!
+  }
+  return next
 }
 
 /** Set ONLY the source content hash on a pool item — used by the hash-first

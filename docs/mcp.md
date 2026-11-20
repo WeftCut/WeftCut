@@ -1453,8 +1453,9 @@ Unconfigured speech tools stay listed and refuse naming the Settings panel.
   `t_start_us`/`t_end_us` and `src_in_us`/`src_out_us` with `rate {num, den}`,
   so offset `w` maps to `t_start_us + w / rate`. Resolves no backend, uploads nothing, needs
   nothing configured.
-- `synthesize_speech` — OpenAI tts-1 to `Cache/voiceover/<hash>.mp3`,
-  imported and placed as a voiceover Audio layer in `composition_id` (root by
+- `synthesize_speech` — OpenAI tts-1, cached at `Cache/voiceover/<hash>.mp3`
+  and pooled as `Media/Voiceover/voiceover-<hash8>.mp3` (needs an open project;
+  the same bytes reuse one file and one media item), placed as a voiceover Audio layer in `composition_id` (root by
   default; start: that composition's end; lane: `target_track_id`, else the
   topmost unlocked track whose audio lane is free across the clip, else a new
   "Voiceover" track). One placement or none: a refused placement takes the

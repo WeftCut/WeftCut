@@ -12,6 +12,7 @@ import { seededGen } from '../ids'
 import { root } from './fixtures/project'
 import { errno, memAtomicIo, type MemAtomicIo } from './fixtures/memAtomicIo'
 import { ATOMIC_TEMP_SUFFIX, writeFileAtomic } from '../../atomicWrite'
+import { parseProjectPath } from '../../../shared/projectPath'
 
 const posixJoin = (...p: string[]) => p.join('/')
 
@@ -40,6 +41,7 @@ function deps(over: Partial<OrchestratorDeps> = {}): OrchestratorDeps & { calls:
   const actor = {
     replaceState: vi.fn((_p: unknown) => { calls.push('replaceState') }),
     snapshot: vi.fn(() => blankProject(seededGen(), 'snap')),
+    dispatch: vi.fn(() => ({ ok: true as const, value: null })),
   }
   return { actor, napi, fs: memFs(), join: posixJoin, idGen: seededGen(), calls, ...over } as OrchestratorDeps & { calls: string[] }
 }
@@ -146,7 +148,7 @@ describe('openProject', () => {
 
   const managedItem: MediaItem = {
     id: 'm1', label: null,
-    path_abs: '/elsewhere/电子榨菜.mp3', path_rel: 'Media/电子榨菜.mp3', kind: 'Audio',
+    path_abs: '/elsewhere/电子榨菜.mp3', path_rel: parseProjectPath('Media/电子榨菜.mp3'), kind: 'Audio',
     metadata: { duration_us: 1_000_000 }, file_hash_blake3: 'b3:AAAA', file_size: 4, file_mtime: 1,
     imported_at: '2026-01-01T00:00:00Z',
     decode_route: { route: 'bypass' },
@@ -162,12 +164,13 @@ describe('openProject', () => {
     const relink = {
       fs: {
         exists: (p: string) => disk.has(p),
-        listDir: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/')).map((p) => p.slice(d.length + 1)),
+        walk: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/'))
+          .map((p) => ({ segments: p.slice(d.length + 1).split('/'), abs: p, size: disk.get(p)!.length })),
         statFile: (p: string) => (disk.has(p) ? { size: disk.get(p)!.length, mtimeSecs: 9 } : null),
         rename: (from: string, to: string) => { disk.set(to, disk.get(from)!); disk.delete(from) },
       },
-      join: posixJoin,
       hashFile: async (p: string) => `b3:${disk.get(p) ?? ''}`,
+      platform: 'linux' as const,
     }
     const reports: unknown[] = []
     let swapped: any
@@ -189,12 +192,13 @@ describe('openProject', () => {
     const relink = {
       fs: {
         exists: (p: string) => disk.has(p),
-        listDir: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/')).map((p) => p.slice(d.length + 1)),
+        walk: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/'))
+          .map((p) => ({ segments: p.slice(d.length + 1).split('/'), abs: p, size: disk.get(p)!.length })),
         statFile: (p: string) => (disk.has(p) ? { size: disk.get(p)!.length, mtimeSecs: 9 } : null),
         rename: (from: string, to: string) => { disk.set(to, disk.get(from)!); disk.delete(from) },
       },
-      join: posixJoin,
       hashFile: async (p: string) => `b3:${disk.get(p) ?? ''}`,
+      platform: 'linux' as const,
     }
     const d = deps({ fs, relink, onRelink: () => { throw new Error('emit failed') } })
     await openProject(d, '/ws')
@@ -205,8 +209,7 @@ describe('openProject', () => {
   it('opens the un-healed project when the relink pass itself throws', async () => {
     const fs = memFs({ [`/ws/${PROJECT_FILE}`]: managedJson }); fs.dirs.add('/ws')
     const relink = {
-      fs: { exists: (): boolean => { throw new Error('boom') }, listDir: () => [], statFile: () => null, rename: () => {} },
-      join: posixJoin,
+      fs: { exists: (): boolean => { throw new Error('boom') }, walk: () => [], statFile: () => null, rename: () => {} },
       hashFile: async () => '',
     }
     const reports: unknown[] = []
@@ -257,7 +260,7 @@ describe('saveProjectAs', () => {
     const writeFile = fs.writeFile
     fs.writeFile = (p, t) => { order.push(`write:${p}`); writeFile(p, t) }
     const copyMotifs = vi.fn((from: string, to: string, ids: readonly string[]) => { order.push(`copy:${from}->${to}:${ids.join(',')}`) })
-    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs) } })
+    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
     await saveProjectAs(d, '/out', '/ws')
     expect(order).toEqual(['copy:/ws->/out:lower-third,title-card', `write:/out/${PROJECT_FILE}`])
   })
@@ -265,7 +268,7 @@ describe('saveProjectAs', () => {
   it('fails without writing project.json when a Motif folder cannot be copied', async () => {
     const fs = memFs()
     const copyMotifs = vi.fn(() => { throw new Error('EACCES') })
-    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs) } })
+    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
     await expect(saveProjectAs(d, '/out', '/ws')).rejects.toThrow('EACCES')
     expect(fs.files.has(`/out/${PROJECT_FILE}`)).toBe(false)
     expect(d.calls).toEqual([])
@@ -367,7 +370,7 @@ describe('makeEnqueueDerivatives', () => {
   it('enqueues only the items whose file still holds their bytes', async () => {
     const calls: string[] = []
     const project = blankProject(seededGen(), 'D')
-    const item = (id: string): MediaItem => ({ id, label: null, path_abs: `/ws/Media/${id}`, path_rel: `Media/${id}`, kind: 'Video',
+    const item = (id: string): MediaItem => ({ id, label: null, path_abs: `/ws/Media/${id}`, path_rel: parseProjectPath(`Media/${id}`), kind: 'Video',
       metadata: { duration_us: 1 }, file_hash_blake3: 'h', file_size: 1, file_mtime: 1, imported_at: '2026-01-01T00:00:00Z',
       decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null })
     const held = '00000000-0000-0000-0000-0000000000aa', changed = '00000000-0000-0000-0000-0000000000bb'

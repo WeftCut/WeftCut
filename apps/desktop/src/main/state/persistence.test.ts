@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { WorkspaceFailure } from '../../shared/workspaceErrors'
 import { seededGen } from './ids'
 import { blankProject, SCHEMA_VERSION } from './model'
-import type { MediaItem, Project } from './model'
 import { canonicalString } from './canonical'
 import { serializeProject } from './serialize'
-import { serializeProjectToJson, schemaGate, parseProjectJson, reconcileMediaPaths, loadProjectFromJson } from './persistence'
+import { serializeProjectToJson, schemaGate, loadProjectFromJson } from './persistence'
 import { root, withGroup } from './__tests__/fixtures/project'
 
 const MARKER_BLUE = { r: 0, g: 128, b: 255, a: 255 }
+/** The folder every load in this file opens from. */
+const AT = { dir: '/home/u/Film' }
 
 describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => {
   it('pretty-prints with 2-space indent and no trailing newline', () => {
@@ -18,9 +19,9 @@ describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => 
     expect(json.endsWith('\n')).toBe(false)
     expect(json.includes('\n    ')).toBe(true) // nested 4-space level exists
   })
-  it('round-trips through parseProjectJson canonically', () => {
+  it('round-trips through loadProjectFromJson canonically', () => {
     const p = blankProject(seededGen(), 'doc')
-    const { project: back, upgradedFrom } = parseProjectJson(serializeProjectToJson(p))
+    const { project: back, upgradedFrom } = loadProjectFromJson(serializeProjectToJson(p), AT)
     expect(upgradedFrom).toBeNull()          // a file this build wrote needs no upgrade
     expect(canonicalString(serializeProject(back))).toBe(canonicalString(serializeProject(p)))
   })
@@ -31,7 +32,7 @@ describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => 
       { id: 't2', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Wipe', direction: 'left' }, extended_us: 0 },
       { id: 't3', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Slide', direction: 'up' }, extended_us: 500_000 },
     )
-    const { project: back } = parseProjectJson(serializeProjectToJson(p))
+    const { project: back } = loadProjectFromJson(serializeProjectToJson(p), AT)
     expect(root(back).transitions).toEqual(root(p).transitions)
     expect(canonicalString(serializeProject(back))).toBe(canonicalString(serializeProject(p)))
   })
@@ -54,7 +55,7 @@ describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => 
       { id: 'asleep', t_us: 900_000, end_t_us: null, label: 'asleep', note: 'past the out point', color: MARKER_BLUE,
         anchor: { layer: refLayerId, src_us: window.src_out_us + 1_000_000 } },
     ]
-    const { project: back } = parseProjectJson(serializeProjectToJson(p))
+    const { project: back } = loadProjectFromJson(serializeProjectToJson(p), AT)
     expect(root(back).markers).toEqual(root(p).markers)
     expect(canonicalString(serializeProject(back))).toBe(canonicalString(serializeProject(p)))
   })
@@ -85,80 +86,24 @@ describe('schemaGate', () => {
   })
 })
 
-describe('parseProjectJson', () => {
+describe('loadProjectFromJson', () => {
   const wireAt = (v: number): string => {
     const p = blankProject(seededGen(), 'doc')
     return JSON.stringify({ ...(serializeProject(p) as object), schema_version: v })
   }
 
   it('throws on malformed JSON', () => {
-    expect(() => parseProjectJson('{not json')).toThrow()
+    expect(() => loadProjectFromJson('{not json', AT)).toThrow()
   })
   it('reports no upgrade for a current-version file', () => {
-    expect(parseProjectJson(wireAt(SCHEMA_VERSION)).upgradedFrom).toBeNull()
+    expect(loadProjectFromJson(wireAt(SCHEMA_VERSION), AT).upgradedFrom).toBeNull()
   })
   it('refuses a newer file at the gate, before the structural cast', () => {
-    expect(() => parseProjectJson(wireAt(SCHEMA_VERSION + 1)))
+    expect(() => loadProjectFromJson(wireAt(SCHEMA_VERSION + 1), AT))
       .toThrow(new WorkspaceFailure({ error: 'ProjectSchemaTooNew', found: SCHEMA_VERSION + 1, supported: SCHEMA_VERSION }))
   })
   it('refuses a version below the chain floor rather than guessing at its shape', () => {
     // v0 never shipped. The chain has no step for it and must not invent one.
-    expect(() => parseProjectJson(wireAt(0))).toThrow(/predates the oldest upgradable version/)
-  })
-})
-
-const posixJoin = (...parts: string[]) => parts.join('/').replace(/\/+/g, '/')
-
-function mediaItem(over: Partial<MediaItem>): MediaItem {
-  return {
-    id: '00000000-0000-0000-0000-0000000000aa', label: null,
-    path_abs: '/saved/at/Media/clip.mp4', path_rel: 'Media/clip.mp4', kind: 'Video',
-    metadata: { duration_us: 1_000_000 }, file_hash_blake3: 'deadbeef', file_size: 0, file_mtime: 0,
-    imported_at: '2026-01-01T00:00:00Z', decode_route: { route: 'bypass' },
-    conform_path: null, waveform_path: null, thumbnails_dir: null, ...over,
-  }
-}
-function withMedia(items: MediaItem[]): Project {
-  return {
-    schema_version: SCHEMA_VERSION, project_id: 'p', metadata: { name: 'm', created_at: '<TS>', modified_at: '<TS>', description: null },
-    compositions: { root: {
-      id: 'root', label: null, ordinal: 0, width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0, duration_pinned: false,
-      sample_rate: 48000, channels: 2, color_space: 'Bt709', background: { r: 0, g: 0, b: 0, a: 255 },
-      tracks: [], markers: [], transitions: [], links: [],
-    } }, root_id: 'root', next_group_ordinal: 1,
-    media_pool: Object.fromEntries(items.map((i) => [i.id, i])), audio_roles: {},
-    settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60, history_capacity: 200, auto_pair_audio_on_import: true, prefer_proxies: false, proxy_overrides: {}, shot_review: null, pause_review: null },
-    motifs: {},
-  }
-}
-
-describe('reconcileMediaPaths (mirror io/mod.rs:73 path_abs ← dir.join(path_rel))', () => {
-  it('rewrites path_abs from path_rel against the new workspace dir', () => {
-    const p = withMedia([mediaItem({ path_rel: 'Media/clip.mp4', path_abs: '/old/Media/clip.mp4' })])
-    const out = reconcileMediaPaths(p, '/new/ws.vproj', posixJoin)
-    expect(out.media_pool['00000000-0000-0000-0000-0000000000aa'].path_abs).toBe('/new/ws.vproj/Media/clip.mp4')
-  })
-  it('leaves path_abs alone when path_rel is null (pending import / synthesized media)', () => {
-    const p = withMedia([mediaItem({ path_rel: null, path_abs: '/external/source/video.mp4' })])
-    const out = reconcileMediaPaths(p, '/new/ws.vproj', posixJoin)
-    expect(out.media_pool['00000000-0000-0000-0000-0000000000aa'].path_abs).toBe('/external/source/video.mp4')
-  })
-})
-
-describe('loadProjectFromJson', () => {
-  it('retains reusable quick proxy references when reopening the same workspace', () => {
-    const quick = '/ws/Cache/proxies/deadbeef.quick-q4.mp4'
-    const p = withMedia([mediaItem({ decode_route: { route: 'direct-export', quick_proxy: quick } })])
-    const { project } = loadProjectFromJson(JSON.stringify(p), { dir: '/ws', join: posixJoin })
-    expect(project.media_pool['00000000-0000-0000-0000-0000000000aa'].decode_route)
-      .toEqual({ route: 'direct-export', quick_proxy: quick })
-  })
-  it('reconciles originals without deleting reusable derivative references', () => {
-    const p = withMedia([mediaItem({ path_rel: 'Media/clip.mp4', path_abs: '/old/Media/clip.mp4', decode_route: { route: 'direct-export', quick_proxy: '/old/clip.quick.mp4' } })])
-    const text = JSON.stringify(p)
-    const { project } = loadProjectFromJson(text, { dir: '/moved.vproj', join: posixJoin })
-    const m = project.media_pool['00000000-0000-0000-0000-0000000000aa']
-    expect(m.path_abs).toBe('/moved.vproj/Media/clip.mp4')
-    expect(m.decode_route).toEqual({ route: 'direct-export', quick_proxy: '/old/clip.quick.mp4' })
+    expect(() => loadProjectFromJson(wireAt(0), AT)).toThrow(/predates the oldest upgradable version/)
   })
 })

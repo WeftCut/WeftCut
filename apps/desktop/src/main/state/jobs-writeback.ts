@@ -10,6 +10,7 @@
 // preserves. UNRECORDED on the actor (durable across undo; 1 broadcast id).
 import type { ActorHandle, DispatchResult } from './actor'
 import type { MediaDerivativesPatch } from './mutations/media'
+import { parseProjectPath } from '../../shared/projectPath'
 
 export interface MediaDerivativesEvent {
   media_id: string
@@ -50,13 +51,15 @@ export interface MediaWorkspacePathsEvent {
  *  set_media_workspace_paths arm — `paths` is the 5-field WorkspacePaths).
  *  MediaNotFound is benign (the media may have been removed between import
  *  and copy-completion) — logged, not thrown. Null: a copy of other bytes
- *  than the item records, discarded unapplied. */
+ *  than the item records, discarded unapplied. Throws on a `path_rel` that is
+ *  not a ProjectPath. */
 export function applyWorkspacePathsEvent(
   actor: Pick<ActorHandle, 'dispatch' | 'snapshot'>,
   payload: MediaWorkspacePathsEvent,
   relocated?: (proof: import('../../shared/media-source-relocated').MediaSourceRelocated) => void,
   discard?: (path: string) => void,
 ): DispatchResult | null {
+  const pathRel = parseProjectPath(payload.path_rel)
   const previous = actor.snapshot().media_pool[payload.media_id];
   // A copy is the item's file only if it holds the bytes the item records.
   // The source can be overwritten while its copy waits in the queue; the copy
@@ -73,7 +76,7 @@ export function applyWorkspacePathsEvent(
     media: payload.media_id,
     paths: {
       path_abs: payload.path_abs,
-      path_rel: payload.path_rel,
+      path_rel: pathRel,
       file_hash_blake3: payload.file_hash_blake3,
       file_size: payload.file_size,
       file_mtime: payload.file_mtime,

@@ -1,6 +1,6 @@
 //! Proxy generation. Transcodes a source to an H.264/AAC mp4 — the EXPORT
 //! master for codecs WebCodecs can't decode directly. Preview reads the
-//! lighter quick proxy, not this. Output at `<cache>/proxies/<file_hash>.mp4`.
+//! lighter quick proxy, not this. Output at `<cache>/proxies/<file_hash>.full-p<version>.mp4`.
 //! See ADR 0011.
 //!
 //! Encode is always software (libx264): proxies must be portable across
@@ -104,28 +104,7 @@ pub fn color_args(media: &MediaItem) -> Vec<String> {
 
 pub(super) fn cached_path(cache: &CacheLayout, media: &MediaItem) -> Option<PathBuf> {
     let path = cache.proxy(&media.file_hash_blake3, media.proxy_recipe());
-    if crate::cache::valid_mp4(&path) {
-        return Some(path);
-    }
-    // Legacy unversioned masters can be adopted only when the saved route
-    // proves their recipe. New outputs always carry the version in the key.
-    let legacy = cache
-        .proxies_dir()
-        .join(format!("{}.mp4", media.file_hash_blake3));
-    let registered = match &media.decode_route {
-        crate::state::DecodeRoute::Proxied {
-            full_proxy: Some(path),
-            format_version,
-            ..
-        }
-        | crate::state::DecodeRoute::NativeSw {
-            full_proxy: Some(path),
-            format_version,
-            ..
-        } if *format_version == media.proxy_recipe().full_version() && *path == legacy => path,
-        _ => return None,
-    };
-    crate::cache::valid_mp4(registered).then(|| registered.clone())
+    crate::cache::valid_mp4(&path).then_some(path)
 }
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
@@ -264,7 +243,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -408,7 +386,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -535,7 +512,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -623,7 +599,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -640,6 +615,40 @@ mod tests {
         assert_eq!(
             tokio::fs::read(&dest).await.unwrap(),
             include_bytes!("../../../fixtures/media/tiny.mp4")
+        );
+    }
+
+    /// Only the versioned name is a master: the project-format migration
+    /// renames an unversioned `<hash>.mp4`, so a route still naming one is
+    /// never taken at its word.
+    #[test]
+    fn an_unversioned_master_is_not_adopted() {
+        let tmp = TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().join("cache"));
+        cache.ensure_dirs().unwrap();
+        let mut media = video_with_color(None, None, None, None);
+        let unversioned = cache
+            .proxies_dir()
+            .join(format!("{}.mp4", media.file_hash_blake3));
+        std::fs::write(
+            &unversioned,
+            include_bytes!("../../../fixtures/media/tiny.mp4"),
+        )
+        .unwrap();
+        media.decode_route = DecodeRoute::Proxied {
+            quick_proxy: None,
+            full_proxy: Some(unversioned),
+        };
+        assert_eq!(cached_path(&cache, &media), None);
+
+        std::fs::write(
+            cache.proxy(&media.file_hash_blake3, media.proxy_recipe()),
+            include_bytes!("../../../fixtures/media/tiny.mp4"),
+        )
+        .unwrap();
+        assert_eq!(
+            cached_path(&cache, &media),
+            Some(cache.proxy(&media.file_hash_blake3, media.proxy_recipe()))
         );
     }
 
@@ -694,7 +703,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -797,7 +805,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,

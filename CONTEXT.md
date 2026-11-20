@@ -941,6 +941,12 @@ The folder holding `project.json`; may be an agent's working directory.
 Relative tool paths resolve against it. See ADR 0152.
 _Avoid_: project directory
 
+**Project path**:
+Where a file sits inside the project folder, as `project.json` records it:
+`/`-separated, relative, every segment a name each OS accepts
+(`Media/sub/clip.mp4`). Only `toNative` turns one into an OS path. See ADR 0175.
+_Avoid_: relative path, workspace path
+
 **TASTE**:
 `TASTE.md` in the project: extends one style and overrides its fields. Always
 capitals.

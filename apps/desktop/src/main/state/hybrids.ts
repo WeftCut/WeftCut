@@ -803,15 +803,21 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
         refuseArg('target_track_id', `track ${String(args.target_track_id)} is not in ${args.composition_id ? `composition ${String(args.composition_id)}` : 'the root composition'}`)
       const { media_item, duration_us, cached } = JSON.parse(
         await deps.compute.synthesizeSpeechCompute(JSON.stringify(args)),
-      ) as { media_item: { id: string }; duration_us: number; cached: boolean }
+      ) as { media_item: MediaItem; duration_us: number; cached: boolean }
       const tStart = (args.t_start_us as number | undefined) ?? composition.duration_us
       const tEnd = tStart + duration_us
       const named = args.target_track_id as string | undefined
       const trackId = named ?? voiceoverLane(composition, tStart, tEnd) ?? null
 
-      const addR = deps.actor.dispatch('add_media_item', { media: media_item })
-      if (!addR.ok) throw new Error(JSON.stringify(addR.error))
-      const undoPool = () => { deps.actor.dispatch('remove_media', { media: media_item.id, force: false }) }
+      // One pool item per content (ADR 0151): a voiceover whose bytes the pool
+      // already holds places that item.
+      const pooled = Object.values(deps.actor.snapshot().media_pool).find((m) => m.file_hash_blake3 === media_item.file_hash_blake3)
+      const mediaId = pooled?.id ?? media_item.id
+      if (!pooled) {
+        const addR = deps.actor.dispatch('add_media_item', { media: media_item })
+        if (!addR.ok) throw new Error(JSON.stringify(addR.error))
+      }
+      const undoPool = () => { if (!pooled) deps.actor.dispatch('remove_media', { media: media_item.id, force: false }) }
       let lane = trackId
       if (lane === null) {
         const r = deps.actor.dispatch('add_track', { label: 'Voiceover', composition_id: composition.id })
@@ -821,13 +827,14 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // ONE add_layer carrying role:'voiceover' — the 'audio' arm accepts the
       // optional `role` override (actor.ts), so no separate update_layer_params.
       const layerR = deps.actor.dispatch('add_layer', {
-        kind: 'audio', track: lane, media: media_item.id, src_in_us: 0, src_out_us: duration_us,
+        kind: 'audio', track: lane, media: mediaId, src_in_us: 0, src_out_us: duration_us,
         role: 'voiceover', t_start_us: tStart, t_end_us: tEnd,
       })
       if (!layerR.ok) { undoPool(); throw new Error(JSON.stringify(layerR.error)) }
-      await deps.enqueueDerivatives([media_item])
+      // A pooled item's jobs were queued when it entered the pool.
+      if (!pooled) await deps.enqueueDerivatives([media_item])
       // Return a JSON STRING, never the object — runHybrid's result contract.
-      return JSON.stringify({ layer_id: layerR.value as string, media_id: media_item.id, track_id: lane, t_start_us: tStart, t_end_us: tEnd, cached })
+      return JSON.stringify({ layer_id: layerR.value as string, media_id: mediaId, track_id: lane, t_start_us: tStart, t_end_us: tEnd, cached })
     }
     case 'auto_split_by_shot': {
       // Convenience composite (reproducible with analyze_clip + split_layer):

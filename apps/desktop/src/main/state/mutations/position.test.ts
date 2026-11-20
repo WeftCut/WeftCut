@@ -7,7 +7,7 @@ import { applyUpdateLayerParamTrack, applyParamsPatch } from './params';
 import { applySplitLayer } from './split';
 import { applyTrimLayer } from './trim';
 import { createActor } from '../actor';
-import { parseProjectJson, serializeProjectToJson } from '../persistence';
+import { loadProjectFromJson, serializeProjectToJson } from '../persistence';
 import { evaluatePosition } from '../../../renderer/render/position';
 import { IN_IDENTITY, OUT_IDENTITY } from '../../../shared/keyframe';
 import { type PathPosition } from '../../../shared/position';
@@ -44,7 +44,7 @@ describe('path authoring through state operations', () => {
             applySetPosition(p, id, conversion.position);
             expect(params.transform.position).toEqual(conversion.position);
             const serialized = serializeProjectToJson(p);
-            expect(serializeProjectToJson(parseProjectJson(serialized).project)).toEqual(serialized);
+            expect(serializeProjectToJson(loadProjectFromJson(serialized, { dir: '/home/u/Film' }).project)).toEqual(serialized);
         }
     });
     it('solves Auto on commit and inserts without changing progress or motion, with one-step undo', () => {
@@ -74,7 +74,7 @@ describe('path authoring through state operations', () => {
         expect(() => applyUpdateLayerParamTrack(p, id, 'x', { mode: 'Static', value: 99 })).toThrow();
         expect(() => applyParamsPatch({ id, params } as never, { kind: 'Text', x: 99 })).toThrow();
         expect(serializeProjectToJson(p)).toBe(before);
-        expect(serializeProjectToJson(parseProjectJson(before).project)).toBe(before);
+        expect(serializeProjectToJson(loadProjectFromJson(before, { dir: '/home/u/Film' }).project)).toBe(before);
     });
     it('preserves movement on both sides of a split, including cyclic extrapolation', () => {
         const { p, c, id, path, gen } = setup();

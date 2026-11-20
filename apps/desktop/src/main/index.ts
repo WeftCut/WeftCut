@@ -916,9 +916,31 @@ app.whenReady().then(async () => {
   // Directory-scan/stat/rename shell for the open-time media relink self-heal.
   const relinkFs = {
     exists: (p: string) => fs.existsSync(p),
-    listDir: (d: string) => { try { return fs.readdirSync(d) as string[] } catch { return [] } },
+    walk: (root: string) => {
+      const found: { segments: string[]; abs: string; size: number }[] = []
+      const visit = (d: string, segments: string[]) => {
+        let entries: fs.Dirent[]
+        try { entries = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+        for (const e of entries) {
+          if (e.name.startsWith('.') || e.name.endsWith('.tmp')) continue
+          const abs = path.join(d, e.name)
+          // Dirent types come from lstat: a symlink is neither a file nor a
+          // folder here, so the walk never leaves Media/.
+          if (e.isDirectory()) visit(abs, [...segments, e.name])
+          else if (e.isFile()) {
+            const s = statFile(abs)
+            if (s) found.push({ segments: [...segments, e.name], abs, size: s.size })
+          }
+        }
+      }
+      visit(root, [])
+      return found
+    },
     statFile,
-    rename: (from: string, to: string) => { fs.renameSync(from, to) },
+    rename: (from: string, to: string) => {
+      fs.mkdirSync(path.dirname(to), { recursive: true })
+      fs.renameSync(from, to)
+    },
   }
 
   // Napi facade for workspace bookkeeping — delegates workspace/job ops to the
@@ -928,6 +950,7 @@ app.whenReady().then(async () => {
     pushRecent: (p: string, n: string) => recents.push(p, n),
     setLastNewProjectParent: (p: string) => recents.setLastNewProjectParent(p),
     enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j, workspaceEvents.requireCurrent()),
+    hydrateDerivatives: (j: string) => backend!.hydrateDerivatives(j, workspaceEvents.requireCurrent()),
   }
 
   // Workspace dir cache — seeded once at boot; refreshed after each persistence call
@@ -1173,6 +1196,7 @@ app.whenReady().then(async () => {
     poolFs,
     fs: nodeFs,
     relinkFs,
+    contentFs: fs.promises,
     join: path.join,
     napi: napiFacadeWithCache,
     compute: computeFacade,

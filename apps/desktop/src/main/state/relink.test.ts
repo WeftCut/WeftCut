@@ -2,19 +2,22 @@ import { describe, it, expect } from 'vitest'
 import { relinkMissingMedia, type RelinkFs } from './relink'
 import { blankProject, type MediaItem, type Project } from './model'
 import { seededGen } from './ids'
+import { parseProjectPath } from '../../shared/projectPath'
+import type { PathPlatform } from './projectPathNative'
 
-const posixJoin = (...p: string[]) => p.join('/')
-
-/** In-memory fs: path → contents string (hash = `b3:${contents}` via fakeHash). */
-function memFs(seed: Record<string, string>) {
+/** In-memory fs: path → contents string (hash = `b3:${contents}` via fakeHash).
+ *  `exists` folds case when the volume is case-insensitive, as NTFS and APFS
+ *  do by default. */
+function memFs(seed: Record<string, string>, opts: { caseInsensitive?: boolean } = {}) {
   const files = new Map(Object.entries(seed))
+  const fold = (p: string) => (opts.caseInsensitive ? p.toLowerCase() : p)
   const fs: RelinkFs & { files: Map<string, string>; renames: [string, string][] } = {
     files,
     renames: [],
-    exists: (p) => files.has(p),
-    listDir: (dir) => [...files.keys()]
-      .filter((p) => p.startsWith(dir + '/') && !p.slice(dir.length + 1).includes('/'))
-      .map((p) => p.slice(dir.length + 1)),
+    exists: (p) => [...files.keys()].some((f) => fold(f) === fold(p)),
+    walk: (dir) => [...files.keys()]
+      .filter((p) => p.startsWith(dir + '/') || p.startsWith(dir + '\\'))
+      .map((p) => ({ segments: p.slice(dir.length + 1).split(/[\\/]/), abs: p, size: files.get(p)!.length })),
     statFile: (p) => (files.has(p) ? { size: files.get(p)!.length, mtimeSecs: 777 } : null),
     rename: (from, to) => {
       if (!files.has(from)) throw new Error(`ENOENT ${from}`)
@@ -34,7 +37,7 @@ const fakeHash = (fs: { files: Map<string, string> }) => async (p: string) => {
 
 function mediaItem(over: Partial<MediaItem>): MediaItem {
   return {
-    id: 'm1', label: null, path_abs: '/ws/Media/clip.mp4', path_rel: 'Media/clip.mp4', kind: 'Video',
+    id: 'm1', label: null, path_abs: '/ws/Media/clip.mp4', path_rel: parseProjectPath('Media/clip.mp4'), kind: 'Video',
     metadata: { duration_us: 1_000_000 }, decode_route: { route: 'bypass' },
     waveform_path: null, conform_path: null, thumbnails_dir: null,
     file_hash_blake3: 'b3:AAAA', file_size: 4, file_mtime: 1, imported_at: '2026-01-01T00:00:00Z',
@@ -48,8 +51,8 @@ function withPool(items: MediaItem[]): Project {
   return p
 }
 
-async function run(project: Project, fs: ReturnType<typeof memFs>) {
-  return relinkMissingMedia(project, '/ws', { fs, join: posixJoin, hashFile: fakeHash(fs) })
+async function run(project: Project, fs: ReturnType<typeof memFs>, platform: PathPlatform = 'linux') {
+  return relinkMissingMedia(project, platform === 'win32' ? 'C:\\ws' : '/ws', { fs, hashFile: fakeHash(fs), platform })
 }
 
 describe('relinkMissingMedia', () => {
@@ -66,28 +69,90 @@ describe('relinkMissingMedia', () => {
     // "鐢靛瓙姒ㄨ彍" is the GENUINE artifact — "电子榨菜"'s UTF-8 bytes decoded
     // as GBK, exactly what a flag-less zip does on a zh-CN Windows.
     const fs = memFs({ '/ws/Media/鐢靛瓙姒ㄨ彍.mp4': 'AAAA' })
-    const { project: out, report } = await run(withPool([mediaItem({ path_rel: 'Media/电子榨菜.mp4', path_abs: '/ws/Media/电子榨菜.mp4' })]), fs)
+    const { project: out, report } = await run(withPool([mediaItem({ path_rel: parseProjectPath('Media/电子榨菜.mp4'), path_abs: '/ws/Media/电子榨菜.mp4' })]), fs)
     expect(fs.renames).toEqual([['/ws/Media/鐢靛瓙姒ㄨ彍.mp4', '/ws/Media/电子榨菜.mp4']])
     expect(out.media_pool['m1'].path_abs).toBe('/ws/Media/电子榨菜.mp4')
     expect(out.media_pool['m1'].path_rel).toBe('Media/电子榨菜.mp4')  // recorded name kept
     expect(out.media_pool['m1'].file_mtime).toBe(777)                // fingerprint refreshed
-    expect(report.healed).toEqual([{ media: 'm1', from: '鐢靛瓙姒ㄨ彍.mp4', to: 'Media/电子榨菜.mp4' }])
+    expect(report.healed).toEqual([{ media: 'm1', from: 'Media/鐢靛瓙姒ㄨ彍.mp4', to: 'Media/电子榨菜.mp4' }])
   })
 
-  it('adopts the found name when the recorded basename is already taken', async () => {
-    // Only reachable when recordedAbs ≠ path_abs (a subdir-shaped path_rel that
-    // relink would flatten): the squatter occupies the flattened target while
-    // the item's own path is genuinely missing.
-    const fs = memFs({
-      '/ws/Media/stray.mp3': 'AAAA',   // the real content, under a new name
-      '/ws/Media/clip.mp4': 'XXXX',    // squatter on the flattened recorded name (different bytes)
-    })
-    const item = mediaItem({ path_rel: 'Media/sub/clip.mp4', path_abs: '/ws/Media/sub/clip.mp4' })
+  it('heals a file renamed inside a subfolder back to its recorded path there', async () => {
+    const fs = memFs({ '/ws/Media/sub/b.mp4': 'AAAA' })
+    const item = mediaItem({ path_rel: parseProjectPath('Media/sub/a.mp4'), path_abs: '/ws/Media/sub/a.mp4' })
     const { project: out, report } = await run(withPool([item]), fs)
+    expect(fs.renames).toEqual([['/ws/Media/sub/b.mp4', '/ws/Media/sub/a.mp4']])
+    expect(out.media_pool['m1'].path_rel).toBe('Media/sub/a.mp4')
+    expect(report.healed).toEqual([{ media: 'm1', from: 'Media/sub/b.mp4', to: 'Media/sub/a.mp4' }])
+  })
+
+  it('finds a file anywhere under Media/ and moves it to the recorded folder', async () => {
+    const fs = memFs({ '/ws/Media/elsewhere/deep/clip.mp4': 'AAAA' })
+    const item = mediaItem({ path_rel: parseProjectPath('Media/sub/clip.mp4'), path_abs: '/ws/Media/sub/clip.mp4' })
+    const { project: out } = await run(withPool([item]), fs)
+    expect(fs.renames).toEqual([['/ws/Media/elsewhere/deep/clip.mp4', '/ws/Media/sub/clip.mp4']])
+    expect(out.media_pool['m1'].path_abs).toBe('/ws/Media/sub/clip.mp4')
+  })
+
+  // An upgrade to project paths renames one of two names that fold alike
+  // (`Clip.mp4`, `clip.mp4`) to `clip-2.mp4`; the file itself keeps its old
+  // name until the project opens.
+  it('renames a file still under its pre-upgrade name to the path the upgrade gave it', async () => {
+    const fs = memFs({ '/ws/Media/Clip.mp4': 'BBBB', '/ws/Media/clip.mp4': 'AAAA' })
+    const kept = mediaItem({ id: 'm2', path_rel: parseProjectPath('Media/Clip.mp4'), path_abs: '/ws/Media/Clip.mp4', file_hash_blake3: 'b3:BBBB' })
+    const renamed = mediaItem({ id: 'm1', path_rel: parseProjectPath('Media/clip-2.mp4'), path_abs: '/ws/Media/clip-2.mp4' })
+    const { project: out, report } = await run(withPool([kept, renamed]), fs)
+    expect(fs.renames).toEqual([['/ws/Media/clip.mp4', '/ws/Media/clip-2.mp4']])
+    expect(out.media_pool['m1'].path_rel).toBe('Media/clip-2.mp4')
+    expect(report.missing).toEqual([])
+  })
+
+  it('adopts the found path when the recorded one is claimed by another item', async () => {
+    // A case-sensitive disk under Windows rules: `Media/Clip.mp4` is m2's file,
+    // so m1's `Media/clip.mp4` names it too and is no place to move bytes to.
+    const fs = memFs({ 'C:\\ws\\Media\\Clip.mp4': 'BBBB', 'C:\\ws\\Media\\stray.mp4': 'AAAA' })
+    const m2 = mediaItem({ id: 'm2', path_rel: parseProjectPath('Media/Clip.mp4'), path_abs: 'C:\\ws\\Media\\Clip.mp4', file_hash_blake3: 'b3:BBBB' })
+    const m1 = mediaItem({ id: 'm1', path_rel: parseProjectPath('Media/clip.mp4'), path_abs: 'C:\\ws\\Media\\clip.mp4' })
+    const { project: out } = await run(withPool([m1, m2]), fs, 'win32')
     expect(fs.renames).toEqual([])
-    expect(out.media_pool['m1'].path_rel).toBe('Media/stray.mp3')
-    expect(out.media_pool['m1'].path_abs).toBe('/ws/Media/stray.mp3')
-    expect(report.healed[0].to).toBe('Media/stray.mp3')
+    expect(fs.files.get('C:\\ws\\Media\\Clip.mp4')).toBe('BBBB')
+    expect(out.media_pool['m1'].path_rel).toBe('Media/stray.mp4')
+  })
+
+  it('never adopts a found name that is not portable, but renames it to the recorded path', async () => {
+    const fs = memFs({ '/ws/Media/take?.mp4': 'AAAA' })
+    const { project: out } = await run(withPool([mediaItem({})]), fs)
+    expect(fs.renames).toEqual([['/ws/Media/take?.mp4', '/ws/Media/clip.mp4']])
+    expect(out.media_pool['m1'].path_rel).toBe('Media/clip.mp4')
+  })
+
+  it('leaves the item missing when a non-portable find cannot be renamed', async () => {
+    const fs = memFs({ '/ws/Media/take?.mp4': 'AAAA' })
+    fs.rename = () => { throw new Error('EPERM') }
+    const { project: out, report } = await run(withPool([mediaItem({})]), fs)
+    expect(report.missing).toEqual(['m1'])
+    expect(out.media_pool['m1'].path_rel).toBe('Media/clip.mp4')
+  })
+
+  it('keeps names that differ only in case apart on Linux', async () => {
+    // m2 holds `Clip.mp4`; `clip.mp4` is another file, free to heal m1.
+    const fs = memFs({ '/ws/Media/Clip.mp4': 'BBBB', '/ws/Media/clip.mp4': 'AAAA' })
+    const m2 = mediaItem({ id: 'm2', path_rel: parseProjectPath('Media/Clip.mp4'), path_abs: '/ws/Media/Clip.mp4', file_hash_blake3: 'b3:BBBB' })
+    const m1 = mediaItem({ id: 'm1', path_rel: parseProjectPath('Media/gone.mp4'), path_abs: '/ws/Media/gone.mp4' })
+    const { report } = await run(withPool([m1, m2]), fs)
+    expect(report.healed.map((h) => h.media)).toEqual(['m1'])
+    expect(fs.files.get('/ws/Media/Clip.mp4')).toBe('BBBB')
+    expect(fs.files.get('/ws/Media/gone.mp4')).toBe('AAAA')
+  })
+
+  it('treats names that differ only in case as one file on Windows', async () => {
+    // The volume answers `Media/Clip.mp4` with `clip.mp4`: that file is m2's.
+    const fs = memFs({ 'C:\\ws\\Media\\clip.mp4': 'AAAA' }, { caseInsensitive: true })
+    const m2 = mediaItem({ id: 'm2', path_rel: parseProjectPath('Media/Clip.mp4'), path_abs: 'C:\\ws\\Media\\Clip.mp4' })
+    const m1 = mediaItem({ id: 'm1', path_rel: parseProjectPath('Media/gone.mp4'), path_abs: 'C:\\ws\\Media\\gone.mp4' })
+    const { report } = await run(withPool([m1, m2]), fs, 'win32')
+    expect(report.missing).toEqual(['m1'])
+    expect(fs.renames).toEqual([])
   })
 
   it('adopts the found name when the rename itself fails', async () => {
@@ -101,8 +166,8 @@ describe('relinkMissingMedia', () => {
     // m2 resolves fine at shared.mp4; m1 (same size, and hashing shared.mp4
     // WOULD match) must not rebind m2's file out from under it.
     const fs = memFs({ '/ws/Media/shared.mp4': 'AAAA' })
-    const m1 = mediaItem({ id: 'm1', path_rel: 'Media/gone.mp4', path_abs: '/ws/Media/gone.mp4' })
-    const m2 = mediaItem({ id: 'm2', path_rel: 'Media/shared.mp4', path_abs: '/ws/Media/shared.mp4' })
+    const m1 = mediaItem({ id: 'm1', path_rel: parseProjectPath('Media/gone.mp4'), path_abs: '/ws/Media/gone.mp4' })
+    const m2 = mediaItem({ id: 'm2', path_rel: parseProjectPath('Media/shared.mp4'), path_abs: '/ws/Media/shared.mp4' })
     const { report } = await run(withPool([m1, m2]), fs)
     expect(report.missing).toEqual(['m1'])
     expect(fs.files.has('/ws/Media/shared.mp4')).toBe(true)
@@ -129,8 +194,8 @@ describe('relinkMissingMedia', () => {
 
   it('binds a duplicate-content second item to the first heal instead of leaving it missing', async () => {
     const fs = memFs({ '/ws/Media/stray.mp3': 'AAAA' })
-    const a = mediaItem({ id: 'a', path_rel: 'Media/one.mp3', path_abs: '/ws/Media/one.mp3' })
-    const b = mediaItem({ id: 'b', path_rel: 'Media/two.mp3', path_abs: '/ws/Media/two.mp3' })
+    const a = mediaItem({ id: 'a', path_rel: parseProjectPath('Media/one.mp3'), path_abs: '/ws/Media/one.mp3' })
+    const b = mediaItem({ id: 'b', path_rel: parseProjectPath('Media/two.mp3'), path_abs: '/ws/Media/two.mp3' })
     const { project: out, report } = await run(withPool([a, b]), fs)
     expect(report.healed).toHaveLength(2)
     expect(report.missing).toEqual([])
@@ -145,8 +210,8 @@ describe('relinkMissingMedia', () => {
       if (p.endsWith('locked.bin')) throw new Error('EBUSY')
       return baseHash(p)
     }
-    const { report } = await relinkMissingMedia(withPool([mediaItem({})]), '/ws', { fs, join: posixJoin, hashFile: failingHash })
+    const { report } = await relinkMissingMedia(withPool([mediaItem({})]), '/ws', { fs, hashFile: failingHash, platform: 'linux' })
     expect(report.healed).toHaveLength(1)
-    expect(report.healed[0].from).toBe('stray.mp3')
+    expect(report.healed[0].from).toBe('Media/stray.mp3')
   })
 })

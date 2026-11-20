@@ -39,30 +39,46 @@ test('audio imports retain their files and produce playable audio caches', async
     })
     const workspace = await invokeCmd<string>(page, 'workspace_dir')
     const root = await rootSummary<ProjectSummary>(page)
+    // Derivative paths are runtime state, not project.json fields (ADR 0175):
+    // each one is read from the job that produced it.
+    await page.evaluate(() => {
+      const state = window as any
+      state.__landed = {}
+      window.api.on('media:job_complete', (payload: any) => {
+        if (payload?.path) state.__landed[`${payload.media_id}:${payload.kind}`] = payload.path
+      })
+    })
+    const landed = (id: string, kind: string) =>
+      page.evaluate(([id, kind]) => (window as any).__landed[`${id}:${kind}`] as string | undefined ?? null, [id, kind])
     const trackId = root.tracks[0].id
     const ids: string[] = []
     for (const [name] of cases) {
       const id = await invokeCmd<string>(page, 'import_media', { path: path.join(folder, name) })
       ids.push(id)
+      const pooled = async () => (await rootSummary<ProjectSummary>(page)).media.find(m => m.id === id)!
       await expect.poll(async () => {
         await invokeCmd(page, 'project_save')
         const saved = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'))
-        const media = saved.media_pool[id]
-        return Boolean(media.path_rel && media.conform_path && media.waveform_path)
+        return Boolean(saved.media_pool[id].path_rel && await landed(id, 'conform') && await landed(id, 'waveform'))
       }, { timeout: 30_000, message: `${name}: copy, conform and waveform complete` }).toBe(true)
       const saved = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'))
       const media = saved.media_pool[id]
       expect(media.kind, name).toBe('Audio')
       expect(media.label, name).toBe(name)
-      expect(path.basename(media.path_abs), name).toBe(name)
-      expect(digest(media.path_abs), `${name}: workspace copy is byte-identical`).toBe(digest(path.join(folder, name)))
+      expect(media.path_rel, `${name}: recorded as a project path`).toBe(`Media/${name}`)
+      expect(media, `${name}: no absolute path in project.json`).not.toHaveProperty('path_abs')
+      const source = (await pooled()).path
+      expect(source, name).toBe(path.join(workspace, 'Media', name))
+      expect(digest(source), `${name}: workspace copy is byte-identical`).toBe(digest(path.join(folder, name)))
       expect(media.metadata.video, `${name}: cover is not a video track`).toBeNull()
       expect(media.metadata.audio.channels, name).toBe(2)
       expect(media.metadata.duration_us, name).toBeGreaterThan(900_000)
       expect(media.metadata.duration_us, name).toBeLessThan(1_200_000)
       expect(media.decode_route, name).toEqual({ route: 'bypass' })
-      expect(media.thumbnails_dir, name).toBeNull()
-      const pcm = fs.readFileSync(media.conform_path)
+      expect(await landed(id, 'thumbnails'), `${name}: audio gets no thumbnails`).toBeNull()
+      const conform = (await landed(id, 'conform'))!
+      expect((await pooled()).conform_path, name).toBe(conform)
+      const pcm = fs.readFileSync(conform)
       expect(pcm.subarray(0, 8).toString(), name).toBe('VCONF\0\0\0')
       expect(pcm.readUInt32LE(12), name).toBe(48_000)
       expect(pcm.readUInt32LE(16), name).toBe(2)
@@ -73,7 +89,7 @@ test('audio imports retain their files and produce playable audio caches', async
       let energy = 0
       for (let offset = 28; offset < pcm.length; offset += 4) energy += pcm.readFloatLE(offset) ** 2
       expect(Math.sqrt(energy / (frames * 2)), `${name}: audible, finite PCM`).toBeGreaterThan(0.03)
-      expect(fs.statSync(media.waveform_path).size, name).toBeGreaterThan(32)
+      expect(fs.statSync((await landed(id, 'waveform'))!).size, name).toBeGreaterThan(32)
       await expect(page.locator(`[data-media-id="${id}"] .media-audio-glyph`)).toBeAttached()
       const layerId = await invokeCmd<string>(page, 'add_media_layer', { trackId, mediaId: id, tStartUs: (ids.length - 1) * 2_000_000 })
       const placed = await rootSummary<ProjectSummary>(page)

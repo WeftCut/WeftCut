@@ -13,7 +13,7 @@ const item = (over: Partial<MediaItem> = {}): MediaItem => ({
   path_abs: SRC, file_hash_blake3: HASH, file_size: 100, file_mtime: 50, ...over,
 })
 const proxied = (over: Partial<MediaItem> = {}): MediaItem => item({
-  decode_route: { route: 'proxied', quick_proxy: QUICK, full_proxy: FULL, format_version: 1 }, conform_path: CONFORM, ...over,
+  decode_route: { route: 'proxied', quick_proxy: QUICK, full_proxy: FULL }, conform_path: CONFORM, ...over,
 })
 const pool = (...items: MediaItem[]): Record<string, MediaItem> => Object.fromEntries(items.map((m) => [m.id, m]))
 

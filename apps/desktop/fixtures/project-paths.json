@@ -1,0 +1,245 @@
+{
+  "_comment": "Shared vectors for the project path rules: src/shared/projectPath.ts and native/src/state/project_path.rs both test against this file.",
+  "valid": [
+    "Media/x.mp4",
+    "Media/sub/clip one.mov",
+    "TASTE.md",
+    "Media/视频.mp4",
+    "Media/Voiceover/voiceover-0a1b2c3d.mp3",
+    "Media/.hidden",
+    "Media/con-cert.mp4",
+    "Media/COM10.wav",
+    "Media/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp4",
+    "Media/视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视.mp",
+    "Media/a.b.c",
+    "Media/COM⁴.wav",
+    "Media/CONIN.txt",
+    "Media/price$.csv"
+  ],
+  "invalid": [
+    {
+      "path": "",
+      "why": "empty"
+    },
+    {
+      "path": "Media\\x.mp4",
+      "why": "backslash"
+    },
+    {
+      "path": "/Media/x.mp4",
+      "why": "leading slash"
+    },
+    {
+      "path": "Media/x.mp4/",
+      "why": "empty segment"
+    },
+    {
+      "path": "Media//x.mp4",
+      "why": "empty segment"
+    },
+    {
+      "path": "./Media/x.mp4",
+      "why": "dot segment"
+    },
+    {
+      "path": "Media/../x.mp4",
+      "why": "dotdot segment"
+    },
+    {
+      "path": "C:/Media/x.mp4",
+      "why": "drive"
+    },
+    {
+      "path": "C:x.mp4",
+      "why": "colon"
+    },
+    {
+      "path": "//server/share/x.mp4",
+      "why": "unc"
+    },
+    {
+      "path": "Media/a<b.mp4",
+      "why": "reserved char"
+    },
+    {
+      "path": "Media/a|b.mp4",
+      "why": "reserved char"
+    },
+    {
+      "path": "Media/a?b.mp4",
+      "why": "reserved char"
+    },
+    {
+      "path": "Media/a*b.mp4",
+      "why": "reserved char"
+    },
+    {
+      "path": "Media/a\"b.mp4",
+      "why": "reserved char"
+    },
+    {
+      "path": "Media/a>b.mp4",
+      "why": "reserved char"
+    },
+    {
+      "path": "Media/x.mp4:stream",
+      "why": "stream colon"
+    },
+    {
+      "path": "Media/a\u0001b.mp4",
+      "why": "control char"
+    },
+    {
+      "path": "Media/clip.",
+      "why": "trailing dot"
+    },
+    {
+      "path": "Media/clip ",
+      "why": "trailing space"
+    },
+    {
+      "path": "Media/CON",
+      "why": "device name"
+    },
+    {
+      "path": "Media/nul.mp4",
+      "why": "device name with extension"
+    },
+    {
+      "path": "Media/Com1.wav",
+      "why": "device name, any case"
+    },
+    {
+      "path": "Media/lpt9.x.y",
+      "why": "device name, several extensions"
+    },
+    {
+      "path": "Media/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp4",
+      "why": "segment over 255 bytes"
+    },
+    {
+      "path": "Media/视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视.mp4",
+      "why": "segment over 255 UTF-8 bytes"
+    },
+    {
+      "path": "Media/café.mp4",
+      "why": "not NFC"
+    },
+    {
+      "path": "Media/COM¹.wav",
+      "why": "device name, superscript digit"
+    },
+    {
+      "path": "Media/lpt³",
+      "why": "device name, superscript digit"
+    },
+    {
+      "path": "Media/conin$",
+      "why": "console device"
+    },
+    {
+      "path": "Media/CONOUT$.txt",
+      "why": "console device with extension"
+    }
+  ],
+  "portableFileName": [
+    {
+      "name": "clip.mp4",
+      "taken": [],
+      "out": "clip.mp4"
+    },
+    {
+      "name": "clip.mp4",
+      "taken": [
+        "clip.mp4"
+      ],
+      "out": "clip-2.mp4"
+    },
+    {
+      "name": "Clip.MP4",
+      "taken": [
+        "clip.mp4"
+      ],
+      "out": "Clip-2.MP4"
+    },
+    {
+      "name": "clip.mp4",
+      "taken": [
+        "clip.mp4",
+        "clip-2.mp4"
+      ],
+      "out": "clip-3.mp4"
+    },
+    {
+      "name": "a:b?.mp4",
+      "taken": [],
+      "out": "a_b_.mp4"
+    },
+    {
+      "name": "CON.mp4",
+      "taken": [],
+      "out": "CON_.mp4"
+    },
+    {
+      "name": "nul",
+      "taken": [],
+      "out": "nul_"
+    },
+    {
+      "name": "clip. ",
+      "taken": [],
+      "out": "clip"
+    },
+    {
+      "name": "...",
+      "taken": [],
+      "out": "media"
+    },
+    {
+      "name": "",
+      "taken": [],
+      "out": "media"
+    },
+    {
+      "name": "café.mp4",
+      "taken": [],
+      "out": "café.mp4"
+    },
+    {
+      "name": "café.mp4",
+      "taken": [
+        "CAFÉ.mp4"
+      ],
+      "out": "café-2.mp4"
+    },
+    {
+      "name": "Ä.wav",
+      "taken": [
+        "ä.wav"
+      ],
+      "out": "Ä-2.wav"
+    },
+    {
+      "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.mp4",
+      "taken": [],
+      "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.mp4"
+    },
+    {
+      "name": "README",
+      "taken": [
+        "readme"
+      ],
+      "out": "README-2"
+    },
+    {
+      "name": "CONIN$.log",
+      "taken": [],
+      "out": "CONIN$_.log"
+    },
+    {
+      "name": "lpt².txt",
+      "taken": [],
+      "out": "lpt²_.txt"
+    }
+  ]
+}

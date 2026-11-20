@@ -5,6 +5,7 @@ import { applyAddLayer } from './add'
 import { isCommandFailure } from '../errors'
 import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate, applySetMediaDerivatives, applySetMediaWorkspacePaths, referencingLayers } from './media'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
+import { parseProjectPath } from '../../../shared/projectPath'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 function expectCmd(fn: () => void, code: string) {
@@ -114,14 +115,14 @@ describe('applySetMediaDerivatives — route fold', () => {
     })
     expect(out.m1.decode_route).toEqual({ route: 'direct-export', quick_proxy: 'q.mp4' })
   })
-  it('full_proxy_landed folds into Proxied with version', () => {
+  it('full_proxy_landed folds into Proxied', () => {
     const out = applySetMediaDerivatives(
-      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null, format_version: 0 }),
+      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null }),
       'm1',
-      { full_proxy_landed: { path: 'f.mp4', format_version: 3 } },
+      { full_proxy_landed: 'f.mp4' },
     )
     expect(out.m1.decode_route).toEqual({
-      route: 'proxied', quick_proxy: 'q.mp4', full_proxy: 'f.mp4', format_version: 3,
+      route: 'proxied', quick_proxy: 'q.mp4', full_proxy: 'f.mp4',
     })
   })
   it('quick_proxy_landed on Bypass is ignored', () => {
@@ -132,11 +133,11 @@ describe('applySetMediaDerivatives — route fold', () => {
   })
   it('null quick_proxy_landed clears the slot on Proxied (tri-state)', () => {
     const out = applySetMediaDerivatives(
-      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null, format_version: 0 }),
+      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null }),
       'm1',
       { quick_proxy_landed: null },
     )
-    expect(out.m1.decode_route).toEqual({ route: 'proxied', quick_proxy: null, full_proxy: null, format_version: 0 })
+    expect(out.m1.decode_route).toEqual({ route: 'proxied', quick_proxy: null, full_proxy: null })
   })
   it('plain path options (waveform/conform/thumbnails) set alongside the route', () => {
     const out = applySetMediaDerivatives(pool1(), MID, {
@@ -149,10 +150,10 @@ describe('applySetMediaDerivatives — route fold', () => {
 
 describe('applySetMediaWorkspacePaths', () => {
   it('MediaNotFound when id absent', () => {
-    expectCmd(() => applySetMediaWorkspacePaths({}, MID, { path_abs: 'a', path_rel: 'r', file_hash_blake3: 'h', file_size: 1, file_mtime: 2 }), 'MediaNotFound')
+    expectCmd(() => applySetMediaWorkspacePaths({}, MID, { path_abs: 'a', path_rel: parseProjectPath('r'), file_hash_blake3: 'h', file_size: 1, file_mtime: 2 }), 'MediaNotFound')
   })
   it('sets all five workspace fields', () => {
-    const out = applySetMediaWorkspacePaths(pool1(), MID, { path_abs: 'ws/clip.bin', path_rel: 'media/clip.bin', file_hash_blake3: 'abc', file_size: 1024, file_mtime: 1700000000 })[MID]
+    const out = applySetMediaWorkspacePaths(pool1(), MID, { path_abs: 'ws/clip.bin', path_rel: parseProjectPath('media/clip.bin'), file_hash_blake3: 'abc', file_size: 1024, file_mtime: 1700000000 })[MID]
     expect([out.path_abs, out.path_rel, out.file_hash_blake3, out.file_size, out.file_mtime])
       .toEqual(['ws/clip.bin', 'media/clip.bin', 'abc', 1024, 1700000000])
   })

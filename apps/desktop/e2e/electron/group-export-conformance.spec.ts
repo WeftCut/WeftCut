@@ -144,17 +144,16 @@ const setTrackValue = (page: Page, layerId: string, paramKey: string, value: num
   })
 
 // ── The project-shape comparison ─────────────────────────────────────────────
-// `project.json` is the whole model (`serializeProject`), so comparing the saved
+// `project.json` is the whole model in its disk form (`projectFile.ts`), so comparing the saved
 // bytes is the broadest statement available about the round trip — every field
 // of every layer, track, link and transition, not a projection someone has to
 // remember to extend. Three things stand between the bytes and an equality:
 // re-minted ids, one wall-clock stamp, and the media pool.
 //
 // The media pool is EXCLUDED and replaced by its key set, because it is the one
-// part of the file that moves on its own: `conform_path`, `decode_route`'s
-// `quick_proxy` and `thumbnails_dir` are cache bookkeeping filled in by
-// background jobs, and the two exports between the two saves are exactly when
-// those jobs land. Neither structural op writes any of it — what they COULD
+// part of the file that moves on its own: background jobs settle each item's
+// hash, metadata and decode route, and the two exports between the two saves
+// are exactly when those jobs land. Neither structural op writes any of it — what they COULD
 // break is which media the project references, which is what the key set says.
 
 interface ProjectJson {

@@ -20,13 +20,20 @@ anchor-position generation: media Position is (320,180), the Group Position is
 (960,540), and Text is unchanged. `v5.json` freezes the graphic-role
 generation: v4 plus `graphic_role: null` at the end of the Text layer's params
 (the step appends it there on Text, Motif and ImageOverlay layers alike).
-`v6.json` is the current project-Motif generation: v5 plus a `motifs` table
+`v6.json` freezes the project-Motif generation: v5 plus a `motifs` table
 after `settings` (where the step appends it), holding one entry copied from the
 library (`from` set) and one missing entry (`revision` and `from` null). The
 step also drops `motif_version` from Motif layers and keys an id in another
 form by its lowercase slug (`migrate.projectMotifs.test.ts`). v5 has no Motif
 layer, so the step writes an empty table for it and changes no layer; the
-entries are written in by hand for breadth. The old synthetic media has no video metadata;
+entries are written in by hand for breadth. `v7.json` is the current
+project-path generation, in the disk form a save writes (`state/projectFile.ts`):
+v6 run through the step, so its one media item keeps `path_rel`
+`Media/clip.mp4` and loses `path_abs`, the derivative paths and the route's
+readiness slots (`decode_route` is `{ "route": "proxied" }`). Its full proxy
+is not under the v7 recipe's old name, so the step plans no file. Path
+rewriting, external items, voiceovers and the proxy rename are exercised by
+`migrate.projectPaths.test.ts`. The old synthetic media has no video metadata;
 chain tests explicitly supply its 640×360 source extent as migration context.
 Production reads original metadata and refuses unknown source dimensions.
 Existing v1–v3 files remain byte-for-byte unchanged. Animated migration cases,

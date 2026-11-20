@@ -203,8 +203,7 @@ a YCbCr encode made libx264 abort, and an untagged one left ffmpeg's BT.601
 with no tag, which the size rule read as BT.709.
 
 The two kinds of source are separate recipes with their own versions
-(`ProxyRecipe`), in the proxy's cache file name and the route's
-`format_version`: the RGB recipe is at 8 / `q5`, the YCbCr recipe, whose
+(`ProxyRecipe`), in the proxy's cache file name: the RGB recipe is at 8 / `q5`, the YCbCr recipe, whose
 output did not change, stays at 7 / `q4`.
 
 ## JPEG derivatives

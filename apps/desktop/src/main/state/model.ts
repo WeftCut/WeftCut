@@ -5,6 +5,7 @@ import type { Animated } from '../../shared/keyframe'
 import type { PositionAnimation } from '../../shared/position'
 import type { TimingFields } from '../../shared/timeMapping'
 import type { ProjectMotifs } from '../../shared/motifs/projectMotifs'
+import type { ProjectPath } from '../../shared/projectPath'
 
 /** The on-disk `project.json` schema version this build reads and writes.
  *
@@ -14,7 +15,7 @@ import type { ProjectMotifs } from '../../shared/motifs/projectMotifs'
  *
  *  This is the only home for the number: Rust deserializes projects but has no
  *  opinion about the version (`native/src/state/project.rs`). */
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 
 export type Uuid = string
 export type TimeUs = number
@@ -239,8 +240,13 @@ export interface MediaMetadata {
   container_format?: string | null
   [k: string]: unknown
 }
+/** One source in the pool. `path_abs` is runtime: for an item inside the
+ *  project folder it is `toNative(projectDir, path_rel)` and project.json does
+ *  not hold it; `path_rel` null means the file is outside the folder (an
+ *  import whose copy is pending). The derivative paths and the route's
+ *  readiness slots are runtime too (`projectFile.ts` owns the disk form). */
 export interface MediaItem {
-  id: Uuid; label: string | null; path_abs: string; path_rel: string | null; kind: 'Video' | 'Audio' | 'Image' | 'Subtitle'
+  id: Uuid; label: string | null; path_abs: string; path_rel: ProjectPath | null; kind: 'Video' | 'Audio' | 'Image' | 'Subtitle'
   metadata: MediaMetadata; file_hash_blake3: string; file_size: number; file_mtime: number
   imported_at: string
   /** Where preview/export decode from + proxy readiness. Mirrors Rust

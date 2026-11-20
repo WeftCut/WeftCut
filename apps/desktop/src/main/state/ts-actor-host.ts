@@ -10,6 +10,7 @@ import { CommandFailure } from './errors'
 import { createAutosave, type AutosaveController, type AutosaveFs, type AutosaveSaveState } from './autosave'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type SchemaUpgradeReport } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
+import type { ProjectContentFs } from './projectContent'
 import { serializeProjectToJson } from './persistence'
 import { currentEditTrace, editTraceId, EDIT_TRACE_ARG, runEditTrace } from '../../shared/editTrace'
 import { describeGridRepairs, type GridRepair } from './serialize'
@@ -53,6 +54,7 @@ import { AuditStore } from '../lint/audits'
 import { playheadView } from '../mcp/playheadView'
 import type { WorkspaceStore } from '../workspace'
 import { ExportJobError } from '../exportJobs'
+import type { PathPlatform } from './projectPathNative'
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -82,6 +84,13 @@ export interface TsActorHostDeps {
   /** Directory-scan/stat/rename shell for the open-time media relink self-heal
    *  (relink.ts). Optional → openProject skips healing when omitted (tests). */
   relinkFs?: RelinkFs
+  /** Whose path rules place the media in a project folder: the host's by
+   *  default; tests standing in for another OS name it. */
+  platform?: PathPlatform
+  /** node:fs/promises — Save As copies the project content through it, and an
+   *  upgrade's planned file moves run through it. Optional → neither happens
+   *  (tests). */
+  contentFs?: ProjectContentFs
   /** node:path.join — injected for testability. */
   join: (...parts: string[]) => string
   /** Backend napi facade for workspace bookkeeping. */
@@ -458,15 +467,17 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         source: { kind: 'System' },
         message: `Project upgraded from schema v${report.from} to v${report.to}; the original is kept as ${report.backupFile}` +
           (report.bakedPositions?.length ? `; ${report.bakedPositions.length} clip(s) converted to frame-sampled position keys. Existing frame appearance is preserved; interpolation between samples and future retiming may differ.` : '') +
-          (report.missingMotifs?.length ? `; ${report.missingMotifs.length} Motif(s) could not be copied into the project's Motifs folder: ${report.missingMotifs.map(m => m.id).join(', ')}` : ''),
+          (report.missingMotifs?.length ? `; ${report.missingMotifs.length} Motif(s) could not be copied into the project's Motifs folder: ${report.missingMotifs.map(m => m.id).join(', ')}` : '') +
+          (report.missingMedia?.length ? `; ${report.missingMedia.length} media file(s) could not be copied into the project folder: ${report.missingMedia.map(m => m.path).join(', ')}` : ''),
         details: { kind: 'SchemaUpgrade', from: report.from, to: report.to, backup: report.backupFile,
           ...(report.bakedPositions?.length ? { bakedPositions: report.bakedPositions } : {}),
-          ...(report.missingMotifs?.length ? { missingMotifs: report.missingMotifs } : {}) },
+          ...(report.missingMotifs?.length ? { missingMotifs: report.missingMotifs } : {}),
+          ...(report.missingMedia?.length ? { missingMedia: report.missingMedia } : {}) },
       })
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (schema upgrade)', err) }
   }
   const relink = deps.relinkFs
-    ? { fs: deps.relinkFs, join: deps.join, hashFile: (p: string) => deps.compute.hashMediaSource(p) }
+    ? { fs: deps.relinkFs, hashFile: (p: string) => deps.compute.hashMediaSource(p), platform: deps.platform }
     : undefined
   // Without a store the upgrade sizes Motifs from the built-ins and copies none.
   // Its copies are heard where the open project's revisions are (Motif trust).
@@ -476,14 +487,15 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       const manifest = BUILTIN_MANIFESTS.get(id)
       return manifest?.version === version ? manifest.size : null
     } }), placeMigratedMotifs: undefined }
-  const swapActor: Pick<ActorHandle, 'replaceState' | 'snapshot'> = {
+  const swapActor: Pick<ActorHandle, 'replaceState' | 'snapshot' | 'dispatch'> = {
     snapshot: () => actor.snapshot(),
+    dispatch: (channel, args, by) => actor.dispatch(channel, args, by),
     replaceState: (next) => {
       swapping = true
       try { actor.replaceState(next) } finally { swapping = false }
     },
   }
-  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, copyMotifs: copyProjectMotifs }
+  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, copyMotifs: copyProjectMotifs, contentFs: deps.contentFs, platform: deps.platform }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and

@@ -30,6 +30,7 @@ import { rootComposition } from './model'
 import { errno } from './__tests__/fixtures/memAtomicIo'
 import { settleQuitSave } from '../quitSave'
 import { SAVE_STATUS_CHANNEL, SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
+import { parseProjectPath } from '../../shared/projectPath'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the project:changed payload shape, refs included', () => {
@@ -323,7 +324,7 @@ describe('createTsActorHost — persistence-route integration', () => {
     const mediaId = '00000000-0000-0000-0000-0000000000aa'
     const base = host.actor.snapshot()
     host.actor.replaceState({ ...base, media_pool: { [mediaId]: {
-      id: mediaId, label: null, path_abs: '/clip.mp4', path_rel: 'Media/clip.mp4',
+      id: mediaId, label: null, path_abs: '/clip.mp4', path_rel: parseProjectPath('Media/clip.mp4'),
       kind: 'Video', metadata: { duration_us: 1_000_000 }, file_hash_blake3: 'x', file_size: 0, file_mtime: 0,
       imported_at: '2026-01-01T00:00:00Z', decode_route: { route: 'bypass' },
       conform_path: null, waveform_path: null, thumbnails_dir: null,

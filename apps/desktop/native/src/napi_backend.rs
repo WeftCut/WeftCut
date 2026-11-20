@@ -289,12 +289,8 @@ impl Backend {
 
     /// Re-fan-out background derivative jobs for a media list (open-time
     /// regeneration of proxies / thumbnails / waveforms), orchestrated by the
-    /// TS host after it loads a project. First invalidates stale-format proxies:
-    /// a `Proxied` variant whose `format_version` predates the encoder's current
-    /// version is cleared through the derivative write-back seam. Versioned
-    /// cache names prevent stale adoption without deleting expensive masters.
-    /// `media_items_json` is a JSON array of serialized `MediaItem` (the TS
-    /// actor's pool values).
+    /// TS host after it loads a project. `media_items_json` is a JSON array of
+    /// serialized `MediaItem` (the TS actor's pool values).
     #[napi]
     #[cfg(feature = "jobs")]
     pub async fn enqueue_jobs_for_media(
@@ -313,28 +309,6 @@ impl Backend {
             cache
                 .check_active()
                 .map_err(|e| Error::from_reason(e.to_string()))?;
-            // A Proxied source whose full master predates the current encoder
-            // version is stale: clear the registered path; versioned artifact
-            // keys select the current recipe and leave old masters intact. We're in an async napi → tokio runtime is present.
-            if let crate::state::DecodeRoute::Proxied {
-                full_proxy: Some(_),
-                format_version,
-                ..
-            }
-            | crate::state::DecodeRoute::NativeSw {
-                full_proxy: Some(_),
-                format_version,
-                ..
-            } = &item.decode_route
-            {
-                if *format_version < item.proxy_recipe().full_version() {
-                    let patch = crate::state::MediaDerivativesPatch {
-                        full_proxy_landed: Some(None),
-                        ..Default::default()
-                    };
-                    let _ = crate::jobs::commit_media_derivatives(&events, item.id, patch).await;
-                }
-            }
             crate::jobs::enqueue_for_media(
                 events.clone(),
                 self.log_slot.clone(),
@@ -343,6 +317,46 @@ impl Backend {
             );
         }
         Ok(())
+    }
+
+    /// The derivatives already cached for each item of `items_json` (a JSON
+    /// array of serialized `MediaItem`), as a JSON object `{ <media id>: patch }`
+    /// in the `media:derivatives` patch shape; an item with nothing cached is
+    /// left out. The open path folds these in before the project is shown, so
+    /// cached proxies, waveforms and thumbnails need no job. Reads the cache
+    /// only (`jobs::cached_patch`): no job starts and no event is emitted.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn hydrate_derivatives(
+        &self,
+        items_json: String,
+        expected_generation: u32,
+    ) -> napi::Result<String> {
+        let cache = self
+            .cache
+            .snapshot_expected(Some(expected_generation))
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let items: Vec<crate::state::MediaItem> = serde_json::from_str(&items_json)
+            .map_err(|e| Error::from_reason(format!("parse media list: {e}")))?;
+        let worker_cache = cache.clone();
+        let patches = tokio::task::spawn_blocking(move || {
+            let mut patches = serde_json::Map::new();
+            for item in &items {
+                worker_cache.check_active()?;
+                let patch = serde_json::to_value(crate::jobs::cached_patch(&worker_cache, item))?;
+                if patch.as_object().is_some_and(|fields| !fields.is_empty()) {
+                    patches.insert(item.id.to_string(), patch);
+                }
+            }
+            anyhow::Ok(serde_json::Value::Object(patches))
+        })
+        .await
+        .map_err(|e| Error::from_reason(format!("hydrate join: {e}")))?
+        .map_err(|e| Error::from_reason(format!("{e:#}")))?;
+        cache
+            .check_active()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(patches.to_string())
     }
 
     /// Probe + hash a source file into a serialized `MediaItem` — the compute
@@ -630,7 +644,7 @@ impl Backend {
     /// workspace internally; no-op when none is set (the item keeps referencing the
     /// original source). The copy job's write-back is seam-routed (the TS host
     /// applies it), so no actor handle is threaded through. Answers the
-    /// workspace-relative `Media/<name>` the copy is reserved to land at, so
+    /// project path `Media/<name>` (`/` on every OS) the copy is reserved to land at, so
     /// `import_media` can say where the pooled file will be before the copy
     /// ran; `null` when nothing was queued.
     #[napi]
@@ -658,7 +672,7 @@ impl Backend {
         Ok(self
             .import_queue
             .enqueue_scoped(id, std::path::PathBuf::from(source_path), ws, cache)
-            .map(|rel| rel.to_string_lossy().into_owned()))
+            .map(|rel| rel.as_str().to_owned()))
     }
 
     /// Open the agent-session slot: installs a new session with the given
@@ -1797,6 +1811,89 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Open-time hydration answers the cached derivatives per media id in the
+    /// `media:derivatives` patch shape, starts nothing, and refuses a call
+    /// made for a workspace that has since been replaced.
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn hydrate_derivatives_answers_cached_patches_and_starts_no_job() {
+        let sink = std::sync::Arc::new(crate::events::VecEventSink::new());
+        let b = Backend::new_for_test_with_sink(sink.clone());
+        let ws = tempfile::TempDir::new().unwrap();
+        let generation = b
+            .commit_workspace(ws.path().to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        let item = |hash: &str| {
+            serde_json::json!({
+                "id": uuid::Uuid::now_v7(), "label": null, "path_abs": "/nonexistent/a.mp4",
+                "path_rel": "Media/a.mp4", "kind": "Video",
+                "metadata": crate::state::MediaMetadata::default(),
+                "decode_route": { "route": "proxied" },
+                "waveform_path": null, "conform_path": null, "thumbnails_dir": null,
+                "file_hash_blake3": hash, "file_size": 0, "file_mtime": 0,
+                "imported_at": chrono::Utc::now(),
+            })
+        };
+        let (cached, cold) = (item("cached-hash"), item("cold-hash"));
+        for path in [
+            b.cache
+                .quick_proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr),
+            b.cache
+                .proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, include_bytes!("../../fixtures/media/tiny.mp4")).unwrap();
+        }
+        let items = serde_json::json!([cached, cold]).to_string();
+
+        let answer: serde_json::Value = serde_json::from_str(
+            &b.hydrate_derivatives(items.clone(), generation)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let patches = answer.as_object().unwrap();
+        let cached_id = cached["id"].as_str().unwrap();
+        assert_eq!(
+            patches.keys().collect::<Vec<_>>(),
+            [cached_id],
+            "only an item with something cached gets a patch"
+        );
+        let patch = &patches[cached_id];
+        assert_eq!(
+            patch["quick_proxy_landed"],
+            serde_json::json!(b
+                .cache
+                .quick_proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr))
+        );
+        assert_eq!(
+            patch["full_proxy_landed"],
+            serde_json::json!(b
+                .cache
+                .proxy("cached-hash", crate::state::ProxyRecipe::Ycbcr))
+        );
+        assert!(patch.get("set_route").is_none());
+        let job_events = [
+            "media:job_started",
+            "media:derivatives",
+            "import:diagnostic",
+        ];
+        assert!(
+            !sink
+                .names()
+                .iter()
+                .any(|n| job_events.contains(&n.as_str())),
+            "hydration must not start or report a job: {:?}",
+            sink.names()
+        );
+
+        assert!(b
+            .hydrate_derivatives(items, generation.wrapping_add(1))
+            .await
+            .is_err());
     }
 
     /// `commit_workspace` re-points cache + workspace slot — both are observable

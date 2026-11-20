@@ -165,16 +165,6 @@ pub enum LatticeField {
     Channels,
 }
 
-/// A full export master that landed on disk, plus the encoder format version
-/// it was produced with. Serializes to a self-describing object
-/// (`{ "path": …, "format_version": … }`) so the TS applier reads a legible,
-/// drift-resistant wire payload rather than a positional tuple/array.
-#[derive(Clone, Debug, Serialize)]
-pub struct FullProxyLanded {
-    pub path: std::path::PathBuf,
-    pub format_version: u32,
-}
-
 /// Patch for a media item's derivative paths and decode route. Background jobs
 /// apply these when generation completes. The route fields are FOLD SIGNALS:
 /// rather than overwriting flat fields, they describe a change the TS state
@@ -197,11 +187,11 @@ pub struct MediaDerivativesPatch {
     /// folded into whatever the current variant is. Ignored on Bypass.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quick_proxy_landed: Option<Option<std::path::PathBuf>>,
-    /// A full export master landed (`Some(Some(FullProxyLanded { .. }))`) or was
-    /// cleared (`Some(None)`). Folded into the current Proxied variant; ignored
-    /// otherwise.
+    /// A full export master landed (`Some(Some(p))`) or was cleared
+    /// (`Some(None)`). Folded into Proxied/NativeSw; ignored otherwise. The
+    /// recipe it was made with is in its cache file name (`CacheLayout::proxy`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub full_proxy_landed: Option<Option<FullProxyLanded>>,
+    pub full_proxy_landed: Option<Option<std::path::PathBuf>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub waveform_path: Option<std::path::PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]

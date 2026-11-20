@@ -22,13 +22,11 @@ const ROUTES = {
     route: "proxied",
     quick_proxy: null,
     full_proxy: "C:\\proxies\\m.mp4",
-    format_version: 7,
   },
   "native-sw": {
     route: "native-sw",
     quick_proxy: null,
     full_proxy: null,
-    format_version: 7,
   },
 } satisfies Record<string, Route>;
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { upgradeWire } from './migrate'
-import { parseProjectJson, serializeProjectToJson } from './persistence'
+import { loadProjectFromJson, serializeProjectToJson } from './persistence'
 import { validate } from './validate'
 
 describe('v1 → v2 clip mute migration', () => {
@@ -45,7 +45,7 @@ describe('v1 → v2 clip mute migration', () => {
     for (const c of Object.values(wire.compositions) as Array<{ tracks: Array<{ layers: Array<{ params: { kind: string; mute?: boolean } }> }> }>) {
       for (const t of c.tracks) for (const l of t.layers) if (l.params.kind === 'Audio') l.params.mute = true
     }
-    const { project, upgradedFrom } = parseProjectJson(JSON.stringify(wire), { migration: { mediaSize: () => [640, 360] } })
+    const { project, upgradedFrom } = loadProjectFromJson(JSON.stringify(wire), { dir: '/home/u/Film', migration: { mediaSize: () => [640, 360] } })
     expect(upgradedFrom).toBe(1)
     expect(() => validate(project)).not.toThrow()
     const audio = Object.values(project.compositions).flatMap((c) => c.tracks.flatMap((t) => t.layers))
@@ -56,7 +56,7 @@ describe('v1 → v2 clip mute migration', () => {
       expect(l.params).toMatchObject({ kind: 'Audio', mute: false })
     }
     const saved = serializeProjectToJson(project)
-    const reopened = parseProjectJson(saved)
+    const reopened = loadProjectFromJson(saved, { dir: '/home/u/Film' })
     expect(reopened.upgradedFrom).toBeNull()
     expect(serializeProjectToJson(reopened.project)).toBe(saved)
   })

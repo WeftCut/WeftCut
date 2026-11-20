@@ -282,7 +282,6 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
         readPool: () => read('project://media') as never,
         readEvents: s.jobEvents ? () => s.jobEvents!.read() : null,
         timeoutMs: plan.media_timeout_ms,
-        projectDir,
       })
     } catch (e) {
       const diag = await s.timeoutDiagnostics()

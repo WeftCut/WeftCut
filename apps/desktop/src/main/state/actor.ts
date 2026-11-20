@@ -45,9 +45,10 @@ import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './mutations/
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
 import { applyAddTransition, applyRemoveTransition, applyUpdateTransition, type TransitionBounce } from './mutations/transitions'
 import { videoClipParams, audioParams, imageOverlayParams, mediaExtent, applySeparateAudio, mediaItemTemplate,
-  applySetMediaDerivatives, applySetMediaWorkspacePaths, applySetMediaHash, referencingLayers,
+  applySetMediaDerivatives, applySetMediaWorkspacePaths, applySetMediaHash, applyRebaseMedia, referencingLayers,
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
 import type { MediaItem } from './model'
+import { isProjectPath } from '../../shared/projectPath'
 import { applyParamsPatch, applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applySetScaleLinked, copyTrackFreshIds, enforceScaleLinkInvariant, transformOf } from './mutations/scaleLink'
 import type { Manifest, MotifManifests } from '../../shared/motifs/catalog'
@@ -69,6 +70,7 @@ import type { TranscriptPayload } from '../../shared/captionTiming'
 import type { PositionAnimation } from '../../shared/position'
 
 import { currentEditTrace, measureEditStage } from '../../shared/editTrace'
+import type { PathPlatform } from './projectPathNative'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -810,12 +812,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
     broadcastUnrecorded('Updated track flags', current())
   }
 
+  /** A `path_rel` handed in by a caller (a Rust job, an import) enters the
+   *  pool only as a ProjectPath. */
+  function requirePathRel(v: unknown): void {
+    if (v === null || (typeof v === 'string' && isProjectPath(v))) return
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'path_rel', detail: `not a project path: ${JSON.stringify(v)}` })
+  }
+
   // ── add_media_item — UNRECORDED. Insert into the
   //    pool (media id is the caller's, NOT counter-minted), validate the probe,
   //    then replace the pool EVERYWHERE (durable across undo) + broadcast (burns
   //    one id). No HistoryEntry. ──
   function addMediaItem(item: MediaItem): Uuid {
     opts.assertWritable?.()
+    requirePathRel(item.path_rel)
     const cur = current()
     const nextPool = { ...cur.media_pool, [item.id]: item }
     runValidate({ ...cur, media_pool: nextPool })
@@ -834,6 +844,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
   // ── set_media_workspace_paths — UNRECORDED. ──
   function setMediaWorkspacePaths(id: Uuid, paths: WorkspacePaths): void {
+    requirePathRel(paths.path_rel)
     const nextPool = applySetMediaWorkspacePaths(current().media_pool, id, paths) // throws MediaNotFound
     history.replaceMediaPoolEverywhere(nextPool)
     broadcastUnrecorded('Updated media workspace paths', current())
@@ -846,6 +857,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const nextPool = applySetMediaHash(current().media_pool, id, hash) // throws MediaNotFound
     history.replaceMediaPoolEverywhere(nextPool)
     broadcastUnrecorded('Updated media hash', current())
+  }
+  // ── rebase_media — UNRECORDED. Save As moved the project to another
+  //    folder: every snapshot's pool is placed there, so an undo after the
+  //    save names the copied files, never the old folder's. Each snapshot
+  //    keeps its own pool (History.mapMediaPoolEverywhere). Broadcast as a
+  //    replacement: the workspace is another one, and nothing the save wrote
+  //    is owed again (autosave). Internal: in no router or MCP list,
+  //    dispatched by the Save As path alone. ──
+  function rebaseMedia(projectDir: string, derivatives: Record<Uuid, MediaDerivativesPatch>, platform?: PathPlatform): void {
+    history.mapMediaPoolEverywhere((pool) => applyRebaseMedia(pool, projectDir, derivatives, platform))
+    broadcastUnrecorded('Moved media to the saved project', current(), { kind: 'Coarse' }, undefined, 'replaced')
   }
   // ── remove_media — HYBRID. MediaNotFound → MediaInUse
   //    (when referenced && !force) → unused path (validate probe BEFORE broadcast,
@@ -1601,6 +1623,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'set_media_derivatives': setMediaDerivatives(a.media as Uuid, a.patch as MediaDerivativesPatch); return { ok: true, value: null }
         case 'set_media_workspace_paths': setMediaWorkspacePaths(a.media as Uuid, a.paths as WorkspacePaths); return { ok: true, value: null }
         case 'set_media_hash': setMediaHash(a.media as Uuid, a.file_hash_blake3 as string); return { ok: true, value: null }
+        case 'rebase_media': rebaseMedia(a.project_dir as string, a.derivatives as Record<Uuid, MediaDerivativesPatch>, a.platform as PathPlatform | undefined); return { ok: true, value: null }
         case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }

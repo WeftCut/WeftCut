@@ -8,14 +8,19 @@ use serde::{Deserialize, Serialize};
 
 use super::decode_route::DecodeRoute;
 use super::ids::MediaId;
+use super::project_path::ProjectRelPath;
 use super::time::TimeUs;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MediaItem {
     pub id: MediaId,
     pub label: Option<String>,
+    /// Where this process opens the file: `path_rel` under the project
+    /// folder when that is set, else the outside file it was imported from.
     pub path_abs: PathBuf,
-    pub path_rel: Option<PathBuf>,
+    /// The copy inside the project folder (`Media/...`), `None` while the
+    /// file is outside it or its copy is still pending.
+    pub path_rel: Option<ProjectRelPath>,
     pub kind: MediaKind,
     pub metadata: MediaMetadata,
     /// Where preview and export each decode this source from, plus the
@@ -139,8 +144,7 @@ impl VideoStreamMeta {
 }
 
 /// Which proxy recipe a source takes. Each recipe has its own versions, which
-/// are part of a proxy's cache file name and of the route's `format_version`,
-/// so changing one recipe re-encodes that recipe's proxies and no others.
+/// are part of a proxy's cache file name, so changing one recipe re-encodes that recipe's proxies and no others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProxyRecipe {
     /// The proxy keeps the source's YCbCr matrix and range.
@@ -152,9 +156,9 @@ pub enum ProxyRecipe {
 
 impl ProxyRecipe {
     /// The full proxy's version. Bump a recipe's whenever its ffmpeg args
-    /// change in a way that affects playback, scrub or colour: the open-time
-    /// `Backend::enqueue_jobs_for_media` pass clears a registered master whose
-    /// stored `format_version` is older, and the job re-encodes it.
+    /// change in a way that affects playback, scrub or colour: the master's
+    /// cache name carries the version (`CacheLayout::proxy`), so an older
+    /// master is never adopted and the job re-encodes it.
     ///
     /// Format: export master, source-resolution H.264 capped at 2160p, High
     /// profile, `-bf 0` (PTS=DTS), short fixed GOP, the colour tags asserted

@@ -31,14 +31,20 @@ test('reopening adopts audio caches without rebuilding and close ends import adm
     expect((await events()).filter(e => e.event === 'media:job_error')).toEqual([])
     await invokeCmd(page, 'project_save')
     const saved = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'))
-    const media = saved.media_pool[mediaId]
-    expect(media.path_rel).toBeTruthy()
-    const before = [media.conform_path, media.waveform_path].map(p => fs.statSync(p).mtimeMs)
+    expect(saved.media_pool[mediaId].path_rel).toBe('Media/source.wav')
+    // Cache paths are runtime state (ADR 0175): taken from the jobs that wrote them.
+    const landed = (kind: string) => events().then(all =>
+      all.find(e => e.event === 'media:job_complete' && e.payload.kind === kind)?.payload.path as string)
+    const caches = [await landed('conform'), await landed('waveform')]
+    const before = caches.map(p => fs.statSync(p).mtimeMs)
     await page.evaluate(() => { (window as any).__importEvents = [] })
     await invokeCmd(page, 'project_open', { path: workspace })
+    // The open reads the cache before the project is shown.
+    const reopened = await invokeCmd<{ media: Array<{ id: string; conform_path: string | null }> }>(page, 'project_summary')
+    expect(reopened.media.find(m => m.id === mediaId)?.conform_path).toBe(caches[0])
     await expect.poll(async () => (await events()).filter(e => e.event === 'media:job_complete').length).toBe(2)
     expect((await events()).filter(e => e.event === 'media:job_started' || e.event === 'media:job_error')).toEqual([])
-    expect([media.conform_path, media.waveform_path].map(p => fs.statSync(p).mtimeMs)).toEqual(before)
+    expect(caches.map(p => fs.statSync(p).mtimeMs)).toEqual(before)
     await invokeCmd(page, 'project_close')
     await expect(invokeCmd(page, 'import_media', { path: source })).rejects.toThrow(/cancelled|closed|project/i)
   } finally { await app.close() }

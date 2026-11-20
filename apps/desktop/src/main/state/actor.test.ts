@@ -1714,10 +1714,10 @@ describe('media-pool mutations dispatch', () => {
   it('set_media_derivatives: success folds the route on the pool item', () => {
     const a = actorWithMedia()
     // set_route promotes the bypass default to Proxied, then a full master folds in.
-    expect(a.dispatch('set_media_derivatives', { media: MID, patch: { set_route: { route: 'proxied', quick_proxy: null, full_proxy: null, format_version: 0 } } }).ok).toBe(true)
-    expect(a.dispatch('set_media_derivatives', { media: MID, patch: { full_proxy_landed: { path: 'media/p.mp4', format_version: 7 } } }).ok).toBe(true)
+    expect(a.dispatch('set_media_derivatives', { media: MID, patch: { set_route: { route: 'proxied', quick_proxy: null, full_proxy: null } } }).ok).toBe(true)
+    expect(a.dispatch('set_media_derivatives', { media: MID, patch: { full_proxy_landed: 'media/p.mp4' } }).ok).toBe(true)
     expect(a.snapshot().media_pool[MID].decode_route)
-      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: 'media/p.mp4', format_version: 7 })
+      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: 'media/p.mp4' })
   })
   it('set_media_workspace_paths: success sets path_rel + hash', () => {
     const a = actorWithMedia()

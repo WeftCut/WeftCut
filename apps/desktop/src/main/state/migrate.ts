@@ -58,7 +58,16 @@ export interface MigrationContext {
   onMotifCopy?: (copy: MotifCopy) => void
   /** v5 → v6: a new lineage uid for a Motif nothing resolved. */
   newUid?: () => string
+  /** v6 → v7: a file the upgrade moved a record to. The step only plans it;
+   *  the open carries it out. */
+  onFile?: (plan: FilePlan) => void
 }
+
+/** A file to move or copy inside the project folder; both paths are
+ *  `/`-separated and relative to it. `recorded` is the absolute path the old
+ *  file named, for a copy whose source is not in the folder (a project copied
+ *  before its voiceover was). */
+export interface FilePlan { from: string; to: string; mode: 'move' | 'copy'; recorded?: string }
 
 export interface LegacyMotif {
   uid: string
@@ -375,6 +384,125 @@ export const STEPS: readonly MigrationStep[] = [{
       delete layer.params.motif_version
     }
     wire.motifs = Object.fromEntries(Object.keys(motifs).sort().map(key => [key, motifs[key]!]))
+  },
+}, {
+  from: 6,
+  apply(wire, context = {}) {
+    // v7 records where a media file sits as a project path: `/`-separated,
+    // relative, every segment a name each OS accepts. A path that leaves the
+    // folder (absolute, or any `..`) makes the item external: path_rel null,
+    // path_abs kept. Two different paths that come to one name, compared
+    // case-folded, are told apart by `-2`, `-3` before the extension; paths
+    // already valid go first, so none of them is renamed. A renamed file is
+    // found again on open by its content. The file stops holding what the
+    // runtime derives: path_abs of an item inside the folder, the derivative
+    // paths and the route's readiness slots. A voiceover the TTS cache held
+    // becomes a file under Media/Voiceover/, hashed on open. Never throws: an
+    // open is not refused for a path.
+    type Route = { route?: unknown; full_proxy?: unknown; format_version?: unknown }
+    type Item = { path_rel?: unknown; path_abs?: unknown; file_hash_blake3?: unknown; decode_route?: unknown
+      conform_path?: unknown; waveform_path?: unknown; thumbnails_dir?: unknown }
+    const pool = wire.media_pool as Record<string, Item> | undefined
+    if (!pool || typeof pool !== 'object') return
+    // LANDMINE: the frozen twin of the project path rules (shared/projectPath.ts,
+    // portable_file_name in native/src/state/project_path.rs). A path this
+    // writes that the live parser refuses fails the open; the step's fuzz test
+    // holds it to the live parser.
+    const utf8 = new TextEncoder()
+    const bytes = (s: string) => utf8.encode(s).length
+    const device = /^(con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])$/i
+    const reserved = /[<>:"|?*\\/\x00-\x1f]/g
+    const portable = (seg: string) => seg !== '' && seg !== '.' && seg !== '..' && !/[<>:"|?*\\/\x00-\x1f]/.test(seg)
+      && !/[. ]$/.test(seg) && !device.test(seg.split('.')[0]!) && seg.normalize('NFC') === seg && bytes(seg) <= 255
+    const clean = (name: string): string => {
+      const trimmed = name.normalize('NFC').replace(reserved, '_').replace(/[. ]+$/, '')
+      if (trimmed === '') return 'media'
+      const stem = trimmed.split('.')[0]!
+      return device.test(stem) ? `${stem}_${trimmed.slice(stem.length)}` : trimmed
+    }
+    // The cleaned name with suffix `-n` (none for 1), cut to 255 bytes keeping
+    // an extension of at most half that.
+    const named = (name: string, n: number): string => {
+      const c = clean(name)
+      const dot = c.lastIndexOf('.')
+      const [stem, ext] = dot > 0 && bytes(c.slice(dot)) <= 127 ? [c.slice(0, dot), c.slice(dot)] : [c, '']
+      const suffix = n === 1 ? '' : `-${n}`
+      let budget = 255 - bytes(suffix) - bytes(ext), cut = ''
+      for (const ch of stem) {
+        const b = bytes(ch)
+        if (b > budget) break
+        budget -= b; cut += ch
+      }
+      const out = clean(cut + suffix + ext)
+      return portable(out) ? out : `media${suffix}`
+    }
+    const fold = (s: string) => s.normalize('NFC').toLowerCase()
+    const taken = new Set<string>()
+    const chosen = new Map<string, string>()
+    // One output per input spelling: items that named one file still do. Two
+    // spellings equal but for case, with the same bytes, are one file on a
+    // volume that folds case (Windows, macOS), so they keep one name too.
+    const sameFile = new Map<string, string>()
+    const claim = (key: string, segments: string[], hash?: unknown): string => {
+      const twin = typeof hash === 'string' && /^[0-9a-f]{64}$/i.test(hash) ? `${fold(key)}\0${hash.toLowerCase()}` : null
+      const known = chosen.get(key) ?? (twin === null ? undefined : sameFile.get(twin))
+      if (known !== undefined) { chosen.set(key, known); return known }
+      const dirs = segments.slice(0, -1).map(seg => named(seg, 1))
+      let out = ''
+      for (let n = 1; out === '' || taken.has(fold(out)); n++) out = [...dirs, named(segments[segments.length - 1]!, n)].join('/')
+      taken.add(fold(out))
+      chosen.set(key, out)
+      if (twin !== null) sameFile.set(twin, out)
+      return out
+    }
+    const planned = new Set<string>()
+    const plan = (file: FilePlan) => {
+      if (planned.has(file.to)) return
+      planned.add(file.to)
+      context.onFile?.(file)
+    }
+
+    const inside: { item: Item; key: string; segments: string[] }[] = []
+    const voiceovers: { id: string; item: Item; key: string }[] = []
+    for (const [id, item] of Object.entries(pool)) {
+      if (!item || typeof item !== 'object') continue
+      if (typeof item.path_rel === 'string') {
+        const rel = item.path_rel.replace(/\\/g, '/').normalize('NFC')
+        const segments = rel.split('/').filter(seg => seg !== '' && seg !== '.')
+        if (/^(?:\/|[A-Za-z]:)/.test(rel) || segments.includes('..') || segments.length === 0) item.path_rel = null
+        else inside.push({ item, key: segments.join('/'), segments })
+      } else if (item.path_rel == null && typeof item.path_abs === 'string') {
+        const voiceover = /[\\/]Cache[\\/]voiceover[\\/]([0-9a-f]{64})\.mp3$/i.exec(item.path_abs)
+        if (voiceover) voiceovers.push({ id, item, key: voiceover[1]! })
+      }
+      const route = item.decode_route as Route | null | undefined
+      if (route && typeof route === 'object') {
+        // The proxy cache now names a full proxy by its recipe; a v7-recipe
+        // one under the old name keeps its bytes.
+        const hash = item.file_hash_blake3
+        if ((route.route === 'proxied' || route.route === 'native-sw') && route.format_version === 7
+          && typeof hash === 'string' && /^[0-9a-f]{64}$/i.test(hash) && typeof route.full_proxy === 'string'
+          && route.full_proxy.split(/[\\/]/).pop() === `${hash}.mp4`) {
+          plan({ from: `Cache/proxies/${hash}.mp4`, to: `Cache/proxies/${hash}.full-p7.mp4`, mode: 'move' })
+        }
+        item.decode_route = { route: route.route }
+      }
+      delete item.conform_path
+      delete item.waveform_path
+      delete item.thumbnails_dir
+    }
+    const valid = (i: (typeof inside)[number]) => i.segments.every(portable)
+    for (const { item, key, segments } of [...inside.filter(valid), ...inside.filter(i => !valid(i))]) {
+      item.path_rel = claim(key, segments, item.file_hash_blake3)
+      delete item.path_abs
+    }
+    for (const { id, item, key } of voiceovers) {
+      const to = claim(`\0voiceover:${key}`, ['Media', 'Voiceover', `voiceover-${key.slice(0, 8).toLowerCase()}.mp3`])
+      plan({ from: `Cache/voiceover/${key}.mp3`, to, mode: 'copy', recorded: item.path_abs as string })
+      item.path_rel = to
+      delete item.path_abs
+      item.file_hash_blake3 = `pending-${id}`
+    }
   },
 }]
 

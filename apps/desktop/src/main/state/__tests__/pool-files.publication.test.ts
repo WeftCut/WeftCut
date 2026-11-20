@@ -58,7 +58,7 @@ function addClip(t: ReturnType<typeof makeHost>, n: number): MediaItem {
   for (const p of Object.values(files)) t.disk.set(p, FILE)
   const item: MediaItem = {
     ...mediaItemTemplate(id, 'Video', 4_000_000), path_abs: files.src, file_hash_blake3: HASH, file_size: FILE.size, file_mtime: FILE.mtimeSecs,
-    decode_route: { route: 'proxied', quick_proxy: files.quick, full_proxy: files.full, format_version: 1 }, conform_path: files.conform,
+    decode_route: { route: 'proxied', quick_proxy: files.quick, full_proxy: files.full }, conform_path: files.conform,
   }
   expect(t.host.actor.dispatch('add_media_item', { media: item }).ok).toBe(true)
   return item

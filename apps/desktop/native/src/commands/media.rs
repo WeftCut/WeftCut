@@ -809,7 +809,6 @@ mod mirror_tests {
             DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
         );
         assert_eq!(filmstrip_decode_source(&item).unwrap_err(), "not_ready");
@@ -822,7 +821,6 @@ mod mirror_tests {
             DecodeRoute::Proxied {
                 quick_proxy: Some(quick.clone()),
                 full_proxy: None,
-                format_version: 0,
             },
         );
         assert_eq!(
@@ -838,7 +836,6 @@ mod mirror_tests {
             DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: Some(full.clone()),
-                format_version: 0,
             },
         );
         assert_eq!(
@@ -855,7 +852,6 @@ mod mirror_tests {
             DecodeRoute::Proxied {
                 quick_proxy: Some(missing_quick),
                 full_proxy: None,
-                format_version: 0,
             },
         );
         assert_eq!(filmstrip_decode_source(&item).unwrap_err(), "not_ready");

@@ -17,7 +17,6 @@ export type DecodeRoute =
       route: "proxied";
       quick_proxy: string | null;
       full_proxy: string | null;
-      format_version: number;
     }
   // Native software-decode preview (ProRes today): the original is
   // WebCodecs-blind but a native ffmpeg SW decoder can preview it. Carries the
@@ -29,5 +28,4 @@ export type DecodeRoute =
       route: "native-sw";
       quick_proxy: string | null;
       full_proxy: string | null;
-      format_version: number;
     };

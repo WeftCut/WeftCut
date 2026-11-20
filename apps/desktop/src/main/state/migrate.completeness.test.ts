@@ -12,7 +12,8 @@ import { describe, it, expect } from 'vitest'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { MIN_SCHEMA_VERSION, STEPS, upgradeWire } from './migrate'
 import { SCHEMA_VERSION } from './model'
-import { parseProject, serializeProject, type GridRepair } from './serialize'
+import { parseProject, type GridRepair } from './serialize'
+import { loadProjectFromJson, serializeProjectToJson } from './persistence'
 import { validate } from './validate'
 
 const DIR = 'fixtures/projects'
@@ -65,7 +66,7 @@ describe('every shipped generation has a frozen fixture', () => {
 })
 
 describe('the fixture for the current generation is the shape the app writes', () => {
-  it('survives parse → serialize byte-identically', () => {
+  it('survives open → save byte-identically', () => {
     // Load-then-save is a no-op on this fixture or something rewrites projects
     // on open. That silent edit is what ADR 0047 refuses, and it is invisible
     // to the upgrade test above, which only asks that the result validate.
@@ -73,8 +74,9 @@ describe('the fixture for the current generation is the shape the app writes', (
     // part of the on-disk shape the next generation's step will read.
     const text = readFileSync(fixturePath(SCHEMA_VERSION), 'utf8')
     let repaired: readonly GridRepair[] = []
-    const project = parseProject(JSON.parse(text), { onGridRepair: (r) => { repaired = r } })
+    const { project, upgradedFrom } = loadProjectFromJson(text, { dir: '/home/u/Film', onGridRepair: (r) => { repaired = r } })
+    expect(upgradedFrom).toBeNull()
     expect(repaired, 'the canonical fixture is already on the grid').toEqual([])
-    expect(`${JSON.stringify(serializeProject(project), null, 2)}\n`).toBe(text)
+    expect(`${serializeProjectToJson(project)}\n`).toBe(text)
   })
 })
