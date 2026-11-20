@@ -9,6 +9,7 @@ function view(over: Partial<FollowViewport> = {}): FollowViewport {
     scrollLeftPx: 0,
     viewportPx: 1000,
     maxScrollLeftPx: 9000,
+    backwardPx: 0,
     ...over,
   };
 }
@@ -41,11 +42,36 @@ describe("followPageScrollLeft", () => {
   it("pages a full screen backward, landing the playhead near the right edge", () => {
     // Stepping back off the left edge of the [2000, 3000) window.
     const next = followPageScrollLeft(
-      view({ playheadPx: 1995, scrollLeftPx: 2000 }),
+      view({ playheadPx: 1995, scrollLeftPx: 2000, backwardPx: 30 }),
     );
     expect(next).toBe(1075);
     // Room to keep stepping back without re-paging on the next press.
     expect(1995 - next!).toBe(920);
+  });
+
+  // Playback resuming behind a view the user scrolled ahead: it is about to
+  // run forward, so the screen it needs is the one after it.
+  it("lands a forward-moving playhead on the lead, whichever edge it left by", () => {
+    expect(
+      followPageScrollLeft(view({ playheadPx: 1995, scrollLeftPx: 2000 })),
+    ).toBe(1915);
+  });
+
+  it("lands a step back near the right edge, whichever edge it left by", () => {
+    expect(
+      followPageScrollLeft(view({ playheadPx: 5000, scrollLeftPx: 0, backwardPx: 300 })),
+    ).toBe(4080);
+  });
+
+  // A jump back of a screen or more is a relocation, not a step the user is
+  // about to repeat: they read and play forward from where it lands.
+  it("lands a jump back of a screen or more on the lead", () => {
+    expect(
+      followPageScrollLeft(view({ playheadPx: 1000, scrollLeftPx: 5000, backwardPx: 4500 })),
+    ).toBe(920);
+    expect(
+      followPageScrollLeft(view({ playheadPx: 1000, scrollLeftPx: 5000, backwardPx: 1000 })),
+    ).toBe(920);
   });
 
   it("clamps to the scroll range instead of overshooting either end", () => {
@@ -91,7 +117,7 @@ describe("followPageScrollLeft", () => {
   // midpoint, i.e. a backward page that lands left of where it started.
   it("keeps the lead inside a viewport too narrow for the ratio", () => {
     const next = followPageScrollLeft(
-      view({ playheadPx: 400, scrollLeftPx: 400, viewportPx: 20 }),
+      view({ playheadPx: 400, scrollLeftPx: 400, viewportPx: 20, backwardPx: 5 }),
     );
     expect(next).toBe(390);
   });

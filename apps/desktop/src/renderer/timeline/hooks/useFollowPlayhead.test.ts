@@ -260,17 +260,30 @@ describe("useFollowPlayhead", () => {
       expect(rootRef.el.scrollLeft).toBe(3920);
     });
 
-    it("brings the view to the playhead when playback starts", () => {
+    // Behind the view, but running forward: it lands on the lead with the
+    // screen ahead of it in view, not near the right edge as a step back would.
+    it("brings the view to the playhead when playback starts, with the screen ahead in view", () => {
       const rootRef = root();
       renderHook(() => useFollowPlayhead({ compositionId: null, rootRef, ...VIEW }));
-      act(() => setPlayheadTimeUs(5_000_000));
-      userScroll(rootRef.el, 3000);
-      act(() => setPlayheadTimeUs(5_100_000));
-      expect(rootRef.el.scrollLeft).toBe(3000);
+      act(() => seekPlayheadTimeUs(35_000_000));
+      expect(rootRef.el.scrollLeft).toBe(3420);
+      userScroll(rootRef.el, 5000); // the playhead (3500 px) is behind the view
+      act(() => setPlayheadTimeUs(35_100_000));
+      expect(rootRef.el.scrollLeft).toBe(5000);
 
       act(() => usePlaybackStore.setState({ playing: true }));
-      act(() => setPlayheadTimeUs(5_200_000));
-      expect(rootRef.el.scrollLeft).toBe(0);
+      act(() => setPlayheadTimeUs(35_200_000));
+      expect(rootRef.el.scrollLeft).toBeCloseTo(3440);
+    });
+
+    it("lands a seek back near the right edge, so the next step back stays in view", () => {
+      const rootRef = root();
+      renderHook(() => useFollowPlayhead({ compositionId: null, rootRef, ...VIEW }));
+      act(() => seekPlayheadTimeUs(50_000_000));
+      expect(rootRef.el.scrollLeft).toBe(4920);
+
+      act(() => seekPlayheadTimeUs(45_000_000)); // 4500 px, off the left edge
+      expect(rootRef.el.scrollLeft).toBe(3580);
     });
 
     it("does not take its own snapped page for a user scroll", () => {

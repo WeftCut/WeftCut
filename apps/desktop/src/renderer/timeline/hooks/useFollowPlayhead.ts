@@ -77,16 +77,26 @@ export function useFollowPlayhead(opts: {
     geomRef.current = { pxPerSec, viewportWidthPx, contentWidthPx };
   }, [pxPerSec, viewportWidthPx, contentWidthPx]);
 
-  // Where the view and the seek count stood at this hook's last look, and
-  // whether it is yielding. Reset on every (re)subscribe below.
-  const followRef = useRef({ scrollLeftPx: 0, seeks: 0, yielded: false });
+  // Where the view, the seek count and the playhead stood at this hook's last
+  // look, and whether it is yielding. Reset on every (re)subscribe below.
+  const followRef = useRef<{
+    scrollLeftPx: number;
+    seeks: number;
+    lastUs: number | null;
+    yielded: boolean;
+  }>({ scrollLeftPx: 0, seeks: 0, lastUs: null, yielded: false });
 
   const apply = useCallback(
     (tUs: number | null) => {
       const root = rootRef.current;
-      if (!root || scrubbingRef.current || tUs === null) return;
-      const geom = geomRef.current;
+      if (!root || tUs === null) return;
       const follow = followRef.current;
+      // Tracked through a scrub too: the first move after it is measured from
+      // where the scrub left the playhead.
+      const backwardUs = follow.lastUs === null ? 0 : Math.max(0, follow.lastUs - tUs);
+      follow.lastUs = tUs;
+      if (scrubbingRef.current) return;
+      const geom = geomRef.current;
       // The store, not `root.scrollLeft` — see the layout-read note above. It
       // tracks the node because the scroll event publishes to it and because
       // this hook publishes its own writes below.
@@ -104,6 +114,7 @@ export function useFollowPlayhead(opts: {
         scrollLeftPx,
         viewportPx: geom.viewportWidthPx,
         maxScrollLeftPx: geom.contentWidthPx - geom.viewportWidthPx,
+        backwardPx: (backwardUs / 1_000_000) * geom.pxPerSec,
       });
       if (follow.yielded) {
         // Re-arm only on a still view: mid-gesture the playhead can sit
@@ -144,17 +155,19 @@ export function useFollowPlayhead(opts: {
     // Subscribe to the clock's values, not the summary's object identity.
     //
     // A (re)subscribe starts un-yielded against the view as it stands: turning
-    // the follow on is the user asking for it.
-    const rearm = () => {
+    // the follow on is the user asking for it. No last playhead: a new
+    // projection reads the moment on a different clock.
+    const rearm = (lastUs: number | null) => {
       followRef.current = {
         scrollLeftPx: timelineScrollLeftPx(compositionId),
         seeks: playheadSeekCount(),
+        lastUs,
         yielded: false,
       };
     };
-    rearm();
+    rearm(null);
     const unsubPlayback = usePlaybackStore.subscribe((s, prev) => {
-      if (s.playing && !prev.playing) rearm();
+      if (s.playing && !prev.playing) rearm(followRef.current.lastUs);
     });
     const unsubPlayhead = subscribeLocalPlayhead(compositionId, anchorFrame, apply);
     return () => {

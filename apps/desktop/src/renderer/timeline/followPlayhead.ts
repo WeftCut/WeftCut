@@ -36,32 +36,37 @@ export interface FollowViewport {
   /// the DOM clamp the assignment) is what lets the caller compare the returned
   /// offset with the current one and skip a no-op write.
   maxScrollLeftPx: number;
+  /// How far, in content px, the playhead's last move went toward earlier
+  /// time; 0 for a forward move or none. Picks the side it lands on; which
+  /// edge it left the view by does not.
+  backwardPx: number;
 }
 
 /// The offset to page to, or `null` when the view already holds the playhead
 /// comfortably — the answer on all but one frame in a screenful, so callers can
 /// treat `null` as "nothing to do" on the per-frame path.
 ///
-/// Backward moves page by a full screen rather than by a lead, landing the
-/// playhead near the RIGHT edge: the gesture that ran the playhead off the left
-/// edge (frame-stepping back, seeking to a previous edit) is one the user
-/// repeats, and a lead-sized jump would re-page on the very next press.
+/// The playhead lands a lead in from the left edge, with the screen it is about
+/// to play into ahead of it — after playback, a seek forward, or a jump of a
+/// screen or more in either direction, which is a relocation the user reads
+/// and plays forward from. A step back of less than a screen (a frame step, the
+/// previous edit) lands near the RIGHT edge instead: the user repeats that
+/// gesture, and a lead-sized margin would re-page on the very next press.
+/// Keyed on the move, not on which edge was crossed: playback resuming behind
+/// a view the user scrolled ahead runs forward from the left.
 export function followPageScrollLeft(view: FollowViewport): number | null {
-  const { playheadPx, scrollLeftPx, viewportPx, maxScrollLeftPx } = view;
+  const { playheadPx, scrollLeftPx, viewportPx, maxScrollLeftPx, backwardPx } = view;
   // Pre-measurement (a panel that has never laid out) and degenerate widths:
   // no window to be outside of.
   if (!(viewportPx > 0)) return null;
+  const inside =
+    playheadPx >= scrollLeftPx + EDGE_PAD_PX &&
+    playheadPx <= scrollLeftPx + viewportPx - EDGE_PAD_PX;
+  if (inside) return null;
+
   const lead = clamp(viewportPx * LEAD_RATIO, EDGE_PAD_PX, viewportPx / 2);
-
-  let target: number;
-  if (playheadPx > scrollLeftPx + viewportPx - EDGE_PAD_PX) {
-    target = playheadPx - lead;
-  } else if (playheadPx < scrollLeftPx + EDGE_PAD_PX) {
-    target = playheadPx - (viewportPx - lead);
-  } else {
-    return null;
-  }
-
+  const steppingBack = backwardPx > 0 && backwardPx < viewportPx;
+  const target = steppingBack ? playheadPx - (viewportPx - lead) : playheadPx - lead;
   const clamped = clamp(target, 0, Math.max(0, maxScrollLeftPx));
   // Already parked against an end stop — the playhead sits in the pad band and
   // no scroll can improve that. Returning the current offset would make every
