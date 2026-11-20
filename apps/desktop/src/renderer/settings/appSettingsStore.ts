@@ -136,11 +136,6 @@ export const useMarkersVisible = (): boolean =>
 /// imperatively — a React re-render per frame is what the playhead gate forbids.
 export const useSafeAreaGuidesVisible = (): boolean =>
   useAppSettingsStore((s) => s.settings.safe_area_guides_visible);
-/// Persisted UI language (a SUPPORTED_LOCALES code), or `undefined` when unset
-/// (the renderer auto-detects the OS language). i18next remains the live
-/// language source; this is the persisted user choice.
-export const useLanguage = (): string | undefined =>
-  useAppSettingsStore((s) => s.settings.language);
 export const useAppSettingsLoaded = (): boolean =>
   useAppSettingsStore((s) => s.loaded);
 export const useExportAutoOverwrite = (): boolean =>

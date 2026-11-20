@@ -1,9 +1,6 @@
-import type {
-  CommandError,
-  ValidationError,
-} from "../../shared/commandErrors";
+import type { CommandError } from "../../shared/commandErrors";
 
-export type { CommandError, ValidationError };
+export type { CommandError };
 
 /// Recover the structured refusal from an IPC rejection.
 ///

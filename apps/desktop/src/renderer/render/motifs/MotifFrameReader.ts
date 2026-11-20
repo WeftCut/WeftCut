@@ -10,7 +10,7 @@ import {
 } from './frameTransport';
 import type { MotifReaderWorkerIn, MotifReaderWorkerOut } from './motifReaderWorker';
 
-export { MotifTransportError, type MotifReaderLane, type MotifTransportFailure } from './frameTransport';
+export { MotifTransportError, type MotifReaderLane } from './frameTransport';
 
 const STAGE_WINDOW = 64;
 

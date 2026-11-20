@@ -23,8 +23,6 @@ export const VOICEOVER_VOICES = [
   "shimmer",
 ] as const;
 
-export type VoiceoverVoice = (typeof VOICEOVER_VOICES)[number];
-
 /// One call's script cap, in characters. Enforced in the field rather than after
 /// the request, so an over-long script costs nothing to discover.
 export const VOICEOVER_SCRIPT_MAX = 4096;

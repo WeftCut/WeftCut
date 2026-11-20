@@ -13,7 +13,7 @@ vi.mock("../settings/appSettingsStore", async (importActual) => ({
 import { buildAppCommands } from "./appCommands";
 import { setPlaybackResolution } from "../settings/appSettingsStore";
 import { ACTION_DEFS } from "../shortcuts/defs";
-import type { HandlerMap } from "../shortcuts";
+import type { HandlerMap } from "../shortcuts/useShortcuts";
 import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";

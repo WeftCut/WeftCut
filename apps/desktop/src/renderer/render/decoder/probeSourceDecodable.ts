@@ -219,15 +219,3 @@ export function classifyWebcodecsDecodability(
     void shared.result.then(finish, () => finish("unknown"));
   });
 }
-
-/// Boolean convenience over `classifyWebcodecsDecodability`: true iff a frame
-/// decoded ("ok"). Both "unsupported" and "unknown" collapse to false, so the
-/// export-readiness gate + import sweep keep their existing decodable/not
-/// contract; the sweep additionally reads the three-valued verdict directly to
-/// drive the sticky `markWebcodecsUnusable` marker.
-export async function probeSourceDecodable(
-  assetUrl: string,
-  deadlineMs = 2500,
-): Promise<boolean> {
-  return (await classifyWebcodecsDecodability(assetUrl, deadlineMs)) === "ok";
-}

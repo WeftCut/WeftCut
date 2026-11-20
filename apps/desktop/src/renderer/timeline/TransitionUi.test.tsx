@@ -30,7 +30,6 @@ const ipcMocks = vi.hoisted(() => ({
   // (the window-capture contract).
   moveLayer: vi.fn().mockResolvedValue(undefined),
   trimLayer: vi.fn().mockResolvedValue(undefined),
-  getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   logEmit: vi.fn().mockResolvedValue(undefined),
   viewStateGet: vi.fn().mockResolvedValue({
     composition_tabs: [],
@@ -56,7 +55,6 @@ vi.mock("../ipc", async (importOriginal) => {
     removeTransition: ipcMocks.removeTransition,
     moveLayer: ipcMocks.moveLayer,
     trimLayer: ipcMocks.trimLayer,
-    getWaveformPeaks: ipcMocks.getWaveformPeaks,
     logEmit: ipcMocks.logEmit,
     viewStateGet: ipcMocks.viewStateGet,
     viewStateSet: ipcMocks.viewStateSet,

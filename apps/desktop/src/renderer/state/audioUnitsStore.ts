@@ -11,7 +11,7 @@
 //     value can never disagree with the file.
 
 import { create } from "zustand";
-import { AUDIO_GRID, AUDIO_SAMPLES_PER_MS, gridIndex, timeUsAtGridIndex } from "../grid";
+import { AUDIO_GRID, gridIndex, timeUsAtGridIndex } from "../grid";
 import { formatTimecode, formatWallClock, parseTimecode } from "../frames";
 
 /// `frames` — SMPTE `HH:MM:SS:FF` against the composition rate (the default: it
@@ -124,6 +124,3 @@ export function parseAudioTime(
       return parseTimecode(input, fpsNum, fpsDen);
   }
 }
-
-/// One sample expressed in ms — used by hints and the nudge labels.
-export const SAMPLE_MS = 1 / AUDIO_SAMPLES_PER_MS;

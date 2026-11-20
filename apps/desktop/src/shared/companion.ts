@@ -72,10 +72,6 @@ export type CompanionControl =
   | { action: 'pause' }
   | { action: 'seek'; t_us: number }
 
-/** Page → main, `POST /companion/control`: a player control, or bring the
- *  editor window forward. */
-export type CompanionPageAction = CompanionControl | { action: 'focus' }
-
 /** What main needs from the attached editor. `watch`: some page is open, so
  *  the editor pushes its transport; with none open it pushes nothing.
  *  `picture`: some page shows the preview, no export runs and the encoder has

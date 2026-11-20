@@ -11,7 +11,7 @@ import {
   type WindowGeometryFs,
 } from './windowGeometry'
 
-// Mirrors MAIN_WINDOW_GEOMETRY_DEFAULTS — kept local so a change to the real
+// Shaped like mainWindowGeometryDefaults' result — kept local so a change to the real
 // window's size doesn't silently rewrite what these cases assert.
 const DEFAULTS = { width: 1440, height: 900, minWidth: 960, minHeight: 640 }
 

@@ -31,6 +31,3 @@ export function setActiveRegion(region: PanelKind | null): void {
 export function activeRegion(): PanelKind | null {
   return useFocusRegionStore.getState().region;
 }
-
-export const useActiveRegion = (): PanelKind | null =>
-  useFocusRegionStore((s) => s.region);

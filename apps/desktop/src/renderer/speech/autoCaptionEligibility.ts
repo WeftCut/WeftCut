@@ -36,7 +36,6 @@ import {
   currentSelection,
   layerIdsOf,
   primaryLayerIdOf,
-  usePrimaryLayerId,
   useSelectionStore,
   type Selection,
 } from "../state/selectionStore";
@@ -103,19 +102,6 @@ export function audioClipState(
     return "needs_audio_kind";
   // Source intervals are projected through the clip time map by native analysis.
   return "ok";
-}
-
-/// Imperative form, for `CommandDef.enabled` and the command handlers — both
-/// run where there is no React.
-export function audioClipForSelection(): AudioClipState {
-  return audioClipState(
-    primaryLayerIdOf(currentSelection()),
-    currentOpenComposition()?.tracks ?? NO_TRACKS,
-  );
-}
-
-export function canTargetAudioClip(): boolean {
-  return audioClipForSelection() === "ok";
 }
 
 /// The clip an audio analysis would read, or null — what a command hands to its
@@ -257,22 +243,6 @@ export function canAutoCaptionSelection(): boolean {
 export function transcribeTargets(): AudioBearingLayer[] {
   return transcribeSubjects(currentSelection(), currentOpenComposition());
 }
-
-/// Subscription form of the shared gate — two stores, two subscriptions,
-/// neither a composite selector (`feedback_zustand_composite_selector`), exactly
-/// as `useAddToGroupState` does it. The project subscription closes over the
-/// other and yields a STRING, so an unrelated project mutation re-runs the
-/// predicate and then bails out instead of re-rendering.
-export const useAudioClipState = (): AudioClipState => {
-  const primaryId = usePrimaryLayerId();
-  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
-  return useProjectStore((s) =>
-    audioClipState(
-      primaryId,
-      compositionOrRoot(s.summary, focusedId)?.tracks ?? NO_TRACKS,
-    ),
-  );
-};
 
 /// Subscription form of transcription's verdict — the whole selection (one
 /// stable reference per change, so it is safe to hand a selector) plus the

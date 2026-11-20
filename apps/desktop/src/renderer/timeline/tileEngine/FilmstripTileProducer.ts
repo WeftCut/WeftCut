@@ -1,4 +1,4 @@
-import { MIB, PERFORMANCE_DEFAULTS, performanceSettings } from "../../../shared/performance-settings";
+import { MIB, performanceSettings } from "../../../shared/performance-settings";
 import { getFilmstripTile } from "../../ipc";
 import { convertFileSrc } from "@/bridge/ipc";
 import { tileEngine, type TileEngine, type TileKey } from "./TileEngine";
@@ -12,10 +12,6 @@ export const FILMSTRIP_MAX_LOD = 12;
 export const FILMSTRIP_MAX_CONCURRENT_FETCHES = 4;
 /// Proxy completion flips a Proxied source's not_ready tiles (proxy-wait rule).
 export const FILMSTRIP_INVALIDATE_ON = ["proxy", "quick_proxy"];
-/// Engine-side bitmap budget. 256 px bitmaps run ~466 KB — a dedicated pool
-/// (~350 tiles, ~3x the field-measured visible-slot count) keeps their
-/// pressure off the waveform tiles.
-export const FILMSTRIP_TILE_BUDGET_BYTES = PERFORMANCE_DEFAULTS.filmstrip_cache_mib * MIB;
 
 export function spacingUs(lod: number): number {
   return FILMSTRIP_BASE_SPACING_US * 2 ** lod;

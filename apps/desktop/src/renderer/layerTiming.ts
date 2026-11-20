@@ -55,11 +55,6 @@ export function writeLayerTiming(layer: TimedLayer, timing: ContentTiming): void
   writeSourceWindow(layer.params, timing.content_in, timing.content_out);
   layer.params.time_map = affineTimeMap(timing.time_map.rate);
 }
-export function trimContentWindow(layer: TimedLayer, localStart: number, localEnd: number): void {
-  const start = contentAt(layer.params, exactTime(localStart));
-  const end = contentAt(layer.params, exactTime(localEnd));
-  writeSourceWindow(layer.params, start, end);
-}
 export function keyTimeExact(key: Pick<Keyframe<unknown>, 't_us' | 'time_fraction'>): ExactTime {
   return addTime(exactTime(key.t_us), key.time_fraction ?? ZERO_TIME);
 }
@@ -71,7 +66,4 @@ export function writeKeyTime(key: Pick<Keyframe<unknown>, 't_us' | 'time_fractio
 export function validateTimeFraction(value: ExactTime): void {
   const v = readExactTime(value);
   if (v.num < 0 || v.num >= v.den) throw new TimeMappingError('NonCanonical');
-}
-export function identityTimingFields(): TimingFields {
-  return { time_map: affineTimeMap(), frame_interpolation: { kind: 'FrameSampling' } };
 }

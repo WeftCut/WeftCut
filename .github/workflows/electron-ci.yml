@@ -919,6 +919,9 @@ jobs:
       - name: Typecheck (tsc -b)
         run: npm run typecheck
 
+      - name: Unused code (knip)
+        run: npm run knip
+
       # src/cli/integration.test.ts starts out/cli/weftcut.exe as a client would,
       # and fails by name when it is missing. Built here, natively, by the script
       # that builds the shipped one.

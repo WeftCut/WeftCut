@@ -8,16 +8,6 @@ import { loadTrack, evalTrack, loadColorTrack, evalRgbaPacked } from "../eval";
 import type { Rgba } from "../ipc";
 import type { Animated } from "../../shared/keyframe";
 
-export type { EaseDir, Interpolation } from "../../shared/easing";
-export type {
-  Continuity,
-  Extrapolate,
-  Extrapolation,
-  Keyframe,
-  Segment,
-  Tangent,
-  TangentMode,
-} from "../../shared/keyframe";
 
 /// The renderer's name for `Animated<T>`.
 export type AnimTrack<T> = Animated<T>;

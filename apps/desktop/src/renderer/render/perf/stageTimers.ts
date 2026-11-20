@@ -149,10 +149,6 @@ export function setStageProfiling(on: boolean): void {
   resetStageTimers();
 }
 
-export function stageProfilingEnabled(): boolean {
-  return enabled;
-}
-
 export function resetStageTimers(): void {
   rings.fill(0);
   written.fill(0);

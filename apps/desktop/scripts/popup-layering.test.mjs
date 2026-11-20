@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { chromium } from "playwright";
+import { chromium } from "@playwright/test";
 
 const dockviewCssPath = new URL(
   "../../../node_modules/dockview-react/dist/styles/dockview.css",

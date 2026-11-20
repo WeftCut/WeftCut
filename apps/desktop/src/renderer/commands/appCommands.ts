@@ -18,7 +18,7 @@ import {
 } from "../preview/centerInFrame";
 import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
 import { resolveAnimated } from "../render/animated";
-import type { HandlerMap } from "../shortcuts";
+import type { HandlerMap } from "../shortcuts/useShortcuts";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
 import { hasChangedRanges } from "../agent/rangeWalk";
 import {

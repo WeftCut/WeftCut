@@ -124,15 +124,6 @@ export function anyRunning(s: ComputeJobsState, tool: ComputeTool): boolean {
 export const useComputeJobForRequest = (requestId: string | null): ComputeJob | null =>
   useComputeJobsStore((s) => (requestId === null ? null : jobForRequest(s, requestId)));
 
-export const useComputeJobForLayer = (
-  layerId: string | null,
-  tool?: ComputeTool,
-): ComputeJob | null =>
-  useComputeJobsStore((s) => (layerId === null ? null : jobForLayer(s, layerId, tool ? { tool } : {})));
-
-export const useAnyComputeRunning = (tool: ComputeTool): boolean =>
-  useComputeJobsStore((s) => anyRunning(s, tool));
-
 /// Subscribe before the snapshot, so an event cannot fall between them; the
 /// reducer's revision check keeps whichever is newer.
 export async function wireComputeJobs(): Promise<() => void> {

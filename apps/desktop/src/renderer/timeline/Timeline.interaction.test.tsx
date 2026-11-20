@@ -122,7 +122,6 @@ const ipcMocks = vi.hoisted(() => ({
   ),
   trimLayer: vi.fn().mockResolvedValue(undefined),
   splitLayerLinked: vi.fn().mockResolvedValue(undefined),
-  getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   linksCreate: vi.fn().mockResolvedValue("link-created"),
   linksDissolve: vi.fn().mockResolvedValue(undefined),
   groupsCreate: vi.fn().mockResolvedValue({ composition_id: "new-group", layer_id: "new-group-layer" }),
@@ -164,7 +163,6 @@ vi.mock("../ipc", async (importOriginal) => {
     pasteLayers: ipcMocks.pasteLayers,
     trimLayer: ipcMocks.trimLayer,
     splitLayerLinked: ipcMocks.splitLayerLinked,
-    getWaveformPeaks: ipcMocks.getWaveformPeaks,
     linksCreate: ipcMocks.linksCreate,
     linksDissolve: ipcMocks.linksDissolve,
     groupsCreate: ipcMocks.groupsCreate,
@@ -354,7 +352,6 @@ describe("Timeline seek/selection coupling", () => {
     ipcMocks.moveTrack.mockClear();
     ipcMocks.pasteLayers.mockClear();
     ipcMocks.trimLayer.mockClear();
-    ipcMocks.getWaveformPeaks.mockClear();
     ipcMocks.linksCreate.mockClear();
     ipcMocks.logEmit.mockClear();
     // All Tracks so the role-stamped track always renders regardless of the

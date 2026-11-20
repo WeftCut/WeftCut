@@ -31,13 +31,9 @@ import {
 } from "../state/selectionStore";
 import {
   addToGroupTarget,
-  canAddToGroupSelection,
-  canGroupSelection,
-  canUngroupSelection,
   selectedGroupLayer,
 } from "../timeline/groupEligibility";
 import {
-  canMoveSelectionToRoot,
   moveLandingUs,
   moveToCompositionSet,
   moveToRootTarget,
@@ -170,13 +166,6 @@ export function openSelectedGroup(): void {
   if (!layer || layer.params.kind !== "CompositionRef") return;
   openComposition(layer.params.composition_id, layer.id);
 }
-
-export {
-  canAddToGroupSelection,
-  canGroupSelection,
-  canMoveSelectionToRoot,
-  canUngroupSelection,
-};
 
 /// `openGroup` is enabled by what is reachable, not by what is selected:
 /// entering needs a Group under the cursor's selection.

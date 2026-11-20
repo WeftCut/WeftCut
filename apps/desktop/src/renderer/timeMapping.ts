@@ -36,7 +36,6 @@ export function divideTime(a: ExactTime, b: ExactTime): ExactTime { return calcu
 export function compareTime(a: ExactTime, b: ExactTime): number { return calculateExact(4, a, b).num; }
 export function roundTime(a: ExactTime): number { return calculateExact(5, a).num; }
 export function floorTime(a: ExactTime): number { return calculateExact(6, a).num; }
-export function ceilTime(a: ExactTime): number { return calculateExact(7, a).num; }
 
 /** UI/display and decoder boundaries only. Never feed this back into timing. */
 export function approximateTime(a: ExactTime): number { return a.num / a.den; }
