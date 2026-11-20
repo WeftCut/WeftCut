@@ -1,3 +1,4 @@
+import type { FaceWeight } from '../fonts/types'
 import type { MotifErrorCode } from './errors'
 import type { MotifReaderDiv, MotifReadTiming } from './readerProtocol'
 
@@ -51,6 +52,15 @@ export interface MotifCacheAddress { hash: string; frame: number }
  * main's capture queue serve them in that order. */
 export type MotifFramePriority = 'current' | 'ahead' | 'background'
 
+/** A catalog face a capture host registers for a Motif's font props
+ * (`./fontProps.ts`), under `family`, the name the prop's list gives it. */
+export interface MotifFontFace {
+  family: string
+  sha256: string
+  weight: FaceWeight
+  italic: boolean
+}
+
 /** The frame a capture renders. */
 export interface MotifCaptureArgs {
   motifId: string
@@ -63,6 +73,9 @@ export interface MotifCaptureArgs {
    * or invalid falls back to 30 (MCP without a project). */
   fpsNum?: number
   fpsDen?: number
+  /** The faces the frame's key was made with (`./fontProps.ts`). Absent:
+   * main resolves the font props against its own catalog. */
+  fonts?: MotifFontFace[]
 }
 
 /** `motif:capture`: one request for a Motif frame (ADR 0160). */

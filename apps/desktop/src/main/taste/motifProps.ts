@@ -5,11 +5,10 @@
 // has that key and the value fits the prop's type; everything else keeps the
 // manifest default, and an explicit prop from the caller wins over both.
 //
-// Font props (`font_<slot>`) take the slot's families that are installed here,
-// in the list's order, so frames and cache keys follow what actually renders
-// and a family without some glyphs (a Latin face, CJK text) still falls back
-// to the next installed one. Without the installed list, or with none of the
-// families installed, the prop gets the whole list.
+// Font props (`font_<slot>`) take the slot's whole family list: the faces are
+// resolved when a frame renders, against the project's `Fonts/` and then the
+// machine's (ADR 0126 note, ADR 0176), so the prop means the same on every
+// machine.
 
 import type { Manifest, PropSpec } from '../../shared/motifs/catalog'
 import { resolveColor } from './apply'
@@ -23,11 +22,9 @@ function colorValue(tokens: Tokens, v: unknown): string | undefined {
   return c ? `#${hex2(c.r)}${hex2(c.g)}${hex2(c.b)}${c.a === 255 ? '' : hex2(c.a)}` : undefined
 }
 
-/** A slot's families as a `font-family` value: the installed ones in order,
- *  else the whole list. */
-export function fontStack(families: readonly string[], installed: ReadonlySet<string> | null): string {
-  const found = installed ? families.filter((f) => installed.has(f.toLowerCase())) : []
-  return (found.length ? found : families).map((f) => `'${f}'`).join(', ')
+/** A slot's families as a `font-family` value, in order. */
+export function fontStack(families: readonly string[]): string {
+  return families.map((f) => `'${f}'`).join(', ')
 }
 
 function fits(spec: PropSpec, v: unknown): boolean {
@@ -43,13 +40,13 @@ function fits(spec: PropSpec, v: unknown): boolean {
 
 /** The props `manifest` takes from `tokens`, keyed by prop. `step_fps` is
  *  the motion group; every other token-backed prop is look. */
-export function motifTokenProps(manifest: Pick<Manifest, 'props_schema'>, tokens: Tokens | null, installed: ReadonlySet<string> | null): Record<string, unknown> {
+export function motifTokenProps(manifest: Pick<Manifest, 'props_schema'>, tokens: Tokens | null): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (!tokens) return out
   for (const [key, spec] of Object.entries(manifest.props_schema)) {
     if (key.startsWith('font_') && spec.type === 'string') {
       const families = tokens.fonts?.[key.slice(5)]
-      if (families) { const v = fontStack(families, installed); if (fits(spec, v)) out[key] = v }
+      if (families) { const v = fontStack(families); if (fits(spec, v)) out[key] = v }
       continue
     }
     const raw = tokens.motif?.[key]

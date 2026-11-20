@@ -357,12 +357,13 @@ export function checkComposition(project: Project, compositionId: string, taste:
   return { composition_id: compositionId, revision: compositionRevision(project, compositionId, taste), findings: inRange, counts }
 }
 
-/** Token-backed props a role's Motif departs from. Fonts are left out: what
- *  they resolve to depends on the machine, which the lint does not know. */
+/** Token-backed props a role's Motif departs from. Fonts are left out: a
+ *  layer may hold the subset of the slot's list one machine had installed
+ *  (ADR 0126 note), which draws the same faces there and is no departure. */
 function motifDrift(p: { motif_id: string; props: Record<string, unknown> }, role: string, taste: TasteView | null): string[] {
   const schema = taste?.motifs?.[role]?.motifs?.find((m) => m.id === p.motif_id)?.props_schema
   if (!schema) return []
-  const want = motifTokenProps({ props_schema: schema }, taste!.tokens, null)
+  const want = motifTokenProps({ props_schema: schema }, taste!.tokens)
   const same = (a: unknown, b: unknown) => typeof a === 'string' && typeof b === 'string' ? a.toUpperCase() === b.toUpperCase() : a === b
   return Object.entries(want).filter(([k, v]) => !k.startsWith('font_') && !same(p.props[k], v)).map(([k, v]) => `${k} ${String(p.props[k])} (style ${String(v)})`)
 }

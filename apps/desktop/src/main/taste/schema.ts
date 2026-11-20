@@ -66,7 +66,8 @@ export interface Tokens {
    *  `color` prop; its type is checked against each Motif's schema at use. */
   motif?: Record<string, string | number>
   /** Font slot → families in preference order. A Motif string prop
-   *  `font_<slot>` takes the first one installed (spec H2-D4). */
+   *  `font_<slot>` takes the whole list; the face is resolved when a frame
+   *  renders (spec H2-D4, ADR 0126 note). */
   fonts?: Record<string, string[]>
 }
 

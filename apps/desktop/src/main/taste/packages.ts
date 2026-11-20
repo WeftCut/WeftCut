@@ -14,6 +14,8 @@ import { parse as parseYaml } from 'yaml'
 
 export const STYLE_FILE = 'STYLE.md'
 export const TASTE_FILE = 'TASTE.md'
+/** The project folder's style packages, one directory per style. */
+export const STYLES_DIR = 'Styles'
 /** Style and TASTE files are small; anything bigger is not one. */
 const MAX_TEXT_BYTES = 256 * 1024
 const MAX_PACKAGE_FILES = 1000

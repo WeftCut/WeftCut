@@ -5,6 +5,7 @@ import type { MotifCaptureService } from './captureService';
 import { hashCacheKey } from '../../shared/motifs/cacheKey';
 import { MotifError, motifSuperseded } from '../../shared/motifs/errors';
 import { fitsMotifFrame } from '../../shared/motifs/limits';
+import { isMotifFontFaces } from '../../shared/motifs/fontProps';
 import type { MotifBakePlan, MotifBakePause, MotifBakeSnapshot } from '../../shared/motifs/baking';
 
 export interface BakeWorkspaceDeps {
@@ -191,6 +192,7 @@ export function validateBakePlan(plan: MotifBakePlan): void {
       || (content.explicit !== undefined && typeof content.explicit !== 'boolean')
       || !fitsMotifFrame(c.width, c.height)
       || !Number.isSafeInteger(c.fpsNum) || c.fpsNum <= 0 || !Number.isSafeInteger(c.fpsDen) || c.fpsDen <= 0
+      || (c.fonts !== undefined && !isMotifFontFaces(c.fonts))
       || !Array.isArray(content.ranges) || content.ranges.length > 10000) invalid();
     let props: unknown;
     try { props = JSON.parse(c.propsJson); } catch { invalid(); }

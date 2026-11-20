@@ -1,3 +1,5 @@
+import type { MotifFontFace } from './frameTransport';
+
 /** Disk demand is independent of the authored content duration/cache identity. */
 export interface MotifFrameRange { start: number; end: number }
 export interface MotifBakeContent {
@@ -15,6 +17,9 @@ export interface MotifBakeContent {
     height: number;
     fpsNum: number;
     fpsDen: number;
+    /** The faces the renderer keyed the content with, as a preview capture
+     * sends them (`MotifCaptureArgs.fonts`). */
+    fonts?: MotifFontFace[];
   };
 }
 export type MotifBakePhase = 'queued' | 'baking' | 'paused' | 'retrying' | 'ready' | 'error';

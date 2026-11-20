@@ -7,6 +7,7 @@ import { CaptureHost, HostRenderError, type CapturePhase } from './captureHost.j
 import { LanePolicy } from './lanePolicy.js'
 import { motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
 import { MotifError } from '../../shared/motifs/errors.js'
+import { motifPageFonts } from './fontProps.js'
 import { resolveMotifMediaProps } from './mediaProps.js'
 import { frameMarkerRows } from '../../shared/motifs/frameMarker.js'
 import { fitsMotifTexture } from '../../shared/motifs/limits.js'
@@ -388,7 +389,12 @@ export class MotifCapturer {
       a.fpsNum != null && a.fpsDen != null && a.fpsNum > 0 && a.fpsDen > 0
         ? a.fpsNum / a.fpsDen
         : 30
-    const meta = { duration, width: a.width, height: a.height, fps }
+    // Font props' faces are served on the Motif's origin and registered
+    // before setup; a Motif without font props gets the meta it always had.
+    // A keyed face that cannot be served refuses the capture as `transient`
+    // before any host is asked for.
+    const fonts = await motifPageFonts(a.motifId, manifest, props, a.fonts)
+    const meta = { duration, width: a.width, height: a.height, fps, ...(fonts.length ? { fonts } : {}) }
     // Opening and readiness are the host's, never the Motif's content: a
     // failure retires the host and the next capture opens another.
     let host = await lease.host(a)

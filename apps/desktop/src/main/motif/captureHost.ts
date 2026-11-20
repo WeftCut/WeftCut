@@ -9,6 +9,7 @@ import { MOTIF_DEADLINES, type MotifTuning } from '../../shared/motifs/tuning.js
 import type { Rendered } from './captureQueue.js'
 import type { HostKey, PooledHost } from './hostPool.js'
 import type { PinnedPackage } from './resolver.js'
+import type { MotifPageFont } from './fontProps.js'
 
 /** The capture phases whose time the capturer accumulates. */
 export type CapturePhase = 'loadMs' | 'readyMs' | 'setupMs' | 'renderMs' | 'outputMs'
@@ -32,7 +33,9 @@ export interface RenderStep {
   width: number
   height: number
   props: Record<string, unknown>
-  meta: { duration: number; width: number; height: number; fps: number }
+  /** `fonts`: the faces the page registers before setup (./fontProps.ts),
+   * absent for a Motif without font props. */
+  meta: { duration: number; width: number; height: number; fps: number; fonts?: MotifPageFont[] }
 }
 
 /** Why a step failed. `threw`: the Motif's script threw in its served page,

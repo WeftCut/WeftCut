@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { FaceIndexEntry, FontIndex } from '../../../shared/fonts/types';
 import type { AnimTrack, LayerSummary, TrackSummary } from '../../ipc';
 import { compositionFixture, groupLayerFixture, ROOT_ID, summaryFixture } from '../../testing/summaryFixture';
 import type { LookaheadTarget } from './motifDemand';
@@ -32,6 +33,17 @@ vi.mock('./bakeClient', () => ({ MotifBakeClient: class {
   }
   invalidate() {} dispose() {}
 } }));
+const fonts = vi.hoisted(() => ({ index: { revision: 1, systemScanned: true, faces: [] } as FontIndex, listeners: new Set<() => void>() }));
+vi.mock('../fonts/fontIndexStore', () => ({
+  getFontIndex: () => fonts.index,
+  subscribeFontIndex: (listener: () => void) => { fonts.listeners.add(listener); return () => fonts.listeners.delete(listener); },
+}));
+/** Main sends a new font index. */
+const publishFonts = (...faces: FaceIndexEntry[]) => {
+  fonts.index = { revision: fonts.index.revision + 1, systemScanned: true, faces };
+  for (const listener of fonts.listeners) listener();
+};
+const face = (family: string, sha: string): FaceIndexEntry => ({ families: [family], weight: 400, italic: false, source: 'system', sha256: sha.repeat(64), size: 1, ttcIndex: null });
 vi.mock('./syncCatalog', () => ({ syncProjectMotifsFromBackend: vi.fn(async () => {}) }));
 vi.mock('../../settings/appSettingsStore', () => ({
   useAppSettingsStore: { getState: () => ({ settings: { prebake_motifs: state.automatic } }), subscribe: () => () => {} },
@@ -95,6 +107,27 @@ describe('MotifDemandSession', () => {
     } finally { service.dispose(); }
     // A document that goes takes its Motifs with it.
     expect(declared.mock.calls.at(-1)![0]).toEqual({ visible: [], next: null, playing: false });
+  });
+
+  it('replans when a font index change resolves a Motif\'s font props to other faces, and only then', () => {
+    vi.stubGlobal('document', {});
+    const headline = motif('headline', 0, 2_000_000);
+    if (headline.params.kind !== 'Motif') throw new Error('fixture');
+    headline.params.motif_id = 'clipping-headline';
+    headline.params.props = {};
+    const summary = summaryFixture({ root: { tracks: [track([headline])] } });
+    const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
+    try {
+      service.handleProjectChanged();
+      const plans = bake.mock.calls.length;
+      publishFonts(face('Anton', 'a'));
+      expect(bake).toHaveBeenCalledTimes(plans + 1);
+      expect(bake.mock.lastCall![0].contents[0].capture.fonts.map((f: { sha256: string }) => f.sha256)).toEqual(['a'.repeat(64)]);
+      publishFonts(face('Anton', 'a'), face('Unrelated Serif', 'u'));
+      expect(bake).toHaveBeenCalledTimes(plans + 1);
+    } finally { service.dispose(); }
+    expect(fonts.listeners.size).toBe(0);
   });
 
   it('uses the startup catalog for edits and replans when the catalog actually changes', async () => {

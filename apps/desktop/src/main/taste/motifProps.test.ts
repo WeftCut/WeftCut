@@ -36,15 +36,13 @@ describe('motifTokenProps', () => {
       accent: { type: 'color', default: '#000' }, tint: { type: 'color', default: '#000' },
       tilt_deg: { type: 'number', default: 0, min: -8, max: 8 }, band: { type: 'enum', default: 'paper', options: ['paper', 'ink'] },
       label: { type: 'number', default: 1 }, other: { type: 'string', default: '' },
-    }), tokens, null)).toEqual({ accent: '#D2261C', tint: '#FFFFFF80', band: 'ink' })
+    }), tokens)).toEqual({ accent: '#D2261C', tint: '#FFFFFF80', band: 'ink' })
   })
 
-  it('resolves a font slot to its installed families in order, else the whole list', () => {
+  it('gives a font slot its whole family list in order, whatever this machine has installed', () => {
     const s = schema({ font_headline: { type: 'string', default: 'serif', max_length: 200 } })
-    expect(motifTokenProps(s, tokens, new Set(['impact']))).toEqual({ font_headline: "'Impact'" })
-    expect(motifTokenProps(s, tokens, new Set(['impact', 'anton']))).toEqual({ font_headline: "'Anton', 'Impact'" })
-    expect(motifTokenProps(s, tokens, null)).toEqual({ font_headline: "'Anton', 'Impact'" })
-    expect(fontStack(['Noto Sans SC Black'], new Set())).toBe("'Noto Sans SC Black'")
+    expect(motifTokenProps(s, tokens)).toEqual({ font_headline: "'Anton', 'Impact'" })
+    expect(fontStack(['Noto Sans SC Black'])).toBe("'Noto Sans SC Black'")
   })
 })
 
@@ -61,7 +59,7 @@ describe('the taste view', () => {
 describe('placing and restyling a style Motif', () => {
   function actor(t: Tokens | null) {
     const gen = seededGen()
-    const a = createActor({ initial: blankProject(gen, 'm'), idGen: gen, clock: () => '<TS>', tasteTokens: () => t, installedFonts: () => new Set(['impact']), motifs: libraryMotifs() })
+    const a = createActor({ initial: blankProject(gen, 'm'), idGen: gen, clock: () => '<TS>', tasteTokens: () => t, motifs: libraryMotifs() })
     return a
   }
   const call = (a: ActorHandle, tool: string, args: Record<string, unknown>) => a.mcpCall(tool, JSON.stringify(args))
@@ -79,6 +77,12 @@ describe('placing and restyling a style Motif', () => {
     const plain = actor(null)
     call(plain, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, content: { kind: 'motif', motif_id: 'lower-third' } }] })
     expect(props(plain)).toMatchObject({ accent: '#ff4d4d', align: 'left' })
+  })
+
+  it('places a font slot prop with the whole family list: the actor never asks what is installed', () => {
+    const a = actor(view(STYLED).tokens)
+    expect(call(a, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, content: { kind: 'motif', motif_id: 'clipping-headline' } }] }).ok).toBe(true)
+    expect(props(a)).toMatchObject({ font_headline: "'Anton', 'Impact'" })
   })
 
   it('restyle_to_taste puts token-backed props back by role, and the audit reports the drift before', () => {
