@@ -1,88 +1,68 @@
 import { test, expect } from '@playwright/test'
+import { createServer } from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
 import { launchApp } from './helpers/driver'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { ModelsView } from '../../src/shared/inference-models'
 
-interface Info { url: string; bearer_token: string }
-type Status = { provider: string; label: string; configured: boolean }
+/// A model's credential, end to end through the real keyring: saved with the
+/// model, encrypted at rest, sent to its service, and dropped with the model.
+/// `main/model-manager.test.ts` covers the same steps on an injected key store,
+/// so only this file sees safeStorage and the files under a real userData dir.
 
-async function connect(url: string, token: string): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(url), {
-    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+const KEY = 'sk-model-e2e-dummy'
+
+test('a model key is stored encrypted, sent to its service, and removed with the model', async () => {
+  // The verification request a service answers before the model is selected.
+  // It records the Authorization header so the test can see which key went out.
+  const authorizations: string[] = []
+  const server = createServer((req, res) => {
+    authorizations.push(String(req.headers.authorization ?? ''))
+    req.resume()
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ choices: [{ message: { content: '[{"t_start":0,"t_end":1,"text":"A blue image","tags":["blue"]}]' } }] }))
+    })
   })
-  const client = new Client({ name: 'e2e-cloud-keys', version: '0.0.0' }, { capabilities: {} })
-  await client.connect(transport)
-  return client
-}
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1/chat/completions`
 
-test('safeStorage key round-trip + cloud tools advertised', async () => {
   const { app, page } = await launchApp()
+  const invoke = (cmd: string, args: unknown = {}) =>
+    page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const)
   try {
-    // `api.backend.invoke` is ONLY for Rust dispatcher commands (incl. the
-    // settings_* channels main intercepts before the Rust fall-through). Main-process
-    // IPC handlers (`fs:*`, `path:*`, `get_mcp_info`) have their own `api.*` methods —
-    // routing them through backend.invoke hits the dispatcher's "unknown command" error.
-    const invoke = (cmd: string, args: unknown) =>
-      page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const)
-    const readJson = (path: string) =>
-      page.evaluate(async (p) => new TextDecoder().decode(await (window as any).api.fs.readFile(p)), path)
-
-    // Resolve userData path from the main process (no require/import needed here).
-    const userData = (await app.evaluate(({ app }) => app.getPath('userData'))) as string
-
-    // Skip when the OS keyring is absent (headless Linux CI) — the round-trip
-    // calls safeStorage.encryptString which throws "Encryption is not available".
+    // Skip when the OS keyring is absent (headless Linux CI): saving a key needs
+    // safeStorage to encrypt it. safestorage.spec.ts covers that host.
     const encryptionAvailable = (await app.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable())) as boolean
-    test.skip(!encryptionAvailable, 'safeStorage encryption unavailable (no OS keyring) — round-trip is verified where a keyring exists (Windows/macOS/Linux-desktop)')
+    test.skip(!encryptionAvailable, 'safeStorage encryption unavailable (no OS keyring)')
+    const userData = (await app.evaluate(({ app }) => app.getPath('userData'))) as string
+    const keysPath = path.join(userData, 'cloud_keys.json')
 
-    const keysPath = (await page.evaluate(
-      ([u]) => (window as any).api.path.join([u, 'cloud_keys.json']),
-      [userData],
-    )) as string
+    await invoke('models_use', { id: 'vlm-online', name: 'Keyed test service', endpoint: { url, model: 'test-vision' }, apiKey: KEY })
+    await expect.poll(async () => ((await invoke('models_list')) as ModelsView).active.vlm).toMatch(/^custom-/)
+    const view = (await invoke('models_list')) as ModelsView
+    const id = view.active.vlm!
+    expect(view.models.find((m) => m.id === id)?.hasKey).toBe(true)
 
-    // Clean slate.
-    await invoke('settings_clear_api_key', { provider: 'openai' })
+    // Sent as the bearer of the verification request.
+    expect(authorizations).toContain(`Bearer ${KEY}`)
 
-    // Set a dummy key → status flips to configured + cloud_keys.json holds an entry.
-    await invoke('settings_set_api_key', { provider: 'openai', key: 'sk-test-dummy' })
-    let status = (await invoke('settings_get_api_key_status', {})) as Status[]
-    const openai = status.find((s) => s.provider === 'openai')!
-    expect(openai.configured).toBe(true)
+    // Encrypted in the keyring file under the model's own tag, and nowhere in
+    // the clear.
+    const stored = JSON.parse(fs.readFileSync(keysPath, 'utf8')) as Record<string, string>
+    expect(typeof stored[`model-${id}`]).toBe('string')
+    expect(JSON.stringify(stored)).not.toContain(KEY)
+    expect(fs.readFileSync(path.join(userData, 'model_settings.json'), 'utf8')).not.toContain(KEY)
 
-    // Read cloud_keys.json via the fs:readFile IPC and confirm the stored value is
-    // an encrypted blob (base64), not the plaintext key.
-    const stored = JSON.parse(await readJson(keysPath)) as Record<string, string>
-    expect(typeof stored.openai).toBe('string')
-    expect(stored.openai).not.toContain('sk-test-dummy') // encrypted, not plaintext
-
-    // The cloud MCP tools are now advertised to an external client.
-    const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info
-    const client = await connect(info.url, info.bearer_token)
-    try {
-      const names = (await client.listTools()).tools.map((t) => t.name)
-      expect(names).toContain('transcribe_clip')
-      expect(names).toContain('synthesize_speech')
-    } finally {
-      // Same rule as the app: an open transport is another handle the worker
-      // would have to outlive.
-      await client.close()
-    }
-
-    // Clear → status flips back + entry gone.
-    await invoke('settings_clear_api_key', { provider: 'openai' })
-    status = (await invoke('settings_get_api_key_status', {})) as Status[]
-    expect(status.find((s) => s.provider === 'openai')!.configured).toBe(false)
-    const exists = (await page.evaluate((p) => (window as any).api.fs.exists(p), keysPath)) as boolean
-    if (exists) {
-      const after = JSON.parse(await readJson(keysPath)) as Record<string, string>
-      expect(after.openai).toBeUndefined()
-    }
-    // If the file doesn't exist at all after clear, the entry is definitely gone.
-
+    // A credential with no model left to use it is not kept.
+    await invoke('models_remove_custom', { id })
+    const after = fs.existsSync(keysPath) ? (JSON.parse(fs.readFileSync(keysPath, 'utf8')) as Record<string, string>) : {}
+    expect(after[`model-${id}`]).toBeUndefined()
   } finally {
     // finally, because the test.skip() above THROWS. Without it the app outlives
     // the test, and an app nobody closed is what the worker's own exit ends up
     // waiting on — green tests, and a leg that dies in teardown.
     await app.close()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })
