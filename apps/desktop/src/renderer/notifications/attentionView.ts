@@ -1,5 +1,5 @@
 // What the bell's notification center lists: the things that need the user and
-// have no entry of their own in the bar. A dismissed item leaves the list; the
+// are not already in front of them. A dismissed item leaves the list; the
 // state it points at stays where it lives (a settings page, Help · Check for
 // Updates). Pure, so ordering, dismissal and the bell's severity are tested
 // without a renderer. Layout and behaviour: `docs/status-log.md` §
@@ -22,7 +22,7 @@ export type AttentionItem =
   | { kind: "update"; key: "update"; level: "info"; update: UpdateStatus & { version: string } };
 
 export interface AttentionView {
-  /// Not dismissed, most severe first.
+  /// Neither dismissed nor on screen, most severe first.
   active: AttentionItem[];
   /// The bell's dot: the most severe item, `null` for no dot.
   level: AttentionLevel | null;
@@ -37,6 +37,11 @@ export interface AttentionInput {
   /// From `useNoticedUpdate`: offered and not skipped, else null. Skipping is
   /// the update's one dismissal, the same in the center and the update dialog.
   update: UpdateStatus | null;
+  /// Keys of items whose home is on screen now. Such an item is left out of
+  /// the list and the dot while its home shows, and comes back once it leaves:
+  /// the bell points only at what the user cannot already see. Only the review
+  /// is ever here; the other homes are modal dialogs that cover the bell.
+  onScreen?: ReadonlySet<AttentionItem["key"]>;
 }
 
 const RANK: Record<AttentionLevel, number> = { error: 0, warn: 1, info: 2 };
@@ -55,6 +60,8 @@ export function attentionView(input: AttentionInput): AttentionView {
     active.push({ kind: "update", key: "update", level: "info", update: { ...update, version: update.version } });
   }
   // Stable: within a level, notices, then review, then the update.
-  active.sort((a, b) => RANK[a.level] - RANK[b.level]);
-  return { active, level: active[0]?.level ?? null };
+  const shown = active
+    .filter((item) => !input.onScreen?.has(item.key))
+    .sort((a, b) => RANK[a.level] - RANK[b.level]);
+  return { active: shown, level: shown[0]?.level ?? null };
 }

@@ -489,7 +489,11 @@ function PlayheadDockPanel() {
 }
 
 /// Same activity surface; only editor mode offers object navigation.
-function AgentDockPanel() { return <AgentPanel editor />; }
+function AgentDockPanel() {
+  // Dock panels stay mounted behind other tabs (`renderer: "always"`).
+  const runtime = useDockPanelRuntime();
+  return <AgentPanel editor onScreen={runtime.isVisible} />;
+}
 
 /// No `weft-dock-panel-scroll` wrapper and no contracts: the History Panel owns
 /// its own scroller (sticky cursor follow) and pulls the edit stack over its own

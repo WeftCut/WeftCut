@@ -289,9 +289,15 @@ where keys are entered, an offered update under Help · Check for Updates.
 
 | Item | Level | Dismiss | Shows again when |
 |---|---|---|---|
-| Agent changes to review (ADR 0115) | info | no | — (gone once reviewed) |
+| Agent changes to review (ADR 0115) | info | no | — (gone once reviewed); hidden while its list is on screen |
 | Environment notices (`app:notices`: keyring, native decode, agent Skill) | the notice's | Got it | the notice was gone, then returns |
 | Update offered, not skipped | info | Skip this version (none while restarting) | a different version is offered |
+
+The center points only at what is not already in front of the user. An item
+whose home is on screen leaves the list and the dot while it shows, and comes
+back when it goes: the review while an agent panel on screen (the agent view's
+record pane, or the editor's Agent panel not hidden behind another tab) shows
+its Changes tab. The other homes are modal dialogs, which cover the bell.
 
 Save failed is not listed: it has its own entry, and two ways in to one problem
 would be one too many. Dismissals are main-owned app settings

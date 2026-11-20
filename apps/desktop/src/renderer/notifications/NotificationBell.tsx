@@ -5,6 +5,7 @@ import { BellIcon } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { useStatusPopover } from "@/components/useStatusPopover";
 import { openAgentTab } from "../agent/openAgentTab";
+import { useChangesOnScreen } from "../agent/activityStore";
 import { useUnreviewedCount } from "../agent/reviewStore";
 import { useNoticedUpdate } from "../app/updateStatus";
 import { UpdateDialog } from "../app/UpdateDialog";
@@ -23,6 +24,8 @@ interface Props {
   placement?: "up" | "down";
 }
 
+const REVIEW_ON_SCREEN: ReadonlySet<AttentionItem["key"]> = new Set(["review"]);
+
 /// The bell: what needs the user. Colour only — the dot is the most severe
 /// item not dismissed, and it counts nothing. Its popover is the notification
 /// center. Dismissing a row only takes it out of here: each state keeps its own
@@ -35,7 +38,11 @@ export function NotificationBell({ onOpenSettings, placement = "up" }: Props) {
   const unreviewed = useUnreviewedCount();
   const update = useNoticedUpdate();
   const dismissedNotices = useDismissedNotices();
-  const view = attentionView({ notices, dismissedNotices, unreviewed, update });
+  const changesOnScreen = useChangesOnScreen();
+  const view = attentionView({
+    notices, dismissedNotices, unreviewed, update,
+    ...(changesOnScreen ? { onScreen: REVIEW_ON_SCREEN } : {}),
+  });
   const { open, close, rootRef, detailsId, triggerProps } = useStatusPopover();
   const [updateOpen, setUpdateOpen] = useState(false);
 
