@@ -30,8 +30,6 @@ export interface PerformanceGpuHardware {
 // Producer fills ahead while Chromium reads one picture; a pipeline depth,
 // not a hardware capability claim.
 export const PREVIEW_BUFFER_FRAMES = 3;
-export const REFERENCE_4K_PIXELS = 3840 * 2160;
-export const REFERENCE_FRAME_BYTES = REFERENCE_4K_PIXELS * 4;
 const CACHE_WEIGHTS = { frame_ring_mib: 32, motif_cache_mib: 16, filmstrip_cache_mib: 5, waveform_cache_mib: 1 } as const;
 const CACHE_KEYS = Object.keys(CACHE_WEIGHTS) as (keyof typeof CACHE_WEIGHTS)[];
 const roundBudget = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Math.ceil(value / 16) * 16));

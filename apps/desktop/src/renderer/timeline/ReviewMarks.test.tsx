@@ -27,7 +27,6 @@ const ipc = vi.hoisted(() => ({
   viewStateGet: vi.fn().mockResolvedValue({ composition_tabs: [], active_composition_id: null, track_heights: {}, expanded_tracks: [] }),
   viewStateSet: vi.fn().mockResolvedValue(undefined),
   logEmit: vi.fn().mockResolvedValue(undefined),
-  getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   reviewView: vi.fn().mockRejectedValue(new Error("no backend")),
 }));
 vi.mock("../ipc", async (importOriginal) => ({ ...(await importOriginal<typeof import("../ipc")>()), ...ipc }));

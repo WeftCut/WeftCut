@@ -74,8 +74,3 @@ export function transportSeek(tUs: number): void {
   notePlayheadSeek();
   usePlaybackStore.getState().transport?.seek(tUs);
 }
-
-/// Atomic hook for React subscribers (primitive → no useSyncExternalStore
-/// loop, re-renders only on actual play/pause flips).
-export const usePlaybackPlaying = (): boolean =>
-  usePlaybackStore((s) => s.playing);

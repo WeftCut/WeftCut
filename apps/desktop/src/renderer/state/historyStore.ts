@@ -146,10 +146,3 @@ export async function wireHistoryStore(): Promise<UnlistenFn> {
     useHistoryStore.getState().reset();
   };
 }
-
-// ===== Atomic selector helpers ============================================
-
-export const useHistoryView = (): HistoryStackView | null =>
-  useHistoryStore((s) => s.view);
-
-export const useHistoryReady = (): boolean => useHistoryStore((s) => s.ready);

@@ -1,4 +1,4 @@
-import { MIB, PERFORMANCE_DEFAULTS, performanceSettings } from "../../../shared/performance-settings";
+import { MIB, performanceSettings } from "../../../shared/performance-settings";
 import {
   audioFxReverify,
   getWaveformLevels,
@@ -18,9 +18,6 @@ export const WAVEFORM_KIND = "waveform";
 export const TILE_PEAKS = 2048;
 /// Aim for ~1.5 timeline px per peak window at the chosen LOD.
 export const PX_PER_PEAK_TARGET = 1.5;
-/// Engine-side budget for waveform tiles (~48 KB each -> ~680 tiles, far
-/// above what the viewport-bounded fetch can request at once).
-export const WAVEFORM_TILE_BUDGET_BYTES = PERFORMANCE_DEFAULTS.waveform_cache_mib * MIB;
 
 /// Which peaks artifact a strip reads.
 ///

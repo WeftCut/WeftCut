@@ -144,15 +144,6 @@ export function clearMasterMeter(): void {
   });
 }
 
-export const useMasterRmsDb = (): number =>
-  useMasterMeterStore((state) => state.rmsDb);
-
-export const useMasterPeakDb = (): number =>
-  useMasterMeterStore((state) => state.peakDb);
-
-export const useMasterPeakHoldDb = (): number =>
-  useMasterMeterStore((state) => state.peakHoldDb);
-
 // Scalar on purpose: a selector that builds `{ rmsDb, peakDb }` returns a fresh
 // reference on every call, `useSyncExternalStore` compares snapshots with
 // `Object.is`, and the subtree then re-renders forever. A per-Role peak reading

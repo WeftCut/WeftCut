@@ -1,26 +1,14 @@
-import { LAYOUT_THEMES, DEFAULT_LAYOUT_THEME, LAYOUT_MINIMUM_WINDOW, readLayoutTheme } from '../shared/layout-theme';
+import { LAYOUT_THEMES, LAYOUT_MINIMUM_WINDOW, readLayoutTheme } from '../shared/layout-theme';
 
 export const MAIN_WINDOW_MINIMUM_SIZE = {
   minWidth: LAYOUT_MINIMUM_WINDOW.width,
   minHeight: LAYOUT_MINIMUM_WINDOW.height,
 } as const;
 
-/// Size for a first launch, or whenever the saved geometry is unusable (stale
-/// monitor, shrunken resolution, corrupt file — see windowGeometry.ts). No x/y:
-/// Chromium centers a window whose position is absent.
-export const MAIN_WINDOW_DEFAULT_SIZE = LAYOUT_THEMES[DEFAULT_LAYOUT_THEME].window;
-
 /// Key under which the main window's geometry is persisted in
 /// <userData>/window_geometry.json. A COMPATIBILITY SURFACE — renaming it
 /// silently discards every existing user's saved position.
 export const MAIN_WINDOW_LABEL = "main";
-
-/// Combined defaults for the geometry sanitizer, which clamps a restored rect
-/// against both the fallback size and the window's own minimums.
-export const MAIN_WINDOW_GEOMETRY_DEFAULTS = {
-  ...MAIN_WINDOW_DEFAULT_SIZE,
-  ...MAIN_WINDOW_MINIMUM_SIZE,
-} as const;
 
 /** Remembered geometry wins within the active theme's minimums. Work-area
  * dimensions are DIPs, so a large preset on a scaled monitor stays reachable. */

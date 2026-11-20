@@ -48,7 +48,6 @@ import {
   playheadTimeUs,
   setPlayheadTimeUs,
   usePlayheadStore,
-  usePlayheadTimeUs,
   usePlayheadTimeUsThrottled,
 } from "./playheadStore";
 import { compositionOrRoot, useProjectStore, type ProjectStoreState } from "./projectStore";
@@ -377,15 +376,6 @@ function useOrphanPlayheadUs(compositionId: string | null): number {
 /// keyboard rather than a Panel of their own.
 export function useFocusedPlayheadUsThrottled(intervalMs = 100, enabled = true): number {
   return useLocalPlayheadUsThrottled(useFocusedCompositionId(), intervalMs, enabled);
-}
-
-/// The editing target's read-out at FRAME rate (tier 4) — leaf components only.
-export function useFocusedPlayheadUs(): number {
-  const compositionId = useFocusedCompositionId();
-  const rootUs = usePlayheadTimeUs();
-  const frame = useAnchorFrame(compositionId);
-  const orphanUs = useOrphanPlayheadUs(compositionId);
-  return frame === null ? orphanUs : localClockUs(frame, rootUs);
 }
 
 /// Transient (tier 2) subscription to one Panel's read-out of the moment: the

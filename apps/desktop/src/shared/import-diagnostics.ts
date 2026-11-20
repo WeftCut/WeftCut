@@ -1,6 +1,5 @@
 /** Diagnostic events only; never persisted as project state. Durations use
  * monotonic clocks in their owning process, not cross-process timestamps. */
-export const IMPORT_DIAGNOSTIC_EVENT = 'import:diagnostic'
 export const IMPORT_DIAGNOSTIC_TRACK = 'import:diagnostic-track'
 export const IMPORT_DIAGNOSTIC_MILESTONE = 'import_diagnostic_milestone'
 export type ImportMilestone = 'pool_observed' | 'editable' | 'first_frame_submitted' | 'audio_prepared'

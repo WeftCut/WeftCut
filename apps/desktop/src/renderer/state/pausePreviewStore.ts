@@ -68,8 +68,3 @@ export const usePausePreview = (layerId: string): PausePreview | null =>
       ? s.preview
       : null,
   );
-
-/// Imperative read for event-time callers.
-export function pausePreviewSnapshot(): PausePreview | null {
-  return usePausePreviewStore.getState().preview;
-}

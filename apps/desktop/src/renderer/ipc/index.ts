@@ -22,11 +22,7 @@ import {
   type ComputeCancelledPayload,
   type ComputeJobsSnapshot,
 } from '../../shared/compute-jobs';
-export {
-  COMPUTE_JOBS_EVENT,
-  phaseLabel,
-  phaseText,
-} from '../../shared/compute-jobs';
+export { COMPUTE_JOBS_EVENT } from '../../shared/compute-jobs';
 export type {
   ComputeJob,
   ComputeJobEnded,
@@ -98,16 +94,9 @@ export { REVIEW_CHANGED_EVENT } from "../../shared/review";
 import { SAVE_STATUS_CHANNEL, type SaveStatus } from "../../shared/save-status";
 export { SAVE_STATUS_EVENT, type SaveStatus } from "../../shared/save-status";
 export type {
-  Change as ReviewChange,
-  ChangeAspect as ReviewChangeAspect,
-  ChangeClass as ReviewChangeClass,
-  EntityKey as ReviewEntityKey,
-  GroupDecoration as ReviewGroupDecoration,
   ReviewActivityView,
   ReviewActionArgs,
   ReviewActionResult,
-  ReviewChangedPayload,
-  ReviewVersion,
   ReviewView,
   ReviewViewArgs,
 } from "../../shared/review";
@@ -120,8 +109,6 @@ export {
   parseFxWaveformKey,
 } from "../../shared/audioEffects/status";
 export type {
-  AudioFxError,
-  AudioFxReady,
   AudioFxSnapshot,
   AudioFxStatusEvent,
   EnsureExportAudioFxResult,
@@ -613,7 +600,7 @@ export interface LinkSummary {
 
 /// Segment easing as a value (`Interpolation`) and the canonical preset table,
 /// single-sourced with main under src/shared/easing.ts.
-export type { EaseDir, Interpolation } from "../../shared/easing";
+export type { Interpolation } from "../../shared/easing";
 
 /// The keyframe record — per-key tangents, segment class on the left key,
 /// track-level `extrapolate` — single-sourced with main in
@@ -622,7 +609,6 @@ export type { EaseDir, Interpolation } from "../../shared/easing";
 export type {
   Continuity,
   Extrapolate,
-  Extrapolation,
   Keyframe,
   Segment,
   Tangent,
@@ -841,46 +827,6 @@ export async function addMediaLayer(
   });
 }
 
-export async function addColorLayer(opts: {
-  tStartUs: number;
-  durationUs?: number;
-  trackId?: string;
-  color?: Rgba;
-  width?: number;
-  height?: number;
-}): Promise<string> {
-  return invoke<string>("add_color_layer", {
-    trackId: opts.trackId,
-    color: opts.color,
-    width: opts.width,
-    height: opts.height,
-    tStartUs: opts.tStartUs,
-    durationUs: opts.durationUs,
-  });
-}
-
-export async function addTextLayer(opts: {
-  tStartUs: number;
-  durationUs?: number;
-  trackId?: string;
-  content?: string;
-  /// Where the layer lands, composition pixels — the ANCHOR point, since that
-  /// is what a Text layer's position names (ADR 0049). Both or neither: the
-  /// actor refuses one without the other, and with neither the layer is
-  /// centred in the frame.
-  x?: number;
-  y?: number;
-}): Promise<string> {
-  return invoke<string>("add_text_layer", {
-    trackId: opts.trackId,
-    content: opts.content,
-    tStartUs: opts.tStartUs,
-    durationUs: opts.durationUs,
-    x: opts.x,
-    y: opts.y,
-  });
-}
-
 export async function projectUndo(): Promise<void> {
   return invoke<void>("project_undo");
 }
@@ -1090,11 +1036,8 @@ export const APP_SETTINGS_EVENTS = {
 // ============================================================
 
 // Single-sourced in src/shared/workspace.ts; re-export convention in the file header.
-import type {
-  WorkspaceDocument,
-  WorkspaceProfile,
-} from "../../shared/workspace";
-export type { WorkspaceDocument, WorkspaceProfile };
+import type { WorkspaceDocument } from "../../shared/workspace";
+export type { WorkspaceDocument };
 
 export async function workspaceGet(): Promise<WorkspaceDocument> {
   return invoke<WorkspaceDocument>("workspace_get");
@@ -1391,14 +1334,6 @@ export async function deleteTrack(trackId: string): Promise<void> {
 /** Move the entire track; one command, one history entry. */
 export async function moveTrack(trackId: string, newPosition: number): Promise<void> {
   return invoke<void>("move_track", { trackId, newPosition });
-}
-
-/// Drop a point marker at `tUs` (frame-snapped actor-side); returns the new
-/// marker id. RECORDED. The label is deliberately empty — a human marker stays
-/// unnamed until renamed, so the ruler tooltip falls back to the translated
-/// noun. Colour is the actor default; the palette belongs to colour editing.
-export async function addMarkerAt(tUs: number): Promise<string> {
-  return invoke<string>("add_marker", { tUs, label: "" });
 }
 
 /// Rename a marker. RECORDED — but renaming to the unchanged label is an
@@ -1928,22 +1863,6 @@ export interface CompositionPatchPartial {
   channels?: number;
 }
 
-/// Update one or more composition fields. Setting `duration_us` pins
-/// the composition duration — call `fitCompositionToLayers()` to clear
-/// the pin and resume auto-fit. See docs/data-model.md#composition.
-export async function setComposition(
-  patch: CompositionPatchPartial,
-): Promise<void> {
-  return invoke<void>("set_composition", { patch });
-}
-
-/// Clear the composition's duration pin and snap `duration_us` to the
-/// layer high-water mark. After this call, subsequent layer edits
-/// track duration bidirectionally.
-export async function fitCompositionToLayers(): Promise<void> {
-  return invoke<void>("fit_composition_to_layers");
-}
-
 /// The Shots Panel's per-project review parameters — the score a candidate must
 /// exceed to become a boundary, and the shortest span the reduce keeps. Mirrors
 /// main `ShotReviewSettings`; both are wire fields of `reduceShotReport`.
@@ -2064,127 +1983,9 @@ export async function reinstallSkills(): Promise<SkillsInstallView> {
   return (await window.api.mcp.reinstallSkills()) as SkillsInstallView;
 }
 
-export interface ApiKeyStatus {
-  provider: string;
-  label: string;
-  configured: boolean;
-}
-
-export async function settingsGetApiKeyStatus(): Promise<ApiKeyStatus[]> {
-  return invoke<ApiKeyStatus[]>("settings_get_api_key_status");
-}
-
-export async function settingsSetApiKey(provider: string, key: string): Promise<void> {
-  return invoke<void>("settings_set_api_key", { provider, key });
-}
-
-export async function settingsClearApiKey(provider: string): Promise<void> {
-  return invoke<void>("settings_clear_api_key", { provider });
-}
-
-export interface ConnectionTestInfo {
-  /// The provider tag the result is attributed to (matches `ApiKeyStatus.provider`).
-  provider: string;
-  /// One-line success summary for the user.
-  summary: string;
-}
-
-/// Run a cheap smoke check against the configured provider key. Resolves with
-/// a structured info object on success; rejects with the structured cloud
-/// error message (MissingKey / InvalidKey / RateLimited / ...) so the UI can
-/// render it inline.
-export async function settingsTestProvider(
-  provider: string,
-): Promise<ConnectionTestInfo> {
-  return invoke<ConnectionTestInfo>("settings_test_provider", { provider });
-}
-
-// ============================================================
-// Speech backends — the multi-backend generalization of the
-// API-key surface. Cloud backends still configure a key (settingsSetApiKey);
-// local engines configure binary/model paths + device/threads via the setters
-// below. All four channels are intercepted in Electron main (they merge the
-// TS-owned speech_config store with Rust availability). PreferredEngine /
-// LocalEngineConfig are single-sourced in src/shared/speech-config.ts.
-// ============================================================
-
-import type {
-  PreferredEngine,
-  LocalEngineConfig,
-} from "../../shared/speech-config";
-export type { PreferredEngine, LocalEngineConfig };
-
-/// Availability verdict tags mirroring Rust `config::Availability`.
-export type SpeechAvailability =
-  | "available"
-  | "needs_key"
-  | "needs_binary"
-  | "needs_model";
-
-/// One backend row for the Settings → Transcription/Speech panel. `local` is
-/// present only for local backends that have stored config (populates the
-/// picker fields); cloud backends configure a key instead.
-export interface SpeechBackendInfo {
-  backend: string;
-  label: string;
-  locality: "cloud" | "local";
-  /// `exactWordTiming`: the engine reports per-word/token timestamps itself
-  /// (`word_timing: exact`) rather than interpolating from cue spans — shown
-  /// as a badge on the backend row.
-  capabilities: { transcription: boolean; tts: boolean; exactWordTiming: boolean };
-  availability: SpeechAvailability;
-  /// The one backend the resolver would use right now (preference + what is
-  /// available). `false` on every row when nothing is configured.
-  selected: boolean;
-  local?: LocalEngineConfig;
-}
-
-export interface SpeechBackendsView {
-  preferred_engine: PreferredEngine;
-  backends: SpeechBackendInfo[];
-}
-
-/// Full backend listing + the user's preferred engine, for the Settings panel.
-export async function settingsGetSpeechBackends(): Promise<SpeechBackendsView> {
-  return invoke<SpeechBackendsView>("settings_get_speech_backends");
-}
-
-/// Persist the user's preferred transcription engine ("auto" | a backend tag).
-export async function settingsSetSpeechPreferred(
-  engine: PreferredEngine,
-): Promise<void> {
-  return invoke<void>("settings_set_speech_preferred", { engine });
-}
-
-/// Set (or replace) one local engine's binary/model config + optional hints.
-/// Persists to the TS store AND pushes into the backend cache so the resolver
-/// sees it immediately.
-export async function settingsSetLocalBackend(args: {
-  backend: string;
-  binary: string;
-  model: string;
-  tokens?: string;
-  device?: string;
-  threads?: number;
-}): Promise<void> {
-  return invoke<void>("settings_set_local_backend", {
-    backend: args.backend,
-    binary: args.binary,
-    model: args.model,
-    ...(args.tokens !== undefined ? { tokens: args.tokens } : {}),
-    ...(args.device !== undefined ? { device: args.device } : {}),
-    ...(args.threads !== undefined ? { threads: args.threads } : {}),
-  });
-}
-
-/// Clear one local engine's config (idempotent).
-export async function settingsClearLocalBackend(backend: string): Promise<void> {
-  return invoke<void>("settings_clear_local_backend", { backend });
-}
-
 // ============================================================
 // Video-understanding (VLM) backends — the Settings surface for `describe_clip`.
-// Structural twin of the speech block above; the differences all follow from
+// Shaped like speech's backends; the differences all follow from
 // the subsystem being STATELESS (ADR 0024) and from vision needing an `mmproj`:
 //   * an `endpoint` locality (any OpenAI-compatible server, self-hosted or
 //     hosted) in place of speech's hosted-provider row — one HTTP describer
@@ -2262,66 +2063,6 @@ export async function settingsSetVlmDescribe(args: {
     ...(args.fps === undefined ? {} : { fps: args.fps }),
     ...(args.focus === undefined ? {} : { focus: args.focus }),
   });
-}
-
-/// Persist the user's preferred description engine ("auto" | a backend tag).
-export async function settingsSetVlmPreferred(
-  engine: VlmPreferredEngine,
-): Promise<void> {
-  return invoke<void>("settings_set_vlm_preferred", { engine });
-}
-
-/// Set (or replace) one local engine's binary/model/mmproj config. All three
-/// paths are required — a GGUF without its projector is text-only and the
-/// availability probe reports `needs_model`.
-export async function settingsSetVlmLocal(args: {
-  backend: string;
-  binary: string;
-  model: string;
-  mmproj: string;
-  device?: string;
-}): Promise<void> {
-  return invoke<void>("settings_set_vlm_local", {
-    backend: args.backend,
-    binary: args.binary,
-    model: args.model,
-    mmproj: args.mmproj,
-    ...(args.device !== undefined ? { device: args.device } : {}),
-  });
-}
-
-/// Clear one local engine's config (idempotent).
-export async function settingsClearVlmLocal(backend: string): Promise<void> {
-  return invoke<void>("settings_clear_vlm_local", { backend });
-}
-
-/// Set the endpoint, or clear it with an empty `url` (which clears its stored
-/// key too). Omitting `apiKey` KEEPS whatever key is stored (the panel never
-/// round-trips it, so an untouched field must not erase one); pass `null` to
-/// clear it. Main routes the key to safeStorage, the URL/model to the store.
-export async function settingsSetVlmEndpoint(args: {
-  url: string;
-  model?: string;
-  apiKey?: string | null;
-}): Promise<void> {
-  return invoke<void>("settings_set_vlm_endpoint", {
-    url: args.url,
-    ...(args.model !== undefined ? { model: args.model } : {}),
-    ...(args.apiKey !== undefined ? { apiKey: args.apiKey } : {}),
-  });
-}
-
-export interface WaveformPeaks {
-  /// One f32 in [0.0, 1.0] per peak window; max-abs over `1 / peaks_per_second`
-  /// of source audio. Resolves rejected with the literal string "not_ready" if
-  /// the waveform job hasn't finished — the caller should retry on the
-  /// matching `media:job_complete` event.
-  peaks: number[];
-  peaks_per_second: number;
-}
-
-export async function getWaveformPeaks(mediaId: string): Promise<WaveformPeaks> {
-  return invoke<WaveformPeaks>("get_waveform_peaks", { mediaId });
 }
 
 export interface WaveformLevels {
@@ -2430,13 +2171,6 @@ export async function ensureFullProxy(mediaId: string): Promise<void> {
 /// no-op on Bypass or when the quick proxy already exists.
 export async function generateQuickProxy(mediaId: string): Promise<void> {
   await invoke("generate_quick_proxy", { mediaId });
-}
-
-/// Kick a conform job for one media if its VCONF file is absent (export
-/// readiness gate + pre-conform-era backfill). No-op for media without an
-/// audio stream or when already cached.
-export async function ensureConform(mediaId: string): Promise<void> {
-  await invoke("ensure_conform", { mediaId });
 }
 
 /// Drive-by "Analyze shots" for a media-pool item: warm the deterministic shot

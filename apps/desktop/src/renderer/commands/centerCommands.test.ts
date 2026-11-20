@@ -12,7 +12,7 @@ import {
   registerGizmoProbe,
   type GizmoProbe,
 } from "../preview/gizmoProbeRegistry";
-import type { HandlerMap } from "../shortcuts";
+import type { HandlerMap } from "../shortcuts/useShortcuts";
 import { buildAppCommands } from "./appCommands";
 import { summaryFixture } from "../testing/summaryFixture";
 

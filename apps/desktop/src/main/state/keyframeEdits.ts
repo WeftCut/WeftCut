@@ -5,14 +5,11 @@
 // injects the actor's deterministic idGen as `mkId` so new keyframe ids match
 // Rust `new_id()` allocation order under det mode.
 export {
-  liftToKeyframed,
   upsertKeyframe,
   removeKeyframe,
   retimeKeyframe,
   setSegmentEasing,
-  setSegmentCoeffs,
   setAuto,
   setTangent,
   setContinuity,
-  setExtrapolation,
 } from '../../renderer/keyframe/edits'

@@ -333,5 +333,3 @@ export function setExtrapolation<T extends TrackValue>(
     },
   };
 }
-
-export type { Keyframe };

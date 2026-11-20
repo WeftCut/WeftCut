@@ -91,18 +91,3 @@ export function useIsKeyframeSelected(
     [selected, layerId, paramKey],
   );
 }
-
-/// The first selected key on one (layerId, paramKey), or null. A primitive, so
-/// an effect gated on it re-arms when the selection changes.
-export function useSelectedKfIdFor(
-  layerId: string,
-  paramKey: string | null,
-): string | null {
-  return useKeyframeSelectionStore((s) => {
-    if (paramKey === null) return null;
-    for (const key of s.selected.values()) {
-      if (key.layerId === layerId && key.paramKey === paramKey) return key.kfId;
-    }
-    return null;
-  });
-}

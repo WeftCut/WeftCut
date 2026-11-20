@@ -9,14 +9,7 @@
 // because it is keyed by the same param keys and read by the same inspector; see
 // that file for why `d` is a decimal place count and not `step`.
 export {
-  PIXEL_EXTENT_PRECISION,
-  EFFECT_PARAM_DECIMALS,
-  PARAM_PRECISION,
-  paramDecimals,
-  paramRange,
-  quantize,
   quantizeParam,
-  type ParamPrecision,
 } from '../../renderer/keyframe/descriptors'
 
 import { PIXEL_EXTENT_PRECISION, EFFECT_PARAM_DECIMALS, paramRange, quantize, quantizeParam } from '../../renderer/keyframe/descriptors'

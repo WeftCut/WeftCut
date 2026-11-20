@@ -31,8 +31,3 @@ export function noteResolution(mediaId: string, r: { key: string | null; reason:
   lastLoggedKey.set(mediaId, k);
   emit("info", `decode resolution: media ${mediaId} → ${r.reason}`);
 }
-
-/// Test/e2e hook: forget session verdicts.
-export function resetDecodeCapabilitySession(): void {
-  lastLoggedKey.clear();
-}

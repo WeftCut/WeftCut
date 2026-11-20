@@ -10,8 +10,6 @@ export {
   snapFrameFloor,
   snapFrameCeil,
   frameIndexRound,
-  frameIndexFloor,
-  frameIndexCeil,
   timeUsAtFrame,
   usToFrame,
   initEval,
@@ -24,7 +22,6 @@ export {
 export {
   AUDIO_GRID,
   AUDIO_SAMPLE_RATE_HZ,
-  AUDIO_SAMPLES_PER_MS,
   floorShiftAtZero,
   frameGrid,
   gridIndex,
@@ -34,11 +31,8 @@ export {
   snapDownOnGrid,
   snapOnGrid,
   snapUpOnGrid,
-  stepOnGrid,
   timeUsAtGridIndex,
   type Grid,
-  type GridDomain,
-  type OverlapClass,
   type ShiftMember,
 } from '../../renderer/grid'
 
