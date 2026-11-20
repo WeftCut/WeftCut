@@ -16,6 +16,7 @@ import { useProjectStore } from "../state/projectStore";
 import type { AgentActivity } from "../../shared/agent-activity";
 import type { ComputeJob } from "../../shared/compute-jobs";
 import { exportPhaseView, type ExportState } from "../panels/ExportPanel";
+import { listenForFontCopies, useFontCopiesStore, type FontCopies } from "./fontCopiesStore";
 import { workView, type MediaWork, type WorkView } from "./workView";
 
 /// What is running, as one pill: a background export (preview during export),
@@ -31,6 +32,8 @@ export function WorkPill({ backgroundExport }: {
   const jobsById = useComputeJobsStore((s) => s.jobs);
   const activities = useAgentActivity((s) => s.snapshot?.activities);
   const derivativeJobs = useDerivativeJobsStore((s) => s.jobs);
+  const fontCopies = useFontCopiesStore((s) => s.copies);
+  useEffect(listenForFontCopies, []);
   // Work held back by the show delay comes due without a store change: one
   // re-render at that moment, no standing clock.
   const [, rerender] = useReducer((n: number) => n + 1, 0);
@@ -38,6 +41,7 @@ export function WorkPill({ backgroundExport }: {
     jobs: Object.values(jobsById),
     activities: activities ?? [],
     derivatives: Object.values(derivativeJobs),
+    fontCopies,
     now: Date.now(),
   });
   useEffect(() => {
@@ -62,7 +66,7 @@ export function WorkPill({ backgroundExport }: {
     : pillLabel(t, view);
   // One group's rows say what they are, beside a trigger that names them, so
   // a lone group goes untitled; several are each titled to tell them apart.
-  const groupCount = [backgroundExport, view.compute.length, view.agent.length, view.derivatives.length]
+  const groupCount = [backgroundExport, view.compute.length, view.agent.length, view.derivatives.length, view.fonts]
     .filter(Boolean).length;
   const titled = groupCount > 1;
   return (
@@ -122,7 +126,15 @@ function pillLabel(t: TFunction, view: WorkView): string {
   if (view.count > 1) return t("status_bar.work.many", { count: view.count });
   const [job] = view.compute;
   if (job) return t(job.tool === "transcribe_clip" ? "status_bar.work.transcribing" : "status_bar.work.describing");
+  if (view.fonts) return fontCopiesLabel(t, view.fonts);
   return t(view.agent.length > 0 ? "status_bar.work.agent" : "status_bar.work.derivatives");
+}
+
+/// "Copying fonts 2/6", or the close's wait for them.
+function fontCopiesLabel(t: TFunction, copies: FontCopies): string {
+  return copies.closing
+    ? t("status_bar.work.fonts_closing")
+    : t("status_bar.work.fonts_copying", { done: copies.done, total: copies.total });
 }
 
 /// The ring owns the accessible progress value; without a percent it spins.
@@ -217,6 +229,15 @@ function WorkDetails({ view, titled, onLeave }: { view: WorkView; titled: boolea
       {view.derivatives.length > 0 && (
         <WorkGroup title={t("status_bar.work.group_derivatives")} titled={titled}>
           {view.derivatives.map((media) => <MediaRow key={media.media_id} media={media} />)}
+        </WorkGroup>
+      )}
+      {view.fonts && (
+        <WorkGroup title={t("status_bar.work.group_fonts")} titled={titled}>
+          <li className="work-row" data-work="fonts">
+            <div className="work-row-line">
+              <span className="work-row-name">{fontCopiesLabel(t, view.fonts)}</span>
+            </div>
+          </li>
         </WorkGroup>
       )}
     </>
