@@ -41,9 +41,9 @@ export interface ViewMenuWorkspaces {
 
 /// The View menu — Panels (open/focus/close) flat at the top, Workspace
 /// profiles + management under the Workspaces submenu (low-frequency ops stay
-/// one level down), then the A/B Roll vs All Tracks track-display radio, the
-/// follow-playhead, marker-display and safe-area toggles, and the Agent-mode
-/// entry. Every
+/// one level down), then the two surface sections: Timeline (the A/B Roll vs
+/// All Tracks mode, follow-playhead, markers, review overlay) and Preview
+/// (safe-area guides, grid, Fit) — then the Agent-mode entry. Every
 /// checkmark here reads the app-pref store, so it stays in sync however the
 /// value changed — whether from `T` / `Shift+F`, the Quick Actions strip, or the
 /// search palette.
@@ -156,10 +156,13 @@ export function ViewMenu({
         />
       </SubMenu>
       <MenuSeparator />
+      {/* The timeline's view controls, under one heading. The two display modes
+          lead — they decide which rows exist before any overlay is read — and
+          the overlays follow, in the order they paint. No separator inside:
+          the heading is the group, and a divider under it would start a second,
+          unheaded run. */}
       <MenuHeading
-        label={t("view.display_mode_heading", {
-          defaultValue: "Track display",
-        })}
+        label={t("view.timeline_heading", { defaultValue: "Timeline" })}
       />
       <CommandItem
         commandId="toggleDisplayMode"
@@ -178,7 +181,6 @@ export function ViewMenu({
         checked={mode === "AllTracks"}
         runIf={mode !== "AllTracks"}
       />
-      <MenuSeparator />
       <CommandItem
         commandId="toggleFollowPlayhead"
         actionId="toggleFollowPlayhead"
@@ -193,31 +195,37 @@ export function ViewMenu({
           toggle has no binding. */}
       <CommandItem
         commandId="toggleMarkersVisible"
-        label={t("view.show_markers", { defaultValue: "Show markers" })}
+        label={t("view.timeline_markers", { defaultValue: "Timeline markers" })}
         checked={markersVisible}
       />
-      {/* Preview chrome rather than timeline display, so it sits below the two
-          timeline toggles. Bindingless like the marker toggle — see
-          `SELF_CONTAINED_COMMAND_IDS` in `commands/appCommands.ts`. */}
+      {/* The Review overlay (ADR 0115): agent review material painted on the
+          timeline — the Review lane of tack chips, unreviewed changes on the
+          clips (edges, removed-clip ghosts, Group badges). Runtime state of the agent
+          panel's store, like the material it shows; no binding. Last of the
+          timeline rows: it shows agent material, not the user's own project. */}
+      <CommandItem
+        commandId="toggleReviewOverlay"
+        label={t("view.review_overlay")}
+        checked={reviewOverlay}
+      />
+      <MenuSeparator />
+      {/* Preview chrome gets its own section instead of trailing the timeline
+          rows: safe areas and the grid annotate the PREVIEW, and Fit resets its
+          view, so a reader after timeline controls should not have to step
+          through them. Both toggles are bindingless like the marker toggle —
+          see `SELF_CONTAINED_COMMAND_IDS` in `commands/appCommands.ts`. */}
+      <MenuHeading
+        label={t("view.preview_heading", { defaultValue: "Preview" })}
+      />
       <CommandItem
         commandId="toggleSafeAreaGuides"
-        label={t("view.show_safe_areas", { defaultValue: "Show safe areas" })}
+        label={t("view.safe_area_guides", { defaultValue: "Safe-area guides" })}
         checked={safeAreaGuides}
       />
       <CommandItem
         commandId="togglePreviewGrid"
         label={t("view.grid", { defaultValue: "Grid" })}
         checked={gridEnabled}
-      />
-      {/* The Review overlay (ADR 0115): agent review material painted on the
-          timeline — the Review lane of tack chips, unreviewed changes on the
-          clips (edges, removed-clip ghosts, Group badges). Runtime state of the agent
-          panel's store, like the material it shows; no binding. Last of the
-          display toggles: it shows agent material, not the user's project. */}
-      <CommandItem
-        commandId="toggleReviewOverlay"
-        label={t("view.review_overlay")}
-        checked={reviewOverlay}
       />
       {/* The preview's view, with its own chrome. Fit only: the two stepping
           commands read as an errand from a menu, and the toolbar's zoom
