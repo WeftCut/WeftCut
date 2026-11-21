@@ -106,11 +106,6 @@ function workspaceProfiles(
 const openView = () =>
   fireEvent.click(screen.getByRole("button", { name: /View/ }));
 
-/// True when `a` comes before `b` in the document — the menu's own order,
-/// headings included.
-const precedes = (a: Node, b: Node) =>
-  (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
-
 // Workspace controls live one level down under the Workspaces submenu.
 const openWorkspaces = async () => {
   // Base UI commits a selected item's close asynchronously. Wait for the
@@ -235,14 +230,14 @@ describe("ViewMenu marker display", () => {
   it("sits immediately below Timeline auto-scroll", async () => {
     renderMenu();
     openView();
-    await screen.findByText("Timeline markers");
+    await screen.findByText("Show markers");
     // Read off the label spans, not the rows: a row's textContent also carries
     // its accelerator, and Timeline auto-scroll has one (`Shift+F`) where this
     // deliberately does not.
     const labels = screen
       .getAllByRole("menuitem")
       .map((item) => item.querySelector(".app-menu-item-label")?.textContent ?? "");
-    expect(labels.indexOf("Timeline markers")).toBe(
+    expect(labels.indexOf("Show markers")).toBe(
       labels.indexOf("Timeline auto-scroll") + 1,
     );
     expect(labels).toContain("Timeline auto-scroll");
@@ -259,7 +254,7 @@ describe("ViewMenu marker display", () => {
     ]);
     renderMenu();
     openView();
-    const item = await screen.findByText("Timeline markers");
+    const item = await screen.findByText("Show markers");
     // Base UI puts the check glyph in the item's own leading slot.
     expect(
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
@@ -271,7 +266,7 @@ describe("ViewMenu marker display", () => {
     prefs.markersVisible = false;
     renderMenu();
     openView();
-    const off = await screen.findByText("Timeline markers");
+    const off = await screen.findByText("Show markers");
     expect(
       off.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).toBeNull();
@@ -279,8 +274,8 @@ describe("ViewMenu marker display", () => {
 });
 
 // The preview's safe-area overlay: the same bindingless-toggle shape as the
-// marker item, but it OPENS the Preview section — it annotates the preview, not
-// the timeline — and is OFF by default.
+// marker item, one row further down (it annotates the preview, not the
+// timeline), and OFF by default.
 describe("ViewMenu safe areas", () => {
   const renderMenu = () =>
     render(
@@ -295,19 +290,14 @@ describe("ViewMenu safe areas", () => {
     prefs.safeAreaGuides = false;
   });
 
-  it("opens the Preview section, below every timeline row, unchecked by default", async () => {
+  it("sits immediately below Show markers, unchecked by default", async () => {
     renderMenu();
     openView();
-    const item = await screen.findByText("Safe-area guides");
-    // The headings, not bare separators, are what draw the line between the
-    // two surfaces: the timeline's own rows follow its heading, then the
-    // Preview heading opens the preview's rows with safe areas.
-    const timelineHeading = screen.getByText("Timeline", { selector: ".menu-heading" });
-    const previewHeading = screen.getByText("Preview", { selector: ".menu-heading" });
-    const markers = await screen.findByText("Timeline markers");
-    expect(precedes(timelineHeading, markers)).toBe(true);
-    expect(precedes(markers, previewHeading)).toBe(true);
-    expect(precedes(previewHeading, item)).toBe(true);
+    const item = await screen.findByText("Show safe areas");
+    const labels = screen
+      .getAllByRole("menuitem")
+      .map((row) => row.querySelector(".app-menu-item-label")?.textContent ?? "");
+    expect(labels.indexOf("Show safe areas")).toBe(labels.indexOf("Show markers") + 1);
     expect(
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).toBeNull();
@@ -325,7 +315,7 @@ describe("ViewMenu safe areas", () => {
     prefs.safeAreaGuides = true;
     renderMenu();
     openView();
-    const item = await screen.findByText("Safe-area guides");
+    const item = await screen.findByText("Show safe areas");
     expect(
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).not.toBeNull();
@@ -341,7 +331,7 @@ describe("ViewMenu grid", () => {
     prefs.gridEnabled = false;
   });
 
-  it("follows Safe-area guides, reflects the grid and flips it through the registry command", async () => {
+  it("follows Show safe areas, reflects the grid and flips it through the registry command", async () => {
     const run = vi.fn();
     provide([{ id: "togglePreviewGrid", labelKey: "actions.toggle_preview_grid", run }]);
     prefs.gridEnabled = true;
@@ -357,7 +347,7 @@ describe("ViewMenu grid", () => {
     const labels = screen
       .getAllByRole("menuitem")
       .map((row) => row.querySelector(".app-menu-item-label")?.textContent ?? "");
-    expect(labels.indexOf("Grid")).toBe(labels.indexOf("Safe-area guides") + 1);
+    expect(labels.indexOf("Grid")).toBe(labels.indexOf("Show safe areas") + 1);
     expect(
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).not.toBeNull();
@@ -423,7 +413,7 @@ describe("ViewMenu registry dispatch", () => {
 
     // No provider registered: same stand-down as the native menu's absent-id
     // projection — no throw, no row.
-    fireEvent.click(await screen.findByText("Timeline markers"));
+    fireEvent.click(await screen.findByText("Show markers"));
     expect(logEmit).not.toHaveBeenCalled();
   });
 });

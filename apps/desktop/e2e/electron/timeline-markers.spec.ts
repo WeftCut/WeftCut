@@ -77,9 +77,9 @@ test('the lane paints markers, and one toggle silences them from either surface'
     const labels = page.locator('[data-testid="timeline-marker-label"]')
     const stripButton = page.locator('button[data-quick-action="toggleMarkersVisible"]')
     const viewMenu = page.locator('.menu-trigger').nth(2)
-    const markersItem = page
+    const showMarkersItem = page
       .locator('.app-menu-item')
-      .filter({ hasText: /^Timeline markers$/ })
+      .filter({ hasText: /^Show markers$/ })
 
     // ── Seed a point and a region, from outside the app ───────────────────
     // The lane holds its row before anything is in it: visibility owns the
@@ -170,15 +170,15 @@ test('the lane paints markers, and one toggle silences them from either surface'
 
     // ── …and from the View menu, which is the same one setting ────────────
     await viewMenu.click()
-    await expect(markersItem).toHaveCount(1)
-    await markersItem.click()
+    await expect(showMarkersItem).toHaveCount(1)
+    await showMarkersItem.click()
     await expect(marks).toHaveCount(0)
     // The proof that it is ONE setting and not two: flipping it in the menu
     // un-presses the strip button.
     await expect(stripButton).toHaveAttribute('aria-pressed', 'false')
 
     await viewMenu.click()
-    await markersItem.click()
+    await showMarkersItem.click()
     await expect(marks).toHaveCount(2)
     await expect(stripButton).toHaveAttribute('aria-pressed', 'true')
   } finally {
