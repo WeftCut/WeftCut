@@ -191,7 +191,7 @@ test("an unbroken transcript line is born with a wrap width inside the safe area
     // Turn on the guides and hold the imported box to the rectangle they draw.
     const viewMenu = page.locator(".menu-trigger").nth(2);
     await viewMenu.click();
-    await page.locator(".app-menu-item").filter({ hasText: /^Show safe areas$/ }).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^Safe-area guides$/ }).click();
     // Attached is not painted: the guides write their rect geometry from a rAF
     // loop, and the band's <g> starts display:none with unsized rects, so a
     // read straight after mount sees a 0×0 band on a slow runner. Wait for the

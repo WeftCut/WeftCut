@@ -230,14 +230,14 @@ describe("ViewMenu marker display", () => {
   it("sits immediately below Timeline auto-scroll", async () => {
     renderMenu();
     openView();
-    await screen.findByText("Show markers");
+    await screen.findByText("Timeline markers");
     // Read off the label spans, not the rows: a row's textContent also carries
     // its accelerator, and Timeline auto-scroll has one (`Shift+F`) where this
     // deliberately does not.
     const labels = screen
       .getAllByRole("menuitem")
       .map((item) => item.querySelector(".app-menu-item-label")?.textContent ?? "");
-    expect(labels.indexOf("Show markers")).toBe(
+    expect(labels.indexOf("Timeline markers")).toBe(
       labels.indexOf("Timeline auto-scroll") + 1,
     );
     expect(labels).toContain("Timeline auto-scroll");
@@ -254,7 +254,7 @@ describe("ViewMenu marker display", () => {
     ]);
     renderMenu();
     openView();
-    const item = await screen.findByText("Show markers");
+    const item = await screen.findByText("Timeline markers");
     // Base UI puts the check glyph in the item's own leading slot.
     expect(
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
@@ -266,7 +266,7 @@ describe("ViewMenu marker display", () => {
     prefs.markersVisible = false;
     renderMenu();
     openView();
-    const off = await screen.findByText("Show markers");
+    const off = await screen.findByText("Timeline markers");
     expect(
       off.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).toBeNull();
@@ -290,14 +290,14 @@ describe("ViewMenu safe areas", () => {
     prefs.safeAreaGuides = false;
   });
 
-  it("sits immediately below Show markers, unchecked by default", async () => {
+  it("sits immediately below Timeline markers, unchecked by default", async () => {
     renderMenu();
     openView();
-    const item = await screen.findByText("Show safe areas");
+    const item = await screen.findByText("Safe-area guides");
     const labels = screen
       .getAllByRole("menuitem")
       .map((row) => row.querySelector(".app-menu-item-label")?.textContent ?? "");
-    expect(labels.indexOf("Show safe areas")).toBe(labels.indexOf("Show markers") + 1);
+    expect(labels.indexOf("Safe-area guides")).toBe(labels.indexOf("Timeline markers") + 1);
     expect(
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).toBeNull();
@@ -315,7 +315,7 @@ describe("ViewMenu safe areas", () => {
     prefs.safeAreaGuides = true;
     renderMenu();
     openView();
-    const item = await screen.findByText("Show safe areas");
+    const item = await screen.findByText("Safe-area guides");
     expect(
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).not.toBeNull();
@@ -331,7 +331,7 @@ describe("ViewMenu grid", () => {
     prefs.gridEnabled = false;
   });
 
-  it("follows Show safe areas, reflects the grid and flips it through the registry command", async () => {
+  it("follows Safe-area guides, reflects the grid and flips it through the registry command", async () => {
     const run = vi.fn();
     provide([{ id: "togglePreviewGrid", labelKey: "actions.toggle_preview_grid", run }]);
     prefs.gridEnabled = true;
@@ -347,7 +347,7 @@ describe("ViewMenu grid", () => {
     const labels = screen
       .getAllByRole("menuitem")
       .map((row) => row.querySelector(".app-menu-item-label")?.textContent ?? "");
-    expect(labels.indexOf("Grid")).toBe(labels.indexOf("Show safe areas") + 1);
+    expect(labels.indexOf("Grid")).toBe(labels.indexOf("Safe-area guides") + 1);
     expect(
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).not.toBeNull();
@@ -413,7 +413,7 @@ describe("ViewMenu registry dispatch", () => {
 
     // No provider registered: same stand-down as the native menu's absent-id
     // projection — no throw, no row.
-    fireEvent.click(await screen.findByText("Show markers"));
+    fireEvent.click(await screen.findByText("Timeline markers"));
     expect(logEmit).not.toHaveBeenCalled();
   });
 });

@@ -193,7 +193,7 @@ export function ViewMenu({
           toggle has no binding. */}
       <CommandItem
         commandId="toggleMarkersVisible"
-        label={t("view.show_markers", { defaultValue: "Show markers" })}
+        label={t("view.timeline_markers", { defaultValue: "Timeline markers" })}
         checked={markersVisible}
       />
       {/* Preview chrome rather than timeline display, so it sits below the two
@@ -201,7 +201,7 @@ export function ViewMenu({
           `SELF_CONTAINED_COMMAND_IDS` in `commands/appCommands.ts`. */}
       <CommandItem
         commandId="toggleSafeAreaGuides"
-        label={t("view.show_safe_areas", { defaultValue: "Show safe areas" })}
+        label={t("view.safe_area_guides", { defaultValue: "Safe-area guides" })}
         checked={safeAreaGuides}
       />
       <CommandItem
