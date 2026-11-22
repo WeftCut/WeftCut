@@ -1153,7 +1153,7 @@ const enUS = {
     no_unused: "Everything in the pool is used somewhere.",
     layout_label: "Layout",
     layout_large: "Large cards (one per row)",
-    layout_grid: "Grid (fixed-size cards)",
+    layout_grid: "Grid (fills each row)",
     layout_list: "List",
     no_duration: "—",
     importing: "Copying…",

@@ -19,9 +19,9 @@ export type DisplayMode = "AbRoll" | "AllTracks";
 /// place it becomes a number.
 export type PlaybackResolution = "full" | "half" | "quarter";
 
-/// Media-pool card arrangement: `large` keeps the legacy one-card-per-row
-/// full-width cards; `grid` packs fixed-size cards into as many columns as
-/// the panel width fits; `list` renders compact file-manager-style rows.
+/// Media-pool card arrangement: `large` is one full-width card per row;
+/// `grid` fills each row with equal columns down to a minimum card width;
+/// `list` renders compact file-manager-style rows.
 export type MediaPoolLayout = "large" | "grid" | "list";
 
 /// Which axis the BARE mouse wheel moves the timeline along. `horizontal` walks

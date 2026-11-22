@@ -1018,7 +1018,7 @@ const zhCN: Resources = {
     no_unused: "素材库中的每一项都已被使用。",
     layout_label: "布局",
     layout_large: "大图（每行一个）",
-    layout_grid: "网格（固定大小卡片）",
+    layout_grid: "网格（铺满每行）",
     layout_list: "列表",
     no_duration: "—",
     importing: "复制中…",

@@ -113,7 +113,7 @@ export const useDecodeEngine = (): AppSettings["decode_engine"] =>
 export const usePlaybackResolution = (): AppSettings["playback_resolution"] =>
   useAppSettingsStore((s) => s.settings.playback_resolution);
 /// Media-pool card arrangement: `large` (one card per row), `grid`
-/// (fixed-size cards, adaptive columns), `list` (compact rows).
+/// (equal columns down to a minimum card width), `list` (compact rows).
 export const useMediaPoolLayout = (): AppSettings["media_pool_layout"] =>
   useAppSettingsStore((s) => s.settings.media_pool_layout);
 /// Which axis the bare wheel scrolls the timeline along. The wheel handler does
