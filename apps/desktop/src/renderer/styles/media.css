@@ -44,7 +44,7 @@
    does not scroll; reserving a gutter there would shift its centered copy. */
 html:not(.platform-mac) .media-pool-inner:not(.media-pool-inner--empty) {
   scrollbar-gutter: stable;
-  padding-right: max(0px, calc(16 * var(--ui-px) - 10px));
+  padding-right: max(0px, calc(16 * var(--ui-px) - 10px)); /* fixed-px: classic thin scrollbar, not a theme length */
 }
 
 /* Empty pool: center the placeholder copy and the large import CTA. */
