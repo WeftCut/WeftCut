@@ -316,6 +316,12 @@
   display: flex;
   align-items: center;
 }
+.app-number-range-hint {
+  display: block;
+  margin-top: calc(2 * var(--ui-px));
+  font-size: var(--font-size-caption);
+  color: var(--destructive);
+}
 .app-number-input {
   /* aligned digits, matching the old .prop-field-control input[type=number] */
   font-variant-numeric: tabular-nums;

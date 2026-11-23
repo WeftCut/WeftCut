@@ -261,7 +261,9 @@ one with the same keys.
   `max_length` of about 200. Use it as a `font-family` value with a generic
   family appended, and `document.fonts.load` it per weight and size in
   `setup`. Installed families need no `@font-face`. Frames follow the
-  machine's fonts, which is the price of not bundling them.
+  machine's fonts, which is the price of not bundling them. The props form
+  edits a font slot with a picker of installed families; a pick is a
+  one-family stack (`'Anton'`).
 - **Leaving.** A Motif that leaves, not just holds, declares a `number` prop
   `duration_s` as its `max_duration_prop`. `ctx.duration` is then the
   layer's length, and the layer is capped to it. Play the exit in the last
