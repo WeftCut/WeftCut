@@ -193,6 +193,7 @@ const enUS = {
   layer_scale: { menu_title: "Preview actions", fit: "Fit to frame", fill: "Fill frame", original: "Restore original size" },
   fonts: {
     app_default: "App default (Liberation Sans / Noto Sans SC)",
+    motif_default: "Motif default",
     loading: "Loading installed fonts…",
     load_failed: "Could not load installed fonts.",
     retry: "Retry",

@@ -12,6 +12,7 @@
 // families installed, the prop gets the whole list.
 
 import type { Manifest, PropSpec } from '../../shared/motifs/catalog'
+import { formatFontStack, isFontSlot } from '../../shared/motifs/fontSlot'
 import { resolveColor } from './apply'
 import type { Tokens } from './schema'
 
@@ -27,7 +28,7 @@ function colorValue(tokens: Tokens, v: unknown): string | undefined {
  *  else the whole list. */
 export function fontStack(families: readonly string[], installed: ReadonlySet<string> | null): string {
   const found = installed ? families.filter((f) => installed.has(f.toLowerCase())) : []
-  return (found.length ? found : families).map((f) => `'${f}'`).join(', ')
+  return formatFontStack(found.length ? found : families)
 }
 
 function fits(spec: PropSpec, v: unknown): boolean {
@@ -47,7 +48,7 @@ export function motifTokenProps(manifest: Pick<Manifest, 'props_schema'>, tokens
   const out: Record<string, unknown> = {}
   if (!tokens) return out
   for (const [key, spec] of Object.entries(manifest.props_schema)) {
-    if (key.startsWith('font_') && spec.type === 'string') {
+    if (isFontSlot(key, spec)) {
       const families = tokens.fonts?.[key.slice(5)]
       if (families) { const v = fontStack(families, installed); if (fits(spec, v)) out[key] = v }
       continue

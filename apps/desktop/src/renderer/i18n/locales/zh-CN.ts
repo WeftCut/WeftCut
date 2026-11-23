@@ -195,6 +195,7 @@ const zhCN: Resources = {
   layer_scale: { menu_title: "预览操作", fit: "适配画面", fill: "填充画面", original: "恢复原始大小" },
   fonts: {
     app_default: "应用默认（Liberation Sans / Noto Sans SC）",
+    motif_default: "Motif 默认",
     loading: "正在读取已安装字体…",
     load_failed: "无法读取已安装字体。",
     retry: "重试",

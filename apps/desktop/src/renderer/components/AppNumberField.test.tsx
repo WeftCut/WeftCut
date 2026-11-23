@@ -72,6 +72,16 @@ describe("AppNumberField", () => {
     expect(onCommit).toHaveBeenCalledTimes(1);
   }, 20_000);
 
+  it("never blocks the submit of a form it sits in, even off its step grid", () => {
+    // 5 is off the grid 0.5, 1.5, … that min 0.5 and step 1 describe.
+    render(
+      <form aria-label="f">
+        <AppNumberField value={5} min={0.5} step={1} onValueChange={() => {}} ariaLabel="x" />
+      </form>,
+    );
+    expect((screen.getByRole("form", { name: "f" }) as HTMLFormElement).checkValidity()).toBe(true);
+  });
+
   it("does not emit null onValueChange when the field is cleared", async () => {
     const onValueChange = vi.fn();
     render(<AppNumberField value={3} onValueChange={onValueChange} ariaLabel="x" />);

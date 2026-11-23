@@ -57,6 +57,9 @@ vi.mock("../components/AppSwitch", () => ({
   ),
 }));
 
+const fontFamilies = vi.hoisted(() => vi.fn());
+vi.mock("../components/fontFamilies", () => ({ getSystemFontFamilies: fontFamilies }));
+
 import { AttributePanel } from "./PropertyPanel";
 
 // jsdom has no PointerEvent; Base UI's Select reads MouseEvent's client coords.
@@ -254,6 +257,37 @@ describe("MotifFields commit contract", () => {
       }),
     );
     expect(updateLayerParams).toHaveBeenCalledTimes(1);
+  });
+
+  it("edits a font slot with a font picker and commits the pick as a one-family stack", async () => {
+    fontFamilies.mockResolvedValue(["Example Sans", "Example Serif"]);
+    const stack = "'Anton', 'Impact', sans-serif";
+    setProjectMotifs([{
+      ...TEST_MANIFEST,
+      props_schema: { font_headline: { type: "string", default: stack, max_length: 200 } },
+    }]);
+    render(
+      <AttributePanel
+        tracks={[motifTrack(TEST_MANIFEST.id, { font_headline: stack })]}
+        selectedLayerId="layer-m1"
+        onMutated={vi.fn().mockResolvedValue(undefined)}
+        fpsNum={30}
+        fpsDen={1}
+        currentTimeUs={1_000_000}
+      />,
+    );
+    const user = userEvent.setup();
+    const section = screen.getByRole("region", { name: "Props" });
+    const trigger = within(section).getByRole("combobox", { name: /^font.headline$/i });
+    expect(trigger.textContent).toBe("Motif default");
+    await openSelect(user, trigger);
+    await user.pointer({ target: await screen.findByRole("option", { name: "Example Sans" }), keys: "[MouseLeft]" });
+    await vi.waitFor(() =>
+      expect(updateLayerParams).toHaveBeenCalledWith("layer-m1", {
+        kind: "Motif",
+        props: { font_headline: "'Example Sans'" },
+      }),
+    );
   });
 
   it("commits a number edit as one single-key props patch, stepping ≤10-wide ranges by 0.1", async () => {

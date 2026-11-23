@@ -133,6 +133,14 @@ export function AppNumberField({
       // from the same precision table the mutation layer quantizes with, which is
       // what makes their round trip exact.
       format={{ useGrouping: false, ...format }}
+      // Base UI mirrors the value into a hidden `<input type="number" min max
+      // step>`. Inside a `<form>`, submit runs the browser's constraint
+      // validation on it: a value off the step grid counted from `min` (5 with
+      // min 0.5, step 1) blocks the submit, and Chromium anchors its bubble on
+      // the hidden input at the form's top-left. An empty `form` attribute
+      // gives that input no form owner; this field clamps on its own and no
+      // call site submits it by name.
+      form=""
       disabled={disabled ?? false}
       onValueChange={(next) => {
         if (next === null) {
