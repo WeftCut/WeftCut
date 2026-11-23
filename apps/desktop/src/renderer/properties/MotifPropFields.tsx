@@ -135,6 +135,7 @@ export function MotifPropField({
           <AppNumberField
             value={typeof value === "number" ? value : spec.default}
             step={stepFor(spec)}
+            rangeHint
             ariaLabel={label}
             onValueChange={(v) => commit.onChange(v)}
             {...(spec.min !== undefined ? { min: spec.min } : {})}
@@ -377,6 +378,7 @@ export function NumberPropField({
         {...(spec.min !== undefined ? { min: spec.min } : {})}
         {...(spec.max !== undefined ? { max: spec.max } : {})}
         step={stepFor(spec)}
+        rangeHint
         onValueChange={setNum}
         onCommit={(v) => onCommit(v)}
         onFocus={() => { focused.current = true; }}

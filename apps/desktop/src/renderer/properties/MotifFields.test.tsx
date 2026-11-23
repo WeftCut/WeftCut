@@ -290,6 +290,15 @@ describe("MotifFields commit contract", () => {
     );
   });
 
+  it("says a number prop's range under its field while the typed value is outside it", async () => {
+    const user = userEvent.setup();
+    const section = renderMotifPanel();
+    const count = within(section).getByLabelText(/^count$/i) as HTMLInputElement;
+    await user.clear(count);
+    await user.type(count, "150");
+    expect(within(section).getByText("Range 0–100")).toBeTruthy();
+  });
+
   it("commits a number edit as one single-key props patch, stepping ≤10-wide ranges by 0.1", async () => {
     const user = userEvent.setup();
     const section = renderMotifPanel();

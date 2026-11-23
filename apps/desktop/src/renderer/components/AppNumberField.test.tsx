@@ -4,6 +4,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppNumberField } from "./AppNumberField";
+import "../i18n";
 
 afterEach(cleanup);
 
@@ -80,6 +81,34 @@ describe("AppNumberField", () => {
       </form>,
     );
     expect((screen.getByRole("form", { name: "f" }) as HTMLFormElement).checkValidity()).toBe(true);
+  });
+
+  it("says the range under the field while the typed text is outside it, and clamps on blur", async () => {
+    const onCommit = vi.fn();
+    function Field() {
+      const [v, setV] = useState(5);
+      return <AppNumberField value={v} min={0.5} max={600} rangeHint onValueChange={setV} onCommit={onCommit} ariaLabel="x" />;
+    }
+    render(<Field />);
+    const input = screen.getByLabelText("x") as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, "700");
+    const hint = screen.getByText("Range 0.5–600");
+    expect(input.getAttribute("aria-describedby")).toBe(hint.id);
+    await userEvent.click(document.body);
+    expect(screen.queryByText("Range 0.5–600")).toBeNull();
+    expect(input.value).toBe("600");
+    expect(onCommit).toHaveBeenLastCalledWith(600);
+  });
+
+  it("says nothing for in-range text, or without rangeHint", async () => {
+    render(<>
+      <AppNumberField value={5} min={0.5} max={600} rangeHint onValueChange={() => {}} ariaLabel="a" />
+      <AppNumberField value={5} min={0.5} max={600} onValueChange={() => {}} ariaLabel="b" />
+    </>);
+    await userEvent.type(screen.getByLabelText("a"), "0");
+    await userEvent.type(screen.getByLabelText("b"), "0");
+    expect(screen.queryByText(/Range/)).toBeNull();
   });
 
   it("does not emit null onValueChange when the field is cleared", async () => {

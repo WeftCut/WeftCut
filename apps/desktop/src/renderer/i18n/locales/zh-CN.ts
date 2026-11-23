@@ -193,6 +193,11 @@ const zhCN: Resources = {
   },
   crop: { title: "画面裁切", edit: "在画面中裁切", done: "结束裁切（Enter / Esc）", reset: "重置裁切", unavailable: "请选择预览合成中可见且未锁定的视频片段进行裁切" },
   layer_scale: { menu_title: "预览操作", fit: "适配画面", fill: "填充画面", original: "恢复原始大小" },
+  number_field: {
+    range: "范围 {{min}}–{{max}}",
+    min_only: "最小 {{min}}",
+    max_only: "最大 {{max}}",
+  },
   fonts: {
     app_default: "应用默认（Liberation Sans / Noto Sans SC）",
     motif_default: "Motif 默认",

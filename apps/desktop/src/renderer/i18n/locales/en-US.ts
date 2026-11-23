@@ -191,6 +191,11 @@ const enUS = {
   },
   crop: { title: "Crop", edit: "Crop in preview", done: "Finish cropping (Enter / Esc)", reset: "Reset crop", unavailable: "Select an unlocked, visible video clip in the preview composition to crop" },
   layer_scale: { menu_title: "Preview actions", fit: "Fit to frame", fill: "Fill frame", original: "Restore original size" },
+  number_field: {
+    range: "Range {{min}}–{{max}}",
+    min_only: "Minimum {{min}}",
+    max_only: "Maximum {{max}}",
+  },
   fonts: {
     app_default: "App default (Liberation Sans / Noto Sans SC)",
     motif_default: "Motif default",
