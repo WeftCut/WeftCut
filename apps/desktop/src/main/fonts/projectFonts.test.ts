@@ -179,6 +179,45 @@ describe('copying into Fonts/', () => {
   })
 })
 
+describe('Fonts/ changed on disk', () => {
+  it('a family the user puts into Fonts/ is no longer missing once the folder is indexed again', async () => {
+    const h = await harness([textLayer('a', 'Gone')])
+    await h.open()
+    expect(h.store.missing().map(m => m.family)).toEqual(['Gone'])
+    fs.mkdirSync(fontsDir())
+    fs.writeFileSync(path.join(fontsDir(), 'Gone-Regular.ttf'), font({ family: 'Gone', cmap: latin() }))
+    await h.store.rescan()
+    await h.store.settled()
+    expect(h.store.missing()).toEqual([])
+  })
+
+  it('a family only Fonts/ held is missing once its file is gone, and the log says so', async () => {
+    fs.mkdirSync(fontsDir())
+    fs.writeFileSync(path.join(fontsDir(), 'Carried-Regular.ttf'), font({ family: 'Carried', cmap: latin() }))
+    const h = await harness([textLayer('a', 'Carried')])
+    await h.open()
+    expect(h.store.missing()).toEqual([])
+    fs.rmSync(path.join(fontsDir(), 'Carried-Regular.ttf'))
+    await h.store.rescan()
+    await h.store.settled()
+    expect(h.store.missing().map(m => m.family)).toEqual(['Carried'])
+    expect(h.logs.map(l => l.i18n_key)).toEqual(['log.fonts_missing'])
+  })
+
+  it('copies nothing: a collected face deleted by hand comes back at the next open, not at the rescan', async () => {
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    const h = await harness([textLayer('a', 'Example')])
+    await h.open()
+    fs.rmSync(path.join(fontsDir(), 'Example-Regular.ttf'))
+    h.calls.length = 0
+    await h.store.rescan()
+    await h.store.settled()
+    expect(h.calls.filter(c => c.startsWith('write'))).toEqual([])
+    expect(inFonts()).toEqual([])
+    expect(h.store.missing()).toEqual([])
+  })
+})
+
 describe('closing', () => {
   it('drain waits for the copy in flight and refuses new batches until the folder is told again', async () => {
     installFont('Example-Regular.ttf', { family: 'Example' })

@@ -120,6 +120,9 @@ export class ProjectFontStore {
   #timer: ReturnType<typeof setTimeout> | null = null
   #running: Promise<void> | null = null
   #again = false
+  /** A batch asked for since the last one started may copy; one asked for
+   *  by `rescan` only walks. */
+  #copyAsked = false
   #inflight: Promise<unknown> | null = null
   #progress: { done: number; total: number } | null = null
   #closing = false
@@ -212,11 +215,15 @@ export class ProjectFontStore {
     return this.#missing
   }
 
-  /** `Fonts/` changed on disk: index it again and tell. Never copies. */
+  /** `Fonts/` changed on disk: index it again, tell, and walk the uses again
+   *  so `missing` follows the folder. Never copies: a face deleted by hand
+   *  comes back at the next open or change to what the project draws, not
+   *  while a sync may still be writing the folder. */
   async rescan(): Promise<void> {
     if (this.#dir === null) return
     await this.#rescan(this.#generation)
     this.#deps.changed()
+    this.#kick(false)
   }
 
   view(): ProjectFontsView | null {
@@ -311,17 +318,21 @@ export class ProjectFontStore {
     this.#timer = setTimeout(() => { this.#timer = null; this.#kick() }, USE_DEBOUNCE_MS)
   }
 
-  /** Starts a batch now, or one more after the batch under way. */
-  #kick(): void {
-    this.#clearTimer()
+  /** Starts a batch now, or one more after the batch under way. `copy`
+   *  false: the batch walks the uses but copies nothing, unless a copying
+   *  batch was asked for too. */
+  #kick(copy = true): void {
+    if (copy) this.#clearTimer()
     if (this.#refusing || this.#dir === null) { this.#missed = true; return }
-    this.#missed = false
+    if (copy) { this.#missed = false; this.#copyAsked = true }
     if (this.#running) { this.#again = true; return }
     const run = async () => {
       try {
         do {
           this.#again = false
-          await this.#batch()
+          const copying = this.#copyAsked
+          this.#copyAsked = false
+          await this.#batch(copying)
         } while (this.#again && !this.#refusing)
         if (this.#again) this.#missed = true
       } finally { this.#running = null }
@@ -336,9 +347,9 @@ export class ProjectFontStore {
     this.#deps.indexChanged()
   }
 
-  /** One reconcile: walk the uses, note what is missing, copy what is not
-   *  in `Fonts/`. Never throws. */
-  async #batch(): Promise<void> {
+  /** One reconcile: walk the uses, note what is missing, and with `copy`,
+   *  copy what is not in `Fonts/`. Never throws. */
+  async #batch(copy: boolean): Promise<void> {
     const generation = this.#generation
     const dir = this.#dir
     if (dir === null) return
@@ -352,7 +363,7 @@ export class ProjectFontStore {
       // Read with `published`, in one synchronous step: `allow` publishes the
       // shorter list and marks the family quiet in one step too, so a walk
       // that sees the family allowed also sees its copy as asked for.
-      quiet = new Set(this.#quiet)
+      if (copy) quiet = new Set(this.#quiet)
       const published = this.#published
       if (!published || generation !== this.#generation) return
       const index = this.#deps.catalog.index()
@@ -364,7 +375,7 @@ export class ProjectFontStore {
       this.#noteMissing(index.systemScanned ? uses.missing : [])
       const bySha = new Map(index.faces.map(f => [f.sha256, f]))
       const planned = uses.collect.map(sha => bySha.get(sha)).filter((f): f is FaceIndexEntry => !!f)
-      if (planned.length > 0) await this.#copyAll(planned, fontsDir, generation, quiet)
+      if (copy && planned.length > 0) await this.#copyAll(planned, fontsDir, generation, quiet)
     } catch (error) {
       console.warn('[fonts] project font reconcile failed', error)
     } finally {
