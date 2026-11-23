@@ -246,6 +246,12 @@ export const STEPS: readonly MigrationStep[] = [{
         if (!['VideoClip', 'ImageOverlay', 'Motif', 'CompositionRef'].includes(p.kind)) continue
         const t = p.transform
         if (!t) throw new Error(`Schema v3 → v4: clip ${layer.id} has no transform`)
+        // Builds before the first release stamped v1 on transforms still
+        // holding a bare x/y; no release wrote that shape (ADR 0060).
+        if (!t.position || typeof t.position !== 'object') {
+          throw new Error(`Schema v3 → v4: clip ${layer.id} has no position record, so the file was written by a build ` +
+            'older than the first release and cannot be upgraded. The original project was not changed.')
+        }
         const ax = constant(t.anchor_x, 0.5), ay = constant(t.anchor_y, 0.5)
         const sx = constant(t.scale_x, 1), sy = constant(t.scale_y, 1)
         const factor = (anchor: number | null, scale: number | null) =>
