@@ -126,6 +126,21 @@ describe("notices", () => {
     expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith("agent");
     expect(screen.queryByTestId("attention-center")).toBeNull();
   });
+
+  it("opens a folder-home notice's folder instead of Settings, and names it as where the files stay", async () => {
+    const updates = setup();
+    const open = vi.fn().mockResolvedValue(undefined);
+    Object.assign(window, { api: { updates, shell: { open } } });
+    const folder = "/home/u/Motifs/drafts";
+    const { openCenter, onOpenSettings } = renderBell([{ level: "info", code: "motif_drafts_left", args: { count: 2, folder } }]);
+    await act(async () => {});
+    const row = openCenter().querySelector<HTMLElement>('[data-attention="notice:motif_drafts_left"]')!;
+    expect(within(row).getByRole("button", { name: "Got it" }).getAttribute("title")).toBe(`Hides it here; the files stay in ${folder}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Open drafts folder" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(folder);
+    expect(onOpenSettings).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("attention-center")).toBeNull();
+  });
 });
 
 describe("agent changes to review", () => {

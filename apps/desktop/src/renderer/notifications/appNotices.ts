@@ -1,9 +1,9 @@
 // Environment notices: the states main collects at startup (and retracts after
 // an in-app recovery) that the user should know about. One catalog per code —
-// where its home is in Settings and its line in the persistent log — and one
-// app-wide mirror of the current set, read by the bell, the notice's settings
-// home and the editor's log mirror alike. The UI strings are
-// `app_notice.<code>.title` / `.body` / `.action` (the way to its page).
+// its home and its line in the persistent log — and one app-wide mirror of the
+// current set, read by the bell, the notice's settings home and the editor's
+// log mirror alike. The UI strings are `app_notice.<code>.title` / `.body` /
+// `.action` (the way to its home).
 //
 // The mirror is pulled once and then follows main's `app:notices` pushes: main
 // collects notices before any window exists, so a push alone would be lost to
@@ -17,10 +17,15 @@ import type { AppNotice, AppNoticeCode } from "../../shared/ipc";
 /// The Settings pages a notice can lead to.
 export type NoticeSettingsPage = "general" | "speech" | "agent";
 
+/// Where the state always shows and can be acted on, whether or not its bell
+/// row was dismissed (ADR 0166): a Settings page, or the folder one of the
+/// notice's args names when the state is files there that no page lists.
+type NoticeHome =
+  | { kind: "settings"; page: NoticeSettingsPage }
+  | { kind: "folder"; arg: string };
+
 interface NoticeEntry {
-  /// Where the state always shows and can be acted on, whether or not its
-  /// bell row was dismissed (ADR 0166).
-  page: NoticeSettingsPage;
+  home: NoticeHome;
   /// Canonical English for the persistent log: JSONL stays searchable and
   /// stable across locales.
   logMessage: string;
@@ -28,23 +33,24 @@ interface NoticeEntry {
 
 const NOTICES: Record<AppNoticeCode, NoticeEntry> = {
   native_decode_unavailable: {
-    page: "general",
+    home: { kind: "settings", page: "general" },
     logMessage: "Native decode engine unavailable; preview is using WebCodecs.",
   },
   keyring_unavailable: {
-    page: "speech",
+    home: { kind: "settings", page: "speech" },
     logMessage: "OS keyring unavailable; cloud API keys cannot be saved or read.",
   },
   agent_skill_unavailable: {
-    page: "agent",
+    home: { kind: "settings", page: "agent" },
     logMessage: "Agent skill not installed; the Agent panel has no skill folder to offer.",
   },
   agent_skill_stale: {
-    page: "agent",
+    home: { kind: "settings", page: "agent" },
     logMessage: "Agent skill refresh failed; the offered folder is an earlier version's copy.",
   },
+  // No Settings page lists the drafts: their folder is the only place they show.
   motif_drafts_left: {
-    page: "agent",
+    home: { kind: "folder", arg: "folder" },
     logMessage: "Motif drafts from an earlier version remain in the library folder; create_motif with a directory source brings one into a project.",
   },
 };
@@ -56,7 +62,7 @@ export const NOTICE_PAGE_LABEL: Record<NoticeSettingsPage, string> = {
   agent: "settings.cat_agent",
 };
 
-export const noticeSettingsPage = (code: AppNoticeCode): NoticeSettingsPage => NOTICES[code].page;
+export const noticeHome = (code: AppNoticeCode): NoticeHome => NOTICES[code].home;
 export const noticeLogMessage = (code: AppNoticeCode): string => NOTICES[code].logMessage;
 
 const NO_NOTICES: readonly AppNotice[] = [];

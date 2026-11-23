@@ -1963,7 +1963,7 @@ const zhCN: Resources = {
     },
     motif_drafts_left: {
       title: "{{count}} 个 Motif 草稿未显示",
-      action: "打开代理设置",
+      action: "打开草稿文件夹",
       body: "旧版本的 Motif 草稿仍在 {{folder}}。要使用其中一个，请让代理对它的文件夹运行 create_motif（directory 来源）。",
     },
   },
@@ -2806,6 +2806,7 @@ const zhCN: Resources = {
     level_warn: "警告",
     level_error: "错误",
     dismiss_hint_settings: "从这里收起；之后仍可在 设置 · {{page}} 中查看",
+    dismiss_hint_folder: "从这里收起；文件仍在 {{folder}}",
     dismiss_hint_update: "此版本不再提醒，也不自动下载；仍可在 帮助 · 检查更新 中获取",
     review_title_one: "{{count}} 项代理变更待审阅",
     review_title_other: "{{count}} 项代理变更待审阅",

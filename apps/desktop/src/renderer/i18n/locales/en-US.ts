@@ -2193,7 +2193,7 @@ const enUS = {
     },
     motif_drafts_left: {
       title: "{{count}} Motif drafts not shown",
-      action: "Open agent settings",
+      action: "Open drafts folder",
       body: "Motif drafts from an earlier version are still in {{folder}}. To use one, ask an agent to run create_motif with a directory source on its folder.",
     },
   },
@@ -3087,6 +3087,7 @@ const enUS = {
     level_warn: "warning",
     level_error: "error",
     dismiss_hint_settings: "Hides it here; it stays in Settings · {{page}}",
+    dismiss_hint_folder: "Hides it here; the files stay in {{folder}}",
     dismiss_hint_update: "No reminder or automatic download for this version; Help · Check for Updates still offers it",
     review_title_one: "{{count}} agent change to review",
     review_title_other: "{{count}} agent changes to review",
