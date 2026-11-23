@@ -5,12 +5,16 @@ import { AppSelect } from "./AppSelect";
 import { getFontFamilies } from "./fontFamilies";
 import { useFontIndex } from "../render/fonts/fontIndexStore";
 
-export function FontSelect({ value, onValueChange, ariaLabel, defaultValue = DEFAULT_CAPTION_FONT_FAMILY }: {
+export function FontSelect({ value, onValueChange, ariaLabel, defaultValue = DEFAULT_CAPTION_FONT_FAMILY, defaultLabel, bundled = true }: {
   value: string;
   onValueChange: (family: string) => void;
   ariaLabel: string;
   /** Settings uses the empty value to clear the preference. */
   defaultValue?: string;
+  defaultLabel?: string;
+  /** Offer the app's bundled families. Off where the text renders outside the
+   *  editor (a Motif document), which only has the machine's installed fonts. */
+  bundled?: boolean;
 }) {
   const { t } = useTranslation();
   const [families, setFamilies] = useState<string[]>([]);
@@ -29,14 +33,14 @@ export function FontSelect({ value, onValueChange, ariaLabel, defaultValue = DEF
   }, [attempt, revision]);
 
   const names = new Map<string, string>();
-  for (const family of [...BUNDLED_FONT_FAMILIES, ...families]) {
+  for (const family of [...(bundled ? BUNDLED_FONT_FAMILIES : []), ...families]) {
     if (!names.has(family.toLowerCase())) names.set(family.toLowerCase(), family);
   }
   // Preserve fonts from other machines, and CSS fallback chains from projects.
   // Loading or an unavailable font must never silently rewrite the selection.
   if (value && value !== defaultValue) names.set(value.toLowerCase(), value);
   const options = [
-    { value: defaultValue, label: t("fonts.app_default") },
+    { value: defaultValue, label: defaultLabel ?? t("fonts.app_default") },
     ...[...names.values()].filter((name) => name !== defaultValue)
       .sort((a, b) => a.localeCompare(b)).map((name) => ({ value: name, label: name })),
   ];

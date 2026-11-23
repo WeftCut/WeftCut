@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fontStack, motifTokenProps } from './motifProps'
+import { motifTokenProps } from './motifProps'
 import { tasteView } from './view'
 import type { Tokens } from './schema'
 import { createActor, type ActorHandle } from '../state/actor'
@@ -42,7 +42,6 @@ describe('motifTokenProps', () => {
   it('gives a font slot its whole family list in order, whatever this machine has installed', () => {
     const s = schema({ font_headline: { type: 'string', default: 'serif', max_length: 200 } })
     expect(motifTokenProps(s, tokens)).toEqual({ font_headline: "'Anton', 'Impact'" })
-    expect(fontStack(['Noto Sans SC Black'])).toBe("'Noto Sans SC Black'")
   })
 })
 

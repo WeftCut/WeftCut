@@ -280,8 +280,9 @@ What the earlier bar showed and this one deliberately does not
 The bell's popover, titled "Needs attention" since the bell has no text. One
 flat list: rows separated by dividers, no cards. A row is severity dot, title
 and a description of at most two lines (full text in its tooltip). At its end,
-the way to the fix (a notice's names its settings page — Open API key settings,
-Open decode settings, Open agent settings — then Open review, View) is a link at the top; the
+the way to the fix (a notice's names its home: a settings page — Open API key
+settings, Open decode settings, Open agent settings — or, for files no page
+lists, their folder — Open drafts folder; then Open review, View) is a link at the top; the
 dismissal (Got it, Skip this version), second in rank, sits grey at the bottom and shows
 while the row is hovered or holds keyboard focus, so a list at rest reads as
 what needs doing. Popover links carry a padded hit area and a faint chip on

@@ -49,7 +49,8 @@ has one way in.
 Dismissal ("Got it", "Skip this version") takes a row out of the center and clears its
 share of the dot; the center keeps no pile of dismissed rows. The center only
 points: every state it lists has a home where it always shows and can be acted
-on (the settings page its row leads to, Help · Check for Updates for an
+on (the settings page its row leads to, or the folder holding the files a
+notice reports when no page lists them; Help · Check for Updates for an
 update), so dismissing never loses it. A dismissal lasts while its cause
 stands: a notice dismissed stays dismissed until main settles a notice set
 without it, and an update's dismissal is the update dialog's own skip, for

@@ -11,6 +11,7 @@
 // machine.
 
 import type { Manifest, PropSpec } from '../../shared/motifs/catalog'
+import { formatFontStack, isFontSlot } from '../../shared/motifs/fontSlot'
 import { resolveColor } from './apply'
 import type { Tokens } from './schema'
 
@@ -20,11 +21,6 @@ function colorValue(tokens: Tokens, v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined
   const c = resolveColor(tokens, v)
   return c ? `#${hex2(c.r)}${hex2(c.g)}${hex2(c.b)}${c.a === 255 ? '' : hex2(c.a)}` : undefined
-}
-
-/** A slot's families as a `font-family` value, in order. */
-export function fontStack(families: readonly string[]): string {
-  return families.map((f) => `'${f}'`).join(', ')
 }
 
 function fits(spec: PropSpec, v: unknown): boolean {
@@ -44,9 +40,9 @@ export function motifTokenProps(manifest: Pick<Manifest, 'props_schema'>, tokens
   const out: Record<string, unknown> = {}
   if (!tokens) return out
   for (const [key, spec] of Object.entries(manifest.props_schema)) {
-    if (key.startsWith('font_') && spec.type === 'string') {
+    if (isFontSlot(key, spec)) {
       const families = tokens.fonts?.[key.slice(5)]
-      if (families) { const v = fontStack(families); if (fits(spec, v)) out[key] = v }
+      if (families) { const v = formatFontStack(families); if (fits(spec, v)) out[key] = v }
       continue
     }
     const raw = tokens.motif?.[key]

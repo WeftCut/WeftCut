@@ -10,8 +10,9 @@
 // suites all run without one.
 
 export interface TimelinePanelCommands {
-  /// Ensure a Panel showing `compositionId` exists and is active.
-  open(compositionId: string): void;
+  /// Ensure a Panel showing `compositionId` exists, and is active unless
+  /// `activate` is false — see `DockWorkspaceController.openTimelinePanel`.
+  open(compositionId: string, options: { activate: boolean }): void;
   /// Retire the Panel showing `compositionId`, if one is open.
   close(compositionId: string): void;
 }
@@ -29,8 +30,11 @@ export function registerTimelinePanels(
   };
 }
 
-export function openTimelinePanel(compositionId: string): void {
-  commands?.open(compositionId);
+export function openTimelinePanel(
+  compositionId: string,
+  { activate = true }: { activate?: boolean } = {},
+): void {
+  commands?.open(compositionId, { activate });
 }
 
 export function closeTimelinePanel(compositionId: string): void {

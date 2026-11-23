@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import {
-  noticeSettingsPage,
+  noticeHome,
   resetAppNoticesForTests,
   useAppNoticeEvents,
   useAppNotices,
@@ -75,11 +75,13 @@ describe("app notices", () => {
     expect(await screen.findByText("clear")).toBeTruthy();
   });
 
-  it("gives every notice a settings page to live on", () => {
-    expect(noticeSettingsPage("native_decode_unavailable")).toBe("general");
-    expect(noticeSettingsPage("keyring_unavailable")).toBe("speech");
-    expect(noticeSettingsPage("agent_skill_unavailable")).toBe("agent");
-    expect(noticeSettingsPage("agent_skill_stale")).toBe("agent");
+  it("gives every notice a home to live on: the settings page that shows it, or the folder holding its files", () => {
+    expect(noticeHome("native_decode_unavailable")).toEqual({ kind: "settings", page: "general" });
+    expect(noticeHome("keyring_unavailable")).toEqual({ kind: "settings", page: "speech" });
+    expect(noticeHome("agent_skill_unavailable")).toEqual({ kind: "settings", page: "agent" });
+    expect(noticeHome("agent_skill_stale")).toEqual({ kind: "settings", page: "agent" });
+    // No settings page lists the drafts; the folder main names is where they are.
+    expect(noticeHome("motif_drafts_left")).toEqual({ kind: "folder", arg: "folder" });
   });
 
   it("unsubscribes on unmount, so a later push cannot reach a dead root", async () => {

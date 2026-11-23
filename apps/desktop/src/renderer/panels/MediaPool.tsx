@@ -81,8 +81,8 @@ function isFileDrag(e: React.DragEvent): boolean {
 }
 
 /// Card arrangement options for the pool, persisted app-wide as
-/// app_settings.media_pool_layout. `large` is the legacy one-card-per-row
-/// layout; `grid` packs fixed-size cards into as many columns as fit;
+/// app_settings.media_pool_layout. `large` is one full-width card per row;
+/// `grid` fills each row with equal columns down to a minimum card width;
 /// `list` renders compact file-manager-style rows.
 const LAYOUT_MODES: ReadonlyArray<{
   mode: MediaPoolLayout;

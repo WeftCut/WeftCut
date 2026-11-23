@@ -89,8 +89,16 @@ export interface DockWorkspaceController {
   /** Ensure the timeline Panel showing `compositionId` is open and active. The
    *  sibling of `openPanel` for the one kind that instantiates: "a timeline"
    *  and "the timeline for THIS composition" are different requests, and only
-   *  the second one can create a second Panel. */
-  openTimelinePanel(compositionId: string): void;
+   *  the second one can create a second Panel.
+   *
+   *  `activate: false` adds a missing Panel BEHIND the tab its strip shows and
+   *  leaves an open one where it is. Activating a timeline enters its
+   *  composition, so a caller putting remembered tabs back must not let each
+   *  one take the keyboard on its way in. */
+  openTimelinePanel(
+    compositionId: string,
+    options?: { activate?: boolean },
+  ): void;
   closeTimelinePanel(compositionId: string): void;
   /** Every composition a timeline Panel currently shows, in tab order. */
   openTimelineCompositions(): string[];
@@ -458,10 +466,14 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
    * apart is then one tab drag, and that is the user's call to make, not this
    * method's.
    */
-  openTimelinePanel(compositionId: string): void {
+  openTimelinePanel(
+    compositionId: string,
+    { activate = true }: { activate?: boolean } = {},
+  ): void {
     const id = panelIdOf("timeline", compositionId);
     const open = this.api.getPanel(id);
     if (open) {
+      if (!activate) return;
       open.api.setActive();
       this.emitChange();
       return;
@@ -471,13 +483,16 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     if (reference) {
       this.addPanel(
         "timeline",
-        { position: { referencePanel: reference, direction: "within" } },
+        {
+          position: { referencePanel: reference, direction: "within" },
+          inactive: !activate,
+        },
         compositionId,
       );
     } else {
-      this.addPanelAtSemanticFallback("timeline", compositionId);
+      this.addPanelAtSemanticFallback("timeline", compositionId, !activate);
     }
-    this.api.getPanel(id)?.api.setActive();
+    if (activate) this.api.getPanel(id)?.api.setActive();
     this.captureOpenPlacements();
     this.emitChange();
   }
@@ -868,7 +883,11 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       : undefined;
   }
 
-  private addPanelAtSemanticFallback(kind: PanelKind, instance?: string): void {
+  private addPanelAtSemanticFallback(
+    kind: PanelKind,
+    instance?: string,
+    inactive = false,
+  ): void {
     // Reference lists below are kinds — "beside whatever Preview is open" —
     // and resolve here to the address the open Panel of that kind actually has.
     const firstOpen = (...kinds: PanelKind[]): PanelId | undefined => {
@@ -907,8 +926,8 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
         "preview", "media", "attribute", "effect", "playhead", "caption", "role-mixer",
       );
       this.addPanel(kind, reference
-        ? { position: { referencePanel: reference, direction: "below" } }
-        : {},
+        ? { position: { referencePanel: reference, direction: "below" }, inactive }
+        : { inactive },
         instance);
       return;
     }

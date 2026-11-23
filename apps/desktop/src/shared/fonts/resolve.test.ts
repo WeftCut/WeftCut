@@ -27,6 +27,15 @@ describe('parseFamilyList', () => {
   it('an empty list has no leaves', () => {
     expect(parseFamilyList('  ,  ')).toEqual([])
   })
+
+  it('reads CSS escapes: a quote or backslash escaped in a string, a code point in hex', () => {
+    expect(parseFamilyList(String.raw`'O\'Brien Sans', 'Back\\slash', "Say \"Hi\"", \41 nton`))
+      .toEqual(["O'Brien Sans", 'Back\\slash', 'Say "Hi"', 'Anton'])
+  })
+
+  it('keeps an apostrophe inside a bare name, as a Text layer stores one', () => {
+    expect(parseFamilyList("O'Brien Sans, Impact")).toEqual(["O'Brien Sans", 'Impact'])
+  })
 })
 
 describe('resolveFace weight (CSS Fonts 4 §5.2)', () => {

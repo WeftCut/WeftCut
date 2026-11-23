@@ -110,11 +110,14 @@ const anchors = () => useCompositionAnchorStore.getState();
 
 /// The Dock's side of the seam, so a test can assert what the store ASKED the
 /// Workspace for without mounting one.
-const panels = { open: vi.fn<(id: string) => void>(), close: vi.fn<(id: string) => void>() };
+const panels = {
+  open: vi.fn<(id: string, options: { activate: boolean }) => void>(),
+  close: vi.fn<(id: string) => void>(),
+};
 let releasePanels: (() => void) | null = null;
 
 beforeEach(() => {
-  panels.open.mockClear();
+  panels.open.mockReset();
   panels.close.mockClear();
   ipcMocks.viewStateGet.mockReset().mockResolvedValue(viewStateDefaults());
   ipcMocks.viewStateSet.mockReset().mockResolvedValue(undefined);
@@ -142,7 +145,7 @@ describe("compositionAnchorStore", () => {
   it("opening a Group asks the Dock for its Panel and anchors it on the clip", () => {
     expect(openComposition(G1, "ref-g1")).toBe(true);
 
-    expect(panels.open).toHaveBeenCalledWith(G1);
+    expect(panels.open).toHaveBeenCalledWith(G1, { activate: true });
     expect(anchorPath(G1)).toEqual([{ layerId: "ref-g1", compositionId: G1 }]);
     expect(anchors().focusedId).toBe(G1);
     expect(currentOpenComposition()?.id).toBe(G1);
@@ -422,7 +425,7 @@ describe("wouldCycleIn", () => {
 describe("a hit that lives inside a Group", () => {
   it("opens the Group's Panel and hands it the keyboard, then selects in it", () => {
     expect(jumpToLayer("inner-g1")).toBe(true);
-    expect(panels.open).toHaveBeenCalledWith(G1);
+    expect(panels.open).toHaveBeenCalledWith(G1, { activate: true });
     expect(anchors().focusedId).toBe(G1);
     expect(primaryLayerIdOf(currentSelection())).toBe("inner-g1");
   });
@@ -498,7 +501,7 @@ describe("tab intent", () => {
     panels.open.mockClear();
     useProjectStore.getState().apply(nested());
 
-    expect(panels.open).toHaveBeenCalledWith(G2);
+    expect(panels.open).toHaveBeenCalledWith(G2, { activate: true });
     expect(anchorPath(G2)).toEqual([
       { layerId: "ref-g1", compositionId: G1 },
       { layerId: "ref-g2", compositionId: G2 },
@@ -522,11 +525,11 @@ describe("restoreCompositionTabs", () => {
 
     await restoreCompositionTabs();
 
-    expect(panels.open).toHaveBeenCalledWith(G1);
-    expect(panels.open).not.toHaveBeenCalledWith("comp-gone");
+    expect(panels.open).toHaveBeenCalledWith(G1, { activate: false });
+    expect(panels.open).not.toHaveBeenCalledWith("comp-gone", expect.anything());
     // The root's Panel comes from the layout snapshot, so its entry is a zoom
     // to restore, never a Panel to open.
-    expect(panels.open).not.toHaveBeenCalledWith(ROOT_ID);
+    expect(panels.open).not.toHaveBeenCalledWith(ROOT_ID, expect.anything());
     expect(anchorPath(G1)).toEqual([{ layerId: "ref-g1", compositionId: G1 }]);
     expect(anchors().focusedId).toBe(G1);
   });
@@ -540,6 +543,47 @@ describe("restoreCompositionTabs", () => {
       { layerId: "ref-g1", compositionId: G1 },
       { layerId: "ref-g2", compositionId: G2 },
     ]);
+  });
+
+  // The Dock enters whichever timeline it activates, so the fake has to as
+  // well: a restore that activated each tab on its way in handed the keyboard
+  // to the last one restored instead of the one stored.
+  describe("against a Dock that enters the Panel it activates", () => {
+    beforeEach(() => {
+      panels.open.mockImplementation((id, options) => {
+        if (options.activate) focusComposition(id);
+      });
+    });
+
+    const activated = (): string[] =>
+      panels.open.mock.calls
+        .filter(([, options]) => options.activate)
+        .map(([id]) => id);
+
+    it("keeps the root in front when the root held the keyboard", async () => {
+      stored({
+        composition_tabs: [storedTab(ROOT_ID), storedTab(G1, "ref-g1")],
+        active_composition_id: ROOT_ID,
+      });
+
+      await restoreCompositionTabs();
+
+      expect(panels.open).toHaveBeenCalledWith(G1, { activate: false });
+      expect(activated()).toEqual([]);
+      expect(anchors().focusedId).toBe(ROOT_ID);
+    });
+
+    it("brings the stored Group to the front, and only that one", async () => {
+      stored({
+        composition_tabs: [storedTab(ROOT_ID), storedTab(G1, "ref-g1"), storedTab(G2)],
+        active_composition_id: G1,
+      });
+
+      await restoreCompositionTabs();
+
+      expect(activated()).toEqual([G1]);
+      expect(anchors().focusedId).toBe(G1);
+    });
   });
 
   // Every Dock rebuild replays this, and only the first is the fresh session
@@ -563,7 +607,7 @@ describe("restoreCompositionTabs", () => {
 
     await restoring;
 
-    expect(panels.open).not.toHaveBeenCalledWith(G1);
+    expect(panels.open).not.toHaveBeenCalledWith(G1, expect.anything());
     expect(anchors().focusedId).toBe(ROOT_ID);
   });
 });
@@ -591,7 +635,7 @@ describe("the preview's render target", () => {
     setPreviewRenderTarget(G2);
 
     expect(previewRenderTargetId()).toBe(G2);
-    expect(panels.open).not.toHaveBeenCalledWith(G2);
+    expect(panels.open).not.toHaveBeenCalledWith(G2, expect.anything());
     expect(anchorPath(G2)).toBeNull();
     expect(pathToComposition(G2)).toEqual([
       { layerId: "ref-g1", compositionId: G1 },

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { BellIcon } from "lucide-react";
+import { open as openInShell } from "@/bridge/shell";
 import { AppIcon } from "@/components/AppIcon";
 import { useStatusPopover } from "@/components/useStatusPopover";
 import { openAgentTab } from "../agent/openAgentTab";
@@ -13,10 +14,15 @@ import { setAppSettings, useDismissedNotices } from "../settings/appSettingsStor
 import { attentionView, type AttentionItem } from "./attentionView";
 import {
   NOTICE_PAGE_LABEL,
-  noticeSettingsPage,
+  noticeHome,
   useAppNotices,
   type NoticeSettingsPage,
 } from "./appNotices";
+
+/// The folder a folder-home notice names, from its args.
+function noticeFolder(item: Extract<AttentionItem, { kind: "notice" }>, arg: string): string {
+  return String(item.args?.[arg] ?? "");
+}
 
 interface Props {
   onOpenSettings: (page: NoticeSettingsPage) => void;
@@ -29,7 +35,7 @@ const REVIEW_ON_SCREEN: ReadonlySet<AttentionItem["key"]> = new Set(["review"]);
 /// The bell: what needs the user. Colour only — the dot is the most severe
 /// item not dismissed, and it counts nothing. Its popover is the notification
 /// center. Dismissing a row only takes it out of here: each state keeps its own
-/// home (the settings page its row's link names, Help · Check for Updates),
+/// home (the settings page or folder its row's link names, Help · Check for Updates),
 /// and the dismiss link's tooltip names it. Layout and behaviour:
 /// `docs/status-log.md` § Notification center.
 export function NotificationBell({ onOpenSettings, placement = "up" }: Props) {
@@ -54,7 +60,11 @@ export function NotificationBell({ onOpenSettings, placement = "up" }: Props) {
     close();
     if (item.kind === "review") openAgentTab("changes");
     else if (item.kind === "update") setUpdateOpen(true);
-    else onOpenSettings(noticeSettingsPage(item.code));
+    else {
+      const home = noticeHome(item.code);
+      if (home.kind === "settings") onOpenSettings(home.page);
+      else void openInShell(noticeFolder(item, home.arg)).catch((error) => console.warn("[notifications] open folder", error));
+    }
   };
   const dismiss = (item: AttentionItem) => {
     // Skipping is the update's one dismissal, as in the update dialog: no
@@ -182,16 +192,18 @@ function rowText(t: TFunction, item: AttentionItem): {
         }),
       };
     }
-    case "notice":
+    case "notice": {
+      const home = noticeHome(item.code);
       return {
         title: t(`app_notice.${item.code}.title`, item.args ?? {}),
         body: t(`app_notice.${item.code}.body`, item.args ?? {}),
-        // Named for where it leads, as the notice's home page is.
+        // Named for where it leads, as the notice's home is.
         action: t(`app_notice.${item.code}.action`),
         dismiss: t("app_notice.dismiss"),
-        dismissHint: t("notifications.dismiss_hint_settings", {
-          page: t(NOTICE_PAGE_LABEL[noticeSettingsPage(item.code)]),
-        }),
+        dismissHint: home.kind === "settings"
+          ? t("notifications.dismiss_hint_settings", { page: t(NOTICE_PAGE_LABEL[home.page]) })
+          : t("notifications.dismiss_hint_folder", { folder: noticeFolder(item, home.arg) }),
       };
+    }
   }
 }

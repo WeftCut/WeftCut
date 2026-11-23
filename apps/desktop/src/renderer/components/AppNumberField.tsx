@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { NumberField } from "@base-ui/react/number-field";
+import { useTranslation } from "react-i18next";
 import { ChevronUpIcon, ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FOCUS_GROUP_ATTR } from "../focus/focusRegion";
@@ -46,6 +47,19 @@ export interface AppNumberFieldProps {
   ariaLabel?: string;
   ariaDescribedBy?: string;
   className?: string;
+  /// While the typed text lies outside `min`/`max`, say the range under the
+  /// field. The value is clamped as always; on blur the text shows the clamped
+  /// number and the note goes away.
+  rangeHint?: boolean;
+}
+
+/// Whether typed text names a number outside the range. Text that is not a
+/// plain number yet (empty, a lone `-`) is not out of range.
+function typedOutOfRange(text: string, min?: number, max?: number): boolean {
+  const trimmed = text.trim();
+  const n = Number(trimmed);
+  if (trimmed === "" || !Number.isFinite(n)) return false;
+  return (min !== undefined && n < min) || (max !== undefined && n > max);
 }
 
 /// The one numeric input for every WeftCut form. Wraps Base UI NumberField:
@@ -71,7 +85,18 @@ export function AppNumberField({
   ariaLabel,
   ariaDescribedBy,
   className,
+  rangeHint,
 }: AppNumberFieldProps) {
+  const { t } = useTranslation();
+  const hintId = useId();
+  const [outOfRange, setOutOfRange] = useState(false);
+  const rangeText =
+    min !== undefined && max !== undefined
+      ? t("number_field.range", { min, max })
+      : min !== undefined
+        ? t("number_field.min_only", { min })
+        : t("number_field.max_only", { max });
+  const showHint = rangeHint === true && outOfRange && (min !== undefined || max !== undefined);
   // Debounced auto-commit plumbing. `slot` is a closure-stable timer slot;
   // `lastCommitted` tracks the value we last handed to onCommit so the
   // blur/Enter commit can't fire a duplicate of what the debounce just sent
@@ -106,6 +131,7 @@ export function AppNumberField({
     // Inside a dialog / menu, Escape belongs to the widget that owns it.
     if (isInTransientWidget(e.currentTarget)) return;
     e.preventDefault();
+    setOutOfRange(false);
     if (slot.current) {
       clearTimeout(slot.current);
       slot.current = null;
@@ -133,6 +159,14 @@ export function AppNumberField({
       // from the same precision table the mutation layer quantizes with, which is
       // what makes their round trip exact.
       format={{ useGrouping: false, ...format }}
+      // Base UI mirrors the value into a hidden `<input type="number" min max
+      // step>`. Inside a `<form>`, submit runs the browser's constraint
+      // validation on it: a value off the step grid counted from `min` (5 with
+      // min 0.5, step 1) blocks the submit, and Chromium anchors its bubble on
+      // the hidden input at the form's top-left. An empty `form` attribute
+      // gives that input no form owner; this field clamps on its own, says
+      // the range itself (`rangeHint`), and no call site submits it by name.
+      form=""
       disabled={disabled ?? false}
       onValueChange={(next) => {
         if (next === null) {
@@ -157,14 +191,20 @@ export function AppNumberField({
       <NumberField.Group className="app-number-group" {...{ [FOCUS_GROUP_ATTR]: "" }}>
         <NumberField.Input
           aria-label={ariaLabel}
-          aria-describedby={ariaDescribedBy}
+          aria-describedby={[ariaDescribedBy, showHint ? hintId : undefined].filter(Boolean).join(" ") || undefined}
           // Capture the committed baseline at edit-start for the dedup guard,
           // then notify the call site (focus-gated resync).
           onFocus={() => {
             lastCommitted.current = value;
             onFocus?.();
           }}
-          onBlur={() => onBlur?.()}
+          onChange={(e) => {
+            if (rangeHint) setOutOfRange(typedOutOfRange(e.currentTarget.value, min, max));
+          }}
+          onBlur={() => {
+            setOutOfRange(false);
+            onBlur?.();
+          }}
           onKeyDown={cancelEdit}
           className={cn("app-input", "app-number-input", align === "center" && "app-input--center")}
         />
@@ -180,6 +220,11 @@ export function AppNumberField({
           </NumberField.Decrement>
         </div>
       </NumberField.Group>
+      {showHint && (
+        <small id={hintId} className="app-number-range-hint" aria-live="polite">
+          {rangeText}
+        </small>
+      )}
     </NumberField.Root>
   );
 }

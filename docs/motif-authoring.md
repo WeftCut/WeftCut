@@ -267,10 +267,12 @@ one with the same keys.
   first, then the system, so the page needs no `@font-face` for them. The
   families the characters of the Motif's `string` props draw with, walked
   through each slot's list, are copied into the project with every weight
-  and style, so its frames look the same on a machine without those fonts. Text a Motif draws should come
-  from props for its fonts to travel with the project: text written into the
-  HTML is not seen. Only `font_<slot>` props get this; a family written into
-  the CSS uses whatever the machine has.
+  and style, so its frames look the same on a machine without those fonts.
+  Text a Motif draws should come from props for its fonts to travel with the
+  project: text written into the HTML is not seen. Only `font_<slot>` props
+  get this; a family written into the CSS uses whatever the machine has. The
+  props form edits a font slot with a font picker; a pick is a one-family
+  stack (`'Anton'`), and Motif default restores the manifest's list.
 - **Leaving.** A Motif that leaves, not just holds, declares a `number` prop
   `duration_s` as its `max_duration_prop`. `ctx.duration` is then the
   layer's length, and the layer is capped to it. Play the exit in the last

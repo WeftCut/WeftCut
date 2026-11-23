@@ -10,23 +10,20 @@
 
 import { familyFaces, parseFamilyList } from '../fonts/resolve'
 import type { FaceIndexEntry } from '../fonts/types'
-import type { Manifest, PropSpec } from './catalog'
+import type { Manifest } from './catalog'
+import { isFontSlot } from './fontSlot'
 import type { MotifFontFace } from './frameTransport'
 
 /** The directory on a Motif's origin its served faces live under:
  *  `motif://<id>/.fonts/<sha256>.<ext>`. */
 export const MOTIF_FONTS_DIR = '.fonts'
 
-export function isMotifFontProp(key: string, spec: PropSpec): boolean {
-  return key.startsWith('font_') && spec.type === 'string'
-}
-
 /** A Motif layer's font slots: each font prop's family list, the layer's own
  *  value when it is a string, else the manifest's default. */
 export function motifFontSlots(manifest: Pick<Manifest, 'props_schema'>, props: Readonly<Record<string, unknown>>): { key: string; css: string }[] {
   const out: { key: string; css: string }[] = []
   for (const [key, spec] of Object.entries(manifest.props_schema)) {
-    if (!isMotifFontProp(key, spec)) continue
+    if (!isFontSlot(key, spec)) continue
     const value = props[key]
     const css = typeof value === 'string' ? value : spec.default
     if (typeof css === 'string') out.push({ key, css })
@@ -68,7 +65,7 @@ const MEMO_CAP = 256
  *  CSS's choice, and Chromium loads only the faces the page draws with. The
  *  result is shared between callers: never mutate it. */
 export function motifFonts(manifest: Input, props: Record<string, unknown>, faces: readonly FaceIndexEntry[]): MotifFonts | null {
-  const keys = Object.entries(manifest.props_schema).filter(([key, spec]) => isMotifFontProp(key, spec)).map(([key]) => key)
+  const keys = Object.entries(manifest.props_schema).filter(([key, spec]) => isFontSlot(key, spec)).map(([key]) => key)
   if (!keys.length) return null
   const shipped = (manifest.fonts ?? []).map((f) => f.family.trim().toLowerCase())
   // Resolved per frame by the renderer: an index of thousands of system faces

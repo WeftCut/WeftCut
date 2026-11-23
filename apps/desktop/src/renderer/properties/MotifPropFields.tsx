@@ -1,7 +1,7 @@
 // The single fallback form generator for motif props: one switch on
-// `PropSpec.type`, consumed by BOTH the property panel (per-key commits to the
-// state actor) and the motif picker (continuous edits into parent-buffered
-// form state). The two surfaces keep their distinct commit models — see
+// `PropSpec.type` (a `font_<slot>` string gets a font picker), consumed by
+// BOTH the property panel (per-key commits to the state actor) and the motif
+// picker (continuous edits into parent-buffered form state). The two surfaces keep their distinct commit models — see
 // `MotifPropCommit` — but share the type switch, the exhaustiveness guard,
 // and the number-step heuristic, so a new PropSpec variant is wired exactly
 // once.
@@ -10,9 +10,11 @@ import { AppColorField } from "../components/AppColorField";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
+import { FontSelect } from "../components/FontSelect";
 import { useTranslation } from "react-i18next";
 import type { PropSpec } from "../render/motifs/catalog";
 import { formatMediaRef, parseMediaRef } from "../../shared/motifs/mediaProp";
+import { formatFontStack, isFontSlot, singleFontFamily } from "../../shared/motifs/fontSlot";
 import { useProjectStore } from "../state/projectStore";
 import { Field } from "./Field";
 
@@ -69,6 +71,16 @@ export function MotifPropField({
   const label = propKeyLabel(propKey);
   switch (spec.type) {
     case "string":
+      if (isFontSlot(propKey, spec)) {
+        // A pick = one re-capture, like an enum.
+        const pick = commit.mode === "commit" ? commit.onCommit : commit.onChange;
+        const field = <FontSlotField label={label} spec={spec} value={value} onPick={pick} />;
+        return commit.mode === "commit" ? (
+          <Field label={label}>{field}</Field>
+        ) : (
+          <PickerField label={label} bare>{field}</PickerField>
+        );
+      }
       if (commit.mode === "commit") {
         return (
           <StringPropField label={label} spec={spec} value={value} onCommit={commit.onCommit} />
@@ -123,6 +135,7 @@ export function MotifPropField({
           <AppNumberField
             value={typeof value === "number" ? value : spec.default}
             step={stepFor(spec)}
+            rangeHint
             ariaLabel={label}
             onValueChange={(v) => commit.onChange(v)}
             {...(spec.min !== undefined ? { min: spec.min } : {})}
@@ -365,12 +378,45 @@ export function NumberPropField({
         {...(spec.min !== undefined ? { min: spec.min } : {})}
         {...(spec.max !== undefined ? { max: spec.max } : {})}
         step={stepFor(spec)}
+        rangeHint
         onValueChange={setNum}
         onCommit={(v) => onCommit(v)}
         onFocus={() => { focused.current = true; }}
         onBlur={() => { focused.current = false; }}
       />
     </Field>
+  );
+}
+
+/// A `font_<slot>` prop: pick one installed family, or go back to the Motif's
+/// own stack. A stack the style layer filled in (`'Anton', 'Impact'`) stays
+/// selected as it is until the user picks something else.
+function FontSlotField({
+  label,
+  spec,
+  value,
+  onPick,
+}: {
+  label: string;
+  spec: Extract<PropSpec, { type: "string" }>;
+  value: unknown;
+  onPick: (next: string) => void;
+}) {
+  const { t } = useTranslation();
+  const stack = typeof value === "string" ? value : spec.default;
+  const selected = stack === spec.default ? stack : singleFontFamily(stack) ?? stack;
+  return (
+    <FontSelect
+      value={selected}
+      defaultValue={spec.default}
+      defaultLabel={t("fonts.motif_default")}
+      bundled={false}
+      ariaLabel={label}
+      onValueChange={(picked) => {
+        if (picked === selected) return;
+        onPick(picked === spec.default ? picked : formatFontStack([picked]));
+      }}
+    />
   );
 }
 

@@ -12,7 +12,9 @@ type Matchable = { families: readonly string[]; weight: FaceWeight; italic: bool
 
 /** The leaves of a CSS font-family list, in order: commas split (outside
  *  quotes), quotes and surrounding whitespace stripped, whitespace runs inside
- *  an unquoted name collapsed to one space, empty leaves dropped. */
+ *  an unquoted name collapsed to one space, empty leaves dropped. A backslash
+ *  escapes as in CSS: `\'` is a quote (shared/motifs/fontSlot.ts
+ *  `formatFontStack` writes one), `\27 ` a code point in hex. */
 export function parseFamilyList(css: string): string[] {
   const out: string[] = []
   let leaf = ''
@@ -25,11 +27,27 @@ export function parseFamilyList(css: string): string[] {
     leaf = ''
     quoted = false
   }
-  for (const ch of css) {
-    if (quote) {
+  const chars = [...css]
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i] as string
+    if (ch === '\\' && i + 1 < chars.length) {
+      const hex = /^[0-9a-fA-F]{1,6}/.exec(chars.slice(i + 1, i + 7).join(''))?.[0]
+      if (hex) {
+        i += hex.length
+        if (/\s/.test(chars[i + 1] ?? '')) i++
+        const cp = parseInt(hex, 16)
+        if (quote || !quoted) leaf += cp > 0 && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff) ? String.fromCodePoint(cp) : '\ufffd'
+      } else {
+        i++
+        // A backslash before a newline continues a quoted string.
+        if (chars[i] !== '\n' && (quote || !quoted)) leaf += chars[i]
+      }
+    } else if (quote) {
       if (ch === quote) quote = null
       else leaf += ch
-    } else if (ch === '"' || ch === "'") {
+    } else if ((ch === '"' || ch === "'") && !quoted && leaf.trim() === '') {
+      // Only a leaf's first character opens a string: a bare name such as
+      // a Text layer's `O'Brien Sans` keeps its apostrophe.
       quote = ch
       quoted = true
       leaf = ''

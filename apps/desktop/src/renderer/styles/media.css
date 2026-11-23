@@ -37,6 +37,16 @@
   overflow-y: auto;
 }
 
+/* A classic thin bar is in flow and 10px wide — the same width the quick-action
+   strip measures (.weft-quick-actions). Spend that gutter out of the 16px
+   inset so the cards end on the search row's line, overflowing or not.
+   macOS draws an overlay bar, which takes no layout width. An empty pool
+   does not scroll; reserving a gutter there would shift its centered copy. */
+html:not(.platform-mac) .media-pool-inner:not(.media-pool-inner--empty) {
+  scrollbar-gutter: stable;
+  padding-right: max(0px, calc(16 * var(--ui-px) - 10px)); /* fixed-px: classic thin scrollbar, not a theme length */
+}
+
 /* Empty pool: center the placeholder copy and the large import CTA. */
 .media-pool-inner--empty {
   display: flex;
@@ -148,18 +158,20 @@
   gap: calc(8 * var(--ui-px));
 }
 
-/* Grid mode: fixed-size cards wrapped with flex. A grid with auto-fill +
-   space-between redistributes the gap every time the column count flips,
-   which reads as a spacing jump while the panel is resized; flex keeps the
-   gap constant and lets the leftover space sit at the row's right edge. */
+/* Equal columns down to a floor, so a wider panel grows the cards instead of
+   leaving a gap at the end of a full row. auto-fill keeps the empty tracks:
+   auto-fit would stretch a short last row to the full width. The min() lets
+   the single column shrink when the panel is narrower than the floor. */
 .media-list.is-layout-grid {
-  display: flex;
-  flex-wrap: wrap;
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(min(100%, calc(132 * var(--ui-px))), 1fr)
+  );
 }
 
+/* The name is nowrap; without this the track grows to the full label. */
 .media-list.is-layout-grid .media-item {
-  flex: none;
-  width: calc(148 * var(--ui-px));
+  min-width: 0;
 }
 
 /* List mode: compact file-manager-style rows — small thumbnail, name,
