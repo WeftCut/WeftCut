@@ -48,7 +48,7 @@ async function uses(p: FontUsesInput['project'], faces: FaceIndexEntry[], covera
   })
 }
 
-describe('text uses: only faces that draw', () => {
+describe('text uses: only families that draw, each whole', () => {
   it('collects the second leaf\'s face for a character the first leaf cannot draw, and not the first\'s for it', async () => {
     const faces = [face('latin', 'Latin Sans'), face('cjk', 'CJK Sans')]
     const result = await uses(project([[text('字', 'Latin Sans, CJK Sans')]]), faces, { latin: 'abc', cjk: '字' })
@@ -61,16 +61,22 @@ describe('text uses: only faces that draw', () => {
     expect(result.collect).toEqual(['latin'])
   })
 
-  it('collects the bold face for a bold layer', async () => {
-    const faces = [face('regular', 'Example'), face('bold', 'Example', { weight: 700 })]
-    const result = await uses(project([[text('a', 'Example', { weight: 700 })]]), faces, { regular: 'a', bold: 'a' })
-    expect(result.collect).toEqual(['bold'])
+  it('collects every face of the family a layer draws with, whatever weight and style it asks for', async () => {
+    const faces = [face('regular', 'Example'), face('bold', 'Example', { weight: 700 }), face('italic', 'Example', { italic: true }), face('other', 'Other')]
+    const result = await uses(project([[text('a', 'Example', { weight: 700 })]]), faces, { regular: 'a', bold: 'a', italic: 'a', other: 'a' })
+    expect(result.collect).toEqual(['bold', 'italic', 'regular'])
   })
 
-  it('stops the walk at a bundled leaf: the characters it reaches are the app\'s own font', async () => {
-    const faces = [face('later', 'Later Sans')]
-    const result = await uses(project([[text('a', 'Liberation Sans, Later Sans')]]), faces, { later: 'a' })
-    expect(result.collect).toEqual([])
+  it('collects the faces of a family Fonts/ holds only some of', async () => {
+    const faces = [face('project', 'Example', { source: 'project' }), face('system-regular', 'Example'), face('system-bold', 'Example', { weight: 700 })]
+    const result = await uses(project([[text('x', 'Example')]]), faces, { project: 'x', 'system-regular': 'x', 'system-bold': 'x' })
+    expect(result.collect).toEqual(['system-bold'])
+  })
+
+  it('passes over a bundled leaf: a later leaf that draws the character is a use', async () => {
+    const faces = [face('later', 'Later CJK')]
+    const result = await uses(project([[text('字', 'Liberation Sans, Later CJK')]]), faces, { later: '字' })
+    expect(result.collect).toEqual(['later'])
     expect(result.missing).toEqual([])
   })
 
@@ -118,9 +124,8 @@ describe('missing uses', () => {
   })
 
   it('walks a layer stored with weight 0 as Regular', async () => {
-    const faces = [face('regular', 'Example'), face('thin', 'Example', { weight: 100 })]
-    const result = await uses(project([[text('a', 'Example', { weight: 0 })]]), faces, { regular: 'a', thin: 'a' })
-    expect(result.collect).toEqual(['regular'])
+    const result = await uses(project([[text('a', 'Gone', { weight: 0 }, 'L1')]]), [], {})
+    expect(result.missing).toEqual([{ family: 'Gone', weight: 400, italic: false, layer_ids: ['L1'] }])
   })
 
   it('names every layer asking for the missing family', async () => {
@@ -157,11 +162,20 @@ describe('Motif uses: the characters of its string props through each font slot'
     expect(result.collect).toEqual(['display'])
   })
 
-  it('stops at a family the package ships', async () => {
-    const result = await uses(project([[motif('card', { font_headline: "'Shipped Sans', Display", headline: 'abc' })]]), faces, coverage, {
+  it('collects every face of a slot family, the weights its CSS asks for among them', async () => {
+    const black = face('display-black', 'Display', { weight: 900 })
+    const result = await uses(project([[motif('card', { headline: 'Breaking' })]]), [...faces, black], { ...coverage, 'display-black': coverage.display }, {
       motifManifest: () => manifest,
     })
-    expect(result).toEqual({ collect: [], missing: [] })
+    expect(result.collect).toEqual(['display', 'display-black'])
+  })
+
+  it('passes over a family the package ships and never collects it, even where it is installed', async () => {
+    const installed = face('shipped', 'Shipped Sans')
+    const result = await uses(project([[motif('card', { font_headline: "'Shipped Sans', Display", headline: 'abc' })]]), [...faces, installed], { ...coverage, shipped: 'abc' }, {
+      motifManifest: () => manifest,
+    })
+    expect(result).toEqual({ collect: ['display'], missing: [] })
   })
 
   it('names a slot family before the first that draws, but not the package\'s own, a bundled one or a later one', async () => {

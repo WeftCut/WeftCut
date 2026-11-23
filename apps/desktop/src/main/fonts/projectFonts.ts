@@ -109,7 +109,7 @@ export class ProjectFontStore {
   /** Bumped when the project folder changes: work started for another
    *  folder stops at its next step. */
   #generation = 0
-  /** Set by `drain` until `projectChanged`: no batch starts. */
+  /** Set by `drain` until `projectChanged`: no batch is asked for. */
   #refusing = false
   /** A trigger arrived while refusing or debouncing; run once allowed. */
   #missed = false
@@ -192,11 +192,13 @@ export class ProjectFontStore {
     this.#kick()
   }
 
-  /** Finishes the batch under way and refuses new ones until
+  /** Finishes the batch under way and any already asked for, the one an
+   *  edit's quiet window still holds included, then refuses new ones until
    *  `projectChanged`. Never rejects. */
   drain(): Promise<void> {
+    // The last edit's uses are collected before the folder is let go.
+    if (this.#timer) this.#kick()
     this.#refusing = true
-    if (this.#timer) { this.#clearTimer(); this.#missed = true }
     const running = this.#running
     if (!running) return Promise.resolve()
     this.#closing = true
@@ -333,8 +335,7 @@ export class ProjectFontStore {
           const copying = this.#copyAsked
           this.#copyAsked = false
           await this.#batch(copying)
-        } while (this.#again && !this.#refusing)
-        if (this.#again) this.#missed = true
+        } while (this.#again)
       } finally { this.#running = null }
     }
     this.#running = run()

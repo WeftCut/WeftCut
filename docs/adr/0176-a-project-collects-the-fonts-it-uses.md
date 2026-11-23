@@ -33,14 +33,17 @@ had its own gaps:
 - **Fonts a project draws are copied into `Fonts/` automatically**, like
   `Media/` and `Motifs/`, when the project opens and whenever what it draws
   changes. This replaces the spec's rule that collection is the user's act.
-- **Only faces that draw are collected.** A Text layer's characters are walked
-  through its family list, and each face that draws at least one is a use. A
-  Motif's text is the characters of its string props (the layer's values, else
-  the manifest's defaults), walked the same way through each `font_<slot>`
-  list at Regular upright; text written into a Motif's HTML is not seen. A
-  bundled or CSS generic family ends a walk. A style slot no layer uses
-  collects nothing. Bundled and generic families and the fonts a Motif package
-  ships are never collected.
+- **A family that draws is collected whole.** A Text layer's characters are
+  walked through its family list, each to the first family whose face draws
+  it; a family that draws at least one is a use, and every face of it is
+  copied, all weights and styles. A Motif's text is the characters of its
+  string props (the layer's values, else the manifest's defaults), walked the
+  same way through each `font_<slot>` list; text written into a Motif's HTML
+  is not seen. A CSS generic family ends a walk. A bundled family, or one the
+  Motif package ships, is passed over: which characters it covers is not
+  read, so a family after it that can draw a character is a use too. A style
+  slot no layer uses collects nothing. Bundled and generic families and the
+  fonts a Motif package ships are never collected.
 - **A face is family + weight + italic**, read from the font's own tables
   (typographic family, `OS/2`, `fvar`), never from the file name. A collection
   (`.ttc`) face is extracted to a single-face file. A different version of the
@@ -76,7 +79,9 @@ had its own gaps:
   that one are fallbacks. The next family in the list draws instead, else a
   bundled one.
 - **Copies finish before the folder is let go.** Closing, quitting, opening
-  another project and Save As wait for pending copies, shown in the work pill.
+  another project and Save As wait for pending copies, shown in the work pill,
+  including the collection an edit just asked for and the style `TASTE.md`
+  extends.
   Each copy is written as `.part` and renamed, so an interrupted one leaves no
   partial font; a stale `.part` is deleted at open. Save As copies `Fonts/`
   and `Styles/`.
@@ -95,9 +100,12 @@ had its own gaps:
   changed font files. Project `Fonts/` records stay in memory.
 - A project folder renders the same text on a machine without its fonts
   installed; frames differ across machines only where a font is missing.
-- Each project pays the disk cost of its fonts. A CJK family of a few
-  weights adds tens of megabytes; covering only the faces that draw keeps
-  that to what the film shows.
+- Each project pays the disk cost of whole families: a CJK family of several
+  weights adds tens to hundreds of megabytes. In return the folder can change
+  a layer's weight or style on a machine without the font, and a Motif draws
+  the weight its CSS asks for.
+- A family listed after a bundled or package font may be copied for
+  characters that font draws.
 - A Motif collects only for text that comes from its props; an author who
   hard-codes text in the HTML gets no font of it in `Fonts/`.
 - A Windows session end cannot wait: an unfinished copy is dropped and redone
@@ -107,8 +115,10 @@ had its own gaps:
 
 Rejected: a licence gate on `fsType` (it answers the font's default, not the
 user's licence); collection on a user action (a folder copied by hand would
-travel without fonts); every face of a used family, and whole `.ttc` files
-(disk cost for faces nothing draws); reading a deleted file as an exclusion
+travel without fonts); only the faces a layer's weight and style resolve to (a
+Motif's CSS picks weights the app cannot see, and a folder could not change
+weight away from the machine that made it); whole `.ttc` files (they carry
+other families); reading a deleted file as an exclusion
 (indistinguishable from a failed sync); an app-wide exclusion list; a bell row
 per copy; a Motif's uses as the faces its capture host fetched
 (`document.fonts.load` of a stack loads a face of every family in it, and a

@@ -483,6 +483,25 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.stop()
   })
 
+  it('close copies the user style TASTE.md extends into Styles/ when nothing has read the tokens since the edit', async () => {
+    const { deps } = makeInMemoryDeps()
+    const root = mkdtempSync(nodePath.join(tmpdir(), 'host-project-styles-'))
+    try {
+      const user = nodePath.join(root, 'user')
+      mkdirSync(nodePath.join(user, 'mine'), { recursive: true })
+      writeFileSync(nodePath.join(user, 'mine', 'STYLE.md'), '---\ntokens: {}\n---\n')
+      const builtin = nodePath.join(import.meta.dirname, '../../shared/styles/builtin')
+      const host = createTsActorHost({ ...deps, styleDirs: { builtin, user } })
+      const dir = await host.handleInvoke('project_new_workspace', { ...publicationProject, parentFolder: nodePath.join(root, 'projects') }) as string
+      // Edited outside the app (an editor, an agent in the folder).
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(nodePath.join(dir, 'TASTE.md'), '---\nextends: mine\n---\n')
+      await host.handleInvoke('project_close', {})
+      expect(existsSync(nodePath.join(dir, 'Styles', 'mine', 'STYLE.md'))).toBe(true)
+      host.stop()
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
   it('project_open flushes pending edits to the current workspace before switching', async () => {
     vi.useFakeTimers()
     const { deps, vfs } = makeInMemoryDeps()

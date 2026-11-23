@@ -265,9 +265,9 @@ one with the same keys.
   resolved when the frame renders: before `setup` runs, the app registers
   their faces in the page under their own names, from the project's `Fonts/`
   first, then the system, so the page needs no `@font-face` for them. The
-  faces the characters of the Motif's `string` props draw with, walked
-  through each slot's list, are copied into the project, so its frames look
-  the same on a machine without those fonts. Text a Motif draws should come
+  families the characters of the Motif's `string` props draw with, walked
+  through each slot's list, are copied into the project with every weight
+  and style, so its frames look the same on a machine without those fonts. Text a Motif draws should come
   from props for its fonts to travel with the project: text written into the
   HTML is not seen. Only `font_<slot>` props get this; a family written into
   the CSS uses whatever the machine has.

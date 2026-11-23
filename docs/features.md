@@ -1278,8 +1278,8 @@ Sans SC` chain. Existing, pasted and imported layers keep their fonts. The picke
 lists the project's `Fonts/` families and OS-installed families from one lazy
 main-process scan (`main/fonts/catalog.ts`; TTF/OTF and every TTC face) exposed
 as `font.listFamilies()`; the renderer never receives font paths. Install fonts
-through the OS and restart to refresh. The faces a project draws are copied
-into its `Fonts/` (ADR 0176), so a chosen font travels with the project folder.
+through the OS and restart to refresh. Every face of the families a project draws is
+copied into its `Fonts/` (ADR 0176), so a chosen font travels with the project folder.
 
 ## Rectangular video crop
 

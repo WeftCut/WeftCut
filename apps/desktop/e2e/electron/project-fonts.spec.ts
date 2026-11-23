@@ -197,7 +197,7 @@ function copyProject(project: string, prefix: string): string {
   return copy
 }
 
-test('a project carries the face it draws, and draws from it where the font is not installed', async () => {
+test('a project carries the family it draws, and draws from it where the font is not installed', async () => {
   test.skip(process.env.WEFTCUT_E2E_NO_EXPORT === '1', 'the portable leg compares real exports')
   test.setTimeout(600_000)
   const outDir = tmpDir('weftcut-e2e-fonts-out-')
@@ -222,8 +222,8 @@ test('a project carries the face it draws, and draws from it where the font is n
     await expect.poll(() => lineWidth(page, layerId), { message: 'the line takes the fixture family' }).not.toBe(bundled)
     drawn = (await lineWidth(page, layerId))!
 
-    // Exactly the face the layer draws: Bold, not the Regular beside it.
-    await expect.poll(() => fontsIn(project), { message: 'the Bold face is copied into Fonts/' }).toEqual([BOLD])
+    // The whole family the layer draws with: the Regular beside its Bold too.
+    await expect.poll(() => fontsIn(project), { message: 'the family is copied into Fonts/' }).toEqual([BOLD, REGULAR])
     expect(readFileSync(path.join(project, 'Fonts', BOLD)).equals(readFileSync(path.join(FIXTURE_DIR, BOLD)))).toBe(true)
     await expect.poll(async () => (await logRows(page, 'log.fonts_copied')).map(row => row.details?.families))
       .toEqual([[FAMILY]])
@@ -243,7 +243,7 @@ test('a project carries the face it draws, and draws from it where the font is n
     await expect.poll(() => lineWidth(page, layerId), { message: 'preview draws the face from Fonts/', timeout: 60_000 }).toBe(drawn)
     await exportTo(page, received)
     expect(ssim(received, made), 'the export draws the face from Fonts/').toBeGreaterThanOrEqual(SAME_FRAME_SSIM)
-    expect(fontsIn(copy)).toEqual([BOLD])
+    expect(fontsIn(copy)).toEqual([BOLD, REGULAR])
     expect(await logRows(page, 'log.fonts_copied'), 'nothing is copied: the folder has it').toEqual([])
 
     // The comparison bites: without the face, the same frame is another one.
@@ -256,7 +256,7 @@ test('a project carries the face it draws, and draws from it where the font is n
   } finally { await running.app.close() }
 })
 
-test('only faces that draw are collected, and a family before the first that draws is missing', async () => {
+test('only families that draw are collected, and a family before the first that draws is missing', async () => {
   test.setTimeout(240_000)
   const { app, page } = await launchWithFonts(installedFonts())
   let client: Client | null = null
@@ -268,10 +268,11 @@ test('only faces that draw are collected, and a family before the first that dra
     const missingFirst = await addText(page, `${NOWHERE}, ${FAMILY}`, 700)
     // Missing after the family that draws: a fallback, never missing.
     const missingAfter = await addText(page, `${FAMILY}, ${NOWHERE}`, 400, 'Sphinx of black quartz')
-    // A bundled family first draws every character: nothing after it is a use.
+    // A bundled family first: a family after it that resolves nowhere is a
+    // fallback, never missing.
     await addText(page, `Liberation Sans, ${NOWHERE_TOO}`, 400)
 
-    await expect.poll(() => fontsIn(project), { message: 'each drawn face is copied' }).toEqual([BOLD, REGULAR])
+    await expect.poll(() => fontsIn(project), { message: 'the drawn family is copied' }).toEqual([BOLD, REGULAR])
     client = await connectMcp(page, 'e2e-project-fonts')
     await expect.poll(() => sessionMissing(client!), { message: 'project://session names the missing family' })
       .toEqual([{ family: NOWHERE, weight: 700, italic: false, layer_ids: [missingFirst] }])
@@ -305,13 +306,13 @@ test('the exclusion list keeps a family out across opens; Allow copying brings i
     await systemScanned(page, true)
     // The missing family is the witness that a reconcile walked the uses.
     const layerId = await addText(page, `${NOWHERE}, ${FAMILY}`, 700)
-    await expect.poll(() => fontsIn(project)).toEqual([BOLD])
+    await expect.poll(() => fontsIn(project)).toEqual([BOLD, REGULAR])
     await expect.poll(async () => (await logRows(page, 'log.fonts_copied')).length).toBe(1)
 
     await stubTrash(app, path.join(tmpDir('weftcut-e2e-fonts-bin-'), 'trash'))
     const view = await page.evaluate(family => window.api.projectFonts.exclude(family), FAMILY)
     expect(view).toMatchObject({ copied: [], excluded: [{ family: FAMILY, installed: true }] })
-    expect((await trashed(app)).map(file => path.basename(file))).toEqual([BOLD])
+    expect((await trashed(app)).map(file => path.basename(file)).sort()).toEqual([BOLD, REGULAR])
     expect(fontsIn(project)).toEqual([])
     await invokeCmd(page, 'project_save')
     expect(JSON.parse(readFileSync(path.join(project, 'project.json'), 'utf8')).settings.excluded_fonts).toEqual([FAMILY])
@@ -328,8 +329,8 @@ test('the exclusion list keeps a family out across opens; Allow copying brings i
     await reopen(page, project)
     await expect.poll(async () => (await logRows(page, 'log.fonts_missing')).length).toBeGreaterThan(0)
     const allowed = await page.evaluate(family => window.api.projectFonts.allow(family), FAMILY)
-    expect(allowed).toMatchObject({ copied: [{ family: FAMILY, files: 1 }], excluded: [] })
-    expect(fontsIn(project)).toEqual([BOLD])
+    expect(allowed).toMatchObject({ copied: [{ family: FAMILY, files: 2 }], excluded: [] })
+    expect(fontsIn(project)).toEqual([BOLD, REGULAR])
     // A later line from the same log is the witness that an earlier one would
     // have landed by now.
     await setText(page, layerId, { font_family: `${NOWHERE_TOO}, ${FAMILY}` })
@@ -347,7 +348,7 @@ test('a face deleted from Fonts/ while the project was closed is copied again', 
     await systemScanned(page, true)
     await addText(page, FAMILY, 700)
     await expect.poll(async () => (await logRows(page, 'log.fonts_copied')).length).toBe(1)
-    expect(fontsIn(project)).toEqual([BOLD])
+    expect(fontsIn(project)).toEqual([BOLD, REGULAR])
     await invokeCmd(page, 'project_save')
     await invokeCmd(page, 'project_close')
 
@@ -355,7 +356,7 @@ test('a face deleted from Fonts/ while the project was closed is copied again', 
     await reopen(page, project)
     await expect.poll(async () => (await logRows(page, 'log.font_recopied')).map(row => row.i18n_args?.name),
       { message: 'the copy again points at the exclusion list' }).toEqual([FAMILY])
-    expect(fontsIn(project)).toEqual([BOLD])
+    expect(fontsIn(project)).toEqual([BOLD, REGULAR])
     expect(await logRows(page, 'log.fonts_copied'), 'a copy again is not a first copy').toEqual([])
   } finally { await app.close() }
 })
@@ -384,8 +385,9 @@ test('a close waits for the copy in flight', async () => {
     expect(await fontOrder(app)).toEqual(['copy held', 'close requested'])
     await releaseCopies(app)
     await closing
-    expect(await fontOrder(app)).toEqual(['copy held', 'close requested', 'copy renamed', 'close answered'])
-    expect(fontsIn(project)).toEqual([BOLD])
+    // Both faces of the family; the gate is open once released.
+    expect(await fontOrder(app)).toEqual(['copy held', 'close requested', 'copy renamed', 'copy held', 'copy renamed', 'close answered'])
+    expect(fontsIn(project)).toEqual([BOLD, REGULAR])
   } finally { await app.close() }
 })
 
@@ -414,11 +416,11 @@ test('a copy killed midway leaves no partial file, and the next open finishes it
     const { page } = running
     await systemScanned(page, true)
     await reopen(page, project)
-    await expect.poll(() => fontsIn(project), { message: 'the stale .part is gone and the copy is done' }).toEqual([BOLD])
+    await expect.poll(() => fontsIn(project), { message: 'the stale .part is gone and the copy is done' }).toEqual([BOLD, REGULAR])
   } finally { await running.app.close() }
 })
 
-test('a Motif font slot collects the face its text draws, and its capture draws with it', async () => {
+test('a Motif font slot collects the family its text draws with, and its capture draws with it', async () => {
   test.setTimeout(300_000)
   const GREEN = [40, 200, 60], RED = [220, 40, 40]
   /** The left half: green when the slot's family measures monospaced (the
@@ -460,8 +462,8 @@ motif.define({ async setup(props) {
     motifId = await createMotif(page, manifest, html)
     await addLayer(page, motifId, 2_000_000)
     await settledSamples(page, 500_000, SIGNAL, shows(GREEN), 'the slot draws the installed family')
-    // A slot walks at Regular upright: its CSS picks the weight.
-    await expect.poll(() => fontsIn(project), { message: 'the slot collects the Regular face' }).toEqual([REGULAR])
+    // A slot collects its whole family: the page's CSS picks the weight.
+    await expect.poll(() => fontsIn(project), { message: 'the slot collects the family' }).toEqual([BOLD, REGULAR])
     await invokeCmd(page, 'project_save')
   } finally { await running.app.close() }
 

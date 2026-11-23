@@ -338,7 +338,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     defaultTextFont: () => deps.appSettings?.get().default_text_font,
     // Read at each creation, so an edit to TASTE.md reaches the next layer
     // without a reload. `opened` is assigned below; this runs only later.
-    tasteTokens: () => { collectStyle(); return deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: libraryManifest }).tokens : null },
+    tasteTokens: () => { void collectStyle(); return deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: libraryManifest }).tokens : null },
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
     // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
@@ -576,8 +576,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     const openAtRequest = opened
     if (closing) opened = null
     const next = persistenceTail.then(async () => {
-      // Copies into `Fonts/` finish before the folder is let go (ADR 0176).
-      // Awaited before `replacing`, so an edit made meanwhile is in the flush.
+      // Copies into `Styles/` and `Fonts/` finish before the folder is let go
+      // (ADR 0176): Save As copies both, and TASTE.md has no watch, so an edit
+      // to it nothing has read yet is collected here. Awaited before
+      // `replacing`, so an edit made meanwhile is in the flush.
+      await collectStyle(openAtRequest?.dir)
       await deps.fonts?.drain()
       // LANDMINE: from `replacing = true` to onWorkspaceChanging nothing may
       // await. The flush then holds every edit made before it, none can land
@@ -644,13 +647,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   let opened: OpenedProject | null = null
-  /** Copies the user style the open project's TASTE.md extends into its
-   *  `Styles/` (ADR 0176). There is no TASTE.md watch, so it runs at open and
-   *  at each read of the tokens; it does nothing once the copy is there. */
-  const collectStyle = (): void => {
-    const dir = opened?.dir
-    if (!deps.styleDirs || !dir) return
-    collectExtendedStyle(deps.styleDirs, dir).catch((error: unknown) => {
+  /** Copies the user style the TASTE.md of `dir` (the open project's by
+   *  default) extends into its `Styles/` (ADR 0176). There is no TASTE.md
+   *  watch, so it runs at open, at each read of the tokens and before the
+   *  folder is let go; it does nothing once the copy is there. Never rejects. */
+  const collectStyle = (dir = opened?.dir): Promise<void> => {
+    if (!deps.styleDirs || !dir) return Promise.resolve()
+    return collectExtendedStyle(deps.styleDirs, dir).then(() => {}, (error: unknown) => {
       try { deps.emitLog?.({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message: `The style TASTE.md extends was not copied into Styles/: ${String(error)}`, details: { kind: 'ProjectStyles' } }) }
       catch (err) { console.warn('[ts-actor-host] emitLog failed (project style)', err) }
     })
@@ -670,7 +673,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     open: async (dir) => {
       await replaceWorkspace(async () => { await openProject(orchestratorDeps, dir); opens(dir) })
       motifRecords.opened()
-      collectStyle()
+      void collectStyle()
     },
     saveAs: (dir) => replaceWorkspace(async () => {
       try { await saveProjectAs(orchestratorDeps, dir, deps.workspaceDir()) }
@@ -1219,7 +1222,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       if (opened === null || replacing || !autosave.unsaved()) return
       autosave.forceFlush()
     },
-    ...(deps.styleDirs ? { taste: () => { collectStyle(); return tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: libraryManifest, fonts: deps.fontFamilies?.() ?? null }) } } : {}),
+    ...(deps.styleDirs ? { taste: () => { void collectStyle(); return tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: libraryManifest, fonts: deps.fontFamilies?.() ?? null }) } } : {}),
     // The project is read once the editor has answered: an edit made while the
     // question was out is in both halves of the answer, not only the editor's.
     ...(deps.readEditorPlayhead ? { playhead: async () => { const report = await deps.readEditorPlayhead!(); return playheadView(actor.snapshot(), report) } } : {}),

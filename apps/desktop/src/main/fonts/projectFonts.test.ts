@@ -108,16 +108,15 @@ describe('copying into Fonts/', () => {
     expect(inFonts()).toEqual(['Example-Regular.ttf'])
   })
 
-  it('extracts a collection face to a standalone file', async () => {
+  it('extracts each collection face of the family to a standalone file', async () => {
     fs.writeFileSync(path.join(systemDir, 'Pair.ttc'), ttc([
       faceTables({ family: 'Pair', weight: 400, cmap: latin() }),
       faceTables({ family: 'Pair', weight: 700, cmap: latin() }),
     ]))
     const h = await harness([textLayer('a', 'Pair', 700)])
     await h.open()
-    expect(inFonts()).toEqual(['Pair-700.ttf'])
-    const faces = readFaces(fs.readFileSync(path.join(fontsDir(), 'Pair-700.ttf')))
-    expect(faces.map(f => f.ttcIndex)).toEqual([null])
+    expect(inFonts()).toEqual(['Pair-400.ttf', 'Pair-700.ttf'])
+    for (const name of inFonts()) expect(readFaces(fs.readFileSync(path.join(fontsDir(), name))).map(f => f.ttcIndex)).toEqual([null])
   })
 
   it('deletes a .part an earlier session left when the folder opens', async () => {
@@ -235,6 +234,32 @@ describe('closing', () => {
     h.edit([textLayer('ab', 'Example')])
     await h.store.settled()
     expect(inFonts()).toEqual([])
+  })
+
+  it('drain collects what the last edit draws, whose quiet window has not ended', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    const h = await harness([])
+    await h.open()
+    h.edit([textLayer('a', 'Example')])
+    await h.store.drain()
+    expect(inFonts()).toEqual(['Example-Regular.ttf'])
+  })
+
+  it('drain finishes the edit\'s batch after the copy in flight', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    installFont('Second-Regular.ttf', { family: 'Second' })
+    const h = await harness([textLayer('a', 'Example')])
+    let land!: () => void
+    h.holdWrites(new Promise<void>(r => { land = r }))
+    const opening = h.open()
+    await vi.waitFor(() => expect(h.calls).toContain('write .Example-Regular.ttf.u1.part'))
+    h.edit([textLayer('a', 'Example'), textLayer('b', 'Second')])
+    const draining = h.store.drain()
+    land()
+    await Promise.all([opening, draining])
+    expect(inFonts()).toEqual(['Example-Regular.ttf', 'Second-Regular.ttf'])
   })
 })
 

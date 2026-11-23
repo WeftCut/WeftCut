@@ -1,10 +1,11 @@
-// The project's font uses: which catalog faces it draws with, so the project
-// font store (./projectFonts.ts) copies them into `Fonts/`, and which families
-// it asks for that resolve nowhere, so `project://session` and the log can name
-// the layers they affect. Only faces that draw are uses (ADR 0176). Matching a
-// family to a face is ../../shared/fonts/resolve.ts and the missing rule is
-// ../../shared/fonts/missing.ts; the walk here decides which of the matched
-// faces a layer's characters actually reach.
+// The project's font uses: which catalog families it draws with, so the
+// project font store (./projectFonts.ts) copies every face of them into
+// `Fonts/`, and which families it asks for that resolve nowhere, so
+// `project://session` and the log can name the layers they affect. Only
+// families that draw are uses, and a use is the whole family (ADR 0176).
+// Matching a family to a face is ../../shared/fonts/resolve.ts and the missing
+// rule is ../../shared/fonts/missing.ts; the walk here decides which of the
+// listed families a layer's characters actually reach.
 
 import { missingLeaves } from '../../shared/fonts/missing'
 import { familyFaces, isBundledFamily, isGenericFamily, parseFamilyList, requestItalic, requestWeight, resolveFace } from '../../shared/fonts/resolve'
@@ -26,8 +27,8 @@ export interface MissingFontUse {
 }
 
 export interface FontUses {
-  /** SHA-256 keys of system faces the project draws with and `Fonts/` lacks:
-   *  what to copy. Sorted. */
+  /** SHA-256 keys of the system faces of every family the project draws
+   *  with that `Fonts/` lacks: what to copy. Sorted. */
   collect: string[]
   /** Sorted by family, then weight. */
   missing: MissingFontUse[]
@@ -52,8 +53,8 @@ interface Request {
   css: string
   weight: number
   italic: boolean
-  /** Family keys the Motif's package ships: they draw in the page, so they
-   *  stop the walk like bundled ones and are never missing. Empty for Text. */
+  /** Family keys the Motif's package ships: they draw in the page, so they are
+   *  never collected and never missing. Empty for Text. */
   shipped: ReadonlySet<string>
   codePoints: Set<number>
   layerIds: string[]
@@ -149,8 +150,8 @@ function presentInProject(faces: readonly FaceIndexEntry[], face: FaceIndexEntry
 
 /** The project's requests: one per Text (family list, weight, italic), and one
  *  per Motif (font slot list, shipped families). A Motif slot walks at
- *  Regular upright: its CSS picks the weights it draws, which the app cannot
- *  see, and no prop names them. */
+ *  Regular upright: the walk only asks which family draws a character, and
+ *  the whole family is the use, whatever weights the Motif's CSS picks. */
 function requests(project: Pick<Project, 'compositions'>, manifestOf: MotifFontManifest): { text: Request[]; motif: Request[] } {
   const text = new Map<string, Request>()
   const motif = new Map<string, Request>()
@@ -192,7 +193,8 @@ export async function fontUses(input: FontUsesInput): Promise<FontUses> {
     if (!c) { c = input.coverage(sha).catch(() => null); coverageOf.set(sha, c) }
     return c
   }
-  const draws = new Set<string>()
+  /** Families (as the list names them) some character is drawn with. */
+  const drawn = new Set<string>()
   const missing = new Map<string, MissingFontUse>()
   const miss = (family: string, weight: number | null, italic: boolean | null, layerIds: readonly string[]) => {
     const key = `${fontFamilyKey(family)}\0${weight}\0${italic}`
@@ -201,20 +203,24 @@ export async function fontUses(input: FontUsesInput): Promise<FontUses> {
     for (const id of layerIds) if (!use.layer_ids.includes(id)) use.layer_ids.push(id)
   }
 
-  /** Each character goes down the list to the first leaf whose face draws it,
-   *  stopping at a bundled, generic or shipped leaf; that face is a use.
+  /** Each character goes down the list to the first leaf whose face draws
+   *  it; that leaf's family is a use. A generic leaf ends the walk: Text
+   *  draws the bundled chain in its place, a Motif's browser maps it to a
+   *  font of the machine. A bundled or shipped leaf is passed over, never a
+   *  use: whether it draws the character is not read, so a later leaf that
+   *  can draw it is a use too, and nothing the page may reach is left behind.
    *  Returns the request's missing leaves. */
   const walk = async (r: Request): Promise<string[]> => {
     const leaves = parseFamilyList(r.css)
-    const stops = leaves.map(leaf => isBundledFamily(leaf) || isGenericFamily(leaf) || r.shipped.has(fontFamilyKey(leaf)))
-    const resolved = leaves.map((leaf, i) => (stops[i] ? null : resolveFace(faces, leaf, r.weight, r.italic)))
+    const end = leaves.findIndex(isGenericFamily)
+    const walked = end < 0 ? leaves : leaves.slice(0, end)
+    const own = (leaf: string) => isBundledFamily(leaf) || r.shipped.has(fontFamilyKey(leaf))
+    const resolved = walked.map(leaf => (own(leaf) ? null : resolveFace(faces, leaf, r.weight, r.italic)))
     const covers = await Promise.all(resolved.map(face => (face ? coverage(face.sha256) : Promise.resolve(null))))
     for (const cp of r.codePoints) {
-      for (let i = 0; i < leaves.length; i++) {
-        if (stops[i]) break
-        const face = resolved[i]
+      for (let i = 0; i < walked.length; i++) {
         const cover = covers[i]
-        if (face && cover && hasGlyph(cover, cp)) { draws.add(face.sha256); break }
+        if (cover && hasGlyph(cover, cp)) { drawn.add(walked[i] as string); break }
       }
       // No leaf draws it: the bundled tail or the browser's default does,
       // which is no use.
@@ -226,14 +232,13 @@ export async function fontUses(input: FontUsesInput): Promise<FontUses> {
   for (const r of text) for (const family of await walk(r)) miss(family, r.weight, r.italic, r.layerIds)
   for (const r of motif) for (const family of await walk(r)) miss(family, null, null, r.layerIds)
 
-  const bySha = new Map(faces.map(f => [f.sha256, f]))
-  const collect = [...draws].filter((sha) => {
-    const face = bySha.get(sha)
-    return !!face && face.source === 'system'
-      && !face.families.some(n => excluded.has(fontFamilyKey(n)))
-      && !presentInProject(faces, face)
-  }).sort()
+  const collect = new Set<string>()
+  for (const family of drawn) {
+    for (const face of familyFaces(faces, family)) {
+      if (face.source === 'system' && !face.families.some(n => excluded.has(fontFamilyKey(n))) && !presentInProject(faces, face)) collect.add(face.sha256)
+    }
+  }
   const missingList = [...missing.values()].sort((a, b) =>
     a.family.localeCompare(b.family) || (a.weight ?? 0) - (b.weight ?? 0) || Number(a.italic) - Number(b.italic))
-  return { collect, missing: missingList }
+  return { collect: [...collect].sort(), missing: missingList }
 }

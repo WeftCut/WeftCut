@@ -699,9 +699,9 @@ The workspace folder **is** the project; originals are copied in on import.
 │                       subfolders; Voiceover/ holds synthesized speech
 ├── Motifs/<id>/        the Motifs the project renders, named in project.json's
 │                       motifs table; edited in place (see motifs.md)
-├── Fonts/              the font faces the project draws, one face per file,
-│                       copied automatically (ADR 0176); `.part` files are
-│                       copies in flight
+├── Fonts/              every face of the families the project draws, one
+│                       face per file, copied automatically (ADR 0176);
+│                       `.part` files are copies in flight
 ├── Styles/<name>/      the user style TASTE.md extends, looked up before the
 │                       user's packages (ADR 0126)
 ├── Cache/              derivatives, regenerable: proxies, thumbnails, filmstrip,
