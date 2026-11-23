@@ -103,7 +103,8 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
    weight its bar placement (bottom, right: 0, 380 px) would win. */
 .status-popover.agent-service-popover { top: 100%; bottom: auto; right: calc(6 * var(--ui-px)); width: min(calc(320 * var(--ui-px)), calc(100% - calc(12 * var(--ui-px)))); max-height: none; gap: calc(6 * var(--ui-px)); padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px)); overflow-wrap: anywhere; }
 .agent-service-popover-title { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); margin: 0; font-weight: 500; }
-.agent-service-popover > .agent-live-state { white-space: normal; }
+/* The status row's live state grows along a row; in this column it keeps its line. */
+.agent-service-popover > .agent-live-state { flex: none; min-width: 0; white-space: normal; }
 .agent-service-popover-facts { display: flex; flex-direction: column; gap: calc(6 * var(--ui-px)); padding-top: calc(6 * var(--ui-px)); border-top: 1px solid var(--border); max-height: calc(180 * var(--ui-px)); overflow: auto; }
 .agent-service-popover-facts > div { display: flex; flex-direction: column; gap: calc(3 * var(--ui-px)); }
 .agent-service-popover-facts > p { margin: 0; }
