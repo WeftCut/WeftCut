@@ -139,6 +139,28 @@ describe('user style packages', () => {
   })
 })
 
+describe('project style packages', () => {
+  it('reads Styles/<name>/ in the project before the user package of the same name', () => {
+    const user = temp()
+    style(user, 'paper', 'tokens: { text: { title: { size_px: 40 } } }')
+    const dir = project('---\nextends: paper\n---\n')
+    style(path.join(dir, 'Styles'), 'paper', 'tokens: { text: { title: { size_px: 50 } } }')
+    const v = tasteView(dirs(user), dir)
+    expect(v.style).toMatchObject({ name: 'paper', origin: 'project' })
+    expect(v.tokens.text?.title?.size_px).toBe(50)
+    expect(listStyles({ ...dirs(user), project: path.join(dir, 'Styles') }).filter((s) => s.name === 'paper')).toEqual([{ name: 'paper', origin: 'project' }])
+  })
+
+  it('never lets a project package shadow a built-in name', () => {
+    const dir = project('---\nextends: weftcut-default\n---\n')
+    style(path.join(dir, 'Styles'), 'weftcut-default', 'tokens: { text: { title: { size_px: 10 } } }')
+    const v = tasteView(dirs(), dir)
+    expect(v.style.origin).toBe('builtin')
+    expect(v.tokens.text?.title?.size_px).toBe(96)
+    expect(listStyles({ ...dirs(), project: path.join(dir, 'Styles') })).toEqual([{ name: 'clipping', origin: 'builtin' }, { name: 'weftcut-default', origin: 'builtin' }])
+  })
+})
+
 describe('the built-in clipping style', () => {
   it('validates against the built-in catalog with no diagnostics and draws five roles with its Motifs', () => {
     const v = tasteView(dirs(), project('---\nextends: clipping\n---\n'), { motif: (id) => BUILTIN_MANIFESTS.get(id) ?? null, fonts: new Set(['impact', 'microsoft yahei', 'georgia', 'simsun', 'consolas']) })

@@ -473,6 +473,7 @@ const enUS = {
       "A folder with that name is already there. Pick a different name, or a different location.",
     invalid_preset: "That canvas size or frame rate isn't valid — pick another.",
     create_failed: "Couldn't create the project: {{detail}}",
+    collects_hint: "Media, Motifs and fonts you use are copied into this folder, so the project opens anywhere you take it.",
   },
   project: {
     canvas: "{{width}}×{{height}} · {{fps}}",
@@ -2401,6 +2402,21 @@ const enUS = {
     prefer_proxies: "Prefer proxies for preview",
     prefer_proxies_hint:
       "Play the lightweight 720p proxy in the preview for clips that have one, for smoother scrubbing. Export still uses the original.",
+    // Settings > Project > Fonts (settings/ProjectFontsSection.tsx).
+    fonts_heading: "Fonts",
+    fonts_blurb: "Fonts you use are copied into the project's Fonts/ folder, so the project looks the same on other computers.",
+    fonts_licence: "Check font licenses before you share the project folder.",
+    fonts_copied_one: "{{count}} font family copied · {{size}}",
+    fonts_copied_other: "{{count}} font families copied · {{size}}",
+    fonts_none: "No fonts copied yet",
+    fonts_show: "Show in folder",
+    fonts_excluded: "Excluded fonts",
+    fonts_allow: "Allow copying",
+    fonts_add_exclusion: "Add exclusion",
+    fonts_add_placeholder: "Choose a font family",
+    // `count` is `files`, passed again for the plural.
+    fonts_option_one: "{{family}} · {{files}} file · {{size}}",
+    fonts_option_other: "{{family}} · {{files}} files · {{size}}",
     decode_unsupported_generate_proxy: "Generate proxy",
     keybindings_blurb:
       "Manage your keyboard shortcut configuration table.",
@@ -2701,6 +2717,9 @@ const enUS = {
     text: "Text",
     content: "Content",
     font_family: "Font family",
+    font_missing: "{{family}} {{style}} is missing; {{fallback}} draws instead.",
+    font_missing_motif: "{{family}} is missing; {{fallback}} draws instead.",
+    font_missing_motif_default: "{{family}} is missing; the default font draws instead.",
     font_size_px: "Font size (px)",
     text_reduced: "auto-reduced to {{px}} px",
     text_overflowing: "overflowing — floored at {{px}} px",
@@ -3056,6 +3075,9 @@ const enUS = {
       kind_conform: "Audio conform",
       kind_audio_fx: "Audio effects",
       group_export: "Export",
+      group_fonts: "Fonts",
+      fonts_copying: "Copying fonts {{done}}/{{total}}",
+      fonts_closing: "Copying fonts into the project…",
       // The export leads the pill; the rest of the work is counted after it.
       with_more: "{{label}} · {{count}} more",
     },
@@ -3108,6 +3130,13 @@ const enUS = {
     changed_range_at: "Changed range {{index}} of {{count}} · {{line}}",
     changed_range_last: "No later changed range",
     changed_range_first: "No earlier changed range",
+    // Project fonts (main/fonts/projectFonts.ts). `names` is an array, joined
+    // by the locale's list format; `fonts_copied_more` names the first
+    // families and counts the rest in `more`. `layers` is a count.
+    fonts_copied: "Copied {{names, list(style: narrow)}} into Fonts/. Check their licenses before you share the project folder.",
+    fonts_copied_more: "Copied {{names, list(style: narrow)}} and {{more}} more into Fonts/. Check their licenses before you share the project folder.",
+    font_recopied: "{{name}} was missing from Fonts/ and was copied again. To keep a font out of the project, exclude it in Settings > Project > Fonts.",
+    fonts_missing: "{{name}} is not installed here. Clips drawn with another font: {{layers}}.",
     save_failing: "Save failed: project.json cannot be written",
     save_recovered: "Project saved again",
     level_filter: "Severity filter",

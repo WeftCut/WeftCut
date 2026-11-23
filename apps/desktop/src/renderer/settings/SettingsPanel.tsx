@@ -36,6 +36,7 @@ import { GridOpacitySection } from "./GridOpacitySection";
 import { PerformanceSection } from "./PerformanceSection";
 import { ModelSection } from "./ModelSection";
 import { VlmSection } from "./VlmSection";
+import { ProjectFontsSection } from "./ProjectFontsSection";
 import {
   setAppSettings,
   usePrebakeMotifsEnabled,
@@ -374,6 +375,8 @@ export function SettingsPanel({
                 <h3>{t("settings.playback_heading")}</h3>
                 <PreferProxiesToggle onError={setError} />
               </section>
+
+              <ProjectFontsSection onError={setError} />
             </div>
           )}
 

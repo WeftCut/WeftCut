@@ -12,7 +12,11 @@ test('system font picker persists a preference and new text uses it through real
     // must still make the setting usable there.
     const family = families[0] ?? 'Liberation Sans'
     if (families.length) {
-      const length = await page.evaluate(async (name) => (await window.api.font.resolve(name))?.byteLength, family)
+      const length = await page.evaluate(async (name) => {
+        const index = await window.api.font.index()
+        const face = index.faces.find((f) => f.families.some((n) => n.toLowerCase() === name.toLowerCase()))
+        return face ? (await window.api.font.bytes(face.sha256))?.byteLength : undefined
+      }, family)
       expect(length).toBeGreaterThan(0)
     }
     await page.getByRole('button', { name: 'Settings', exact: true }).click()

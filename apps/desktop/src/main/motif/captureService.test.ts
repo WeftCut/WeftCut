@@ -565,7 +565,8 @@ describe('Motif capture and persistence', () => {
 });
 
 describe('Motif capture wire', () => {
-  const valid = { ...args, requestId: 3, priority: 'ahead', address: bake, store: 'keep', afterMiss: true, finalizationToken: 'fin', fpsNum: 30, fpsDen: 1 };
+  const valid = { ...args, requestId: 3, priority: 'ahead', address: bake, store: 'keep', afterMiss: true, finalizationToken: 'fin', fpsNum: 30, fpsDen: 1,
+    fonts: [{ family: 'Anton', sha256: 'c'.repeat(64), weight: 400, italic: false }, { family: 'Anton', sha256: 'd'.repeat(64), weight: [100, 900], italic: true }] };
 
   it('parses a request and drops what it does not know', () => {
     expect(parseMotifCaptureRequest({ ...valid, coalesceKey: 'old', address: { ...bake, extra: 1 } })).toEqual(valid);
@@ -576,6 +577,8 @@ describe('Motif capture wire', () => {
     ['no request id', { requestId: undefined }], ['a fractional request id', { requestId: 1.5 }], ['an unknown priority', { priority: 'high' }],
     ['a bad address', { address: { hash: 'x', frame: 0 } }], ['an unknown store mode', { store: 'bake' }], ['a non-boolean afterMiss', { afterMiss: 1 }],
     ['no size', { width: 0 }], ['no time', { tSec: Number.NaN }],
+    ['a font face without a sha256', { fonts: [{ family: 'Anton', sha256: 'x', weight: 400, italic: false }] }],
+    ['a font face with a bad weight', { fonts: [{ family: 'Anton', sha256: 'c'.repeat(64), weight: [400], italic: false }] }],
   ])('refuses %s', (_name, change) => {
     expect(() => parseMotifCaptureRequest({ ...valid, ...change })).toThrow('Invalid Motif capture request');
   });

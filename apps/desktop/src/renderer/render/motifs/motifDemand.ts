@@ -315,7 +315,7 @@ export function planMotifPreparation(input: PreparationInput): PreparationDemand
       contentFrames: desc.contentDurationFrames, ranges: [range],
       capture: { motifId: motif.manifest.id, contentHash: motif.manifest.content_hash ?? '',
         propsJson: JSON.stringify(desc.canonicalProps), width: desc.renderW, height: desc.renderH,
-        fpsNum, fpsDen },
+        fpsNum, fpsDen, ...(desc.fonts ? { fonts: desc.fonts } : {}) },
     });
   }
   plan.contents = [...contents.values()];

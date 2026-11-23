@@ -5,6 +5,7 @@ import { scaleTracksTwins } from './mutations/scaleLink'
 import { positionProblem } from '../../shared/position'
 import { isUuid } from './ids'
 import { parseProjectPath } from '../../shared/projectPath'
+import { normalizeExcludedFonts } from './excludedFonts'
 
 function serializeLink(g: Link): unknown {
   return { id: g.id, members: [...g.members].sort() }
@@ -560,8 +561,11 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // get_project_settings → the renderer proxy store) hands `undefined` downstream
   // and a `settings.proxy_overrides[id]` read throws mid-render. Existing keys win.
   o.settings = { ...defaultSettings(), ...(o.settings as Record<string, unknown>) }
-  const correctionSettings = o.settings as Record<string, unknown>
-  if (typeof correctionSettings.correction_script !== 'string') delete correctionSettings.correction_script
+  const wireSettings = o.settings as Record<string, unknown>
+  if (typeof wireSettings.correction_script !== 'string') delete wireSettings.correction_script
+  // A hand-edited exclusion list is cut to the entries validate accepts
+  // (trimmed, first spelling of a family kept) rather than refusing the open.
+  wireSettings.excluded_fonts = normalizeExcludedFonts(wireSettings.excluded_fonts)
   // `Composition.ordinal` / `Project.next_group_ordinal`: absent → creation-order
   // numbers and a counter above them, so a project written before the pair
   // existed opens under the numbering it always showed — see the function.

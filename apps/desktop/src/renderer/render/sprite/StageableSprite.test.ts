@@ -7,6 +7,8 @@ import { ColorSprite } from "./ColorSprite";
 import { TextSprite } from "./TextSprite";
 import { MotifSprite } from "./MotifSprite";
 
+const NO_FONTS = { revision: 0, complete: false, faces: [] };
+
 describe("StageableSprite contract", () => {
   it("VideoClipSprite: displayObject is the sprite; stageReady tracks a non-EMPTY texture", () => {
     const s = new VideoClipSprite({ layerId: "L", mediaId: "m" });
@@ -39,7 +41,7 @@ describe("StageableSprite contract", () => {
   });
 
   it("TextSprite: displayObject is the text; always stageReady", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     expect(s.displayObject).toBe(s.text);
     expect(s.stageReady).toBe(true);
   });

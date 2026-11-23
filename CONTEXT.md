@@ -942,8 +942,9 @@ _Avoid_: theme (layout theme), template, preset, brand
 
 **Project folder**:
 The folder holding `project.json`; may be an agent's working directory.
-`Media/` holds pooled files, `Cache/` is derived, `TASTE.md` is hand-edited.
-Relative tool paths resolve against it. See ADR 0152.
+`Media/` holds pooled files, `Motifs/` the project Motifs, `Fonts/` the
+project fonts, `Styles/` the style `TASTE.md` extends; `Cache/` is derived,
+`TASTE.md` is hand-edited. Relative tool paths resolve against it. See ADR 0152.
 _Avoid_: project directory
 
 **Project path**:
@@ -951,6 +952,29 @@ Where a file sits inside the project folder, as `project.json` records it:
 `/`-separated, relative, every segment a name each OS accepts
 (`Media/sub/clip.mp4`). Only `toNative` turns one into an OS path. See ADR 0175.
 _Avoid_: relative path, workspace path
+
+**Project font**:
+A font face (family, weight, italic, read from the font's own tables) copied
+into the project's `Fonts/` because a layer draws with its family: a Text
+layer's characters, or a Motif's string props walked through its font slots.
+Every face of such a family is copied, automatically; looked up before system and bundled fonts. Bundled and generic
+families and a Motif package's own fonts are never project fonts. See ADR 0176.
+_Avoid_: embedded font, packed font, collected font file
+
+**Font exclusion**:
+A family the user keeps out of `Fonts/`, listed in Settings → Project → Fonts
+(`settings.excluded_fonts`). The only way to keep a font out: a project font
+missing from `Fonts/` is copied again where it is installed. Excluding moves
+its files to the OS trash; Allow copying ends it. See ADR 0176.
+_Avoid_: blocked font, ignored font
+
+**Missing font**:
+A face a layer asks for that resolves nowhere on this machine, neither in
+`Fonts/` nor installed, named before the first family in the layer's list that
+draws; families after that one are fallbacks, never missing. Shown on the
+layer, listed in `project://session`; the next family in the layer's list
+draws instead.
+_Avoid_: fallback font (what draws instead)
 
 **TASTE**:
 `TASTE.md` in the project: extends one style and overrides its fields. Always

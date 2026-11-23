@@ -2,9 +2,10 @@ import type { WebContents } from 'electron'
 import type { MotifOsrFrame } from './offscreenFrames.js'
 import type { CaptureArgs, CaptureOptions, CaptureRun } from './captureQueue'
 import type { MotifFrameStore, FrameWriter } from './frameStore'
-import type { MotifCacheAddress, MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifContentRef, MotifFramePriority, MotifPresence, MotifTextureFrame } from '../../shared/motifs/frameTransport'
+import type { MotifCacheAddress, MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifContentRef, MotifFontFace, MotifFramePriority, MotifPresence, MotifTextureFrame } from '../../shared/motifs/frameTransport'
 import { MotifError, motifErrorCode } from '../../shared/motifs/errors'
 import { isMotifFrameAddress } from './frameAddress'
+import { isMotifFontFaces } from '../../shared/motifs/fontProps'
 import { MotifGateRefusal } from './resolver'
 import { MotifFrameWriteQueue, type FrameRead } from './frameWriteQueue'
 import { failsTexturePath, MotifFrameJobs, type FrameJobHandle, type FrameJobSession, type PersistSubscriber } from './frameJobs'
@@ -40,7 +41,7 @@ export function parseMotifCaptureRequest(value: unknown): MotifCaptureRequest {
     || !optional(r.fpsNum, v => typeof v === 'number') || !optional(r.fpsDen, v => typeof v === 'number')
     || !optional(address, () => isMotifFrameAddress(address!.hash, address!.frame))
     || !optional(r.store, v => v === 'keep' || v === 'offer') || !optional(r.afterMiss, v => typeof v === 'boolean')
-    || !optional(r.finalizationToken, v => typeof v === 'string')) throw new Error('Invalid Motif capture request')
+    || !optional(r.finalizationToken, v => typeof v === 'string') || !optional(r.fonts, isMotifFontFaces)) throw new Error('Invalid Motif capture request')
   return {
     requestId: r.requestId as number, priority: r.priority,
     motifId: r.motifId, tSec: r.tSec, propsJson: r.propsJson, width: r.width as number, height: r.height as number, contentHash: r.contentHash,
@@ -50,6 +51,7 @@ export function parseMotifCaptureRequest(value: unknown): MotifCaptureRequest {
     ...(r.store !== undefined ? { store: r.store as 'keep' | 'offer' } : {}),
     ...(r.afterMiss !== undefined ? { afterMiss: r.afterMiss as boolean } : {}),
     ...(r.finalizationToken !== undefined ? { finalizationToken: r.finalizationToken as string } : {}),
+    ...(r.fonts !== undefined ? { fonts: (r.fonts as MotifFontFace[]).map(f => ({ family: f.family, sha256: f.sha256, weight: f.weight, italic: f.italic })) } : {}),
   }
 }
 

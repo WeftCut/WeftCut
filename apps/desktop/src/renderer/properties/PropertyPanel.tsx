@@ -65,6 +65,7 @@ import { useTextFit } from "./useTextFit";
 import { getMotif, motifUnavailable, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
 import { MotifManagementRow, MotifSourcePanel } from "./MotifManagement";
 import { MotifProblem } from "../motifs/MotifProblem";
+import { MotifFontProblem, TextFontProblem } from "./FontProblem";
 import { openMotifsPanelAt } from "../motifs/openMotifsPanel";
 import {
   useCompositionRefCounts,
@@ -1038,6 +1039,7 @@ function TextFields({
           }}
         />
       </Field>
+      <TextFontProblem text={v} />
       <Field label={t("property_panel.font_size_px")}>
         <AppNumberField
           value={size}
@@ -1206,6 +1208,9 @@ function MotifFields({
   const propEntries = motif
     ? Object.entries(motif.manifest.props_schema)
     : [];
+  // A missing family under the props that name it (`font_*` string props,
+  // as style slots fill them), except the families the package ships.
+  const fontProblem = motif ? <MotifFontProblem manifest={motif.manifest} props={v.props} /> : null;
 
   // Partial props patch: send ONLY the changed key so the state actor's
   // key-wise props merge keeps all other keys untouched. Sending the full
@@ -1241,6 +1246,7 @@ function MotifFields({
             props={v.props}
             commit={(patch) => commit({ kind: "Motif", props: patch })}
           />
+          {fontProblem}
         </PropSection>
       ) : propEntries.length > 0 ? (
         <PropSection layerKind={layer.kind} sectionId="props" title={t("property_panel.props")}>
@@ -1258,6 +1264,7 @@ function MotifFields({
               }}
             />
           ))}
+          {fontProblem}
         </PropSection>
       ) : null}
       <PropSection layerKind={layer.kind} sectionId="motif_management" title={t("property_panel.motif_management")} defaultCollapsed>

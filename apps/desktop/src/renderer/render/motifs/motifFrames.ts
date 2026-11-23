@@ -93,6 +93,10 @@ export interface MotifFrameCacheKeyInput {
   /// The pictures `media` props name (`MotifView.media_keys`). Absent for a
   /// Motif without one, so its key is unchanged.
   mediaKeys?: Record<string, string>;
+  /// Font prop → the sha256 of each face its family list resolves to
+  /// (`shared/motifs/fontProps.ts`). Absent for a Motif without font props,
+  /// so its key is unchanged.
+  fontKeys?: Record<string, string[]>;
 }
 
 /// Stable opaque key for `MotifFrameCache`. The cache appends `#<frame>@<div>`;
@@ -115,5 +119,6 @@ export function motifFrameCacheKey(input: MotifFrameCacheKeyInput): string {
     String(input.durationFrames),
     JSON.stringify(input.canonicalProps),
     ...(input.mediaKeys ? [JSON.stringify(input.mediaKeys)] : []),
+    ...(input.fontKeys ? [JSON.stringify(input.fontKeys)] : []),
   ].join("|");
 }

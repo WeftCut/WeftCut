@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import i18n from "../i18n";
-import type { ComputeJob, ComputeOrigin, ComputePhase } from "../ipc";
+import type { ComputeJob, ComputeOrigin, ComputePhase, FontCopyProgress } from "../ipc";
 import type { AgentActivity } from "../../shared/agent-activity";
 import type { ExportJob } from "../../shared/exportJob";
 import type { ExportProgress, ExportState } from "../panels/ExportPanel";
@@ -11,6 +11,15 @@ import { WorkPill } from "./WorkPill";
 
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 vi.mock("@/bridge/ipc", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
+// Main's `project-fonts:progress` event, fired by hand.
+const fontEvents = vi.hoisted(() => ({ emit: null as null | ((p: FontCopyProgress | null) => void) }));
+vi.mock("../ipc", async (importActual) => ({
+  ...(await importActual<typeof import("../ipc")>()),
+  onFontCopyProgress: (cb: (p: FontCopyProgress | null) => void) => {
+    fontEvents.emit = cb;
+    return () => {};
+  },
+}));
 
 let revision = 2_000_000;
 const LONG_AGO = new Date(Date.now() - 70_000).toISOString();
@@ -45,6 +54,8 @@ afterEach(async () => {
   await setCalls([]);
   const { resetDerivativeJobsForTests } = await import("../state/derivativeJobsStore");
   resetDerivativeJobsForTests();
+  const { resetFontCopiesForTests } = await import("./fontCopiesStore");
+  resetFontCopiesForTests();
 });
 
 describe("work pill", () => {
@@ -164,6 +175,23 @@ describe("work pill", () => {
     expect(pill(container)).toBeNull();
     await publish([jobFixture("b", { kind: "inferring", done: 1, total: 2 })]);
     expect(container.querySelector(".work-pill-details")).toBeNull();
+  });
+
+  it("shows a font copy batch from main's progress as one row, then the close's wait, then nothing", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const { WORK_SHOW_AFTER_MS } = await import("./workView");
+    const { container } = render(<WorkPill />);
+    act(() => fontEvents.emit!({ done: 2, total: 6, closing: false }));
+    act(() => { vi.advanceTimersByTime(WORK_SHOW_AFTER_MS); });
+    expect(pill(container)!.textContent).toBe("Copying fonts 2/6");
+    act(() => pill(container)!.click());
+    expect(screen.getByRole("group", { name: "Fonts" }).querySelectorAll(".work-row")).toHaveLength(1);
+
+    act(() => fontEvents.emit!({ done: 5, total: 6, closing: true }));
+    expect(pill(container)!.textContent).toBe("Copying fonts into the project…");
+
+    act(() => fontEvents.emit!(null));
+    expect(pill(container)).toBeNull();
   });
 });
 

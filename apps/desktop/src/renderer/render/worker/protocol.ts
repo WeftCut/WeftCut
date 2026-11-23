@@ -13,6 +13,7 @@ import type { SourceColor } from "../decoder/ffprobeColorSpace";
 import type { MotifFramePacket } from "./motifStream";
 import type { SinkPixFmt } from "../../../shared/export-resources";
 import type { ExportDecodeOpenInfo, PlaneColor } from "../../../shared/frameCarrier/wire";
+import type { FaceRef, FontIndex } from "../../../shared/fonts/types";
 
 /// Snapshot of project state needed to render the export. The Worker
 /// receives this as a structured-clone of the live `ProjectSummary`,
@@ -130,10 +131,19 @@ export type ExportRequest =
         outFormat: ExportTransportFormat;
         window?: number;
       };
-      /// Bundled font bytes (family → ArrayBuffer), FontFace-loaded into the
-      /// Worker's `self.fonts` before renderer init so burned-in Text/captions
-      /// don't tofu. Transferred, not copied.
-      fonts: Record<string, ArrayBuffer>;
+      /// Every font the Text layers draw with, FontFace-loaded into the
+      /// Worker's `self.fonts` before renderer init, the way preview loads
+      /// them (docs/render.md "Fonts"). Bytes are transferred, not copied.
+      fonts: {
+        /// Bundled font bytes, family → bytes, registered under the family.
+        bundled: Record<string, ArrayBuffer>;
+        /// The catalog faces `textFaceRefs` names for this summary, each
+        /// registered under `faceAlias(ref.sha256)`. A face whose bytes main
+        /// could not read is absent: its family falls through, as in preview.
+        faces: { ref: FaceRef; bytes: ArrayBuffer }[];
+        /// The index the faces were resolved from; Text resolves against it.
+        index: FontIndex;
+      };
     }
   | { type: "cancel" }
   | { type: "motif:frame"; packet: MotifFramePacket }

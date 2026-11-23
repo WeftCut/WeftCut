@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { FaceIndexEntry, FontIndex } from "../../../shared/fonts/types";
 import { getMotif, resolveMotifContentDurationUs } from "./catalog";
 import { motifFrameDescriptor } from "./motifFrameDescriptor";
 import { resetMotifPreview, setMotifPreviewProps } from "./previewOverlay";
@@ -8,6 +9,9 @@ import { holdBuiltinMotifs } from "../../testing/projectMotifs";
 
 // The project these tests render holds the built-ins.
 holdBuiltinMotifs();
+
+const fontIndex = vi.hoisted(() => ({ current: { revision: 0, complete: true, faces: [] } as FontIndex }));
+vi.mock("../fonts/fontIndexStore", () => ({ getFontIndex: () => fontIndex.current }));
 
 function view(props: Record<string, unknown>, srcInUs = 0): any {
   return { motif_id: "countdown", x: 0, y: 0, scale_x: 1, scale_y: 1, opacity: 1, src_in_us: srcInUs, props };
@@ -166,3 +170,35 @@ describe('motifFrameCacheKey media keys', () => {
     expect(motifFrameCacheKey({ ...base, mediaKeys: { photo: 'h1' } })).not.toBe(motifFrameCacheKey({ ...base, mediaKeys: { photo: 'h2' } }))
   })
 })
+
+describe('motifFrameCacheKey font keys', () => {
+  const face = (family: string, sha: string, weight = 400): FaceIndexEntry =>
+    ({ families: [family], weight, italic: false, source: 'system', sha256: sha.repeat(64), size: 1, ttcIndex: null });
+  const indexOf = (...faces: FaceIndexEntry[]): FontIndex => ({ revision: 1, complete: true, faces });
+  afterEach(() => { fontIndex.current = indexOf(); });
+
+  it('change when a font prop resolves to another face, and ride the capture with those faces', () => {
+    const headline = getMotif('clipping-headline')!;
+    const v = { ...view({}), motif_id: 'clipping-headline' };
+    fontIndex.current = indexOf(face('Anton', 'a'), face('Anton', 'b', 700));
+    const before = motifFrameDescriptor(v, 0, 2_000_000, 30, 1, headline)!;
+    expect(before.fonts?.filter(f => f.family === 'Anton').map(f => f.sha256)).toEqual(['a'.repeat(64), 'b'.repeat(64)]);
+    fontIndex.current = indexOf(face('Anton', 'c'), face('Anton', 'b', 700));
+    const after = motifFrameDescriptor(v, 0, 2_000_000, 30, 1, headline)!;
+    expect(after.cacheKey).not.toBe(before.cacheKey);
+    expect(after.fonts?.map(f => f.sha256)).toContain('c'.repeat(64));
+  });
+
+  it('leave the key of a Motif without font props byte-for-byte as it was', () => {
+    const countdown = getMotif('countdown')!;
+    const v = view({ seconds: 6 });
+    fontIndex.current = indexOf(face('Anton', 'a'));
+    const d = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, countdown)!;
+    const { contentDurationFrames } = motifContentFrame(0, 0, resolveMotifContentDurationUs(countdown.manifest, v.props)!, 30, 1);
+    expect(d.cacheKey).toBe(motifFrameCacheKey({
+      motifId: 'countdown', version: countdown.manifest.version, canonicalProps: canonicalizeProps(v.props, countdown.manifest),
+      renderW: countdown.manifest.size[0], renderH: countdown.manifest.size[1], fpsNum: 30, fpsDen: 1, durationFrames: contentDurationFrames,
+    }));
+    expect(d.fonts).toBeUndefined();
+  });
+});

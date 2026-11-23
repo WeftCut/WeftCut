@@ -1929,6 +1929,36 @@ export async function updateProjectSettings(
   return invoke<void>("update_project_settings", { patch });
 }
 
+// Settings > Project > Fonts (ADR 0176): thin wrappers over
+// window.api.projectFonts. None of these is an undoable edit.
+import type { FontCopyProgress, ProjectFontsView } from "../../shared/fonts/types";
+export type { FontCopyProgress, ProjectFontsView } from "../../shared/fonts/types";
+
+/// What `Fonts/` holds, by family, and the exclusion list; null when no
+/// project is open.
+export async function projectFontsView(): Promise<ProjectFontsView | null> {
+  return window.api.projectFonts.view();
+}
+
+/// Records the family as excluded, then main moves its files in `Fonts/` to
+/// the OS trash.
+export async function projectFontsExclude(family: string): Promise<ProjectFontsView | null> {
+  return window.api.projectFonts.exclude(family);
+}
+
+/// Drops the family from the exclusion list; main copies it at once.
+export async function projectFontsAllow(family: string): Promise<ProjectFontsView | null> {
+  return window.api.projectFonts.allow(family);
+}
+
+export function onProjectFontsChanged(cb: () => void): () => void {
+  return window.api.projectFonts.onChanged(cb);
+}
+
+export function onFontCopyProgress(cb: (progress: FontCopyProgress | null) => void): () => void {
+  return window.api.projectFonts.onProgress(cb);
+}
+
 export interface McpInfoView {
   bind: string;
   url: string;

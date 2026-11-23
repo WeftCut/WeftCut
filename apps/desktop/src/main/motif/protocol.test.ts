@@ -25,6 +25,7 @@ import { builtinMotifs } from './authoring'
 import { ProjectMotifStore } from './projectStore'
 import { MotifResolver } from './resolver'
 import { UserMotifStore } from './store'
+import { motifPageFonts, setMotifFontSource } from './fontProps'
 
 const BUILTIN_DIR = path.resolve(__dirname, '../../shared/motifs/builtin')
 
@@ -137,6 +138,25 @@ describe('registerMotifProtocol responses', () => {
     const res = await handler!(new Request('motif://user-p/params.html?v=7'))
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Security-Policy')).toBe(MOTIF_PARAMS_CSP)
+  })
+})
+
+describe('the font route', () => {
+  afterEach(() => setMotifFontSource(null))
+
+  it('serves a face a font prop resolved to on the Motif\'s origin, and 404s any other', async () => {
+    const sha = 'a'.repeat(64), other = 'b'.repeat(64)
+    const faces = [sha, other].map(s => ({ families: [s === sha ? 'Anton' : 'Impact'], weight: 400, italic: false, source: 'system' as const, sha256: s, size: 4, ttcIndex: null }))
+    setMotifFontSource({
+      catalog: { index: () => ({ revision: 1, complete: true, faces }), faceFile: s => ({ file: `/f/${s}.ttf`, ttcIndex: null }), faceBytes: async () => Buffer.from('font') },
+    })
+    await motifPageFonts('scene', { props_schema: { font_title: { type: 'string', default: '' } } }, { font_title: 'Anton' })
+    const res = await serve('scene', `.fonts/${sha}.ttf`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toBe('font/ttf')
+    expect(res.headers.get('Content-Security-Policy')).toBe(MOTIF_CSP)
+    expect(await res.text()).toBe('font')
+    expect((await serve('scene', `.fonts/${other}.ttf`)).status).toBe(404)
   })
 })
 

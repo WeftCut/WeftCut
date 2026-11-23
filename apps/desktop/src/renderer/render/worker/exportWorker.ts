@@ -34,7 +34,7 @@ import type { ExportEvent, ExportRequest } from "./protocol";
 import { PackYuv420p10 } from "../tenbit/PackYuv420p10";
 import { PackYuvPlanar } from "../yuv/PackYuvPlanar";
 import { webgpuDeviceOf } from "../webgpuDevice";
-import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
+import { loadFontsIntoFaceSet, syncFaces } from "../fonts/loadFontsIntoFaceSet";
 import { initEval } from "@/eval";
 import { MotifFrameInbox, closeMotifPacket } from "./motifStream";
 import { paceSystemTicker } from "../pixiSystemTicker";
@@ -131,15 +131,23 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // Stills: render as export does, then hand each frame back as a JPEG.
   const stills = !nativeSink ? req.stills ?? null : null;
 
-  // Register bundled fonts into the Worker's font set BEFORE the renderer
-  // initializes. OffscreenCanvas has no system-font fallback chain, so
-  // unregistered families (e.g. CJK) would rasterize as blank boxes.
+  // Register every font Text draws with into the Worker's font set BEFORE
+  // the renderer initializes, the way preview does. OffscreenCanvas has no
+  // system-font fallback chain, so unregistered families (e.g. CJK) would
+  // rasterize as blank boxes.
   // Cast: TypeScript types `self` as Window in tsconfig lib, but inside a
   // DedicatedWorker `self.fonts` (FontFaceSet) is available at runtime.
-  await loadFontsIntoFaceSet(
-    (self as unknown as { fonts: FontFaceSet }).fonts,
-    req.fonts,
+  const faceSet = (self as unknown as { fonts: FontFaceSet }).fonts;
+  await loadFontsIntoFaceSet(faceSet, req.fonts.bundled);
+  const failedFaces = await syncFaces(
+    faceSet,
+    req.fonts.faces.map(({ ref, bytes }) => ({ ref, bytes: () => Promise.resolve(bytes) })),
   );
+  if (failedFaces.length > 0) {
+    // Their families fall through to the next one, as they do in preview.
+    // eslint-disable-next-line no-console
+    console.warn("[weftcut/export] font faces could not be registered", failedFaces);
+  }
   // 1. PixiJS Application against the transferred OffscreenCanvas.
   // Any native-sink export (8-bit or 10-bit) needs WebGL2 — the pack shaders
   // (PackYuv420p10 / PackYuvPlanar) need a GL renderer, and 10-bit additionally
@@ -232,6 +240,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     mode: "export",
     effects,
     pool: exportPool,
+    fontIndex: req.fonts.index,
     proxyAssetUrl: (mediaId: string) =>
       req.project.proxyAssetUrls[mediaId] ??
       // Native-routed media may have NO export proxy at all (they skip the

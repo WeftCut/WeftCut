@@ -2,6 +2,9 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { isShrunk, TEXT_BOX_MIN_PX } from "../textBox";
 import { blockAnchorInBox, TextSprite } from "./TextSprite";
+import type { FontIndex } from "../../../shared/fonts/types";
+
+const NO_FONTS: FontIndex = { revision: 0, complete: false, faces: [] };
 
 const base = {
   kind: "Text" as const, content: "x", font_family: "Liberation Sans", font_size_px: 54,
@@ -87,7 +90,7 @@ const TEN = "aaaaaaaaaa";
 
 describe("TextSprite", () => {
   it("applies weight, italic, stroke, dropShadow and anchor", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     s.update(base);
     expect(s.text.style.fontWeight).toBe("700");
     expect(s.text.style.fontStyle).toBe("italic");
@@ -97,8 +100,34 @@ describe("TextSprite", () => {
     expect(s.text.anchor.y).toBe(1.0);
   });
 
+  it("draws under the resolved face's alias, then the bundled chain", () => {
+    const bold = { families: ["Example Sans"], weight: 700, italic: false, source: "system" as const, sha256: "ab".repeat(32), size: 1, ttcIndex: null };
+    const index: FontIndex = { revision: 3, complete: true, faces: [bold] };
+    const s = new TextSprite({ layerId: "L", fontIndex: () => index });
+    s.update({ ...plain, font_family: "Example Sans", weight: 700, italic: false });
+    expect(s.text.style.fontFamily).toBe(`wf-${"ab".repeat(8)}, Liberation Sans, Noto Sans SC`);
+  });
+
+  it("keeps its last raster while faces load, and redraws once they are in", () => {
+    let fonts: FontIndex | null = NO_FONTS;
+    const s = new TextSprite({ layerId: "L", fontIndex: () => fonts });
+    s.update({ ...plain, content: "first" });
+    fonts = null;
+    s.update({ ...plain, content: "second" });
+    expect(s.text.text).toBe("first");
+    fonts = NO_FONTS;
+    s.update({ ...plain, content: "second" });
+    expect(s.text.text).toBe("second");
+  });
+
+  it("draws nothing before its first faces are in", () => {
+    const s = new TextSprite({ layerId: "L", fontIndex: () => null });
+    s.update({ ...plain, content: "early" });
+    expect(s.text.text).toBe("");
+  });
+
   it("applies scale and rotation without rebuilding text style", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     s.update({ ...base, scale_x: 1.5, scale_y: 0.75, rotation_deg: 30 });
 
     expect(s.text.scale.x).toBe(1.5);
@@ -107,7 +136,7 @@ describe("TextSprite", () => {
   });
 
   it("wraps only when a box width says so, and never splits a Latin word", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     s.update({ ...plain, content: "aaa bbb" });
     expect(s.text.style.wordWrap).toBe(false);
 
@@ -122,7 +151,7 @@ describe("TextSprite", () => {
   });
 
   it("places a single line against the box edge that `align` names", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     // One 70 px line in a 200 px box, anchored at its centre: the box spans
     // [-100, +100] around `position`, so the block's own edges are the assertion.
     const box = { ...plain, content: "aaa bbb", box_w: 200, anchor_x: 0.5, anchor_y: 0.5 };
@@ -139,7 +168,7 @@ describe("TextSprite", () => {
   });
 
   it("moves a short block between the top, middle and bottom of a tall box", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     // 300 px tall box around `position` ⇒ [-150, +150]; the block is one line.
     const box = { ...plain, content: "aaa", box_w: 200, box_h: 300, anchor_x: 0.5, anchor_y: 0.5 };
 
@@ -155,7 +184,7 @@ describe("TextSprite", () => {
   });
 
   it("leaves Auto width exactly where it was: align and valign move nothing", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     for (const align of ["Left", "Center", "Right"] as const) {
       for (const valign of ["Top", "Middle", "Bottom"] as const) {
         s.update({ ...plain, content: "aaa bbb", align, valign, anchor_x: 0.25, anchor_y: 0.75 });
@@ -168,7 +197,7 @@ describe("TextSprite", () => {
   });
 
   it("treats box_h without a box_w as Auto width instead of blanking the frame", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     expect(() =>
       s.update({ ...plain, content: "aaa bbb", box_w: null, box_h: 300, valign: "Bottom" }),
     ).not.toThrow();
@@ -179,7 +208,7 @@ describe("TextSprite", () => {
   });
 
   it("reports the box as the natural size once one is set, measured bounds until then", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     s.update({ ...plain, content: "aaa bbb" });
     expect(s.naturalSize()).toEqual({ w: 7 * ADVANCE_PX, h: LINE_H });
 
@@ -194,7 +223,7 @@ describe("TextSprite", () => {
   // The gizmo boxes what this reports and the Text tool hit-tests it, so an
   // emptied layer with no footprint would be unreachable from the preview.
   it("gives a glyphless layer a one-em caret footprint instead of none", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     s.update({ ...plain, content: "" });
     expect(s.naturalSize()).toEqual({ w: BASE_PX, h: LINE_H });
     // Newlines alone are still no glyphs; the height is still the line count.
@@ -213,7 +242,7 @@ describe("TextSprite", () => {
   });
 
   it("renders a garbage align/valign at the default instead of vanishing", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     const bogus = {
       ...plain,
       content: "aaa",
@@ -242,7 +271,7 @@ describe("TextSprite shrink-to-fit", () => {
   const strokeWidth = (s: TextSprite): number => (s.text.style.stroke as { width: number }).width;
 
   it("shrinks a Fixed box that cannot hold its text, then restores exactly the authored size", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     // Ten glyphs measure 100 px at 54 px, so a 50 px box is beaten until half
     // the size — 27 px fills it exactly and 28 px does not fit.
     const tight = { ...plain, content: TEN, box_w: 50, box_h: 300 };
@@ -260,7 +289,7 @@ describe("TextSprite shrink-to-fit", () => {
   });
 
   it("stops at the 8 px floor and reports the text as overflowing", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     s.update({ ...plain, content: TEN, box_w: TEXT_BOX_MIN_PX, box_h: 300 });
     expect(s.fit()).toEqual({ authoredPx: 54, effectivePx: TEXT_BOX_MIN_PX, overflowing: true });
     expect(s.text.style.fontSize).toBe(TEXT_BOX_MIN_PX);
@@ -270,7 +299,7 @@ describe("TextSprite shrink-to-fit", () => {
   });
 
   it("scales the outline and all three shadow numbers by the font's own factor", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     // `base` carries a 3 px outline and a (2, 2, blur 2) shadow, and Pixi counts
     // both in the measured width — so the box beats the glyphs by more than the
     // plain case, which is exactly why the geometry has to come down with them.
@@ -293,7 +322,7 @@ describe("TextSprite shrink-to-fit", () => {
   });
 
   it("is monotone: a wider box never renders smaller text", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     // Leading and tracking follow the factor too, so the measured extent is
     // linear in the size with no absolute term left in it. Sweep with them set
     // as well as at their defaults: that linearity IS the bisection's premise.
@@ -315,7 +344,7 @@ describe("TextSprite shrink-to-fit", () => {
   });
 
   it("scales the leading and the tracking by the font's own factor", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     // Ten glyphs plus nine 4 px gaps measure 136 px at 54 px, so a 50 px box
     // takes the size down to 19.
     const authored = { line_height: 20, letter_spacing: 4 };
@@ -339,7 +368,7 @@ describe("TextSprite shrink-to-fit", () => {
   });
 
   it("converges on a box shorter than one authored line rather than hitting the floor", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     // The regression scaled leading exists to remove: 200 px of it in a 50 px
     // box. Absolute, the height carries a term no bisection can shrink, so every
     // candidate overflows and the search reports the floor — on a case the
@@ -352,7 +381,7 @@ describe("TextSprite shrink-to-fit", () => {
   });
 
   it("never shrinks outside Fixed, however narrow the box", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     const unshrunk = { authoredPx: 54, effectivePx: 54, overflowing: false };
 
     s.update({ ...plain, content: TEN });
@@ -372,7 +401,7 @@ describe("TextSprite shrink-to-fit", () => {
   });
 
   it("re-measures nothing while the box and the text hold still", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     const v = { ...plain, content: TEN, box_w: 50, box_h: 300 };
     s.update(v);
     const searched = ctxMeasureCalls;
@@ -390,7 +419,7 @@ describe("TextSprite shrink-to-fit", () => {
   });
 
   it("leaves the view it was handed untouched: the authored size stays state's", () => {
-    const s = new TextSprite({ layerId: "L" });
+    const s = new TextSprite({ layerId: "L", fontIndex: () => NO_FONTS });
     // Frozen, so any write-back of the derived size throws instead of passing
     // unnoticed — the sprite cannot assert on a project snapshot from here, and
     // "never written back" is the whole shape of this feature (ADR 0049).

@@ -69,3 +69,23 @@ drives them. Two later measurements bounded what a style may prescribe:
 Rejected: a `role-motif` audit rule and a full component set per style
 (examples become the answer); a layer-level exit preset for Motifs (a Motif
 already animates itself); bundling font bytes.
+
+## Note (2026-11-20): the project collects its fonts and styles
+
+A project now copies the fonts it draws into `Fonts/`
+([ADR 0176](0176-a-project-collects-the-fonts-it-uses.md)), so the bullet
+"Fonts are not bundled" holds for styles only: a style still ships no font
+bytes, and a project carries the faces its layers draw. Font lookup is project
+`Fonts/`, then system, then bundled.
+
+- A `font_<slot>` prop keeps the whole family list of `tokens.fonts.<slot>`,
+  not the installed subset; the face is resolved at render time, so a project
+  opened where the first family is installed draws it. Layers placed before
+  keep the subset they were given, which is still a valid list.
+- A Motif's frame key carries the hashes of the faces its font props resolve
+  to, so a font change re-renders its frames. Frames differ across machines
+  only where a font is missing, no longer wherever installed fonts differ.
+- The user style `TASTE.md` extends is copied into the project's
+  `Styles/<name>/` and looked up there first, then in the user's packages. A
+  built-in name always means the built-in; a project style never shadows it.
+  The `extends: name@hash` pin check is unchanged.

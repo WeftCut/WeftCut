@@ -58,7 +58,7 @@ vi.mock("../components/AppSwitch", () => ({
 }));
 
 const fontFamilies = vi.hoisted(() => vi.fn());
-vi.mock("../components/fontFamilies", () => ({ getSystemFontFamilies: fontFamilies }));
+vi.mock("../components/fontFamilies", () => ({ getFontFamilies: fontFamilies }));
 
 import { AttributePanel } from "./PropertyPanel";
 

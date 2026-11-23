@@ -113,6 +113,13 @@ or per chunk — the ring is 1000 entries.
   folders the app could not keep in step with the table (`Warn` `"ProjectMotifs"`),
   and the cross-composition Alt-drag refusal
   (`renderer/timeline/crossCompositionRefusal.ts`).
+- **Project fonts** (`Project`, `Warn`, `source = System`; ADR 0176): one row
+  per copy batch that first copies a family into `Fonts/`, naming it and
+  asking for a licence check before sharing (`log.fonts_copied`, two names
+  then "and N more"); one row per family copied again because its file was
+  gone (`log.font_recopied`); one row when a face is first found missing,
+  naming the layers (`log.fonts_missing`). No row for an empty batch or for
+  copies the user asked for with Allow copying. Never a bell row.
 - **System**: `tracing` errors (above) and startup capability notices, mirrored
   once the bus exists.
 
@@ -193,7 +200,8 @@ already says what it is has no title.
   "Open the log".
 - **Work pill** (`WorkPill`, model in `logs/workView.ts`): one pill for a
   background export (Preview during export), clip-compute jobs (ADR 0121),
-  agent calls and derivative jobs. One piece of work is one row: an agent call
+  agent calls, derivative jobs and font copies into the project ("Copying
+  fonts 2/6"; "Copying fonts into the project…" while a close waits for them). One piece of work is one row: an agent call
   running a clip-compute job is that job's row, tagged with the agent. Work
   shows once it has run 250 ms, so an agent's quick reads never flash; the
   export, started by the user, shows at once. The label: a running export

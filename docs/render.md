@@ -281,12 +281,16 @@ not expose them.
 Decision and rejected options: [ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md).
 
 **Fonts.** Registration belongs to the document's or the export Worker's
-`FontFaceSet`, not to a Compositor. `loadFontsIntoFaceSet` registers each
-family once per set and shares in-flight loads; bytes come from
-`fonts/registry.ts` (bundled Liberation Sans + Noto Sans SC, OS resolution
-otherwise). Re-adding a `FontFace` does not replace the old one and the
-document keeps it alive, so reopening Preview reuses the document's fonts;
-the export Worker installs its own before the encode loop.
+`FontFaceSet`, not to a Compositor. Both register the faces the Text layers
+resolve to, chosen by one resolver (`shared/fonts/resolve.ts`: project `Fonts/`,
+then system, then bundled Liberation Sans + Noto Sans SC) over main's face
+index, with weight and style descriptors. Each face registers once per set,
+keyed by its hash, under an alias family `wf-<sha16>`, and a Text layer's
+`font-family` is the aliases of its resolved faces, then the bundled chain, so
+two files naming one family never shadow each other. Re-adding a `FontFace`
+does not replace the old one and the document keeps it alive, so reopening
+Preview reuses the document's fonts; the export Worker installs its own before
+the encode loop.
 
 **Mode** is read from `(box_w, box_h)`: `(null, null)` Auto width (no wrap),
 `(set, null)` Auto height (wrap), `(set, set)` Fixed (wrap + shrink).

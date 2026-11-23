@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentActivity } from "../../shared/agent-activity";
 import type { ComputeJob, ComputePhase } from "../../shared/compute-jobs";
 import type { DerivativeJob } from "../state/derivativeJobsStore";
+import type { FontCopies } from "./fontCopiesStore";
 import { WORK_SHOW_AFTER_MS, workView } from "./workView";
 
 const T0 = Date.parse("2026-01-02T03:04:05.000Z");
@@ -23,8 +24,14 @@ const call = (id: string, opts: { startedAt?: number; state?: AgentActivity["sta
 
 const derivative = (media_id: string, kind: string, since = LONG_AGO): DerivativeJob => ({ media_id, kind, since });
 
-const view = (input: { jobs?: ComputeJob[]; activities?: AgentActivity[]; derivatives?: DerivativeJob[]; now?: number }) =>
-  workView({ jobs: input.jobs ?? [], activities: input.activities ?? [], derivatives: input.derivatives ?? [], now: input.now ?? T0 });
+const fontBatch = (done: number, total: number, opts: { closing?: boolean; since?: number } = {}): FontCopies =>
+  ({ done, total, closing: opts.closing ?? false, since: opts.since ?? LONG_AGO });
+
+const view = (input: { jobs?: ComputeJob[]; activities?: AgentActivity[]; derivatives?: DerivativeJob[]; fontCopies?: FontCopies; now?: number }) =>
+  workView({
+    jobs: input.jobs ?? [], activities: input.activities ?? [], derivatives: input.derivatives ?? [],
+    fontCopies: input.fontCopies ?? null, now: input.now ?? T0,
+  });
 
 describe("workView", () => {
   it("is empty with nothing running", () => {
@@ -79,6 +86,22 @@ describe("workView", () => {
     expect(view({ jobs: [queued, job("w")] }).waiting).toBe(false);
     expect(view({ jobs: [queued], derivatives: [derivative("a", "proxy")] }).waiting).toBe(false);
     expect(view({ jobs: [queued], activities: [call("a1")] }).waiting).toBe(false);
+    expect(view({ jobs: [queued], fontCopies: fontBatch(1, 3) }).waiting).toBe(false);
+  });
+
+  it("makes a font copy batch one row however many files it holds, closing or not", () => {
+    const copying = view({ fontCopies: fontBatch(2, 6) });
+    expect(copying.fonts).toMatchObject({ done: 2, total: 6, closing: false });
+    expect(copying.count).toBe(1);
+    const closing = view({ fontCopies: fontBatch(5, 6, { closing: true }) });
+    expect(closing.fonts?.closing).toBe(true);
+    expect(closing.count).toBe(1);
+  });
+
+  it("holds back a font copy batch for the show delay, like every other row", () => {
+    const fresh = view({ fontCopies: fontBatch(0, 1, { since: T0 }) });
+    expect(fresh.fonts).toBeNull();
+    expect(fresh.nextDueAt).toBe(T0 + WORK_SHOW_AFTER_MS);
   });
 
   it("orders each group by start", () => {

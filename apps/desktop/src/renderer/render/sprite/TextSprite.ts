@@ -6,7 +6,8 @@
 
 import { CanvasTextMetrics, Text, TextStyle, type Container, type TextStyleFontWeight } from "pixi.js";
 
-import { DEFAULT_CAPTION_FONT_FAMILY } from "../../../shared/fonts";
+import type { FontIndex } from "../../../shared/fonts/types";
+import { renderFamilyStack } from "../fonts/textFaces";
 import type { ResolvedTextView } from "../resolveView";
 import { fitFontSize, type TextFit } from "../textBox";
 import type { StageableSprite } from "./StageableSprite";
@@ -18,6 +19,11 @@ export interface TextSpriteInit {
   /// where nothing is resampled and rounding would only move a title by up to
   /// half a pixel from where it was authored.
   snapToPixels?: boolean;
+  /// The face index the layer's family list resolves against
+  /// (`renderFamilyStack`). Null while faces it may name are still loading:
+  /// the sprite keeps its last raster rather than draw a fallback font Pixi
+  /// would not redraw once the face arrives.
+  fontIndex: () => FontIndex | null;
 }
 
 /// Where the block sits along one axis of the box, as a fraction of the slack.
@@ -101,6 +107,8 @@ function anchorAxis(block: number, box: number | null, frac: number, anchor: num
 /// searches for against one of these.
 interface StyleInput {
   view: ResolvedTextView;
+  /// `renderFamilyStack` of the view.
+  fontFamily: string;
   align: keyof typeof ALIGN_FRAC;
   /// Already coalesced — the wrap width, or null for no wrapping at all.
   boxW: number | null;
@@ -137,7 +145,7 @@ function textStyleFor(i: StyleInput, px: number): TextStyle {
   const f = v.font_size_px > 0 ? px / v.font_size_px : 1;
   const offX = (sh?.offset_x ?? 0) * f, offY = (sh?.offset_y ?? 0) * f;
   return new TextStyle({
-    fontFamily: v.font_family || DEFAULT_CAPTION_FONT_FAMILY,
+    fontFamily: i.fontFamily,
     fontSize: px,
     fontWeight: String(v.weight || 400) as TextStyleFontWeight,
     fontStyle: v.italic ? "italic" : "normal",
@@ -187,6 +195,7 @@ export class TextSprite implements StageableSprite {
   /// this is still the answer.
   private fitState: TextFit | null = null;
   private readonly snapToPixels: boolean;
+  private readonly fontIndex: () => FontIndex | null;
   /// Position of the previous `update`, NaN before the first — what decides
   /// whether the layer is standing still this frame.
   private lastX = NaN;
@@ -195,6 +204,7 @@ export class TextSprite implements StageableSprite {
   constructor(init: TextSpriteInit) {
     this.layerId = init.layerId;
     this.snapToPixels = init.snapToPixels === true;
+    this.fontIndex = init.fontIndex;
     this.text = new Text({
       text: "",
       // Pixi's shadow pass moves black source glyphs off-canvas using pixel
@@ -268,8 +278,10 @@ export class TextSprite implements StageableSprite {
     const letterSpacing = finiteOr0(view.letter_spacing);
     this.boxW = boxW;
     this.boxH = boxH;
+    const fonts = this.fontIndex();
     const sig =
-      `${view.content}|${view.font_family}|${view.font_size_px}|${view.weight}|${view.italic}|${align}|` +
+      // The index revision stands for every face the family list can resolve to.
+      `${view.content}|${view.font_family}|${fonts?.revision}|${view.font_size_px}|${view.weight}|${view.italic}|${align}|` +
       `${view.color.r},${view.color.g},${view.color.b},${view.color.a}|` +
       // The box joins the signature because it IS a measurement input: a wrap
       // width change re-flows the lines. `valign` rides along so the two box
@@ -282,9 +294,9 @@ export class TextSprite implements StageableSprite {
       `${o ? `${o.width}:${o.color.r},${o.color.g},${o.color.b}` : "-"}|` +
       `${sh ? `${sh.offset_x},${sh.offset_y},${sh.blur}:${sh.color.r},${sh.color.g},${sh.color.b},${sh.color.a}` : "-"}`;
 
-    if (sig !== this.appliedSig) {
+    if (fonts && sig !== this.appliedSig) {
       this.appliedSig = sig;
-      const si: StyleInput = { view, align, boxW, lineHeight, letterSpacing };
+      const si: StyleInput = { view, fontFamily: renderFamilyStack(view, fonts), align, boxW, lineHeight, letterSpacing };
       // Shrink belongs to Fixed alone, with no exceptions to remember: Auto
       // height narrower than one glyph overflows HORIZONTALLY instead of
       // shrinking, which is what keeps a caption at exactly the size its style

@@ -12,6 +12,11 @@ export type ProjectPath = string & { readonly [projectPathBrand]: true }
 const MAX_SEGMENT_BYTES = 255
 
 const utf8 = new TextEncoder()
+const bytes = (s: string) => utf8.encode(s).length
+
+/** A name Windows opens as a device: `NUL`, `nul.mp4` and `nul.x.y` alike, so
+ *  it is tested on the part before the first `.`. */
+const DEVICE_STEM = /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])$/i
 
 /** Why one name is not valid on every OS, or null when it is. */
 function segmentProblem(seg: string): string | null {
@@ -21,11 +26,10 @@ function segmentProblem(seg: string): string | null {
   if (/[\x00-\x1f]/.test(seg)) return 'control character'
   if (/[<>:"|?*]/.test(seg)) return 'reserved character'
   if (/[. ]$/.test(seg)) return 'trailing dot or space'
-  // Windows resolves these names to devices whatever the extension.
-  if (/^(con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(seg)) return 'device name'
+  if (DEVICE_STEM.test(seg.split('.')[0]!)) return 'device name'
   if (/^[\x20-\x7e]*$/.test(seg)) return seg.length > MAX_SEGMENT_BYTES ? `segment over ${MAX_SEGMENT_BYTES} bytes` : null
   if (seg.normalize('NFC') !== seg) return 'not NFC'
-  if (utf8.encode(seg).length > MAX_SEGMENT_BYTES) return `segment over ${MAX_SEGMENT_BYTES} bytes`
+  if (bytes(seg) > MAX_SEGMENT_BYTES) return `segment over ${MAX_SEGMENT_BYTES} bytes`
   return null
 }
 
@@ -81,6 +85,52 @@ export function projectPathBase(p: ProjectPath): string {
  *  match the Rust twin's `to_lowercase` whatever the machine's locale. */
 export function foldCase(name: string): string {
   return name.normalize('NFC').toLowerCase()
+}
+
+/** A portable file name for `name` that no existing name takes. `taken`
+ *  receives a candidate already passed through `foldCase` and answers whether
+ *  a name with that folded form exists (on disk or reserved).
+ *
+ *  Rewrites what a project path refuses: reserved and control characters
+ *  become `_`, a trailing `.`/space goes, a device stem gains `_` (`CON.mp4` →
+ *  `CON_.mp4`), nothing left becomes `media`, and the name is cut to 255 bytes
+ *  keeping its extension. A taken name gets `-2`, `-3`… before the extension.
+ *  Must stay identical to Rust `portable_file_name`; both pass the
+ *  `portableFileName` vectors of `fixtures/project-paths.json`. */
+export function portableFileName(name: string, taken: (folded: string) => boolean): string {
+  const [stem, ext] = splitExt(cleanName(name))
+  for (let n = 1; ; n++) {
+    const candidate = fit(stem, n === 1 ? '' : `-${n}`, ext)
+    if (!taken(foldCase(candidate))) return candidate
+  }
+}
+
+/** `name` with every refused form rewritten; not yet length-capped. */
+function cleanName(name: string): string {
+  const trimmed = name.normalize('NFC').replace(/[<>:"|?*\\/\x00-\x1f]/g, '_').replace(/[. ]+$/, '')
+  if (trimmed === '') return 'media'
+  const stem = trimmed.split('.')[0]!
+  return DEVICE_STEM.test(stem) ? `${stem}_${trimmed.slice(stem.length)}` : trimmed
+}
+
+/** Splits off the last `.ext`. An extension over half the cap counts as stem,
+ *  so cutting the stem for the cap always leaves a long, non-device stem. */
+function splitExt(name: string): [string, string] {
+  const dot = name.lastIndexOf('.')
+  return dot > 0 && bytes(name.slice(dot)) <= MAX_SEGMENT_BYTES / 2 ? [name.slice(0, dot), name.slice(dot)] : [name, '']
+}
+
+/** `stem + suffix + ext` within the cap, the stem cut between characters. */
+function fit(stem: string, suffix: string, ext: string): string {
+  let budget = MAX_SEGMENT_BYTES - bytes(suffix) - bytes(ext)
+  let cut = ''
+  for (const ch of stem) {
+    budget -= bytes(ch)
+    if (budget < 0) break
+    cut += ch
+  }
+  // A cut with no extension can end in `.`/space or leave a device stem.
+  return cleanName(cut + suffix + ext)
 }
 
 /** The folder every imported file is copied into. */
