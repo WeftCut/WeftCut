@@ -41,6 +41,15 @@ function write(dir: string, name: string, bytes: Buffer): string {
   return file
 }
 
+/** Rewrites `file` in place with a stamp sure to differ: a file system's
+ *  timestamp tick can hold two quick writes of one size, which the catalog
+ *  rightly reads as one unchanged file. */
+function rewrite(file: string, bytes: Buffer): void {
+  const before = fs.statSync(file).mtime
+  fs.writeFileSync(file, bytes)
+  fs.utimesSync(file, before, new Date(before.getTime() - 1000))
+}
+
 async function scanned(): Promise<FontCatalog> {
   const catalog = new FontCatalog({ systemDirs: [systemDir] })
   await catalog.scanSystem()
@@ -87,7 +96,7 @@ describe('system scan', () => {
     const catalog = await scanned()
     const [entry] = catalog.index().faces
     expect(await catalog.faceBytes(entry!.sha256)).toEqual(fs.readFileSync(file))
-    fs.writeFileSync(file, font({ family: 'Example', weight: 500 }))
+    rewrite(file, font({ family: 'Example', weight: 500 }))
     expect(await catalog.faceBytes(entry!.sha256)).toBeNull()
     fs.rmSync(file)
     expect(await catalog.faceBytes(entry!.sha256)).toBeNull()
@@ -255,7 +264,7 @@ describe('file records', () => {
     catalog.setProjectDir(projectDir)
     await catalog.rescanProject()
     const before = catalog.index()
-    fs.writeFileSync(file, font({ family: 'A', weight: 500 }))
+    rewrite(file, font({ family: 'A', weight: 500 }))
     const open = vi.spyOn(fs.promises, 'open')
     await catalog.rescanProject()
     await catalog.rescanProject()
