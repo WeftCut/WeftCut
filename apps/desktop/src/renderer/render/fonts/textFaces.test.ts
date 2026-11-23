@@ -15,8 +15,8 @@ const bold = face(["Example Sans"], 700, false, "b2");
 const variable = face(["Flex Serif"], [100, 900], false, "c3");
 const projectRegular = face(["Example Sans"], 400, false, "d4", "project");
 
-function index(faces: FaceIndexEntry[], systemScanned = true): FontIndex {
-  return { revision: 1, systemScanned, faces };
+function index(faces: FaceIndexEntry[], complete = true): FontIndex {
+  return { revision: 1, complete, faces };
 }
 
 const BUNDLED_TAIL = `, ${DEFAULT_CAPTION_FONT_FAMILY}`;

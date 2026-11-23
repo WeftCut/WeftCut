@@ -115,7 +115,7 @@ describe('system scan', () => {
     const dirsRead = readdir.mock.calls.map(([dir]) => String(dir))
     expect(new Set(dirsRead).size).toBe(dirsRead.length)
     expect(catalog.listFamilies()).toEqual(['Example'])
-    expect(catalog.index().systemScanned).toBe(true)
+    expect(catalog.index().complete).toBe(true)
   })
 
   it('lists each face family once, sorted, without bundled families', async () => {
@@ -154,6 +154,19 @@ describe('project fonts', () => {
     catalog.setProjectDir(projectDir)
     await catalog.rescanProject()
     expect(catalog.index().faces.map(f => f.families[0])).toEqual(['Kept'])
+  })
+
+  it('is not complete from pointing at a project folder until its first scan lands, even an empty one', async () => {
+    const catalog = await scanned()
+    expect(catalog.index().complete).toBe(true)
+    catalog.setProjectDir(projectDir)
+    const pointed = catalog.index()
+    expect(pointed.complete).toBe(false)
+    await catalog.rescanProject()
+    expect(catalog.index()).toMatchObject({ complete: true, faces: [] })
+    expect(catalog.index().revision).toBeGreaterThan(pointed.revision)
+    catalog.setProjectDir(null)
+    expect(catalog.index().complete).toBe(true)
   })
 
   it('the revision moves when the face set changes and only then', async () => {

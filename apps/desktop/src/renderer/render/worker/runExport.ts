@@ -13,7 +13,7 @@ import { convertFileSrc } from "@/bridge/ipc";
 import { openVideoSinkPort } from "../../ipc";
 import { openDecodeSession } from "../../ipc/decodeSession";
 import { faceBytes, loadBundledFontBytes } from "../fonts/registry";
-import { whenSystemScanned } from "../fonts/fontIndexStore";
+import { whenFontIndexComplete } from "../fonts/fontIndexStore";
 import { textFaceRefs } from "../fonts/textFaces";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
@@ -465,7 +465,7 @@ type ExportFonts = Extract<ExportRequest, { type: "start" }>["fonts"];
 /// `textFaceRefs` over the same summary and index preview registers from, so
 /// export draws the faces preview shows. MAIN-THREAD ONLY (IPC).
 async function exportFonts(summary: ProjectSummary): Promise<ExportFonts> {
-  const index = await whenSystemScanned();
+  const index = await whenFontIndexComplete();
   const refs = textFaceRefs(summary, index);
   const [bundled, bytes] = await Promise.all([
     loadBundledFontBytes(),

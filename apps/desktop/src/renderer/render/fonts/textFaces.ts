@@ -151,10 +151,10 @@ function styleName(weight: number, italic: boolean): string {
 }
 
 /// The missing leaves of a Text layer's family list, by the rule main names
-/// them by (shared/fonts/missing.ts). Empty while the system scan is pending:
-/// a family missing then may only be unscanned.
+/// them by (shared/fonts/missing.ts). Empty until the index is `complete`: a
+/// family missing before then may only be unindexed.
 export function missingTextFonts(text: TextFontRequest, index: FontIndex): MissingFont[] {
-  if (!index.systemScanned) return [];
+  if (!index.complete) return [];
   const { missing, fallback } = missingLeaves(parseFamilyList(text.font_family), (leaf) => familyKnown(index, leaf));
   // A generic leaf draws as the bundled chain (`drawableLeaves`).
   const drawn = fallback === null || isGenericFamily(fallback) ? DEFAULT_CAPTION_FONT_FAMILY
@@ -165,13 +165,13 @@ export function missingTextFonts(text: TextFontRequest, index: FontIndex): Missi
 /// The missing leaves of a Motif layer's font slots (the layer's value, else
 /// the manifest's default), by the rule main names them by
 /// (shared/fonts/missing.ts); the families its package ships draw. Empty
-/// while the system scan is pending.
+/// until the index is `complete`.
 export function missingMotifFonts(
   manifest: Pick<Manifest, "props_schema" | "fonts">,
   props: Readonly<Record<string, unknown>>,
   index: FontIndex,
 ): MissingFont[] {
-  if (!index.systemScanned) return [];
+  if (!index.complete) return [];
   const shipped = new Set((manifest.fonts ?? []).map(f => f.family.trim().toLowerCase()));
   const out: MissingFont[] = [];
   const seen = new Set<string>();

@@ -148,7 +148,7 @@ describe('the font route', () => {
     const sha = 'a'.repeat(64), other = 'b'.repeat(64)
     const faces = [sha, other].map(s => ({ families: [s === sha ? 'Anton' : 'Impact'], weight: 400, italic: false, source: 'system' as const, sha256: s, size: 4, ttcIndex: null }))
     setMotifFontSource({
-      catalog: { index: () => ({ revision: 1, systemScanned: true, faces }), faceFile: s => ({ file: `/f/${s}.ttf`, ttcIndex: null }), faceBytes: async () => Buffer.from('font') },
+      catalog: { index: () => ({ revision: 1, complete: true, faces }), faceFile: s => ({ file: `/f/${s}.ttf`, ttcIndex: null }), faceBytes: async () => Buffer.from('font') },
     })
     await motifPageFonts('scene', { props_schema: { font_title: { type: 'string', default: '' } } }, { font_title: 'Anton' })
     const res = await serve('scene', `.fonts/${sha}.ttf`)

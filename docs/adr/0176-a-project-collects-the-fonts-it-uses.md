@@ -36,7 +36,9 @@ had its own gaps:
 - **A family that draws is collected whole.** A Text layer's characters are
   walked through its family list, each to the first family whose face draws
   it; a family that draws at least one is a use, and every face of it is
-  copied, all weights and styles. A Motif's text is the characters of its
+  copied, all weights and styles, under the family name the face itself
+  gives first, so a legacy name such as "Segoe UI Semibold" brings all of
+  "Segoe UI". A Motif's text is the characters of its
   string props (the layer's values, else the manifest's defaults), walked the
   same way through each `font_<slot>` list; text written into a Motif's HTML
   is not seen. A CSS generic family ends a walk. A bundled family, or one the
@@ -52,7 +54,9 @@ had its own gaps:
   through one resolver over one face index, so preview, export and Motif
   hosts draw the same face. Preview and export register faces under alias
   families (`wf-<sha16>`), so two files naming one family never shadow each
-  other.
+  other. The index is `complete` once the system scan has landed and the open
+  project's `Fonts/` has been read; an export starts only then, so it never
+  fixes a fallback where the folder carries the face.
 - **No licence gate.** The app reads no `fsType` and refuses no font: the
   user's own licence decides, and it may differ from a font's default
   embedding flags. The app tells, once per batch that first copies a family,
@@ -80,8 +84,9 @@ had its own gaps:
   bundled one.
 - **Copies finish before the folder is let go.** Closing, quitting, opening
   another project and Save As wait for pending copies, shown in the work pill,
-  including the collection an edit just asked for and the style `TASTE.md`
-  extends.
+  including the collection an edit just asked for, the style `TASTE.md`
+  extends, and a system scan still running when the project asks for a
+  family it may find.
   Each copy is written as `.part` and renamed, so an interrupted one leaves no
   partial font; a stale `.part` is deleted at open. Save As copies `Fonts/`
   and `Styles/`.

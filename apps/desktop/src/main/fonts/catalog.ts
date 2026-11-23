@@ -99,6 +99,8 @@ export class FontCatalog {
    *  of this machine's stamps is written into a folder that travels. */
   readonly #projectRecords = new FileRecords(null, '')
   #projectDir: string | null = null
+  /** The project directory's first scan has landed; true with none. */
+  #projectIndexed = true
   #project: Entry[] = []
   /** Bumped by every project switch; a scan that finds it moved since it
    *  started drops its result. */
@@ -144,8 +146,10 @@ export class FontCatalog {
     if (dir === this.#projectDir) return
     this.#projectDir = dir
     this.#projectGeneration++
-    if (this.#project.length) {
+    const indexed = dir === null
+    if (this.#project.length || indexed !== this.#projectIndexed) {
       this.#project = []
+      this.#projectIndexed = indexed
       this.#changed()
     }
   }
@@ -183,9 +187,10 @@ export class FontCatalog {
     const entries = await this.#indexFiles(files, 'project', this.#projectRecords)
     this.#projectRecords.retain(files)
     if (generation !== this.#projectGeneration) return
-    const moved = entriesKey(entries) !== entriesKey(this.#project)
+    const moved = entriesKey(entries) !== entriesKey(this.#project) || !this.#projectIndexed
     // Taken even when the faces did not move: the entries carry fresh stamps.
     this.#project = entries
+    this.#projectIndexed = true
     this.#changed(moved)
   }
 
@@ -193,7 +198,7 @@ export class FontCatalog {
   index(): FontIndex {
     return {
       revision: this.#revision,
-      systemScanned: this.#systemScanned,
+      complete: this.#systemScanned && this.#projectIndexed,
       faces: [...this.#project, ...this.#system].map(({ record: { file: _file, ...entry } }) => entry),
     }
   }

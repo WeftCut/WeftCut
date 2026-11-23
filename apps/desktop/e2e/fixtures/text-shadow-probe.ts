@@ -8,7 +8,7 @@ export function runTextShadowProbe() {
   // No catalog faces: the probe reads shadow pixels, which any font shows.
   const sprite = new TextSprite({
     layerId: 'synthetic-title', snapToPixels: true,
-    fontIndex: () => ({ revision: 0, systemScanned: false, faces: [] }),
+    fontIndex: () => ({ revision: 0, complete: false, faces: [] }),
   })
   const view: ResolvedTextView = {
     content: 'Sample video title', font_family: 'Arial', font_size_px: 80,

@@ -7,7 +7,7 @@ import { ColorSprite } from "./ColorSprite";
 import { TextSprite } from "./TextSprite";
 import { MotifSprite } from "./MotifSprite";
 
-const NO_FONTS = { revision: 0, systemScanned: false, faces: [] };
+const NO_FONTS = { revision: 0, complete: false, faces: [] };
 
 describe("StageableSprite contract", () => {
   it("VideoClipSprite: displayObject is the sprite; stageReady tracks a non-EMPTY texture", () => {

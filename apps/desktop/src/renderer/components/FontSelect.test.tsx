@@ -8,7 +8,7 @@ const { getFamilies } = vi.hoisted(() => ({ getFamilies: vi.fn() }));
 (window as unknown as { PointerEvent: unknown }).PointerEvent = window.MouseEvent;
 vi.mock("./fontFamilies", () => ({ getFontFamilies: getFamilies }));
 vi.mock("../render/fonts/fontIndexStore", () => ({
-  useFontIndex: () => ({ revision: 1, systemScanned: true, faces: [] }),
+  useFontIndex: () => ({ revision: 1, complete: true, faces: [] }),
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });

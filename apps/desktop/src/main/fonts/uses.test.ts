@@ -67,6 +67,13 @@ describe('text uses: only families that draw, each whole', () => {
     expect(result.collect).toEqual(['bold', 'italic', 'regular'])
   })
 
+  it('collects the whole family a legacy family name resolves to', async () => {
+    const legacy = { families: ['Example', 'Example Semibold'], weight: 600 }
+    const faces = [face('regular', 'Example'), face('semibold', 'Example', legacy), face('bold', 'Example', { weight: 700 })]
+    const result = await uses(project([[text('a', 'Example Semibold')]]), faces, { regular: 'a', semibold: 'a', bold: 'a' })
+    expect(result.collect).toEqual(['bold', 'regular', 'semibold'])
+  })
+
   it('collects the faces of a family Fonts/ holds only some of', async () => {
     const faces = [face('project', 'Example', { source: 'project' }), face('system-regular', 'Example'), face('system-bold', 'Example', { weight: 700 })]
     const result = await uses(project([[text('x', 'Example')]]), faces, { project: 'x', 'system-regular': 'x', 'system-bold': 'x' })

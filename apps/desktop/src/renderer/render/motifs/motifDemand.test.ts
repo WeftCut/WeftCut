@@ -17,7 +17,7 @@ import { holdBuiltinMotifs } from '../../testing/projectMotifs';
 holdBuiltinMotifs();
 
 const anton = (sha: string): FaceIndexEntry => ({ families: ['Anton'], weight: 400, italic: false, source: 'system', sha256: sha.repeat(64), size: 1, ttcIndex: null });
-const fontIndex = vi.hoisted(() => ({ current: { revision: 1, systemScanned: true, faces: [] } as FontIndex }));
+const fontIndex = vi.hoisted(() => ({ current: { revision: 1, complete: true, faces: [] } as FontIndex }));
 vi.mock('../fonts/fontIndexStore', () => ({ getFontIndex: () => fontIndex.current }));
 
 const stat = (value: number): AnimTrack<number> => ({ mode: 'Static', value });
@@ -50,7 +50,7 @@ const statuses = (summary: ProjectSummary, demand: ReturnType<typeof prepare>, o
 
 describe('planMotifPreparation', () => {
   it('bakes a Motif with font props under the preview\'s key and with the faces its capture sends', () => {
-    fontIndex.current = { revision: 2, systemScanned: true, faces: [anton('a')] };
+    fontIndex.current = { revision: 2, complete: true, faces: [anton('a')] };
     const layer = motif('headline', 0, 2_000_000, {});
     if (layer.params.kind !== 'Motif') throw new Error('fixture');
     layer.params.motif_id = 'clipping-headline';

@@ -10,7 +10,7 @@ import { holdBuiltinMotifs } from "../../testing/projectMotifs";
 // The project these tests render holds the built-ins.
 holdBuiltinMotifs();
 
-const fontIndex = vi.hoisted(() => ({ current: { revision: 0, systemScanned: true, faces: [] } as FontIndex }));
+const fontIndex = vi.hoisted(() => ({ current: { revision: 0, complete: true, faces: [] } as FontIndex }));
 vi.mock("../fonts/fontIndexStore", () => ({ getFontIndex: () => fontIndex.current }));
 
 function view(props: Record<string, unknown>, srcInUs = 0): any {
@@ -174,7 +174,7 @@ describe('motifFrameCacheKey media keys', () => {
 describe('motifFrameCacheKey font keys', () => {
   const face = (family: string, sha: string, weight = 400): FaceIndexEntry =>
     ({ families: [family], weight, italic: false, source: 'system', sha256: sha.repeat(64), size: 1, ttcIndex: null });
-  const indexOf = (...faces: FaceIndexEntry[]): FontIndex => ({ revision: 1, systemScanned: true, faces });
+  const indexOf = (...faces: FaceIndexEntry[]): FontIndex => ({ revision: 1, complete: true, faces });
   afterEach(() => { fontIndex.current = indexOf(); });
 
   it('change when a font prop resolves to another face, and ride the capture with those faces', () => {

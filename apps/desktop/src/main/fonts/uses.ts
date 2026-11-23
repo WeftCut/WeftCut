@@ -179,6 +179,19 @@ function requests(project: Pick<Project, 'compositions'>, manifestOf: MotifFontM
   return { text: [...text.values()], motif: [...motif.values()] }
 }
 
+/** Whether some layer asks for a family the catalog would answer: one before
+ *  its list's first generic family that is neither bundled nor shipped by the
+ *  Motif's package. Without one there is nothing to collect, whatever the
+ *  system scan finds. */
+export function asksCatalogFamily(project: Pick<Project, 'compositions'>, motifManifest: MotifFontManifest): boolean {
+  const { text, motif } = requests(project, motifManifest)
+  return [...text, ...motif].some((r) => {
+    const leaves = parseFamilyList(r.css)
+    const end = leaves.findIndex(isGenericFamily)
+    return (end < 0 ? leaves : leaves.slice(0, end)).some(leaf => !isBundledFamily(leaf) && !r.shipped.has(fontFamilyKey(leaf)))
+  })
+}
+
 export async function fontUses(input: FontUsesInput): Promise<FontUses> {
   const { project, faces } = input
   const manifests = new Map<string, ReturnType<MotifFontManifest>>()
@@ -193,7 +206,7 @@ export async function fontUses(input: FontUsesInput): Promise<FontUses> {
     if (!c) { c = input.coverage(sha).catch(() => null); coverageOf.set(sha, c) }
     return c
   }
-  /** Families (as the list names them) some character is drawn with. */
+  /** Families some character is drawn with, by their faces' first name. */
   const drawn = new Set<string>()
   const missing = new Map<string, MissingFontUse>()
   const miss = (family: string, weight: number | null, italic: boolean | null, layerIds: readonly string[]) => {
@@ -219,8 +232,11 @@ export async function fontUses(input: FontUsesInput): Promise<FontUses> {
     const covers = await Promise.all(resolved.map(face => (face ? coverage(face.sha256) : Promise.resolve(null))))
     for (const cp of r.codePoints) {
       for (let i = 0; i < walked.length; i++) {
+        const face = resolved[i]
         const cover = covers[i]
-        if (cover && hasGlyph(cover, cp)) { drawn.add(walked[i] as string); break }
+        // The family is the face's own first name, not the leaf's: a legacy
+        // name such as "Segoe UI Semibold" names one face of "Segoe UI".
+        if (face && cover && hasGlyph(cover, cp)) { drawn.add(face.families[0] as string); break }
       }
       // No leaf draws it: the bundled tail or the browser's default does,
       // which is no use.

@@ -71,16 +71,8 @@ async function systemScanned(page: Page, withFixture: boolean): Promise<void> {
   await expect.poll(() => page.evaluate(async ({ family, withFixture }) => {
     const index = await window.api.font.index()
     const has = index.faces.some(face => face.source === 'system' && face.families.includes(family))
-    return index.systemScanned && has === withFixture
+    return index.complete && has === withFixture
   }, { family: FAMILY, withFixture }), { message: 'the system font scan lands', timeout: 60_000 }).toBe(true)
-}
-
-/** Waits until the catalog serves the fixture from the project's `Fonts/`. */
-async function projectFaceIndexed(page: Page): Promise<void> {
-  await expect.poll(() => page.evaluate(async (family) => {
-    const index = await window.api.font.index()
-    return index.faces.some(face => face.source === 'project' && face.families.includes(family))
-  }, FAMILY), { message: 'Fonts/ is indexed', timeout: 60_000 }).toBe(true)
 }
 
 interface LogRow { id: string; i18n_key?: string | null; i18n_args?: Record<string, unknown>; details?: Record<string, unknown> }
@@ -239,10 +231,10 @@ test('a project carries the family it draws, and draws from it where the font is
     const { app, page } = running
     await systemScanned(page, false)
     await reopen(page, copy)
-    await projectFaceIndexed(page)
-    await expect.poll(() => lineWidth(page, layerId), { message: 'preview draws the face from Fonts/', timeout: 60_000 }).toBe(drawn)
+    // At once: the export itself waits until the folder's Fonts/ is indexed.
     await exportTo(page, received)
     expect(ssim(received, made), 'the export draws the face from Fonts/').toBeGreaterThanOrEqual(SAME_FRAME_SSIM)
+    await expect.poll(() => lineWidth(page, layerId), { message: 'preview draws the face from Fonts/', timeout: 60_000 }).toBe(drawn)
     expect(fontsIn(copy)).toEqual([BOLD, REGULAR])
     expect(await logRows(page, 'log.fonts_copied'), 'nothing is copied: the folder has it').toEqual([])
 

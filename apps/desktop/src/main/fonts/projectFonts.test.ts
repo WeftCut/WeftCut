@@ -56,9 +56,9 @@ function motifLayer(id: string, props: Record<string, unknown>): Layer {
 
 /** The store over a real catalog and folder, its file calls, trash and
  *  exclusion writes recorded in one list. */
-async function harness(layers: Layer[], excluded: string[] = [], manifest: MotifFontManifest = () => null) {
+async function harness(layers: Layer[], excluded: string[] = [], manifest: MotifFontManifest = () => null, { scanned = true } = {}) {
   const catalog = new FontCatalog({ systemDirs: [systemDir] })
-  await catalog.scanSystem()
+  if (scanned) await catalog.scanSystem()
   const calls: string[] = []
   const logs: FontLogEntry[] = []
   const name = (p: string) => path.basename(p)
@@ -89,6 +89,7 @@ async function harness(layers: Layer[], excluded: string[] = [], manifest: Motif
     emitLog: (entry) => { logs.push(entry) },
     changed: () => {}, indexChanged: () => {}, progress: () => {},
     uuid: () => 'u1',
+    systemScan: () => catalog.scanSystem(),
   })
   // As the host does: the opened project is published, then its folder told.
   const open = async () => { store.published(project, manifest); store.projectChanged(projectDir); await store.settled() }
@@ -244,6 +245,25 @@ describe('closing', () => {
     h.edit([textLayer('a', 'Example')])
     await h.store.drain()
     expect(inFonts()).toEqual(['Example-Regular.ttf'])
+  })
+
+  it('drain waits for a system scan still running and copies what it finds', async () => {
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    const h = await harness([textLayer('a', 'Example')], [], () => null, { scanned: false })
+    await h.open()
+    expect(inFonts()).toEqual([])
+    await h.store.drain()
+    expect(inFonts()).toEqual(['Example-Regular.ttf'])
+  })
+
+  it('drain does not wait for the system scan when the project asks only for bundled and generic families', async () => {
+    const h = await harness([textLayer('a', 'Liberation Sans, sans-serif')], [], () => null, { scanned: false })
+    await h.open()
+    let scans = 0
+    const scan = h.catalog.scanSystem.bind(h.catalog)
+    h.catalog.scanSystem = () => { scans++; return scan() }
+    await h.store.drain()
+    expect(scans).toBe(0)
   })
 
   it('drain finishes the edit\'s batch after the copy in flight', async () => {

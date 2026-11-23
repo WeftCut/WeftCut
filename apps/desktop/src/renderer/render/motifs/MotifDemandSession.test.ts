@@ -33,14 +33,14 @@ vi.mock('./bakeClient', () => ({ MotifBakeClient: class {
   }
   invalidate() {} dispose() {}
 } }));
-const fonts = vi.hoisted(() => ({ index: { revision: 1, systemScanned: true, faces: [] } as FontIndex, listeners: new Set<() => void>() }));
+const fonts = vi.hoisted(() => ({ index: { revision: 1, complete: true, faces: [] } as FontIndex, listeners: new Set<() => void>() }));
 vi.mock('../fonts/fontIndexStore', () => ({
   getFontIndex: () => fonts.index,
   subscribeFontIndex: (listener: () => void) => { fonts.listeners.add(listener); return () => fonts.listeners.delete(listener); },
 }));
 /** Main sends a new font index. */
 const publishFonts = (...faces: FaceIndexEntry[]) => {
-  fonts.index = { revision: fonts.index.revision + 1, systemScanned: true, faces };
+  fonts.index = { revision: fonts.index.revision + 1, complete: true, faces };
   for (const listener of fonts.listeners) listener();
 };
 const face = (family: string, sha: string): FaceIndexEntry => ({ families: [family], weight: 400, italic: false, source: 'system', sha256: sha.repeat(64), size: 1, ttcIndex: null });

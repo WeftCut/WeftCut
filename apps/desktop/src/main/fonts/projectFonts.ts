@@ -11,7 +11,7 @@ import { fontFamilyKey, normalizeExcludedFonts } from '../state/excludedFonts'
 import type { Project } from '../state/model'
 import type { FontCatalog } from './catalog'
 import { readFaces, readIdentity } from './sfnt'
-import { fontUseKey, fontUses, type MissingFontUse, type MotifFontManifest } from './uses'
+import { asksCatalogFamily, fontUseKey, fontUses, type MissingFontUse, type MotifFontManifest } from './uses'
 
 export const FONTS_DIR = 'Fonts'
 
@@ -70,6 +70,9 @@ export interface ProjectFontStoreDeps {
   indexChanged: () => void
   /** `project-fonts:progress`; null when no copy is in flight. */
   progress: (progress: FontCopyProgress | null) => void
+  /** The system scan (`FontCatalog.scanSystem`, shared and in flight once).
+   *  Absent → `drain` does not wait for it. */
+  systemScan?: () => Promise<void>
   /** Watches `Fonts/` (./watcher.ts). Absent (tests) → nothing watches. */
   watch?: (fontsDir: string, onChange: () => void) => { close(): void }
   uuid?: () => string
@@ -194,16 +197,31 @@ export class ProjectFontStore {
 
   /** Finishes the batch under way and any already asked for, the one an
    *  edit's quiet window still holds included, then refuses new ones until
-   *  `projectChanged`. Never rejects. */
-  drain(): Promise<void> {
+   *  `projectChanged`. While the system scan has not landed and the project
+   *  asks for a family it may find, waits for the scan and the batch it
+   *  allows. Never rejects. */
+  async drain(): Promise<void> {
     // The last edit's uses are collected before the folder is let go.
     if (this.#timer) this.#kick()
+    const dir = this.#dir
+    const published = this.#published
+    const scan = dir !== null && published && !this.#deps.catalog.index().complete
+      && asksCatalogFamily(published.project, published.manifest) ? this.#deps.systemScan?.() : undefined
     this.#refusing = true
-    const running = this.#running
-    if (!running) return Promise.resolve()
     this.#closing = true
-    if (this.#progress) this.#emitProgress()
-    return running.finally(() => { this.#closing = false })
+    try {
+      if (scan) {
+        // The pill tells the wait before any copy has started.
+        this.#deps.progress({ done: 0, total: 0, closing: true })
+        await scan.catch(() => {})
+        if (dir === this.#dir) this.#kick(true, true)
+      }
+      if (this.#progress) this.#emitProgress()
+      await this.#running
+    } finally {
+      this.#closing = false
+      if (scan && !this.#progress) this.#deps.progress(null)
+    }
   }
 
   /** Resolves once no batch runs. */
@@ -322,10 +340,10 @@ export class ProjectFontStore {
 
   /** Starts a batch now, or one more after the batch under way. `copy`
    *  false: the batch walks the uses but copies nothing, unless a copying
-   *  batch was asked for too. */
-  #kick(copy = true): void {
+   *  batch was asked for too. `draining`: `drain` asks, past its refusal. */
+  #kick(copy = true, draining = false): void {
     if (copy) this.#clearTimer()
-    if (this.#refusing || this.#dir === null) { this.#missed = true; return }
+    if ((this.#refusing && !draining) || this.#dir === null) { this.#missed = true; return }
     if (copy) { this.#missed = false; this.#copyAsked = true }
     if (this.#running) { this.#again = true; return }
     const run = async () => {
@@ -373,7 +391,7 @@ export class ProjectFontStore {
         coverage: (sha) => this.#deps.catalog.faceCoverage(sha),
       })
       if (generation !== this.#generation) return
-      this.#noteMissing(index.systemScanned ? uses.missing : [])
+      this.#noteMissing(index.complete ? uses.missing : [])
       const bySha = new Map(index.faces.map(f => [f.sha256, f]))
       const planned = uses.collect.map(sha => bySha.get(sha)).filter((f): f is FaceIndexEntry => !!f)
       if (copy && planned.length > 0) await this.#copyAll(planned, fontsDir, generation, quiet)

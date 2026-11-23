@@ -196,7 +196,7 @@ export interface CompositorInit {
 }
 
 /// No catalog faces: Text draws its bundled leaves and the bundled chain.
-const NO_FONTS: FontIndex = { revision: 0, systemScanned: false, faces: [] };
+const NO_FONTS: FontIndex = { revision: 0, complete: false, faces: [] };
 
 export class Compositor {
   private readonly sync = new PreviewSyncTracker();

@@ -19,7 +19,7 @@ const exampleSans: FontIndex["faces"][number] = {
 
 describe("FontProblem", () => {
   it("names a Text layer's missing family, its style, and what draws instead", () => {
-    current.index = { revision: 1, systemScanned: true, faces: [exampleSans] };
+    current.index = { revision: 1, complete: true, faces: [exampleSans] };
     render(<TextFontProblem text={{ font_family: "Missing Face, Example Sans", weight: 700, italic: false }} />);
     expect(screen.getByTestId("font-problem").textContent).toBe(
       `property_panel.font_missing ${JSON.stringify({ family: "Missing Face", style: "Bold", fallback: "Example Sans" })}`,
@@ -27,13 +27,13 @@ describe("FontProblem", () => {
   });
 
   it("says nothing while the system scan is pending", () => {
-    current.index = { revision: 1, systemScanned: false, faces: [] };
+    current.index = { revision: 1, complete: false, faces: [] };
     render(<TextFontProblem text={{ font_family: "Missing Face", weight: 400, italic: false }} />);
     expect(screen.queryByTestId("font-problem")).toBeNull();
   });
 
   it("names a Motif prop's missing family without a style", () => {
-    current.index = { revision: 1, systemScanned: true, faces: [] };
+    current.index = { revision: 1, complete: true, faces: [] };
     const manifest = { props_schema: { font_title: { type: "string" as const, default: "serif" } } };
     render(<MotifFontProblem manifest={manifest} props={{ font_title: "Missing Face" }} />);
     expect(screen.getByTestId("font-problem").textContent).toBe(

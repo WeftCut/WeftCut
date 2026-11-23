@@ -38,13 +38,14 @@ export interface FaceRecord {
 /** A face as the renderer sees it: no path. */
 export type FaceIndexEntry = Omit<FaceRecord, 'file'>
 
-/** The catalog at one moment. `revision` grows whenever the face set changes,
- *  so a holder of an older copy knows to refetch. */
+/** The catalog at one moment. `revision` grows whenever the face set or
+ *  `complete` changes, so a holder of an older copy knows to refetch. */
 export interface FontIndex {
   revision: number
-  /** False until the system scan has landed: a family missing now may only
-   *  not be scanned yet. */
-  systemScanned: boolean
+  /** False until the system scan has landed and the open project's `Fonts/`
+   *  has been read once: a family missing now may only not be indexed yet,
+   *  and a face resolved now may not be the one the project carries. */
+  complete: boolean
   faces: FaceIndexEntry[]
 }
 

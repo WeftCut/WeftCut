@@ -4,7 +4,7 @@ import { isShrunk, TEXT_BOX_MIN_PX } from "../textBox";
 import { blockAnchorInBox, TextSprite } from "./TextSprite";
 import type { FontIndex } from "../../../shared/fonts/types";
 
-const NO_FONTS: FontIndex = { revision: 0, systemScanned: false, faces: [] };
+const NO_FONTS: FontIndex = { revision: 0, complete: false, faces: [] };
 
 const base = {
   kind: "Text" as const, content: "x", font_family: "Liberation Sans", font_size_px: 54,
@@ -102,7 +102,7 @@ describe("TextSprite", () => {
 
   it("draws under the resolved face's alias, then the bundled chain", () => {
     const bold = { families: ["Example Sans"], weight: 700, italic: false, source: "system" as const, sha256: "ab".repeat(32), size: 1, ttcIndex: null };
-    const index: FontIndex = { revision: 3, systemScanned: true, faces: [bold] };
+    const index: FontIndex = { revision: 3, complete: true, faces: [bold] };
     const s = new TextSprite({ layerId: "L", fontIndex: () => index });
     s.update({ ...plain, font_family: "Example Sans", weight: 700, italic: false });
     expect(s.text.style.fontFamily).toBe(`wf-${"ab".repeat(8)}, Liberation Sans, Noto Sans SC`);

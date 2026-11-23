@@ -1173,14 +1173,15 @@ app.whenReady().then(async () => {
     indexChanged: () => broadcastEvent(BrowserWindow.getAllWindows(), 'fonts:index', fontCatalog.index()),
     progress: (progress) => emitToRenderer('project-fonts:progress', progress),
     watch: watchProjectFonts,
+    systemScan: () => fontCatalog.scanSystem(),
   })
   // The system scan runs once, in the background. Until it lands no font is
   // reported missing and the taste view resolves no style font slot.
   void fontCatalog.scanSystem().then(() => fontStore.systemScanned()).catch((err) => console.warn('[fonts] system font scan failed', err))
   let fontFamilies: { revision: number; families: ReadonlySet<string> } | null = null
   const catalogFamilies = (): ReadonlySet<string> | null => {
-    const { revision, systemScanned } = fontCatalog.index()
-    if (!systemScanned) return null
+    const { revision, complete } = fontCatalog.index()
+    if (!complete) return null
     if (fontFamilies?.revision !== revision) fontFamilies = { revision, families: new Set(fontCatalog.listFamilies().map((f) => f.toLowerCase())) }
     return fontFamilies.families
   }

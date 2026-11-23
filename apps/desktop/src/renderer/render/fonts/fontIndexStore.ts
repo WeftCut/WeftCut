@@ -7,9 +7,9 @@ import { useSyncExternalStore } from "react";
 import type { FontIndex } from "../../../shared/fonts/types";
 
 /// What every reader sees before the first fetch lands: no faces, and
-/// `systemScanned` false so nothing is reported missing yet. Revision -1 sits
+/// `complete` false so nothing is reported missing yet. Revision -1 sits
 /// below any index main sends.
-const NOT_FETCHED: FontIndex = { revision: -1, systemScanned: false, faces: [] };
+const NOT_FETCHED: FontIndex = { revision: -1, complete: false, faces: [] };
 
 let current: FontIndex = NOT_FETCHED;
 let first: Promise<FontIndex> | null = null;
@@ -47,7 +47,7 @@ function start(): Promise<FontIndex> {
   return first;
 }
 
-/// The last known index; an empty one with `systemScanned` false before the
+/// The last known index; an empty one with `complete` false before the
 /// first fetch has landed.
 export function getFontIndex(): FontIndex {
   void start().catch(() => {});
@@ -59,21 +59,23 @@ export function whenFontIndex(): Promise<FontIndex> {
   return start();
 }
 
-/// The first index that includes the system fonts. Export waits for it: before
-/// the scan lands a system-only family would draw a bundled font, unannounced.
-/// Answers the index current when it resolves, never the first fetch's: an
-/// export started long after launch must see the project opened since.
-export async function whenSystemScanned(): Promise<FontIndex> {
+/// The first `complete` index: the system fonts and the open project's
+/// `Fonts/` both read. Export waits for it: before then a family would draw
+/// a bundled or system font in place of the face the project carries,
+/// unannounced. Answers the index current when it resolves, never the first
+/// fetch's: an export started long after launch must see the project opened
+/// since.
+export async function whenFontIndexComplete(): Promise<FontIndex> {
   await start();
-  if (current.systemScanned) return current;
+  if (current.complete) return current;
   return new Promise<FontIndex>((resolve) => {
     const stop = subscribeFontIndex(() => {
-      if (!current.systemScanned) return;
+      if (!current.complete) return;
       stop();
       resolve(current);
     });
     // An event may have landed between the check above and subscribing.
-    if (current.systemScanned) {
+    if (current.complete) {
       stop();
       resolve(current);
     }

@@ -23,7 +23,7 @@ afterEach(() => {
 /** A catalog of `faces`, each in `<sha>.ttf` (or `.otf` for `o…`) holding
  *  its sha. */
 function wire(faces: FaceIndexEntry[]) {
-  const index: FontIndex = { revision: 1, systemScanned: true, faces }
+  const index: FontIndex = { revision: 1, complete: true, faces }
   const fileOf = (s: string) => path.join(dir, `${s}.${s.startsWith('o') ? 'otf' : 'ttf'}`)
   for (const f of faces) fs.writeFileSync(fileOf(f.sha256), f.sha256)
   const has = (s: string) => faces.some(f => f.sha256 === s)
