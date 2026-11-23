@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed, Highlighter, X, Hourglass, Unplug, Ban } from 'lucide-react'
+import { ArrowDown, Check, AlertCircle, Loader2, ChevronDown, ChevronRight, Lock, Settings, LocateFixed, Highlighter, X, Hourglass, Unplug, Ban } from 'lucide-react'
 import { invoke } from '@/bridge/ipc'
 import type { AgentActivity, AgentConnectionSnapshot } from '../../shared/agent-activity'
 import { agentSessionEnd, projectRestoreCheckpoint, type HistoryEntityRef } from '../ipc'
@@ -20,6 +20,7 @@ import { buildActivitySections, type ActivityRow } from './activityRows'
 import { sessionSectionKey, sessionSectionOpenByDefault } from './expansion'
 import './activity.css'
 import { AppIcon } from "@/components/AppIcon";
+import { useStatusPopover } from '@/components/useStatusPopover'
 import { ComputeJobStatus } from '../compute/ComputeJobStatus'
 import { ComputeRefusal } from '../compute/ComputeRefusal'
 import { isWaiting, type ComputeJobSubject } from '../compute/computeJobView'
@@ -162,39 +163,59 @@ export function AgentPanel({ editor = false, onScreen = true }: { editor?: boole
     e.stopPropagation()
     escapeFocus()
   }
+  const service = t(connections === null ? 'agent_panel.service_unknown' : connections.available ? 'agent_panel.service_ready' : 'agent_panel.service_offline')
+  const live = session ? session.reason : running ? t('agent_panel.running_count', { count: running }) : t('agent_panel.no_running')
+  const dot = <span className={`agent-service-dot ${connections?.available ? 'available' : ''}`} />
+  const facts = <><code>{connections?.url ?? '—'}</code>
+    {connections?.connections.length ? connections.connections.map(c => <div key={c.id}><strong>{c.client} {c.version}</strong><small>{t('agent_panel.last_activity', { time: formatClock(c.last_activity_at) })}</small></div>) : <p>{t('agent_panel.no_connections')}</p>}
+    <small>{t('agent_panel.connection_note')}</small></>
+  const end = session && <button type="button" className="agent-session-end" disabled={busy !== null} aria-label={t('agent_panel.end_session')} title={t('agent_panel.end_hint')} aria-description={t('agent_panel.end_hint')}
+    onClick={() => void action('agent_session_end', agentSessionEnd)}>{t('agent_panel.end_short')}</button>
   return <div className="agent-panel agent-activity-panel" onKeyDown={onKeyDown}>
-    {/* One status row: the service (its toggle opens the connection details),
-        then the active work session's reason — or, outside one, what is
-        running — and the session's End beside the settings. */}
-    <header className="agent-status-row">
+    {/* The agent view: one status row — the service (its toggle opens the
+        connection details), then the active work session's reason or, outside
+        one, what is running — and the session's End beside the settings. The
+        editor has none: its status bar already tells what runs (work pill) and
+        what awaits review (bell), so the tab bar carries End and a service dot
+        whose popover holds the rest. */}
+    {!editor && <header className="agent-status-row">
       <button type="button" className="agent-connection-toggle" aria-expanded={expanded.connections ?? false} onClick={() => toggle('connections')}>
-        <span className={`agent-service-dot ${connections?.available ? 'available' : ''}`} /><span>{t(connections === null ? 'agent_panel.service_unknown' : connections.available ? 'agent_panel.service_ready' : 'agent_panel.service_offline')}</span>
+        {dot}<span>{service}</span>
         {expanded.connections ? <AppIcon icon={ChevronDown} size="label" /> : <AppIcon icon={ChevronRight} size="label" />}</button>
       <span className="agent-status-sep" aria-hidden>·</span>
-      <span className={`agent-live-state${session ? ' session' : ''}`} role="status" title={session ? `${session.client} · ${session.reason}` : undefined}>
-        {session ? session.reason : running ? t('agent_panel.running_count', { count: running }) : t('agent_panel.no_running')}</span>
-      {session && <button type="button" className="agent-session-end" disabled={busy !== null} aria-label={t('agent_panel.end_session')} title={t('agent_panel.end_hint')} aria-description={t('agent_panel.end_hint')}
-        onClick={() => void action('agent_session_end', agentSessionEnd)}>{t('agent_panel.end_short')}</button>}
-      <button type="button" aria-label={t('agent_panel.connection_settings')} title={t('agent_panel.connection_settings')} onClick={() => setSettings(true)}><AppIcon icon={Settings} size="title" /></button></header>
-    {expanded.connections && <div className="agent-connection-details"><code>{connections?.url ?? '—'}</code>
-      {connections?.connections.length ? connections.connections.map(c => <div key={c.id}><strong>{c.client} {c.version}</strong><small>{t('agent_panel.last_activity', { time: formatClock(c.last_activity_at) })}</small></div>) : <p>{t('agent_panel.no_connections')}</p>}
-      <small>{t('agent_panel.connection_note')}</small></div>}
+      <span className={`agent-live-state${session ? ' session' : ''}`} role="status" title={session ? `${session.client} · ${session.reason}` : undefined}>{live}</span>
+      {end}
+      <button type="button" aria-label={t('agent_panel.connection_settings')} title={t('agent_panel.connection_settings')} onClick={() => setSettings(true)}><AppIcon icon={Settings} size="title" /></button></header>}
+    {!editor && expanded.connections && <div className="agent-connection-details">{facts}</div>}
     {locked && <div className="agent-history-lock"><AppIcon icon={Lock} size="label" /><span title={snapshot?.lock_reason || t('agent_panel.locked')}>{snapshot?.lock_reason || t('agent_panel.locked')}</span><button type="button" disabled={busy !== null} onClick={() => void action('agent_unlock_history', () => invoke('agent_unlock_history'))}>{t('agent_panel.unlock')}</button></div>}
     {/* One tab per review surface. Content below the bar belongs to the tab;
-        the status and lock rows above it hold for every tab. */}
-    <div className="agent-panel-tabs" role="tablist" aria-label={t('agent_panel.tabs')}>
-      {AGENT_PANEL_TABS.map(id => <button type="button" role="tab" key={id} aria-selected={tab === id}
-        title={id === 'tacks' ? t('tacks.subtitle') : id === 'changes' ? t('changes.subtitle') : undefined}
-        onClick={() => useAgentActivity.setState({ tab: id })}>{t(`agent_panel.tab_${id}`)}{badge(id) > 0 && <span className={`agent-panel-tab-count tab-${id}`}>{badge(id)}</span>}</button>)}
+        the status and lock rows above it, and the editor's actions beside
+        the tabs, hold for every tab. */}
+    <div className="agent-panel-head">
+      <div className="agent-panel-tabs" role="tablist" aria-label={t('agent_panel.tabs')}>
+        {AGENT_PANEL_TABS.map(id => <button type="button" role="tab" key={id} aria-selected={tab === id}
+          title={id === 'tacks' ? t('tacks.subtitle') : id === 'changes' ? t('changes.subtitle') : undefined}
+          onClick={() => useAgentActivity.setState({ tab: id })}>{t(`agent_panel.tab_${id}`)}{badge(id) > 0 && <span className={`agent-panel-tab-count tab-${id}`}>{badge(id)}</span>}</button>)}
+      </div>
+      {editor && <span className="agent-panel-head-actions">
+        {tab === 'activity' && <button type="button" className="agent-errors-only" aria-pressed={filter === 'errors'} aria-label={t('agent_panel.errors_only')} title={t('agent_panel.errors_only')}
+          onClick={() => useAgentActivity.setState({ filter: filter === 'errors' ? 'all' : 'errors' })}><AppIcon icon={AlertCircle} size="body" /></button>}
+        {end}
+        <ServicePopover label={service} title={[service, session ? `${session.client} · ${session.reason}` : live].join(' · ')}
+          dot={dot} live={<span className={`agent-live-state${session ? ' session' : ''}`} role="status">{live}</span>}
+          facts={facts} onSettings={() => setSettings(true)} />
+      </span>}
     </div>
     {tab === 'tacks' ? <TacksTab editor={editor} /> : tab === 'changes' ? <ChangesTab editor={editor} /> : <>
-    <div className="agent-activity-toolbar" role="group" aria-label={t('agent_panel.filter')}>
-      {(['all', 'errors'] as const).map(value => <button type="button" key={value} aria-pressed={filter === value} onClick={() => useAgentActivity.setState({ filter: value })}>{t(`agent_panel.filter_${value}`)}</button>)}
-      {!following && <button type="button" onClick={() => useAgentActivity.setState({ following: true, anchor: null })}>{t('agent_panel.latest')}</button>}</div>
+    {!editor && <div className="agent-activity-toolbar" role="group" aria-label={t('agent_panel.filter')}>
+      {(['all', 'errors'] as const).map(value => <button type="button" key={value} aria-pressed={filter === value} onClick={() => useAgentActivity.setState({ filter: value })}>{t(`agent_panel.filter_${value}`)}</button>)}</div>}
     {shown?.status === 'ready' && <div className="agent-activity-highlight" role="status"><AppIcon icon={Highlighter} size="label" aria-hidden />
       <span>{t(shown.reverted ? 'agent_panel.highlight_reverted' : 'agent_panel.highlight_active', { count: shown.count })}</span>
       <button type="button" aria-label={t('agent_panel.highlight_clear')} title={t('agent_panel.highlight_clear')} onClick={clearActivityChanges}><AppIcon icon={X} size="label" /></button></div>}
     <RangeBar source="activity" />
+    {/* Back to latest floats over the list's foot, so it costs no row. */}
+    <div className="agent-activity-body">
+    {!following && <button type="button" className="agent-latest" onClick={() => useAgentActivity.setState({ following: true, anchor: null })}><AppIcon icon={ArrowDown} size="label" aria-hidden />{t('agent_panel.latest')}</button>}
     <div className="agent-activity-list" ref={list} onScroll={onScroll}>
       {!!snapshot?.evicted && <p className="agent-retention-note">{t('agent_panel.truncated', { count: snapshot.evicted })}</p>}
       {!sections.length && (ready
@@ -214,8 +235,29 @@ export function AgentPanel({ editor = false, onScreen = true }: { editor?: boole
             {failure && <AppIcon icon={AlertCircle} size="label" className="agent-activity-error" />}<small>{t(work.end_reason === 'disconnected' ? 'agent_panel.disconnected' : work.ended_at ? 'agent_panel.session_ended' : 'agent_panel.session_active')}</small></button>
           {open && section.rows.map(row)}</section>
       })}
-      {sections.length > 0 && <p className="agent-retention-note agent-list-footnote">{t('agent_panel.retention')}</p>}</div></>}
+      {sections.length > 0 && <p className="agent-retention-note agent-list-footnote">{t('agent_panel.retention')}</p>}</div></div></>}
     {settings && <AppDialog title={t('agent_panel.connection_settings')} onClose={() => setSettings(false)} panelClassName="agent-connect-dialog"><div className="agent-connect-dialog-body"><AgentSection /></div></AppDialog>}
+  </div>
+}
+
+/** The editor's service dot: its popover holds what the agent view's status
+ *  row and connection details show, and the way to the connection settings.
+ *  The anchor is not positioned, so the popover is placed against the panel's
+ *  head and stays inside the panel, which clips what leaves it. */
+function ServicePopover({ label, title, dot, live, facts, onSettings }: {
+  label: string; title: string; dot: ReactNode; live: ReactNode; facts: ReactNode; onSettings: () => void
+}) {
+  const { t } = useTranslation()
+  const { open, close, rootRef, detailsId, triggerProps } = useStatusPopover()
+  return <div className="agent-service-anchor" ref={rootRef}>
+    <button {...triggerProps} type="button" className="agent-service-trigger" aria-label={label} title={title}>{dot}</button>
+    {open && <section id={detailsId} className="status-popover agent-service-popover" aria-label={label}>
+      <p className="agent-service-popover-title">{dot}<span>{label}</span></p>
+      {live}
+      <div className="agent-service-popover-facts">{facts}</div>
+      <button type="button" className="agent-service-popover-settings" onClick={() => { close(); onSettings() }}>
+        <AppIcon icon={Settings} size="body" aria-hidden />{t('agent_panel.connection_settings')}</button>
+    </section>}
   </div>
 }
 

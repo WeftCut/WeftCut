@@ -1500,6 +1500,7 @@ const enUS = {
   "filter": "Activity filter",
   "filter_all": "All activity",
   "filter_errors": "Failures",
+  "errors_only": "Show failures only",
   "latest": "Back to latest",
   "truncated": "{{count}} older activities are no longer shown.",
   "loading": "Loading activity…",

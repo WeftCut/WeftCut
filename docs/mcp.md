@@ -1303,9 +1303,13 @@ in its description (convention 5).
   Checkpoint restore is gated by availability, lock and pending restore. Object
   navigation is editor-only; the agent view can jump its preview to a review
   item's time without selecting, entering compositions or starting playback.
-- The connection header shows the listening service, registered clients
-  (name/version, last request) and running calls. Registration is not a
-  heartbeat.
+- The connection status shows the listening service, registered clients
+  (name/version, last request) and running calls, or the session's reason.
+  Registration is not a heartbeat. The agent view gives it a row above the
+  tabs. The editor folds it into the tab bar: a service dot whose popover
+  holds it, End while a session runs, and the Activity tab's failures-only
+  toggle. The editor's status bar already shows what runs (work pill) and
+  what awaits review (bell).
 
 ## Review
 
