@@ -1598,8 +1598,8 @@ export function DockWorkspace({
   useEffect(
     () =>
       registerTimelinePanels({
-        open: (compositionId) =>
-          adapterRef.current?.openTimelinePanel(compositionId),
+        open: (compositionId, options) =>
+          adapterRef.current?.openTimelinePanel(compositionId, options),
         close: (compositionId) =>
           adapterRef.current?.closeTimelinePanel(compositionId),
       }),
