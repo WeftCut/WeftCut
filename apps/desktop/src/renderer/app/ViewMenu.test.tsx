@@ -23,13 +23,14 @@ vi.mock("react-i18next", async (importOriginal) => ({
 }));
 
 const prefs = vi.hoisted(() => ({
+  displayMode: "AbRoll" as "AbRoll" | "AllTracks",
   markersVisible: true,
   safeAreaGuides: false,
   gridEnabled: false,
 }));
 
 vi.mock("../settings/appSettingsStore", () => ({
-  useDisplayMode: () => "AbRoll",
+  useDisplayMode: () => prefs.displayMode,
   useFollowPlayheadEnabled: () => true,
   useMarkersVisible: () => prefs.markersVisible,
   useSafeAreaGuidesVisible: () => prefs.safeAreaGuides,
@@ -209,6 +210,46 @@ describe("ViewMenu workspace controls", () => {
       (await screen.findByText("Save as New Workspace…")).closest('[aria-disabled="true"]'),
     ).toBeNull();
   });
+});
+
+// The display-mode binding toggles, so its accelerator names the mode the key
+// switches to: it belongs on the unchecked row only.
+describe("ViewMenu track display", () => {
+  afterEach(() => {
+    prefs.displayMode = "AbRoll";
+  });
+
+  const acceleratorRows = async () => {
+    render(
+      <ViewMenu
+        workspaceController={controller()}
+        workspaceProfiles={null}
+        workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
+      />,
+    );
+    openView();
+    const row = async (label: string) => {
+      const item = (await screen.findByText(label)).closest('[role="menuitem"]');
+      return {
+        checked: item?.querySelector(".app-menu-item-check svg") != null,
+        accelerator:
+          item?.querySelector(".app-menu-item-accelerator")?.textContent ?? "",
+      };
+    };
+    return { abRoll: await row("A/B Roll"), allTracks: await row("All Tracks") };
+  };
+
+  it.each(["AbRoll", "AllTracks"] as const)(
+    "in %s, shows the key on the unchecked row only",
+    async (mode) => {
+      prefs.displayMode = mode;
+      const rows = Object.values(await acceleratorRows());
+      const checked = rows.find((r) => r.checked);
+      const unchecked = rows.find((r) => !r.checked);
+      expect(checked?.accelerator).toBe("");
+      expect(unchecked?.accelerator).not.toBe("");
+    },
+  );
 });
 
 // The marker toggle sits with the other timeline view preferences, and is the
