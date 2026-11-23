@@ -9,8 +9,8 @@ import { upsertKeyframe, removeKeyframe, type TrackValue } from "../keyframe/edi
 import { resolveParamTrack } from "../keyframe/autoKey";
 import { snapFrameRound } from "../frames";
 import { transportSeek } from "../state/playbackStore";
-import { selectKeyframe } from "../keyframe/selectionStore";
 import { setKeyframeFocus, useKeyframeFocusStore } from "../keyframe/focusStore";
+import { useSelectKeyframe } from "./keyframeBatch";
 import { AppIcon } from "@/components/AppIcon";
 
 function stopPropagation(e: SyntheticEvent): void {
@@ -52,6 +52,7 @@ export function KeyframeNavigator({
   const { t } = useTranslation();
   // Atomic primitive selector (per the zustand composite-selector rule).
   const focusedLayerId = useKeyframeFocusStore((s) => s.layerId);
+  const selectKey = useSelectKeyframe();
 
   const layer = resolveNavLayer(track, paramKey, focusedLayerId);
   const trk: ParamTrack | null = layer ? readLayerParamTrack(layer, paramKey) : null;
@@ -68,7 +69,7 @@ export function KeyframeNavigator({
 
   const seekTo = (kf: Keyframe<TrackValue>) => {
     if (!layer) return;
-    selectKeyframe({ layerId: layer.id, paramKey, kfId: kf.id });
+    selectKey({ layerId: layer.id, paramKey, kfId: kf.id });
     setKeyframeFocus(layer.id, paramKey);
     transportSeek(layer.t_start_us + kf.t_us);
   };

@@ -73,10 +73,9 @@ import {
 import { useTrackPreview } from "../keyframe/easingPreviewStore";
 import { useKeyframeDrag } from "../keyframe/useKeyframeDrag";
 import { EasingMenu } from "./EasingMenu";
-import { useKeyframeBatchCommit } from "./keyframeBatch";
+import { useKeyframeBatchCommit, useSelectKeyframe } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
 import {
-  selectKeyframe,
   clearKeyframeSelection,
   keyframeKey,
   useIsKeyframeSelected,
@@ -435,6 +434,7 @@ export function LayerBlock({
   // Which of THIS layer+param's keyframes are selected. Reads the shared
   // selection store so the chip diamonds and the sub-lane ones agree.
   const isKfSelected = useIsKeyframeSelected(layer.id, focusedParam);
+  const selectKey = useSelectKeyframe();
   // A gesture's preview of the focused property — a menu row armed over the
   // selection, a retime in flight — drawn in place of the committed track.
   // Read untyped in the value: the row draws times and segment classes only,
@@ -460,14 +460,6 @@ export function LayerBlock({
     // whichever name is being edited; `layer.params` is not a stable dep and the
     // two label primitives below are the only content that can change it.
   }, [isEditing, isEditingGroupName, layer.id, layer.label, groupLabel(layer)]);
-
-  // Drop the diamond selection when this layer is no longer the primary
-  // selection, so a keyframe selection cannot stay armed after the user moves
-  // on — `deleteSelected` takes keyframes whenever any are selected, and Delete
-  // has to revert to deleting the layer.
-  useEffect(() => {
-    if (!isPrimary) clearKeyframeSelection();
-  }, [isPrimary]);
 
   const commitRename = () => {
     const next = draft.trim();
@@ -1252,7 +1244,7 @@ export function LayerBlock({
             // `onContextMenu` states in full.
             const key = { layerId: layer.id, paramKey: focusedParam, kfId: hitId };
             if (!useKeyframeSelectionStore.getState().selected.has(keyframeKey(key))) {
-              selectKeyframe(key);
+              selectKey(key);
             }
             setInterpMenu({ x: e.clientX, y: e.clientY, kfId: hitId });
           }}

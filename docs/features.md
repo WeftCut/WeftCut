@@ -140,7 +140,12 @@ offers only *Ripple delete*.
 **Keyframe selection** is a set across layers and properties. A box tests each
 diamond's drawn centre — both axes in an expanded row, x only in a collapsed row
 (one glyph covers ~40 % of its axis). Sweeping clips drops the keyframe
-selection. Every whole-selection operation — Delete, easing choice, retime drag,
+selection, and so does any change of primary clip. Clicking or right-clicking
+an unselected diamond (or stepping to a key with the navigator) makes its clip
+the primary first, so the Attribute panel shows the clip whose key is being
+edited: a clip already in the selection keeps the set, any other is selected
+as a plain click would, link included. A box leaves the clip selection alone,
+and so does pressing a key that is already selected. Every whole-selection operation — Delete, easing choice, retime drag,
 nudge, paste — is one undo entry. With several keys selected the easing menu
 shows no current value. Right-clicking a selected diamond acts on the whole
 selection without moving the playhead; an unselected one is selected first.

@@ -31,10 +31,13 @@ import {
 import {
   getSelectedKeyframes,
   keyframeKey,
-  selectKeyframe,
   useKeyframeSelectionStore,
 } from "./selectionStore";
-import { useKeyframeOps, type ParamTrackEntry } from "../timeline/keyframeBatch";
+import {
+  useKeyframeOps,
+  useSelectKeyframe,
+  type ParamTrackEntry,
+} from "../timeline/keyframeBatch";
 
 export interface KeyframeDragStart {
   layerId: string;
@@ -61,13 +64,14 @@ export interface KeyframeDragStart {
 /// which is what makes a swept group draggable at all.
 export function useKeyframeDrag(): (start: KeyframeDragStart) => void {
   const ops = useKeyframeOps();
+  const selectKey = useSelectKeyframe();
   const beginGesture = usePointerGesture();
   return useCallback(
     (start: KeyframeDragStart) => {
       if (start.pxPerSec <= 0) return;
       const key = { layerId: start.layerId, paramKey: start.paramKey, kfId: start.kfId };
       if (!useKeyframeSelectionStore.getState().selected.has(keyframeKey(key))) {
-        selectKeyframe(key);
+        selectKey(key);
       }
       setKeyframeFocus(start.layerId, start.paramKey);
 
@@ -144,6 +148,6 @@ export function useKeyframeDrag(): (start: KeyframeDragStart) => void {
       };
       beginGesture(start.pointerId, { move: onMove, release, cancel: teardown });
     },
-    [ops, beginGesture],
+    [ops, selectKey, beginGesture],
   );
 }

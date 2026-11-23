@@ -4,8 +4,16 @@ import {
   getSelectedKeyframes, hasKeyframeSelection, keyframeKey,
   useKeyframeSelectionStore,
 } from "./selectionStore";
+import {
+  clearLayerSelection,
+  setLayerSelection,
+  setMediaSelection,
+} from "../state/selectionStore";
 
-beforeEach(() => clearKeyframeSelection());
+beforeEach(() => {
+  clearLayerSelection();
+  clearKeyframeSelection();
+});
 
 /// What the render path does: membership by composite key.
 const isSelected = (layerId: string, paramKey: string, kfId: string) =>
@@ -71,12 +79,38 @@ describe("keyframeSelectionStore", () => {
     setKeyframeSelection([]);
     expect(hasKeyframeSelection()).toBe(false);
   });
-  // Clearing an already-empty selection must not write a new reference:
-  // `LayerBlock` clears from a per-clip effect, and a fresh Map would re-render
-  // every diamond in the timeline.
+  // Clearing an already-empty selection must not write a new reference: a
+  // fresh Map would re-render every diamond in the timeline.
   it("clearing twice keeps one reference", () => {
     const first = useKeyframeSelectionStore.getState().selected;
     clearKeyframeSelection();
     expect(useKeyframeSelectionStore.getState().selected).toBe(first);
+  });
+});
+
+// Delete takes keyframes whenever any are selected, so keys must not outlive
+// the clip the user was on.
+describe("keyframe selection under a clip selection change", () => {
+  const key = { layerId: "A", paramKey: "x", kfId: "k1" };
+
+  it("is dropped when another clip becomes primary", () => {
+    setLayerSelection("A", ["A"]);
+    selectKeyframe(key);
+    setLayerSelection("B", ["B"]);
+    expect(hasKeyframeSelection()).toBe(false);
+  });
+
+  it("is dropped when the selection leaves clips altogether", () => {
+    setLayerSelection("A", ["A"]);
+    selectKeyframe(key);
+    setMediaSelection("m1");
+    expect(hasKeyframeSelection()).toBe(false);
+  });
+
+  it("survives a change to the set that keeps the primary", () => {
+    setLayerSelection("A", ["A"]);
+    selectKeyframe(key);
+    setLayerSelection("A", ["A", "B"]);
+    expect(getSelectedKeyframes()).toEqual([key]);
   });
 });

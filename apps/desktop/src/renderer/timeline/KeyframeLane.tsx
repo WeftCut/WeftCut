@@ -26,13 +26,12 @@ import { isNumberTrack, useTrackPreview } from "../keyframe/easingPreviewStore";
 import { useKeyframeDrag } from "../keyframe/useKeyframeDrag";
 import { ColorLane } from "./ColorLane";
 import {
-  selectKeyframe,
   keyframeKey,
   useIsKeyframeSelected,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
 import { setContinuity, setTangent } from "../keyframe/edits";
-import { useKeyframeBatchCommit } from "./keyframeBatch";
+import { useKeyframeBatchCommit, useSelectKeyframe } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
 import { useLocalPlayheadUsThrottled } from "../state/playheadProjection";
 import {
@@ -156,6 +155,7 @@ export function KeyframeLane({
   onCommitParamTrack: (layerId: string, paramKey: string, t: ParamTrack) => void;
 }) {
   const props = trackKeyframeProperties(track);
+  const selectKey = useSelectKeyframe();
   const [interpMenu, setInterpMenu] = useState<{
     x: number;
     y: number;
@@ -172,7 +172,7 @@ export function KeyframeLane({
   const openInterpMenu: OpenInterpMenu = (clientX, clientY, layerId, paramKey, kfId) => {
     const key = { layerId, paramKey, kfId };
     if (!useKeyframeSelectionStore.getState().selected.has(keyframeKey(key))) {
-      selectKeyframe(key);
+      selectKey(key);
     }
     setInterpMenu({ x: clientX, y: clientY, layerId, paramKey, kfId });
   };
@@ -383,6 +383,7 @@ function ColorKeyLane({
   const paramKey = desc.paramKey;
   const isSelected = useIsKeyframeSelected(layerId, paramKey);
   const beginKeyframeDrag = useKeyframeDrag();
+  const selectKey = useSelectKeyframe();
   const preview = useTrackPreview(layerId, paramKey);
   const renderTrack: KeyframedRgba =
     preview !== null && preview.mode === "Keyframed" && !isNumberTrack(preview)
@@ -439,7 +440,7 @@ function ColorKeyLane({
               // A right-click on a key already in the selection leaves the
               // selection alone — the same rule the value graph's dots apply.
               if (!isSelected(k.id)) {
-                selectKeyframe({ layerId, paramKey, kfId: k.id });
+                selectKey({ layerId, paramKey, kfId: k.id });
                 focusSeek(k.id);
               }
               onOpenInterpMenu(e.clientX, e.clientY, layerId, paramKey, k.id);
