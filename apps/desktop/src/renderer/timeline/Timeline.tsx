@@ -1328,6 +1328,18 @@ export const Timeline = memo(function Timeline({
     (edit) => commitKeyframeEntries(foldKeyframeBatch(edit)),
     [commitKeyframeEntries, foldKeyframeBatch],
   );
+  // A key's clip becomes primary the way a right-click on a clip makes it: an
+  // already-selected clip keeps the set around it, any other is selected as a
+  // plain click would (whole link). No modifier reaches here — `Alt` on a
+  // diamond means time-scale, not a link escape.
+  const selectKeyframeClip = useCallback(
+    (layerId: string) => {
+      const selected = layerIdsOf(currentSelection());
+      if (selected.has(layerId)) setLayerSelection(layerId, selected);
+      else selectFromClick(layerId, { altKey: false, shiftKey: false, metaKey: false });
+    },
+    [selectFromClick],
+  );
   const keyframeBatch = useMemo<KeyframeBatch>(
     () => ({
       commit: commitKeyframeBatch,
@@ -1335,8 +1347,17 @@ export const Timeline = memo(function Timeline({
       fold: foldKeyframeBatch,
       tracks,
       fps: { num: fpsNum, den: fpsDen },
+      selectClip: selectKeyframeClip,
     }),
-    [commitKeyframeBatch, commitKeyframeEntries, foldKeyframeBatch, tracks, fpsNum, fpsDen],
+    [
+      commitKeyframeBatch,
+      commitKeyframeEntries,
+      foldKeyframeBatch,
+      tracks,
+      fpsNum,
+      fpsDen,
+      selectKeyframeClip,
+    ],
   );
 
   const onRename = useCallback((layerId: string) => {
@@ -1740,12 +1761,13 @@ export const Timeline = memo(function Timeline({
   const onMarqueeBox = useCallback(
     (box: MarqueeBox, kind: MarqueeKind) => {
       if (kind === "keyframe") {
-        // Selection and nothing else: no seek, no focus move. Those stay on the
-        // single-click path (`KeyframeLane`'s `selectKeyframe` +
-        // `setKeyframeFocus` + `transportSeek` triple). The layer selection is
-        // left standing too — the sub-selection model already gives keyframes
-        // Delete priority, so a clip selection is not a conflict in this
-        // direction the way it is in the other.
+        // Selection and nothing else: no seek, no focus move, no clip change.
+        // Those stay on the single-click path (`useSelectKeyframe` +
+        // `setKeyframeFocus` + `transportSeek`). The layer selection is left
+        // standing because a box can take keys on several clips and names no
+        // one of them; keyframes already have Delete priority, so a clip
+        // selection is not a conflict in this direction the way it is in the
+        // other.
         setKeyframeSelection(
           marqueeHitKeyframes({
             box,

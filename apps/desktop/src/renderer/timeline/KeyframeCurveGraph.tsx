@@ -21,7 +21,6 @@ import {
 } from "../keyframe/curve";
 import { useNumberTrackPreview } from "../keyframe/easingPreviewStore";
 import { setTangent } from "../keyframe/edits";
-import { selectKeyframe } from "../keyframe/selectionStore";
 import { useKeyframeDrag } from "../keyframe/useKeyframeDrag";
 import {
   computeValueRange, extrapolationSampleCount, handleDragToCoeff, sampleExtrapolation,
@@ -29,6 +28,7 @@ import {
   type CurveGeom, type Seg, type TimeValue,
 } from "../keyframe/curveGraph";
 import { ContinuityMenu } from "./ContinuityMenu";
+import { useSelectKeyframe } from "./keyframeBatch";
 import { uiPixels, uiScaled, useUiScale } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
 
@@ -84,6 +84,7 @@ export function KeyframeCurveGraph({
   const { t } = useTranslation();
   const svgRef = useRef<SVGSVGElement>(null);
   const beginKeyframeDrag = useKeyframeDrag();
+  const selectKey = useSelectKeyframe();
   const teardownRef = useRef<(() => void) | null>(null);
 
   useEffect(() => () => teardownRef.current?.(), []);
@@ -354,7 +355,7 @@ export function KeyframeCurveGraph({
               // re-running the click path would seek away from what the user is
               // about to edit. The same rule the clip context menu applies.
               if (!isSelected(k.id)) {
-                selectKeyframe({ layerId, paramKey, kfId: k.id });
+                selectKey({ layerId, paramKey, kfId: k.id });
                 onFocusSeek(k.id);
               }
               onOpenMenu(e.clientX, e.clientY, k.id);

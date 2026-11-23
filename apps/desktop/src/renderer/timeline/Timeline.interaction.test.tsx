@@ -4422,10 +4422,79 @@ describe("Timeline marquee", () => {
     expect(getSelectedKeyframes()).toEqual([
       { layerId: "kl-b", paramKey: "opacity", kfId: "b1" },
     ]);
+    // The menu edits kl-b's key, so the Attribute panel moves to kl-b too.
+    expect(selection()).toEqual({ primary: "kl-b", ids: ["kl-b"] });
     fireEvent.click(screen.getByTestId("easing-cmd-hold"));
 
     expect(ipcMocks.updateParamTracksMulti).toHaveBeenCalledTimes(1);
     expect(committedInterps()).toEqual([["kl-b", ["Hold", "Linear"]]]);
+  });
+
+  describe("a diamond click selects its clip", () => {
+    it("makes the key's clip primary, so the Attribute panel follows the key", () => {
+      const { container } = renderTimeline({
+        tracks: [twoLayerKeyTrack],
+        selectedLayerId: "kl-a",
+      });
+      expandAndStubSubLaneRows(container);
+
+      pressAndRelease(diamond(container, "b1"), [440, 310]);
+
+      expect(selection()).toEqual({ primary: "kl-b", ids: ["kl-b"] });
+      // The clip change did not take the key it was made for with it.
+      expect(getSelectedKeyframes()).toEqual([
+        { layerId: "kl-b", paramKey: "opacity", kfId: "b1" },
+      ]);
+      expect(useKeyframeFocusStore.getState()).toEqual({
+        layerId: "kl-b",
+        paramKey: "opacity",
+      });
+    });
+
+    it("takes the clip's whole link, as a plain click on the clip would", () => {
+      const { container } = renderTimeline({
+        tracks: [twoLayerKeyTrack],
+        selectedLayerId: "kl-a",
+        links: [{ id: "link-b", layer_ids: ["kl-b", "kl-b-audio"] }],
+      });
+      expandAndStubSubLaneRows(container);
+
+      pressAndRelease(diamond(container, "b1"), [440, 310]);
+
+      expect(selection()).toEqual({ primary: "kl-b", ids: ["kl-b", "kl-b-audio"] });
+    });
+
+    it("keeps a multi-clip selection that already holds the key's clip", () => {
+      const { container } = renderTimeline({
+        tracks: [twoLayerKeyTrack],
+        selectedLayerId: "kl-a",
+      });
+      expandAndStubSubLaneRows(container);
+      act(() => setLayerSelection("kl-a", ["kl-a", "kl-b"]));
+
+      pressAndRelease(diamond(container, "b1"), [440, 310]);
+
+      expect(selection()).toEqual({ primary: "kl-b", ids: ["kl-a", "kl-b"] });
+      expect(getSelectedKeyframes().map((k) => k.kfId)).toEqual(["b1"]);
+    });
+
+    it("leaves a swept selection and its clip standing when one of its keys is pressed", () => {
+      const { container } = renderTimeline({
+        tracks: [twoLayerKeyTrack],
+        selectedLayerId: "kl-a",
+      });
+      const [row] = expandAndStubSubLaneRows(container);
+      sweep(row!, [250, 302], [550, 320]);
+      release([550, 320]);
+      expect(getSelectedKeyframes()).toHaveLength(4);
+
+      // Pressing inside the selection is how a group drag starts, so it must
+      // not move the primary: a primary change drops the keyframe selection.
+      pressAndRelease(diamond(container, "b1"), [440, 310]);
+
+      expect(getSelectedKeyframes()).toHaveLength(4);
+      expect(selection()).toEqual({ primary: "kl-a", ids: ["kl-a"] });
+    });
   });
 });
 

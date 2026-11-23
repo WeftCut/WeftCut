@@ -14,7 +14,7 @@ import { readLayerParamTrack, layerParams } from "../keyframe/channels";
 // The retime gestures' arithmetic is NOT here: they compute a whole next track
 // per group rather than folding an edit, and that lives in
 // `keyframe/batchRetime.ts`.
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useCallback, useContext, useMemo } from "react";
 
 import type {
   AnimTrack,
@@ -34,6 +34,7 @@ import { fanOutEntries } from "../keyframe/fanOut";
 import {
   clearKeyframeSelection,
   getSelectedKeyframes,
+  selectKeyframe,
   type SelectedKeyframe,
 } from "../keyframe/selectionStore";
 import { useProjectStore } from "../state/projectStore";
@@ -268,6 +269,9 @@ export interface KeyframeBatch {
   commitEntries?: KeyframeEntriesCommit;
   tracks?: readonly TrackSummary[];
   fps?: Grid;
+  /// Make a clip the primary selection, as `useSelectKeyframe` needs. The
+  /// Timeline supplies it because the link fan-out reads its own composition.
+  selectClip?: (layerId: string) => void;
 }
 
 /// The whole gesture surface, with every optional member resolved.
@@ -307,6 +311,7 @@ const NO_TRACKS: readonly TrackSummary[] = [];
 /// raised outside the provider measures nothing rather than snapping to a rate
 /// nobody named.
 const NO_GRID: Grid = { num: 0, den: 0 };
+const NO_SELECT_CLIP = (): void => {};
 
 /// The gesture surface for a consumer inside the provider. Outside it every
 /// member is inert, which is the same bargain `useKeyframeBatchCommit` makes:
@@ -325,5 +330,21 @@ export function useKeyframeOps(): KeyframeOps {
       fps: ctx?.fps ?? NO_GRID,
     }),
     [ctx],
+  );
+}
+
+/// Select one key the way a press on its diamond does: its clip becomes the
+/// primary selection first, then the key replaces the keyframe selection. The
+/// Attribute panel follows the primary, so this is what keeps it on the clip
+/// whose key is being edited. The order matters: a primary change clears the
+/// keyframe selection (`keyframe/selectionStore.ts`), so the key comes after.
+export function useSelectKeyframe(): (key: SelectedKeyframe) => void {
+  const selectClip = useContext(KeyframeBatchContext)?.selectClip ?? NO_SELECT_CLIP;
+  return useCallback(
+    (key: SelectedKeyframe) => {
+      selectClip(key.layerId);
+      selectKeyframe(key);
+    },
+    [selectClip],
   );
 }
