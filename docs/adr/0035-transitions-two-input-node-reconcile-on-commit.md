@@ -8,10 +8,11 @@ Date: 2026-07-24
 
 ## Context
 
-A transition authorizes an overlap between two same-track visual layers that
-the no-overlap invariant would otherwise reject; the overlap must equal the
+A transition authorizes an overlap between two same-track layers of one class
+that the no-overlap invariant would otherwise reject; the overlap must equal the
 transition's duration. Kinds: Crossfade, Wipe and Slide (Wipe/Slide carry a
-motion direction; see CONTEXT.md § Transitions).
+motion direction; see CONTEXT.md § Transitions). This record covers visual
+transitions; audio transitions are ADR 0177's.
 
 Wipe and Slide are two-input operations — each output pixel depends on both
 clips — so they cannot ride the per-layer opacity path. A crossfade done as an
@@ -31,12 +32,13 @@ premultiplied captures with the kind's shader (GLSL + WGSL) at the first
 participant's stage slot. Progress is linear `(t − overlapStart) / duration`.
 Side RTs come from a pool sized by concurrent transitions × 2 and are never
 allocated per frame (memory-ratchet `transitions` scenario). Preview and
-export share the node.
+export share the node. Audio transitions never reach it; they are envelope
+factors in the mixers.
 
 **Reconcile on commit (Policy B).** The per-transition invariant
-(participants exist, same track, visual only, overlap = duration, duration
-within both layers) is one predicate with two callers in
-`main/state/validate.ts`: `validateTransitions` fails on it,
+(participants exist, same track, one class with that class's kinds,
+overlap = duration, duration within both layers) is one predicate with two
+callers in `main/state/validate.ts`: `validateTransitions` fails on it,
 `reconcileTransitions` drops on it. Reconcile runs inside every commit (and
 `dryRun`) after the mutation and before validate; each drop emits a status
 row and lands in the same history entry as the edit. A drop never shrinks the
