@@ -398,7 +398,8 @@ export function reconcileCompositionAnchors(summary: ProjectSummary | null): voi
 
 /// Bring this project's remembered tabs back: read `view.json`, open a Panel
 /// for every entry the summary still carries, and hand the keyboard to the one
-/// that had it.
+/// that had it — on the Dock as well as in this store, so the tab in front is
+/// the timeline being edited.
 ///
 /// Idempotent, and it has to be. A layout snapshot names one folded `timeline`
 /// slot — no composition uuid may enter the app-level document (ADR 0053) — so
@@ -415,23 +416,37 @@ export async function restoreCompositionTabs(): Promise<void> {
   if (!summary || summary.project_id !== projectId) return;
   // Snapshotted: opening a Panel republishes the intent, which replaces the
   // array this is walking.
+  //
+  // Added BEHIND the tab in front: activating a timeline Panel enters its
+  // composition (the Dock's active-Panel subscriber calls `focusComposition`),
+  // so each tab activated on its way in would take the keyboard, and the last
+  // one restored would end up both in front and focused, whatever was stored.
   for (const tab of [...compositionTabIntent()]) {
     const id = tab.composition_id;
     if (id === summary.root_id || !summary.compositions[id]) continue;
     if (useCompositionAnchorStore.getState().anchors.has(id)) continue;
     setAnchor(id, resolveAnchor(summary, id, tab.anchor_layer_id));
-    openTimelinePanel(id);
+    openTimelinePanel(id, { activate: false });
   }
+  // A later replay (a Dock rebuild) keeps the timeline being edited in front.
   // The stored focus and the stored preview lock are a fresh session's opening
   // position, not something to re-apply on a later geometry restore: `state` is
   // the document as it was READ, so replaying it would undo whatever the user
   // has changed since.
-  if (intentAppliedForProjectId === projectId) return;
-  intentAppliedForProjectId = projectId;
-  const active = state.active_composition_id;
-  if (active !== null && summary.compositions[active]) focusOn(active);
-  const target = state.preview_render_target_id;
-  if (target !== null && summary.compositions[target]) setPreviewRenderTarget(target);
+  let focus = useCompositionAnchorStore.getState().focusedId;
+  if (intentAppliedForProjectId !== projectId) {
+    intentAppliedForProjectId = projectId;
+    const active = state.active_composition_id;
+    if (active !== null && summary.compositions[active]) focus = active;
+    const target = state.preview_render_target_id;
+    if (target !== null && summary.compositions[target]) setPreviewRenderTarget(target);
+  }
+  if (focus === null || !summary.compositions[focus]) return;
+  // The root's Panel comes from the layout snapshot and every other tab went
+  // in behind it, so it is in front already; activating it would only move
+  // the Dock's active Panel off whichever Panel the snapshot left active.
+  if (focus !== summary.root_id) openTimelinePanel(focus);
+  focusOn(focus);
 }
 
 // ===== Readers ==============================================================

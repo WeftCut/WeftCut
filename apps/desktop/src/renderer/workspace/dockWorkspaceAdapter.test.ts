@@ -1163,6 +1163,28 @@ describe("DockWorkspaceAdapter", () => {
     expect(adapter.openTimelineCompositions()).toEqual(["comp-root"]);
   });
 
+  // Activating a timeline enters its composition, so a tab put back from
+  // `view.json` has to arrive without taking the strip's front.
+  it("adds a tab behind the one in front when asked not to activate it", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.setTimelineInstance("comp-root");
+    adapter.initializeEditingLayout();
+    adapter.openTimelinePanel("comp-root");
+    const root = dock.panels.get("timeline:comp-root");
+
+    adapter.openTimelinePanel("comp-group", { activate: false });
+
+    expect(dock.added.at(-1)).toMatchObject({ id: "timeline:comp-group", inactive: true });
+    expect(dock.panels.get("timeline:comp-group")?.api.setActive).not.toHaveBeenCalled();
+    expect(root?.group.activePanel).toBe(root);
+    expect(adapter.getSnapshot().activePanel).toBe("timeline:comp-root");
+
+    // Already open: left where it is rather than brought forward.
+    adapter.openTimelinePanel("comp-group", { activate: false });
+    expect(dock.panels.get("timeline:comp-group")?.api.setActive).not.toHaveBeenCalled();
+  });
+
   it("retires every timeline of the project being left when the root changes", () => {
     const dock = fakeDockview();
     const adapter = new DockWorkspaceAdapter(dock.api);
