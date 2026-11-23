@@ -558,7 +558,7 @@ const enUS = {
     timeline_markers: "Timeline markers",
     safe_area_guides: "Safe-area guides",
     grid: "Grid",
-    review_overlay: "Review overlay",
+    review_overlay: "Tacks & changes",
     close_active_panel: "Close Active Panel",
     reset_workspace: "Reset Workspace",
     workspaces_heading: "Workspaces",
@@ -607,8 +607,8 @@ const enUS = {
     canvas_snap_off_hint: "Canvas snapping off. Click to enable.",
     grid_on_hint: "Grid on. Click to turn off.",
     grid_off_hint: "Grid off. Click to turn on.",
-    review_overlay_on_hint: "Review overlay on: tacks and unreviewed agent changes show on the timeline. Click to hide.",
-    review_overlay_off_hint: "Review overlay off. Click to show tacks and unreviewed agent changes on the timeline.",
+    review_overlay_on_hint: "Showing agent tacks and unreviewed changes on the timeline. Click to hide.",
+    review_overlay_off_hint: "Agent tacks and unreviewed changes hidden. Click to show.",
     follow_on_hint: "Timeline auto-scroll on. Click to disable.",
     follow_off_hint: "Timeline auto-scroll off. Click to enable.",
     safe_area_on_hint: "Showing safe-area guides. Click to hide.",
@@ -1009,7 +1009,7 @@ const enUS = {
     toggle_preview_grid: "Toggle grid",
     toggle_preview_snap: "Toggle canvas snapping",
     toggle_tail_snap: "Toggle clip snapping",
-    toggle_review_overlay: "Toggle review overlay",
+    toggle_review_overlay: "Toggle tacks & changes",
     // Prefixed, unlike the bare "Full" / "1/2" the Settings radio uses: these
     // labels also appear in the search palette, where a row reading just
     // "1/2" says nothing about what it would change.

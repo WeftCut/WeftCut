@@ -540,7 +540,7 @@ const zhCN: Resources = {
     timeline_markers: "时间线标记",
     safe_area_guides: "安全框参考线",
     grid: "网格",
-    review_overlay: "审阅叠加层",
+    review_overlay: "批注与变更",
     close_active_panel: "关闭活动面板",
     reset_workspace: "重置工作区",
     workspaces_heading: "工作区",
@@ -580,8 +580,8 @@ const zhCN: Resources = {
     canvas_snap_off_hint: "画面吸附已关闭。点击开启。",
     grid_on_hint: "网格已开启。点击关闭。",
     grid_off_hint: "网格已关闭。点击开启。",
-    review_overlay_on_hint: "审阅叠加层已开启：时间线上显示批注和代理尚未审阅的变更。点击隐藏。",
-    review_overlay_off_hint: "审阅叠加层已关闭。点击在时间线上显示批注和代理尚未审阅的变更。",
+    review_overlay_on_hint: "当前在时间线上显示代理的批注与未审阅变更。点击隐藏。",
+    review_overlay_off_hint: "已隐藏代理的批注与未审阅变更。点击显示。",
     follow_on_hint: "时间线自动滚动已开启。点击关闭。",
     follow_off_hint: "时间线自动滚动已关闭。点击开启。",
     safe_area_on_hint: "当前显示安全框参考线。点击隐藏。",
@@ -910,7 +910,7 @@ const zhCN: Resources = {
     toggle_preview_grid: "切换网格",
     toggle_preview_snap: "切换画面吸附",
     toggle_tail_snap: "切换片段吸附",
-    toggle_review_overlay: "切换审阅叠加层",
+    toggle_review_overlay: "切换批注与变更",
     // 带前缀，不像设置里的单选那样只写"完整"/"1/2"：这些标签同时出现在搜索面板里，
     // 只写"1/2"根本说不清改的是什么。
     playback_resolution_full: "播放分辨率：完整",

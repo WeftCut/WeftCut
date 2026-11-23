@@ -1318,8 +1318,9 @@ as a whole — *Approve all* (moves the baseline, records nothing) or *Revert
 all* (a recorded restore to the baseline, under the history lock) — and both
 refuse when the view has moved on. Removed entities are drawn at their
 baseline place, labelled as such. Tacks paint in their own Review lane under
-the marker lane while the Review overlay is on and the opening has had a
-session or a tack; overlapping chips collapse into a group chip.
+the marker lane while the Review overlay (*Tacks & changes*) is on and the
+opening has had a session or a tack; overlapping chips collapse into a group
+chip.
 
 ## Tool description quality
 

@@ -863,6 +863,11 @@ The row below the marker lane that shows tacks; ruler family, not a scrub
 surface. UI word: Tacks / 批注 (header), review lane / 审阅行.
 _Avoid_: tack track, review track
 
+**Review overlay**:
+The editor-timeline switch that shows the Review lane and the unreviewed-change
+marks; display only, on by default. UI word: Tacks & changes / 批注与变更.
+_Avoid_: 叠加层 (Motifs use it), 审阅标记 (reads as markers)
+
 **Review baseline**:
 The project state the user last accepted, against which agent changes are
 reviewed. Owned by history; reset on open, advanced only by Approve. Not a
