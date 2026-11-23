@@ -1309,6 +1309,7 @@ const zhCN: Resources = {
   "filter": "活动筛选",
   "filter_all": "全部活动",
   "filter_errors": "失败",
+  "errors_only": "只看失败",
   "latest": "回到最新",
   "truncated": "{{count}} 条较早的活动已不再显示。",
   "loading": "正在加载活动…",
