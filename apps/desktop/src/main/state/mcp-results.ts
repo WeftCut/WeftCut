@@ -14,7 +14,8 @@
 // text block, which is the part every client shows the model.
 //
 // `adjusted[]` names each numeric field whose applied value differs from the
-// requested one (today: the frame/sample-grid snap). The policy for what may be
+// requested one (today: the frame-grid snap, or the sample-lattice snap of an
+// audio automation key). The policy for what may be
 // adjusted silently and what must refuse lives with the mutations; this file
 // only reports the difference.
 import type { Composition, Layer, Project, Uuid } from './model'

@@ -438,10 +438,9 @@ test.describe("keyframe batch gestures — the pointer and the keys agree", () =
 
       const clip = await place(page, trackIds[0]!, imageId, 1_000_000);
       const audio = await place(page, trackIds[1]!, audioId, 1_000_000);
-      // Placed whole, the audio reads its source from 0 to the media's end, and
-      // any slip would read outside the media, which the actor refuses. A
-      // second off each end leaves the window [1 s, 9 s]: room on both sides,
-      // and both ends on the sample lattice whatever the media's probed length.
+      // A second off each end leaves the window [1 s, 9 s], so the slips below
+      // stay inside the media whatever its probed length, and the sound under
+      // every key is media rather than silence.
       await invokeCmd(page, "trim_layer", { layerId: audio, edge: "in", newTUs: frameUs(60) });
       await invokeCmd(page, "trim_layer", { layerId: audio, edge: "out", newTUs: frameUs(300) });
       await keyOpacity(page, clip, [{ id: "n0", t_us: frameUs(15), value: 0.5 }]);

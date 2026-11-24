@@ -323,9 +323,8 @@ export function planMediaDrop({
     ),
   );
   // add_media_layer creates tEnd from the *raw* start plus source duration,
-  // then applyAddLayer snaps both edges independently. This mirrors the
-  // frame-grid case; Audio commits on the sample grid instead (ADR 0038), so
-  // an audio ghost can sit a sub-frame off its committed layer.
+  // then applyAddLayer snaps both edges independently on the frame grid, which
+  // every kind's edges, Audio's included, sit on (ADR 0038).
   const baseTStartUs = snapFrameRound(baseRawStartUs, fpsNum, fpsDen);
   const baseTEndUs = snapFrameRound(
     baseRawStartUs + media.durationUs,

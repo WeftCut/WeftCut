@@ -733,7 +733,7 @@ cut); in the ruler it hangs the cut's timecode on a flag, in the label band and
 clear of the ticks. The playhead, the guide and the blade mark share one
 geometry and one overlay (Time mark in [CONTEXT.md](../CONTEXT.md)). Holding
 Mod (Ctrl; ⌘ on macOS) suspends the magnet for that event, including when held
-before the press; the frame and audio sample grids still apply. The chosen target never depends on the lane under the pointer: a
+before the press; the frame grid still applies. The chosen target never depends on the lane under the pointer: a
 vertical-only move keeps its time, and a landing that does not fit shows as a
 collision at the aligned position. Escape, pointer cancel or a tool change
 abandons a clip drag; Escape or pointer cancel abandons a marker drag. Solver:
