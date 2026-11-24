@@ -4,13 +4,14 @@
 // mirror). This is the app-wide resolution v5 used; only the upgrade may
 // resolve through it, and it is the one reader of an older release's
 // `drafts/` and `.workspaces/`, which stay in the library folder untouched.
+// An upgrade also names the draft left for each Motif it leaves missing.
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { BUILTIN_IDS, BUILTIN_MANIFESTS, parseManifestIsland, type Manifest } from '../../shared/motifs/catalog'
 import type { AppNotice } from '../../shared/ipc'
 import { isProposalPreviewId } from '../../shared/motifs/projectMotifs'
 import type { LegacyMotif, MigrationContext, MotifCopy } from '../state/migrate'
-import type { MotifCopyOutcome } from '../state/workspace-orchestrator'
+import type { LegacyDraft, MotifCopyOutcome } from '../state/workspace-orchestrator'
 import type { BuiltinMotif } from './authoring'
 import { packageContentHash } from './contentHash'
 import { hasMotifFile, motifFileSegments, readMotifFile, type MotifFile } from './packageFiles'
@@ -56,7 +57,7 @@ export function resolveLegacyMotif(store: UserMotifStore, builtins: readonly Bui
   }
   if (BUILTIN_IDS.includes(id) || isProposalPreviewId(id)) return null
   const dir = draftDir(store, id)
-  if (!dir || linkedDiagnostic(store, id)) return null
+  if (!dir || linkedFailure(store, id)) return null
   try { parseManifestIsland(readFileSync(path.join(dir, 'index.html'), 'utf8')) } catch { return null }
   const draft = new PackageSource(store.revisions, files => packageContentHash(files)).snapshot(dir)
   const key = `${DRAFTS_DIR}/${id}`
@@ -64,13 +65,28 @@ export function resolveLegacyMotif(store: UserMotifStore, builtins: readonly Bui
   return { uid, revision: draft.revision, from: null, files: draft.files }
 }
 
-/** Why draft `id`'s linked directory was invalid, as its working state
- *  recorded it; such a draft rendered nothing. */
-function linkedDiagnostic(store: UserMotifStore, id: string): string | null {
+/** Draft `id`'s linked directory and why it was invalid, as its working
+ *  state recorded it; such a draft rendered nothing. Null when it was not
+ *  linked or its directory was valid. */
+function linkedFailure(store: UserMotifStore, id: string): { directory: string | null; diagnostic: string } | null {
   try {
-    const state = JSON.parse(readFileSync(path.join(store.root(), '.workspaces', `${id}.json`), 'utf8')) as { diagnostic?: unknown }
-    return typeof state.diagnostic === 'string' && state.diagnostic ? state.diagnostic : null
+    const state = JSON.parse(readFileSync(path.join(store.root(), '.workspaces', `${id}.json`), 'utf8')) as { directory?: unknown; diagnostic?: unknown }
+    if (typeof state.diagnostic !== 'string' || !state.diagnostic) return null
+    return { directory: typeof state.directory === 'string' ? state.directory : null, diagnostic: state.diagnostic }
   } catch { return null }
+}
+
+/** The draft an older release left for `id`, named beside a Motif an
+ *  upgrade leaves missing: copied to the project's `Motifs/<id>/` while it
+ *  is open, it restores that Motif. A draft whose linked directory was
+ *  invalid says so: it rendered nothing, which is why it was not copied. */
+export function legacyDraft(store: UserMotifStore, id: string): LegacyDraft | null {
+  const folder = draftDir(store, id)
+  if (!folder) return null
+  const failure = linkedFailure(store, id)
+  if (!failure) return { folder }
+  const linked = failure.directory ? `its working folder ${failure.directory}` : 'its working folder'
+  return { folder, diagnostic: `The draft rendered nothing: ${linked} could not be read (${failure.diagnostic})` }
 }
 
 /** The manifest v5 sized Motif `id` with: a built-in's, else the installed
@@ -147,5 +163,6 @@ export function legacyMigration(store: UserMotifStore, builtins: readonly Builti
       },
     }),
     placeMigratedMotifs: (dir: string, copies: readonly MotifCopy[]) => placeMigratedMotifs(projectStore(dir), copies, resolve, versionOf),
+    legacyDraft: (id: string) => legacyDraft(store, id),
   }
 }

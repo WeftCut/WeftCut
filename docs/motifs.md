@@ -708,9 +708,11 @@ project loses a Motif by either. Agent and file workflows:
 
 Drafts and linked working directories from earlier versions stay on disk in
 `<dataRoot>/motifs/drafts/` and `.workspaces/`, unlisted; a startup notice
-counts the drafts. Only the v5 → v6 upgrade reads them
-(`main/motif/legacyResolve.ts`), to copy what a v5 project rendered into its
-`Motifs/`.
+counts the drafts. Only a project upgrade reads them
+(`main/motif/legacyResolve.ts`): the v5 → v6 step copies what a v5 project
+rendered into its `Motifs/`, and every upgrade's report names, beside each
+Motif it leaves missing, the draft of the same id when one is left: copied to
+`Motifs/<id>/` while the project is open, it restores that Motif.
 
 Library **covers** are default-props PNGs captured at the poster time at 30 fps,
 scaled to fit 480×270, cached under `<dataRoot>/cache/motif-covers/` and

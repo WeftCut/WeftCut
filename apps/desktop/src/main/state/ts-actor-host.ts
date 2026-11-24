@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/ts-actor-host.ts
-import { resolve as resolvePath } from 'node:path'
+import { dirname, resolve as resolvePath } from 'node:path'
 import { createActor, type ActorHandle, type ChangeEvent } from './actor'
 import type { Actor, EntityRef } from './history'
 import { uuidV7Gen } from './ids'
@@ -8,7 +8,7 @@ import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
 import { CommandFailure } from './errors'
 import { createAutosave, type AutosaveController, type AutosaveFs, type AutosaveSaveState } from './autosave'
-import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type SchemaUpgradeReport } from './workspace-orchestrator'
+import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type MissingMotif, type SchemaUpgradeReport } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
 import type { ProjectContentFs } from './projectContent'
 import { serializeProjectToJson } from './persistence'
@@ -302,6 +302,17 @@ export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'us
   return { op_id: e.op_id, actor_kind, client, summary: e.summary, timestamp: e.timestamp, affected: e.affected }
 }
 
+/** The upgrade row's clause for missing Motifs an older release's draft can
+ *  restore: which (the row already lists every missing one), where the
+ *  drafts are, and how. Empty when none can. */
+function restorableDrafts(missing: readonly MissingMotif[]): string {
+  const drafts = missing.filter((m) => m.draft !== undefined)
+  if (drafts.length === 0) return ''
+  const which = drafts.length < missing.length ? drafts.map((m) => m.id).join(', ') : missing.length === 1 ? 'it' : 'them'
+  return `; an earlier version's drafts of ${which} are in ${dirname(drafts[0]!.draft!)}:` +
+    " copying a draft's folder into the project's Motifs folder while the project is open restores that Motif"
+}
+
 /** Whether two Motif tables hold the same entries. */
 function sameMotifTable(a: Readonly<ProjectMotifs>, b: Readonly<ProjectMotifs>): boolean {
   const ids = Object.keys(a)
@@ -480,6 +491,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         message: `Project upgraded from schema v${report.from} to v${report.to}; the original is kept as ${report.backupFile}` +
           (report.bakedPositions?.length ? `; ${report.bakedPositions.length} clip(s) converted to frame-sampled position keys. Existing frame appearance is preserved; interpolation between samples and future retiming may differ.` : '') +
           (report.missingMotifs?.length ? `; ${report.missingMotifs.length} Motif(s) could not be copied into the project's Motifs folder: ${report.missingMotifs.map(m => m.id).join(', ')}` : '') +
+          restorableDrafts(report.missingMotifs ?? []) +
           (report.missingMedia?.length ? `; ${report.missingMedia.length} media file(s) could not be copied into the project folder: ${report.missingMedia.map(m => m.path).join(', ')}` : ''),
         details: { kind: 'SchemaUpgrade', from: report.from, to: report.to, backup: report.backupFile,
           ...(report.bakedPositions?.length ? { bakedPositions: report.bakedPositions } : {}),
@@ -493,12 +505,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     : undefined
   // Without a store the upgrade sizes Motifs from the built-ins and copies none.
   // Its copies are heard where the open project's revisions are (Motif trust).
-  const { migration, placeMigratedMotifs } = store && deps.motifBuiltins
+  const { migration, placeMigratedMotifs, legacyDraft } = store && deps.motifBuiltins
     ? legacyMigration(store, deps.motifBuiltins, (project) => resolver?.hear(project))
     : { migration: () => ({ motifSize: (id: string, version: number) => {
       const manifest = BUILTIN_MANIFESTS.get(id)
       return manifest?.version === version ? manifest.size : null
-    } }), placeMigratedMotifs: undefined }
+    } }), placeMigratedMotifs: undefined, legacyDraft: undefined }
   const swapActor: Pick<ActorHandle, 'replaceState' | 'snapshot' | 'dispatch'> = {
     snapshot: () => actor.snapshot(),
     dispatch: (channel, args, by) => actor.dispatch(channel, args, by),
@@ -507,7 +519,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       try { actor.replaceState(next) } finally { swapping = false }
     },
   }
-  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, copyMotifs: copyProjectMotifs, contentFs: deps.contentFs, platform: deps.platform }
+  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, legacyDraft, copyMotifs: copyProjectMotifs, contentFs: deps.contentFs, platform: deps.platform }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and
