@@ -27,37 +27,46 @@ const frame = (i: number) => timeUsAtGridIndex(i, frameGrid(FPS));
 const sample = (i: number) => timeUsAtGridIndex(i, AUDIO_GRID);
 const MEDIA = "take-1";
 
-/** A layer playing `MEDIA` from `srcIn` between frames `from` and `to`. */
-function clip(id: string, kind: string, from: number, to: number, srcIn: number, extra: Partial<SlipLayer> = {}): SlipLayer {
+type Params = SlipLayer["params"];
+
+/** A layer playing `MEDIA` from `srcIn` between frames `from` and `to`, its
+ *  source fields under `params` as a `LayerSummary` row carries them. */
+function clip(id: string, kind: string, from: number, to: number, srcIn: number, extra: Partial<Params> = {}): SlipLayer {
   return {
     id,
     kind,
     t_start_us: frame(from),
     t_end_us: frame(to),
-    media_id: MEDIA,
-    src_in_us: srcIn,
-    src_out_us: srcIn + (frame(to) - frame(from)),
-    ...extra,
+    params: {
+      kind,
+      media_id: MEDIA,
+      src_in_us: srcIn,
+      src_out_us: srcIn + (frame(to) - frame(from)),
+      ...extra,
+    },
   };
 }
-const audio = (id: string, from: number, to: number, srcIn: number, extra: Partial<SlipLayer> = {}) =>
+const audio = (id: string, from: number, to: number, srcIn: number, extra: Partial<Params> = {}) =>
   clip(id, "Audio", from, to, srcIn, extra);
-const video = (id: string, from: number, to: number, srcIn: number, extra: Partial<SlipLayer> = {}) =>
+const video = (id: string, from: number, to: number, srcIn: number, extra: Partial<Params> = {}) =>
   clip(id, "VideoClip", from, to, srcIn, extra);
+const withParams = (l: SlipLayer, extra: Partial<Params>): SlipLayer => ({ ...l, params: { ...l.params, ...extra } });
+const srcIn = (l: SlipLayer) => l.params.src_in_us!;
+const srcOut = (l: SlipLayer) => l.params.src_out_us!;
 
 /** `l` with `nudgedSource(l, steps)` written back, as the command does. */
-const nudged = (l: SlipLayer, steps: number): SlipLayer => ({ ...l, ...nudgedSource(l, steps)! });
+const nudged = (l: SlipLayer, steps: number): SlipLayer => withParams(l, nudgedSource(l, steps)!);
 
 describe("audio nudge", () => {
   it("slips the source one sample earlier for one sample later, leaving the edges alone", () => {
     const a = audio("a", 31, 91, sample(50_000));
     const out = nudgedSource(a, NUDGE_SAMPLE)!;
     expect(gridIndex(out.src_in_us, AUDIO_GRID)).toBe(50_000 - 1);
-    expect(gridIndex(out.src_out_us, AUDIO_GRID)).toBe(gridIndex(a.src_out_us!, AUDIO_GRID) - 1);
+    expect(gridIndex(out.src_out_us, AUDIO_GRID)).toBe(gridIndex(srcOut(a), AUDIO_GRID) - 1);
     // The slip is a source window; nothing in it names an edge.
     expect(Object.keys(out).sort()).toEqual(["src_in_us", "src_out_us"]);
     // One sample is far less than one frame, which is what the nudge is for.
-    expect(a.src_in_us! - out.src_in_us).toBeLessThan(frame(1) - frame(0));
+    expect(srcIn(a) - out.src_in_us).toBeLessThan(frame(1) - frame(0));
   });
 
   it("the coarse tier is exactly 1 ms = 48 samples", () => {
@@ -65,25 +74,25 @@ describe("audio nudge", () => {
     const a = audio("a", 31, 91, sample(1000));
     const out = nudgedSource(a, NUDGE_MS)!;
     expect(gridIndex(out.src_in_us, AUDIO_GRID)).toBe(1000 - 48);
-    expect(a.src_in_us! - out.src_in_us).toBe(1000);
+    expect(srcIn(a) - out.src_in_us).toBe(1000);
   });
 
   it("returns to the exact source window after 10 000 nudges out and back", () => {
     // Index arithmetic, not µs addition: 48 kHz spacing alternates 20/21 µs, so
     // an additive step would drift off the starting sample.
     const start = audio("a", 31, 91, sample(123_457));
-    const len = gridIndex(start.src_out_us!, AUDIO_GRID) - gridIndex(start.src_in_us!, AUDIO_GRID);
+    const len = gridIndex(srcOut(start), AUDIO_GRID) - gridIndex(srcIn(start), AUDIO_GRID);
     let a = start;
     for (let i = 0; i < 10_000; i++) a = nudged(a, NUDGE_SAMPLE);
-    expect(gridIndex(a.src_in_us!, AUDIO_GRID)).toBe(123_457 - 10_000);
-    expect(gridIndex(a.src_out_us!, AUDIO_GRID) - gridIndex(a.src_in_us!, AUDIO_GRID)).toBe(len);
+    expect(gridIndex(srcIn(a), AUDIO_GRID)).toBe(123_457 - 10_000);
+    expect(gridIndex(srcOut(a), AUDIO_GRID) - gridIndex(srcIn(a), AUDIO_GRID)).toBe(len);
     for (let i = 0; i < 10_000; i++) a = nudged(a, -NUDGE_SAMPLE);
-    expect(a.src_in_us).toBe(start.src_in_us);
-    expect(a.src_out_us).toBe(start.src_out_us);
+    expect(srcIn(a)).toBe(srcIn(start));
+    expect(srcOut(a)).toBe(srcOut(start));
   });
 
   it("has nothing to slip on a layer without a source window", () => {
-    const bare: SlipLayer = { id: "a", kind: "Audio", t_start_us: frame(31), t_end_us: frame(91) };
+    const bare: SlipLayer = { id: "a", kind: "Audio", t_start_us: frame(31), t_end_us: frame(91), params: { kind: "Audio" } };
     expect(nudgedSource(bare, NUDGE_SAMPLE)).toBeNull();
   });
 
@@ -149,9 +158,9 @@ describe("derived link sync offset", () => {
     const v = video("v", 31, 91, sample(96_000));
     const a = nudged(audio("a", 31, 91, sample(96_000)), 5);
     const timeMap = { kind: "speed", rate: 2 };
-    expect(syncOffsetSamples(a, [a, { ...v, time_map: timeMap }])).toBeNull();
-    expect(syncOffsetSamples({ ...a, time_map: timeMap }, [a, v])).toBeNull();
-    expect(resyncedSource(a, [a, { ...v, time_map: timeMap }])).toBeNull();
+    expect(syncOffsetSamples(a, [a, withParams(v, { time_map: timeMap })])).toBeNull();
+    expect(syncOffsetSamples(withParams(a, { time_map: timeMap }), [a, v])).toBeNull();
+    expect(resyncedSource(a, [a, withParams(v, { time_map: timeMap })])).toBeNull();
   });
 
   it("measures against the same-media visual member CLOSEST in time when a link holds several", () => {
@@ -174,10 +183,10 @@ describe("derived link sync offset", () => {
     for (const steps of [7, -7, NUDGE_MS * 3]) {
       const slipped = nudged(synced, steps);
       const back = resyncedSource(slipped, [v, slipped])!;
-      const resynced = { ...slipped, ...back };
+      const resynced = withParams(slipped, back);
       expect(syncOffsetSamples(resynced, [v, resynced]), `after ${steps}`).toBe(0);
-      expect(back.src_out_us - back.src_in_us).toBe(slipped.src_out_us! - slipped.src_in_us!);
-      expect(back.src_in_us).toBe(v.src_in_us);
+      expect(back.src_out_us - back.src_in_us).toBe(srcOut(slipped) - srcIn(slipped));
+      expect(back.src_in_us).toBe(srcIn(v));
     }
   });
 });

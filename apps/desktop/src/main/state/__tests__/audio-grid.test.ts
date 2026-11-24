@@ -11,6 +11,7 @@ import { serializeProjectToJson } from '../persistence'
 import { AUDIO_GRID, frameGrid, gridIndex, isCanonicalOnGrid, snapFrameRound, timeUsAtGridIndex } from '../snap'
 import { nudgedSource, syncOffsetSamples, type SlipLayer } from '../../../renderer/timeline/audioSlip'
 import { root } from './fixtures/project'
+import { layerParamsView } from '../summary'
 
 // 29.97 is the discriminating rate: 48000 * 1001/30000 = 1601.6 samples per frame, so
 // the frame lattice is NOT a sublattice of the 48 kHz one and an audio edge written
@@ -77,10 +78,10 @@ function pairedFixture(): Fixture {
 const stateOf = (f: Fixture): Project => f.actor.snapshot()
 const findLayer = (p: Project, id: string): Layer => root(p).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
 
-/** A model layer in the shape the timeline's slip helpers read. */
-function slipLayer(l: Layer): SlipLayer {
-  const p = l.params as { kind: string; media?: string; src_in_us?: number; src_out_us?: number; time_map?: unknown }
-  return { id: l.id, t_start_us: l.t_start_us, t_end_us: l.t_end_us, kind: p.kind, media_id: p.media, src_in_us: p.src_in_us, src_out_us: p.src_out_us, time_map: p.time_map }
+/** A model layer as the timeline's summary row carries it, through the summary's
+ *  own `layerParamsView`, so the slip helpers read the shape they get in the app. */
+function slipLayer(l: Layer, p: Project): SlipLayer {
+  return { id: l.id, t_start_us: l.t_start_us, t_end_us: l.t_end_us, kind: l.params.kind, params: layerParamsView(l.params, p.media_pool) }
 }
 
 const srcIn = (l: Layer) => (l.params as { src_in_us: number }).src_in_us
@@ -93,13 +94,14 @@ const mixOrigin = (l: Layer) => gridIndex(l.t_start_us, AUDIO_GRID) - gridIndex(
 
 /** Slip the audio layer's sound `samples` later through the command the nudge sends. */
 function slip(f: Fixture, samples: number): void {
-  const next = nudgedSource(slipLayer(findLayer(f.actor.snapshot(), f.audioLayer)), samples)
+  const snap = f.actor.snapshot()
+  const next = nudgedSource(slipLayer(findLayer(snap, f.audioLayer), snap), samples)
   expect(next).not.toBeNull()
   expect(f.actor.dispatch('update_layer_params', { layer: f.audioLayer, patch: { kind: 'Audio', ...next! } }).ok).toBe(true)
 }
 
 function offsetOf(p: Project, f: Fixture): number | null {
-  return syncOffsetSamples(slipLayer(findLayer(p, f.audioLayer)), [slipLayer(findLayer(p, f.videoLayer)), slipLayer(findLayer(p, f.audioLayer))])
+  return syncOffsetSamples(slipLayer(findLayer(p, f.audioLayer), p), [slipLayer(findLayer(p, f.videoLayer), p), slipLayer(findLayer(p, f.audioLayer), p)])
 }
 
 describe('audio grid — edges on frames, precision in the source', () => {

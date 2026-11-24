@@ -673,7 +673,7 @@ export const Timeline = memo(function Timeline({
               .filter((l): l is LayerSummary => l !== undefined)
           : [];
         const next = nextSource(audio, members);
-        if (next === null || (next.src_in_us === audio.src_in_us && next.src_out_us === audio.src_out_us)) continue;
+        if (next === null || (next.src_in_us === audio.params.src_in_us && next.src_out_us === audio.params.src_out_us)) continue;
         try {
           await updateLayerParams(audio.id, { kind: "Audio", ...next });
           slipped = true;

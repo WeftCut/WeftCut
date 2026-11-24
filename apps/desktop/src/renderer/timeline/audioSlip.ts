@@ -16,16 +16,21 @@ export const NUDGE_MS = AUDIO_SAMPLES_PER_MS;
 /** Minimum layer geometry the slip helpers need — structurally satisfied by
  *  `LayerSummary` (whose top-level `kind` IS `params.kind`; see
  *  `summary.ts::layerKind`), so callers pass summary rows straight in. The source
- *  fields are present on the kinds that have a source window. */
+ *  fields live in `params`, present on the kinds that have a source window;
+ *  `params` itself is required so a row of another shape is a compile error
+ *  rather than a slip that silently finds no source. */
 export interface SlipLayer {
   id: string;
   t_start_us: number;
   t_end_us: number;
   kind: string;
-  media_id?: string;
-  src_in_us?: number;
-  src_out_us?: number;
-  time_map?: unknown;
+  params: {
+    kind: string;
+    media_id?: string;
+    src_in_us?: number;
+    src_out_us?: number;
+    time_map?: unknown;
+  };
 }
 
 /** A source window to write back with `update_layer_params`. */
@@ -44,10 +49,11 @@ export interface SourceWindow {
  *  would leave the media is refused by the actor (`InvalidSrcRange`,
  *  `SrcRangeExceedsMedia`), which is the notice the user sees. */
 export function nudgedSource(layer: SlipLayer, steps: number): SourceWindow | null {
-  if (layer.src_in_us === undefined || layer.src_out_us === undefined) return null;
+  const { src_in_us: srcIn, src_out_us: srcOut } = layer.params;
+  if (srcIn === undefined || srcOut === undefined) return null;
   return {
-    src_in_us: stepPointOnGrid(layer.src_in_us, -steps, AUDIO_GRID),
-    src_out_us: stepPointOnGrid(layer.src_out_us, -steps, AUDIO_GRID),
+    src_in_us: stepPointOnGrid(srcIn, -steps, AUDIO_GRID),
+    src_out_us: stepPointOnGrid(srcOut, -steps, AUDIO_GRID),
   };
 }
 
@@ -71,23 +77,35 @@ function samplesOf(us: number): number {
   return Math.sign(us) * gridIndex(Math.abs(us), AUDIO_GRID);
 }
 
-/** Whether `l` plays its source at rate 1 from `src_in_us`: the only mapping on
- *  which "where source time 0 lands" is one instant. */
-function plainSource(l: SlipLayer): l is SlipLayer & { media_id: string; src_in_us: number; src_out_us: number } {
-  return l.media_id !== undefined && l.src_in_us !== undefined && l.src_out_us !== undefined && l.time_map === undefined;
+/** A layer's source window when it plays that source at rate 1 from `src_in_us`:
+ *  the only mapping on which "where source time 0 lands" is one instant. */
+interface PlainSource {
+  layer: SlipLayer;
+  media_id: string;
+  src_in_us: number;
+  src_out_us: number;
+}
+
+function plainSource(l: SlipLayer): PlainSource | null {
+  const { media_id, src_in_us, src_out_us, time_map } = l.params;
+  if (media_id === undefined || src_in_us === undefined || src_out_us === undefined || time_map !== undefined) return null;
+  return { layer: l, media_id, src_in_us, src_out_us };
 }
 
 /** The visual member of `audio`'s link that plays the SAME media, the one whose
  *  start is closest to the audio's — "the picture this sound was recorded with".
  *  `null` when there is none, or when either side is retimed. */
-function syncReference(audio: SlipLayer, linkMembers: readonly SlipLayer[]): (SlipLayer & { src_in_us: number }) | null {
-  if (!plainSource(audio)) return null;
-  let ref: (SlipLayer & { src_in_us: number }) | null = null;
+function syncReference(audio: SlipLayer, linkMembers: readonly SlipLayer[]): { audio: PlainSource; ref: PlainSource } | null {
+  const own = plainSource(audio);
+  if (own === null) return null;
+  let ref: PlainSource | null = null;
   for (const v of linkMembers) {
-    if (v.id === audio.id || v.kind === "Audio" || !plainSource(v) || v.media_id !== audio.media_id) continue;
-    if (ref === null || Math.abs(v.t_start_us - audio.t_start_us) < Math.abs(ref.t_start_us - audio.t_start_us)) ref = v;
+    if (v.id === audio.id || v.kind === "Audio") continue;
+    const src = plainSource(v);
+    if (src === null || src.media_id !== own.media_id) continue;
+    if (ref === null || Math.abs(v.t_start_us - audio.t_start_us) < Math.abs(ref.layer.t_start_us - audio.t_start_us)) ref = src;
   }
-  return ref;
+  return ref === null ? null : { audio: own, ref };
 }
 
 /** The sync offset of a linked audio layer, in SAMPLES: how much later its sound
@@ -102,10 +120,10 @@ export function syncOffsetSamples(
   audio: SlipLayer,
   linkMembers: readonly SlipLayer[],
 ): number | null {
-  const ref = syncReference(audio, linkMembers);
-  if (ref === null) return null;
-  const audioIn = audio.src_in_us!;
-  return samplesOf((audio.t_start_us - ref.t_start_us) - (audioIn - ref.src_in_us));
+  const pair = syncReference(audio, linkMembers);
+  if (pair === null) return null;
+  const { ref } = pair;
+  return samplesOf((audio.t_start_us - ref.layer.t_start_us) - (pair.audio.src_in_us - ref.src_in_us));
 }
 
 /** The source window that puts an audio layer back in sync with its picture, its
@@ -115,10 +133,11 @@ export function resyncedSource(
   audio: SlipLayer,
   linkMembers: readonly SlipLayer[],
 ): SourceWindow | null {
-  const ref = syncReference(audio, linkMembers);
-  if (ref === null || syncOffsetSamples(audio, linkMembers) === 0) return null;
-  const srcIn = ref.src_in_us + (audio.t_start_us - ref.t_start_us);
-  return { src_in_us: srcIn, src_out_us: srcIn + (audio.src_out_us! - audio.src_in_us!) };
+  const pair = syncReference(audio, linkMembers);
+  if (pair === null || syncOffsetSamples(audio, linkMembers) === 0) return null;
+  const { ref } = pair;
+  const srcIn = ref.src_in_us + (audio.t_start_us - ref.layer.t_start_us);
+  return { src_in_us: srcIn, src_out_us: srcIn + (pair.audio.src_out_us - pair.audio.src_in_us) };
 }
 
 /** Human-readable slip for the clip badge. `null` when there is nothing to show —
