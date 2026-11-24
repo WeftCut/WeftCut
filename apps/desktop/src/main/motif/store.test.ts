@@ -8,6 +8,18 @@ import { packageContentHash } from "./contentHash";
 import { readMotifDirectory, type MotifFile } from "./packageFiles";
 
 let root: string;
+/** Whether the temp volume keeps two names that differ only in case apart
+ *  (Linux, usually); on macOS and Windows they are one folder. */
+function caseSensitiveTemp(): boolean {
+  const dir = mkdtempSync(path.join(tmpdir(), "case-probe-"));
+  try {
+    writeFileSync(path.join(dir, "a"), "");
+    return !existsSync(path.join(dir, "A"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 beforeEach(() => { root = mkdtempSync(path.join(tmpdir(), "motif-store-")); });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
@@ -152,7 +164,9 @@ describe("UserMotifStore rename", () => {
     expect(s.lineage.peek("MyMotif")).toBeNull();
   });
 
-  it("refuses a name another folder has in any case, changing nothing", () => {
+  // A name taken in another case is a second folder only where the volume
+  // keeps the two apart; elsewhere they are one folder, renamed in place.
+  it.runIf(caseSensitiveTemp())("refuses a name another folder has in any case, changing nothing", () => {
     const s = new UserMotifStore(root);
     install(s, "MyMotif", "Mine");
     install(s, "MYMOTIF", "Other");
