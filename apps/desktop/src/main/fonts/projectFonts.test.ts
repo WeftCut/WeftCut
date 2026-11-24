@@ -169,6 +169,23 @@ describe('copying into Fonts/', () => {
     expect(h.logs.map(l => l.i18n_key)).toEqual(['log.fonts_copied', 'log.font_recopied'])
   })
 
+  it('walks a Motif again when its folder comes back holding the revision the table records', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    installFont('Display-Regular.ttf', { family: 'Display' })
+    let restored = false
+    const manifest: MotifFontManifest = () => (restored
+      ? { props_schema: { font_headline: { type: 'string', default: "'Display', sans-serif" }, headline: { type: 'string', default: 'abc' } } }
+      : null)
+    const h = await harness([motifLayer('M1', {})], [], manifest)
+    await h.open()
+    expect(inFonts()).toEqual([])
+    restored = true
+    h.store.motifFolderChanged()
+    vi.advanceTimersByTime(USE_DEBOUNCE_MS)
+    await h.store.settled()
+    expect(inFonts()).toEqual(['Display-Regular.ttf'])
+  })
+
   it('logs a missing family once while the folder is open, naming how many layers ask for it', async () => {
     const h = await harness([textLayer('a', 'Gone')])
     await h.open()

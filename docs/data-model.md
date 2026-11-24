@@ -704,6 +704,7 @@ The workspace folder **is** the project; originals are copied in on import.
 │                       motifs table; edited in place (see motifs.md)
 ├── Fonts/              every face of the families the project draws, one
 │                       face per file, copied automatically (ADR 0176);
+│                       a font put here by hand serves the project too;
 │                       `.part` files are copies in flight
 ├── Styles/<name>/      the user style TASTE.md extends, looked up before the
 │                       user's packages (ADR 0126)
