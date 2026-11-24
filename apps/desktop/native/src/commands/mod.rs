@@ -12,6 +12,7 @@ pub mod media;
 #[cfg(feature = "speech")]
 pub mod model_verify;
 pub mod prefs;
+pub mod project_pack;
 
 // ---- Command args structs ----
 

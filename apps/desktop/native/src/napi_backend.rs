@@ -881,6 +881,81 @@ impl Backend {
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::content::extract_tar(a.archive_path, a.dest_dir).await)
             }
+            // Packed projects (ADR 0178). Main-only like content extraction:
+            // main picks the files and the allowed top-level names. A run is
+            // a compute job under `jobId`, so `cancel_compute_job` stops it.
+            "project_pack" | "project_unpack" => {
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct PackArgs {
+                    job_id: String,
+                    /// Pack: the project folder. Unpack: the new folder.
+                    folder: String,
+                    archive: String,
+                    #[serde(default)]
+                    files: Vec<crate::state::project_path::ProjectRelPath>,
+                    #[serde(default)]
+                    allowed_top: Vec<String>,
+                    #[serde(default)]
+                    app_version: String,
+                    #[serde(default)]
+                    schema_version: u32,
+                }
+                let a: PackArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let flag = cancel.clone();
+                let events = self.events.clone();
+                let job_id = a.job_id.clone();
+                let packing = cmd == "project_pack";
+                let work = async move {
+                    let _cancel_on_drop = crate::commands::project_pack::CancelOnDrop(flag);
+                    tokio::task::spawn_blocking(move || {
+                        use crate::commands::project_pack as pp;
+                        let step = std::sync::atomic::AtomicU64::new(0);
+                        let progress = |p: pp::PackProgress| {
+                            // About 200 events a run, plus the last.
+                            let bucket = p.done.saturating_mul(200).checked_div(p.total).unwrap_or(0);
+                            if p.done == p.total || bucket > step.swap(bucket, std::sync::atomic::Ordering::Relaxed) {
+                                events.emit("project_pack:progress", serde_json::json!({ "jobId": a.job_id, "done": p.done, "total": p.total }));
+                            }
+                        };
+                        let run = pp::Run { cancel: &cancel, progress: &progress };
+                        let folder = std::path::Path::new(&a.folder);
+                        let archive = std::path::Path::new(&a.archive);
+                        if packing {
+                            pp::pack(folder, archive, &a.files, &a.app_version, a.schema_version, &run)
+                                .map(|m| serde_json::json!({ "files": m.files.len() }))
+                        } else {
+                            pp::unpack(archive, folder, &a.allowed_top, &run).map(|n| serde_json::json!({ "files": n }))
+                        }
+                    })
+                    .await
+                };
+                match self.compute_jobs.run(Some(&job_id), work).await {
+                    Ok(Ok(Ok(value))) => Ok(value.to_string()),
+                    Ok(Ok(Err(e))) => Err(e.to_string()),
+                    Ok(Err(join)) => Err(join.to_string()),
+                    Err(_) => Err("cancelled".into()),
+                }
+            }
+            "project_pack_inspect" => {
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct InspectArgs {
+                    archive: String,
+                    allowed_top: Vec<String>,
+                }
+                let a: InspectArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let seen = tokio::task::spawn_blocking(move || {
+                    crate::commands::project_pack::inspect(
+                        std::path::Path::new(&a.archive),
+                        &a.allowed_top,
+                    )
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+                ser(seen.map_err(|e| e.to_string()))
+            }
             #[cfg(feature = "jobs")]
             "import_cancel" => {
                 let a: crate::commands::MediaIdArgs =
