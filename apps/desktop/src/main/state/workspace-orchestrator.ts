@@ -21,7 +21,7 @@ import { serializeProject, type GridRepair } from './serialize'
 import type { MigrationContext, MotifCopy, PositionBakeReport } from './migrate'
 import { foldDerivatives, type MediaDerivativesPatch } from './mutations/media'
 import { mediaAtFolder } from './projectFile'
-import { copyLateFiles, copyProjectContent, placeFilePlans, sameFolder, type MissingFile, type ProjectContentFs } from './projectContent'
+import { copyLateFiles, copyProjectContent, ensureGitignore, placeFilePlans, sameFolder, type MissingFile, type ProjectContentFs } from './projectContent'
 import type { PathPlatform } from './projectPathNative'
 
 /** The Rust-native workspace bookkeeping, exposed over napi (Backend methods
@@ -328,7 +328,8 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
 }
 
 /** project_save_as. snapshot → copy the project content and the Motif
- *  folders from `from` → write project.json → commit_workspace → place the
+ *  folders from `from` → default `.gitignore` where none came →
+ *  write project.json → commit_workspace → place the
  *  pool in `dir` with the new cache's derivatives (`rebase_media`) →
  *  push_recent → derivative re-fan-out. Never swaps state (the actor already
  *  holds it). A failed copy fails the save before project.json names it. */
@@ -341,6 +342,7 @@ export async function saveProjectAs(deps: OrchestratorDeps, dir: string, from?: 
     if (deps.contentFs) await copyProjectContent(from, dir, deps.contentFs, deps.platform ?? process.platform)
     deps.copyMotifs?.(from, dir, Object.keys(snap.motifs))
   }
+  ensureGitignore(dir, fs, join)
   fs.writeFile(join(dir, PROJECT_FILE), serializeProjectToJson(snap))
   await napi.commitWorkspace(dir)
   if (moves) {
@@ -395,7 +397,7 @@ export function makeEnqueueDerivatives(
 }
 
 /** project_new_workspace. Validate → blank project with
- *  the canvas preset → write → commit_workspace → replace_state → push_recent +
+ *  the canvas preset → default `.gitignore` → write → commit_workspace → replace_state → push_recent +
  *  set_last_new_project_parent. Returns the created workspace path. */
 export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArgs): Promise<string> {
   const { actor, napi, fs, join, idGen } = deps
@@ -417,6 +419,7 @@ export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArg
   root.fps = { num: args.fpsNum, den: args.fpsDen }
 
   fs.mkdirp(target)
+  ensureGitignore(target, fs, join)
   fs.writeFile(join(target, PROJECT_FILE), serializeProjectToJson(project))
   await napi.commitWorkspace(target)
   actor.replaceState(project)

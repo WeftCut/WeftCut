@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { createTsActorHost } from '../ts-actor-host'
 import { openProject, saveProjectAs, type OrchestratorDeps, type SchemaUpgradeReport, type WorkspaceNapi } from '../workspace-orchestrator'
+import { DEFAULT_GITIGNORE } from '../projectContent'
 import type { MediaDerivativesPatch } from '../mutations/media'
 import type { MediaItem, Project } from '../model'
 import { blankProject } from '../model'
@@ -228,6 +229,8 @@ describe('the open project in its folder (host)', () => {
     const { disk, t } = await savedAs()
     expect(disk.read('/projects/Copy/TASTE.md')).toBe('taste')
     expect(disk.fs.exists('/projects/Copy/Cache/proxies/old.mp4')).toBe(false)
+    // The source had no .gitignore, so the copy gets the default.
+    expect(disk.read('/projects/Copy/.gitignore')).toBe(DEFAULT_GITIGNORE)
     t.host.stop()
     const reopened = makeHost(disk)
     await reopened.host.handleInvoke('project_open', { path: '/projects/Copy' })
