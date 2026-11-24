@@ -12,6 +12,7 @@ import { AUDIO_GRID, frameGrid, gridIndex, isCanonicalOnGrid, snapFrameRound, ti
 import { nudgedSource, syncOffsetSamples, type SlipLayer } from '../../../renderer/timeline/audioSlip'
 import { root } from './fixtures/project'
 import { layerParamsView } from '../summary'
+import { validate } from '../validate'
 
 // 29.97 is the discriminating rate: 48000 * 1001/30000 = 1601.6 samples per frame, so
 // the frame lattice is NOT a sublattice of the 48 kHz one and an audio edge written
@@ -376,6 +377,101 @@ describe('load repair of audio edges written on the sample lattice', () => {
     else expect(fields).toContain('src_in_us')
     expect(repairs.every((r) => r.id === f.audioLayer || r.entity === 'Composition')).toBe(true)
 
+    expect(open(JSON.parse(serializeProjectToJson(project))).repairs).toEqual([])
+  })
+})
+
+describe('load repair of audio cuts in a 30 fps project saved on samples', () => {
+  const FPS_30 = { num: 30, den: 1 }
+  /** Audio layers on one track of a 30 fps project, saved with the edges and
+   *  source windows given: what a build with audio edges on samples wrote. */
+  function legacyTrack(clips: ReadonlyArray<{ t: readonly [number, number]; src: readonly [number, number] }>) {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 'legacy-audio')
+    root(initial).fps = FPS_30
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    actor.dispatch('add_media', { id: AV_MEDIA, kind: 'Video', duration_us: 60_000_000, with_audio: true })
+    const track = root(actor.snapshot()).tracks[0]!.id
+    const ids = clips.map((_, i) => {
+      const at = i * 2_000_000
+      const r = actor.dispatch('add_layer', { track, kind: 'audio', media: AV_MEDIA, src_in_us: 0, src_out_us: 1_000_000, t_start_us: at, t_end_us: at + 1_000_000 })
+      expect(r.ok).toBe(true)
+      return r.ok ? (r.value as string) : ''
+    })
+    const { wire, layer } = wireOf(actor.snapshot())
+    clips.forEach((c, i) => {
+      const l = layer(ids[i]!)
+      ;[l.t_start_us, l.t_end_us] = c.t
+      ;[l.params.src_in_us, l.params.src_out_us] = c.src
+    })
+    return { wire, ids, legacy: ids.map((id) => structuredClone(layer(id))) }
+  }
+
+  /** Opens the wire as `project_open` does: the load pass, then the validator
+   *  that refuses a project before it is installed. */
+  function open(wire: unknown) {
+    const reported: GridRepair[][] = []
+    const project = parseProject(wire, { onGridRepair: (r) => reported.push([...r]) })
+    validate(project)
+    return { project, repairs: reported.flat() }
+  }
+  const onFrames30 = (t: number) => isCanonicalOnGrid(t, frameGrid(FPS_30))
+  const spanSamples = (a: number, b: number) => gridIndex(b, AUDIO_GRID) - gridIndex(a, AUDIO_GRID)
+  /** Every sample the repaired layer still plays sounds where it did, and the
+   *  mixer, which plays the source window's length, stops at the layer's end. */
+  function expectSoundInPlace(now: Layer, legacy: WireLayer) {
+    expect(mixOrigin(now)).toBe(gridIndex(legacy.t_start_us, AUDIO_GRID) - gridIndex(legacy.params.src_in_us as number, AUDIO_GRID))
+    expect(spanSamples(srcIn(now), srcOut(now))).toBe(spanSamples(now.t_start_us, now.t_end_us))
+  }
+
+  it.each([
+    ['both edges round down', { t: [1_010_000, 2_010_000], src: [2_000_000, 3_000_000] }],
+    ['the edges round opposite ways', { t: [1_010_000, 2_020_000], src: [500_000, 1_510_000] }],
+  ] as const)('%s: the clip is trimmed onto frames and its sound stays where it played', (_name, clip) => {
+    const { wire, ids, legacy } = legacyTrack([clip])
+    const now = findLayer(open(wire).project, ids[0]!)
+    expect(onFrames30(now.t_start_us) && onFrames30(now.t_end_us)).toBe(true)
+    expectSoundInPlace(now, legacy[0]!)
+  })
+
+  it('a cut between two pieces of one source still joins with nothing skipped or repeated', () => {
+    const { wire, ids, legacy } = legacyTrack([
+      { t: [0, 10_010_000], src: [0, 10_010_000] },
+      { t: [10_010_000, 20_000_000], src: [10_010_000, 20_000_000] },
+    ])
+    const { project } = open(wire)
+    const [a, b] = ids.map((id) => findLayer(project, id))
+    expect(a!.t_end_us).toBe(b!.t_start_us)
+    expect(srcOut(a!)).toBe(srcIn(b!))
+    expectSoundInPlace(a!, legacy[0]!)
+    expectSoundInPlace(b!, legacy[1]!)
+  })
+
+  it('a clip shorter than a frame gets a frame where it was when its track has room', () => {
+    const { wire, ids } = legacyTrack([
+      { t: [0, 10_000], src: [0, 10_000] },
+      { t: [100_000, 1_100_000], src: [100_000, 1_100_000] },
+    ])
+    const { project } = open(wire)
+    const sliver = findLayer(project, ids[0]!)
+    expect([sliver.enabled, sliver.t_start_us, srcIn(sliver)]).toEqual([true, 0, 0])
+    expect(open(JSON.parse(serializeProjectToJson(project))).repairs).toEqual([])
+  })
+
+  it('a clip shorter than a frame with no room beside it is parked, switched off, past its track, and the project opens', () => {
+    const { wire, ids } = legacyTrack([
+      { t: [0, 10_000], src: [0, 10_000] },
+      { t: [10_000, 1_010_000], src: [10_000, 1_010_000] },
+    ])
+    const comps = wire.compositions as Record<string, { duration_us: number }>
+    comps[wire.root_id as string]!.duration_us = 1_010_000
+    const { project, repairs } = open(wire)
+    const [sliver, next] = ids.map((id) => findLayer(project, id))
+    expect(sliver!.enabled).toBe(false)
+    expect(sliver!.t_start_us).toBeGreaterThanOrEqual(next!.t_end_us)
+    // Off and past the content, it does not lengthen what the composition plays.
+    expect(root(project).duration_us).toBe(next!.t_end_us)
+    expect(repairs).toContainEqual({ entity: 'Layer', id: ids[0], field: 'enabled', from: true, to: false })
     expect(open(JSON.parse(serializeProjectToJson(project))).repairs).toEqual([])
   })
 })

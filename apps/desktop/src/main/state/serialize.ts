@@ -1,6 +1,6 @@
 import { cropProblem } from '../../shared/crop'
 import { SCHEMA_VERSION, defaultSettings, type Animated, type Link, type Project } from './model'
-import { AUDIO_GRID, frameGrid, gridIndex, snapOnGrid, snapUpOnGrid, timeUsAtGridIndex, type Grid } from './snap'
+import { AUDIO_GRID, frameGrid, gridIndex, layerOverlapClass, snapDownOnGrid, snapOnGrid, snapUpOnGrid, timeUsAtGridIndex, type Grid } from './snap'
 import { scaleTracksTwins } from './mutations/scaleLink'
 import { positionProblem } from '../../shared/position'
 import { isUuid } from './ids'
@@ -22,15 +22,15 @@ export function serializeProject(p: Project): unknown {
 }
 
 /** One timeline field the load pass had to move: onto the composition frame
- *  grid, or up to 0. */
+ *  grid, or up to 0; or a layer it parked and switched off (`enabled`). */
 export interface GridRepair {
   entity: 'Layer' | 'Composition' | 'Marker' | 'Transition'
   /** Entity id (for `'Composition'` the composition's own id); null only when
    *  the wire object carries no string id. */
   id: string | null
   field: string
-  from: number
-  to: number
+  from: number | boolean
+  to: number | boolean
 }
 
 export interface ParseProjectOptions {
@@ -49,6 +49,13 @@ export function describeGridRepairs(repairs: readonly GridRepair[]): string {
   return repairs.map((r) => `${r.entity}${r.id ? `(${r.id})` : ''}.${r.field} ${r.from}→${r.to}`).join(', ')
 }
 
+interface Span { start: number; end: number }
+/** A wire layer during the repair: its end as the file wrote it, its edges before
+ *  the frame snap (`raw`, after any negative-start repair) and as they now stand,
+ *  and whether `placeCollapsed` moved it beside where it collapsed or parked it
+ *  past its track. */
+interface SnappedLayer extends Span { layer: Record<string, unknown>; id: string | null; raw: Span; writtenEnd: number; placed: 'snapped' | 'moved' | 'parked' }
+
 function warnGridRepair(repairs: readonly GridRepair[]): void {
   console.warn(`[grid-repair] repaired ${repairs.length} timeline field(s) on load: ${describeGridRepairs(repairs)}`)
 }
@@ -64,10 +71,10 @@ function warnGridRepair(repairs: readonly GridRepair[]): void {
  *  load, reject on edit (spec D4).
  *
  *  Every layer edge goes to the composition frame grid, Audio included (ADR 0038).
- *  An Audio layer written when audio edges lived on the 48 kHz lattice keeps where
- *  its sound plays: when its start moves by whole samples, the source window moves
- *  with it (`keepAudioInPlace`), so the sample that played at a timeline instant
- *  still plays there. It runs on the wire shape, so it reads `layer.params`
+ *  An Audio layer written when audio edges lived on the 48 kHz lattice is trimmed to
+ *  those frames (`trimAudioSource`), so its sound stays where it played. A layer the
+ *  snap collapses to nothing gets one frame where its track has room
+ *  (`placeCollapsed`). It runs on the wire shape, so it reads `layer.params`
  *  defensively rather than a typed union.
  *
  *  Idempotent by construction: every write is a snap, and a snapped value snaps to
@@ -130,33 +137,63 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     repairs.push({ entity: 'Layer', id, field: 't_start_us', from: start, to: 0 })
     return parkAt
   }
-  /** An Audio layer whose start the frame snap moved: shift its source window so
-   *  the sound stays where it played. Counted in samples, the mixer's own unit, so a
-   *  start that moved by less than half a sample — the grid residue every pair at
-   *  29.97/59.94 carried — leaves the source untouched and the mix identical; a
-   *  slipped one moves both source ends by exactly the samples its start moved. The
-   *  mixer plays the source window's length whatever the edges say, so keeping that
-   *  length keeps every sample where it played. Nothing is clamped: an end that
-   *  moves past the media reads silence there (`padsWithSilence`), which is what the
-   *  legacy edge played, so a slip near the media's head or tail survives too. A
-   *  retimed layer (`time_map`) maps time non-linearly and is left to its edges. Automation keys are layer-local and are not rebased, so on a
-   *  slipped layer they move against the sound by less than half a frame. */
-  const keepAudioInPlace = (id: string | null, params: Record<string, unknown>, fromStart: number, toStart: number): void => {
+  /** An un-retimed Audio layer whose edges moved, trimmed as an edit trims it: each
+   *  source end moves by the samples its own edge moved. Every sample still sounding
+   *  plays where it did, and two pieces cut from one source still meet with nothing
+   *  skipped or repeated; each edge shows or hides under half a frame of source.
+   *  Counted in samples, the mixer's unit, so the residue every edge at 29.97/59.94
+   *  carried leaves the source as it was. Nothing is clamped: an end past the media
+   *  reads silence (`padsWithSilence`). A retimed layer (`time_map`) is left to its
+   *  edges. Automation keys are layer-local and are not rebased. */
+  const trimAudioSource = (id: string | null, params: Record<string, unknown>, from: Span, to: Span): void => {
     if (params.time_map !== undefined) return
-    const moved = gridIndex(toStart, AUDIO_GRID) - gridIndex(fromStart, AUDIO_GRID)
-    if (moved === 0) return
-    const shift = (field: 'src_in_us' | 'src_out_us'): void => {
+    const shift = (field: 'src_in_us' | 'src_out_us', fromUs: number, toUs: number): void => {
       const cur = params[field]
-      if (typeof cur !== 'number') return
+      const moved = gridIndex(toUs, AUDIO_GRID) - gridIndex(fromUs, AUDIO_GRID)
+      if (typeof cur !== 'number' || moved === 0) return
       const next = timeUsAtGridIndex(gridIndex(cur, AUDIO_GRID) + moved, AUDIO_GRID)
       if (next !== cur) { params[field] = next; repairs.push({ entity: 'Layer', id, field, from: cur, to: next }) }
     }
-    shift('src_in_us')
-    shift('src_out_us')
+    shift('src_in_us', from.start, to.start)
+    shift('src_out_us', from.end, to.end)
   }
-  /** Push an end that the snap collapsed onto its own start out to the next lattice
-   *  point, so the repair itself can never manufacture an `InvalidLayerRange` /
-   *  zero-span region out of a legacy sub-quantum entity. */
+  /** Gives every layer the snap collapsed to nothing (a legacy audio clip shorter
+   *  than a frame) one frame: from where it collapsed, else ending there, else past
+   *  everything on its track. The first span no layer of its overlap class holds
+   *  wins, so the repair never makes a `LayerOverlap` and the project still opens.
+   *  A parked layer is also switched off: it never played there, so it must not
+   *  sound or draw there. Runs after every edge on the track is snapped, since room
+   *  depends on where the neighbours landed. */
+  const placeCollapsed = (track: SnappedLayer[], grid: Grid): void => {
+    const cls = (s: SnappedLayer) => layerOverlapClass({ kind: String((s.layer.params as { kind?: unknown } | undefined)?.kind ?? '') })
+    const free = (self: SnappedLayer, span: Span) => span.start >= 0 && track.every((o) =>
+      o === self || o.end <= o.start || cls(o) !== cls(self) || o.end <= span.start || span.end <= o.start)
+    for (const s of track) {
+      if (s.end > s.start) continue
+      const at = s.start
+      const after = { start: at, end: snapUpOnGrid(at + 1, grid) }
+      const before = { start: snapDownOnGrid(at - 1, grid), end: at }
+      const parked = () => {
+        const start = snapUpOnGrid(Math.max(0, ...track.map((o) => o.end)), grid)
+        return { start, end: snapUpOnGrid(start + 1, grid) }
+      }
+      const fits = free(s, after) ? after : free(s, before) ? before : null
+      const span = fits ?? parked()
+      s.placed = fits ? 'moved' : 'parked'
+      if (!fits && s.layer.enabled !== false) {
+        repairs.push({ entity: 'Layer', id: s.id, field: 'enabled', from: true, to: false })
+        s.layer.enabled = false
+      }
+      for (const field of ['t_start_us', 't_end_us'] as const) {
+        const to = field === 't_start_us' ? span.start : span.end
+        if (s.layer[field] !== to) { repairs.push({ entity: 'Layer', id: s.id, field, from: s.layer[field] as number, to }); s.layer[field] = to }
+      }
+      s.start = span.start
+      s.end = span.end
+    }
+  }
+  /** Push a marker end that the snap collapsed onto its own start out to the next
+   *  frame, so the repair never makes a zero-span region. */
   const widenToOneQuantum = (entity: GridRepair['entity'], id: string | null, holder: Record<string, unknown>, field: string, startUs: number, grid: Grid): number => {
     const cur = holder[field] as number
     const next = snapUpOnGrid(startUs + 1, grid)
@@ -180,6 +217,7 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     // Layer endpoints first: transition durations are re-derived from the repaired
     // geometry below, so they must read the final values.
     const geometry = new Map<string, { start: number; end: number }>()
+    let repairedEnd = 0
     for (const track of (comp.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
       const layers = (track?.layers as Array<Record<string, unknown>> | undefined) ?? []
       // Where an entirely-negative layer gets parked. Read from the RAW ends before any
@@ -190,18 +228,29 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
         const e = l === null || typeof l !== 'object' ? null : l.t_end_us
         if (typeof e === 'number' && Number.isFinite(e) && e > parkAt) parkAt = e
       }
+      const snapped: SnappedLayer[] = []
       for (const layer of layers) {
         if (layer === null || typeof layer !== 'object') continue
         const id = typeof layer.id === 'string' ? layer.id : null
-        const params = layer.params as Record<string, unknown> | undefined
+        const writtenEnd = layer.t_end_us
         parkAt = repairNegativeStart(id, layer, compGrid, parkAt)
-        const before = { start: layer.t_start_us }
+        const raw = { start: layer.t_start_us, end: layer.t_end_us }
         const start = snapField('Layer', id, layer, 't_start_us', compGrid)
-        let end = snapField('Layer', id, layer, 't_end_us', compGrid)
-        if (start !== null && end !== null && end <= start) end = widenToOneQuantum('Layer', id, layer, 't_end_us', start, compGrid)
-        if (params?.kind === 'Audio' && start !== null && typeof before.start === 'number' && start !== before.start)
-          keepAudioInPlace(id, params, before.start, start)
-        if (id !== null && start !== null && end !== null) geometry.set(id, { start, end })
+        const end = snapField('Layer', id, layer, 't_end_us', compGrid)
+        if (start === null || end === null) continue
+        snapped.push({ layer, id, raw: { start: raw.start as number, end: raw.end as number }, writtenEnd: writtenEnd as number, start, end, placed: 'snapped' })
+      }
+      placeCollapsed(snapped, compGrid)
+      for (const s of snapped) {
+        const params = s.layer.params as Record<string, unknown> | undefined
+        // A placed layer was moved, not trimmed: its source keeps its start and
+        // follows the new length.
+        const from = s.placed === 'snapped' ? s.raw : { start: s.start, end: s.start + (s.raw.end - s.raw.start) }
+        if (params?.kind === 'Audio') trimAudioSource(s.id, params, from, s)
+        if (s.id !== null) geometry.set(s.id, { start: s.start, end: s.end })
+        // Only an end this pass moved can have crossed the duration. A parked layer
+        // is off past its track's content and must not lengthen what plays.
+        if (s.placed !== 'parked' && s.end !== s.writtenEnd && s.end > repairedEnd) repairedEnd = s.end
       }
     }
 
@@ -232,9 +281,7 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     // the tail. Grow-only, so a deliberately pinned longer duration is never
     // shortened here.
     if (snappedDuration !== null) {
-      let maxEnd = 0
-      for (const g of geometry.values()) if (g.end > maxEnd) maxEnd = g.end
-      const needed = snapUpOnGrid(maxEnd, compGrid)
+      const needed = snapUpOnGrid(repairedEnd, compGrid)
       if (needed > snappedDuration) {
         repairs.push({ entity: 'Composition', id: compId, field: 'duration_us', from: snappedDuration, to: needed })
         comp.duration_us = needed

@@ -60,11 +60,14 @@ Date: 2026-07-25
 - A slip at the media's head or tail is not refused: the sound moves within the
   clip and the clip's edge plays silence where the media has none. A clip, or a
   piece a cut leaves, may be silence throughout.
-- Projects with audio edges on the sample lattice open with a reported repair:
-  edges go to the nearest frame and the source window moves by the samples the
-  start moved, so every sample plays where it did, reading silence where the
-  move passes the media's ends. A slipped layer's automation keys shift
-  against the sound by under half a frame.
+- Projects with audio edges on the sample lattice open with a reported repair
+  that trims each clip onto the nearest frames: each source end moves by the
+  samples its own edge moved. Every sample still sounding plays where it did,
+  two pieces cut from one source still meet, under half a frame of source is
+  shown or hidden at each edge, and an end past the media reads silence. A clip
+  shorter than a frame gets one frame beside where it was; with no room there it
+  is parked past its track and switched off, so the project still opens.
+  Automation keys are not rebased.
 - `composition.duration_us` stays a frame count. `OffGridLayerBoundary` keeps
   its `grid` field for MCP clients; it is always `frame`.
 - No new field: no DF flag, no timecode offset, no stored sync offset. The
