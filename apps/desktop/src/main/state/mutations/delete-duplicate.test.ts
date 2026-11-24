@@ -8,7 +8,7 @@ import { applyAddEffect } from './effects'
 import { EFFECT_KINDS } from '../../../shared/effects/params'
 import { CommandFailure, isCommandFailure } from '../errors'
 import { validate } from '../validate'
-import { AUDIO_GRID, frameGrid, gridIndex, isCanonicalOnGrid, snapOnGrid, timeUsAtGridIndex } from '../snap'
+import { AUDIO_GRID, frameGrid, isCanonicalOnGrid, timeUsAtGridIndex } from '../snap'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 describe('delete + duplicate', () => {
@@ -153,40 +153,32 @@ describe('applyPasteLayers', () => {
     expect(p).toEqual(before)
   })
 
-  // Data-loss dependency: a slipped audio member must come out of the copy with
-  // the SAME slip, in samples. 29.97 is the discriminating rate — the frame
-  // lattice is not a sublattice of the 48 kHz one, so a kind-blind snap onto the
-  // frame grid would re-sync the audio and validate would reject the clone.
-  it('snaps each member on ITS OWN lattice, so an audio member keeps its slip offset', () => {
+  // A slipped audio member must come out of the copy with the SAME slip: its
+  // edges ride the frame grid with the picture's, and the slip rides in its
+  // source window. 29.97 is the discriminating rate — a frame there is 1601.6
+  // samples, so a slip expressed in edges could not stay on frames.
+  it('lands every member on the same whole frames, and an audio member keeps its slipped source', () => {
     const FPS = { num: 30_000, den: 1001 }
     const fg = frameGrid(FPS)
     const frame = (i: number) => timeUsAtGridIndex(i, fg)
     const sample = (i: number) => timeUsAtGridIndex(i, AUDIO_GRID)
-    // A frame whose canonical µs is NOT a sample boundary (every 5th frame is).
-    const offSample = (from: number) => { for (let i = from; ; i++) if (snapOnGrid(frame(i), AUDIO_GRID) !== frame(i)) return i }
-    const F = offSample(30), M = offSample(90)
+    const F = 31, M = 97
     const g = seededGen(); const p = blankProject(g, 't'); root(p).fps = FPS
     const v = applyAddLayer(p, g, root(p).tracks[0].id, colorParams(BLACK, 1, 1), frame(F), frame(F + 60))
-    const slipped = sample(gridIndex(frame(F), AUDIO_GRID) + 7)
+    const slippedIn = sample(48_000 - 7) // sound 7 samples late against its edges
     const au: Layer = {
-      id: 'au', label: null, t_start_us: slipped, t_end_us: sample(gridIndex(slipped, AUDIO_GRID) + 96_000), enabled: true, locked: false, metadata: {}, effects: [],
-      params: { kind: 'Audio', media: 'm', src_in_us: 0, src_out_us: 2_000_000, gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 }, fade_in_us: 0, fade_out_us: 0, mute: false, role: 'dialogue' },
+      id: 'au', label: null, t_start_us: frame(F), t_end_us: frame(F + 60), enabled: true, locked: false, metadata: {}, effects: [],
+      params: { kind: 'Audio', media: 'm', src_in_us: slippedIn, src_out_us: slippedIn + 2_002_000, gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 }, fade_in_us: 0, fade_out_us: 0, mute: false, role: 'dialogue' },
     }
     root(p).tracks[1].layers = [au]
-    const slipBefore = gridIndex(au.t_start_us - find(p, v).t_start_us, AUDIO_GRID)
-    expect(slipBefore).not.toBe(0)
 
-    const delta = frame(M) - frame(F)
-    const map = applyPasteLayers(p, g, [v, 'au'], delta, null)
+    const map = applyPasteLayers(p, g, [v, 'au'], frame(M) - frame(F), null)
     const vClone = find(p, map.get(v)!); const aClone = find(p, map.get('au')!)
-    expect(vClone.t_start_us).toBe(frame(M))
-    // The audio clone is the source shifted by the delta on the SAMPLE lattice…
-    expect(aClone.t_start_us).toBe(snapOnGrid(au.t_start_us + delta, AUDIO_GRID))
-    expect(isCanonicalOnGrid(aClone.t_start_us, AUDIO_GRID)).toBe(true)
-    expect(isCanonicalOnGrid(aClone.t_end_us, AUDIO_GRID)).toBe(true)
-    // …so the slip survives in samples, and the kind-blind answer is provably different.
-    expect(gridIndex(aClone.t_start_us - vClone.t_start_us, AUDIO_GRID)).toBe(slipBefore)
-    expect(snapOnGrid(au.t_start_us + delta, fg)).not.toBe(aClone.t_start_us)
+    expect([vClone.t_start_us, vClone.t_end_us]).toEqual([frame(M), frame(M + 60)])
+    expect([aClone.t_start_us, aClone.t_end_us]).toEqual([vClone.t_start_us, vClone.t_end_us])
+    expect(isCanonicalOnGrid(aClone.t_start_us, fg)).toBe(true)
+    const src = (l: Layer) => { const q = l.params as { src_in_us: number; src_out_us: number }; return [q.src_in_us, q.src_out_us] }
+    expect(src(aClone)).toEqual(src(au))
   })
 })
 

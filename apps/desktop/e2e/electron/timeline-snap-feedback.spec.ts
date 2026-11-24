@@ -368,7 +368,7 @@ for (const cancelWith of ["pointercancel", "Escape", "blade tool"] as const) {
 }
 
 for (const { fpsNum, fpsDen } of [canvas, { fpsNum: 30_000, fpsDen: 1001 }]) {
-  const alignments = fpsDen === 1 ? ["aligned", "adjacent-frame"] : ["aligned", "adjacent-frame", "sample-grid"];
+  const alignments = fpsDen === 1 ? ["aligned", "adjacent-frame"] : ["aligned", "adjacent-frame", "audio"];
   for (const alignment of alignments) {
     const aligned = alignment !== "adjacent-frame";
     test(`reversing a track-only drag at ${fpsNum}/${fpsDen} fps (${alignment} edge)`, async () => {
@@ -391,7 +391,7 @@ for (const { fpsNum, fpsDen } of [canvas, { fpsNum: 30_000, fpsDen: 1001 }]) {
         });
         const frameUs = (index: number) => Math.round(index * 1_000_000 * fpsDen / fpsNum);
         const boundaryUs = frameUs(aligned ? 61 : 62);
-        const targetId = alignment === "sample-grid"
+        const targetId = alignment === "audio"
           ? await invokeCmd<string>(page, "add_media_layer", {
               trackId: targetTrackId, tStartUs: boundaryUs,
               mediaId: await invokeCmd<string>(page, "import_media", {
@@ -401,13 +401,14 @@ for (const { fpsNum, fpsDen } of [canvas, { fpsNum: 30_000, fpsDen: 1001 }]) {
           : await invokeCmd<string>(page, "add_color_layer", {
               trackId: targetTrackId, tStartUs: boundaryUs, durationUs: 1_000_000,
             });
-        if (alignment === "sample-grid") {
+        if (alignment === "audio") {
+          // An audio edge sits on the frame grid like every edge (ADR 0038), so
+          // at a fractional rate it lands exactly on the boundary it was placed at.
           const summary = await rootSummary<{
             tracks: Array<{ layers: Array<{ id: string; t_start_us: number }> }>;
           }>(page);
           const audio = summary.tracks.flatMap((track) => track.layers).find((layer) => layer.id === targetId);
-          expect(audio?.t_start_us).toBeDefined();
-          expect(audio?.t_start_us).not.toBe(boundaryUs);
+          expect(audio?.t_start_us).toBe(boundaryUs);
         }
         const startUs = frameUs(15);
         const endUs = frameUs(61);

@@ -18,7 +18,7 @@ import { applyLinksCreate } from './links'
 import { audioParams, mediaItemTemplate, videoClipParams } from './media'
 import { applyAddTransition } from './transitions'
 import { applyRippleDeleteGap, applyRippleDeleteLayers } from './ripple'
-import { AUDIO_GRID, frameGrid, timeUsAtGridIndex } from '../snap'
+import { frameGrid, timeUsAtGridIndex } from '../snap'
 import { isCommandFailure, type CommandError } from '../errors'
 import { groupedProject, root, withGroup } from '../__tests__/fixtures/project'
 
@@ -30,10 +30,9 @@ const VIDEO = '00000000-0000-0000-0000-0000000000bb'
 const SOUND = '00000000-0000-0000-0000-0000000000cc'
 const CROSSFADE = { kind: 'Crossfade' as const }
 
-/** Canonical µs of frame `i` / of second `n` / of 48 kHz sample `i`. */
+/** Canonical µs of frame `i` / of second `n`. */
 const f = (i: number) => timeUsAtGridIndex(i, FRAME)
 const sec = (n: number) => f(n * 30)
-const smp = (i: number) => timeUsAtGridIndex(i, AUDIO_GRID)
 
 /** An IdGen that reports how many ids it handed out — the id-burn convention (a
  *  refused path consumes ZERO) is otherwise invisible. */
@@ -150,16 +149,14 @@ describe('applyRippleDeleteLayers closes the span the deletion vacated', () => {
     expect(rc.duration_us).toBe(sec(3))
   })
 
-  it('lands each mover on ITS OWN lattice — audio exact, visual on the nearest frame', () => {
-    // A 10 000-sample hole is 208 333 µs, which is 6¼ frames: the visual mover
-    // cannot land on the audio answer and must not try to.
+  it('moves every mover, audio or visual, by the same whole frames', () => {
     const x = fx()
-    const a1 = sound(x, x.bRoll, smp(0), smp(10_000))
-    const a2 = sound(x, x.bRoll, smp(10_000), smp(20_000))
+    const a1 = sound(x, x.bRoll, f(0), f(6))
+    const a2 = sound(x, x.bRoll, f(6), f(12))
     const v = color(x, x.aRoll, f(30), f(60))
     applyRippleDeleteLayers(x.p, [a1])
     const rc = root(x.p)
-    expect(spanOf(rc, a2)).toEqual([smp(0), smp(10_000)])
+    expect(spanOf(rc, a2)).toEqual([f(0), f(6)])
     expect(spanOf(rc, v)).toEqual([f(24), f(54)])
   })
 

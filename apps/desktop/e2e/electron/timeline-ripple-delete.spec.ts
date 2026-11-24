@@ -52,11 +52,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// project and only DELTAS are asserted.
 const FIXTURE = path.resolve(__dirname, '../fixtures/media/test_1080p_30fps_audio.mp4')
 
-/// 30 fps, so every time this spec names is an exact lattice point on BOTH
-/// grids: 2 s is frame 60 and audio sample 96 000, 1 s is frame 30 and sample
-/// 48 000. That is what makes the shift assertions integer-exact instead of
-/// approximate — a mover re-snaps on its own lattice (`grid.ts` `shiftOnGrids`),
-/// and a delta that is a whole number of both makes the snap an identity.
+/// 30 fps, so every time this spec names is a whole frame: 2 s is frame 60,
+/// 1 s is frame 30. That is what makes the shift assertions integer-exact
+/// instead of approximate — every edge, Audio's included, moves by whole frames
+/// (ADR 0038), and a delta that is a whole number of them makes the snap an
+/// identity.
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 
 interface WireLayer {

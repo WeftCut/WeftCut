@@ -510,6 +510,14 @@ export const STEPS: readonly MigrationStep[] = [{
       item.file_hash_blake3 = `pending-${id}`
     }
   },
+}, {
+  from: 7,
+  apply() {
+    // v8 lets an un-retimed Audio layer's source window reach past its media,
+    // that part playing silence (ADR 0038). Every v7 file is already a valid v8
+    // file; the bump is there so an older build refuses a v8 file by its
+    // version rather than by the source-range rule it cannot know.
+  },
 }]
 
 export interface UpgradeOutcome {

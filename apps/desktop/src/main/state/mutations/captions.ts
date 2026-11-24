@@ -3,7 +3,7 @@ import { locateLayerIn, requireLayer, requireSameComposition, scopeComposition }
 import { applyDeleteLayer } from './delete'
 import { CommandFailure } from '../errors'
 import type { IdGen } from '../ids'
-import { gridForLayerKind, snapOnGrid } from '../snap'
+import { frameGrid, snapOnGrid } from '../snap'
 import { quantizeExtentPx, quantizeParam } from '../quantize'
 import { applyAddLayer, defaultTransform } from './add'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
@@ -157,7 +157,7 @@ export interface CaptionStylePatch {
  *  (the project's caption tokens, for transcripts). */
 export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], compW: number, compH: number, label: string | null, compositionId?: Uuid | null, style?: (t: TextParams) => TextParams): Uuid {
   const c = scopeComposition(p, compositionId)
-  const grid = gridForLayerKind('Text', c.fps)
+  const grid = frameGrid(c.fps)
   const sorted = cues.slice().sort((a, b) => (a.start_us < b.start_us ? -1 : a.start_us > b.start_us ? 1 : 0)) // stable by start_us
   // Candidates in the order they are tried: the composition's own unlocked
   // caption tracks first, then every lane this call opens, appended as it opens.

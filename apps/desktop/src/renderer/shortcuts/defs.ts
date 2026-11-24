@@ -363,7 +363,7 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // changes what timeline gestures do.
   toggleLinkOverride:     { defaultKeys: ["Alt+Shift+G"],  labelKey: "actions.toggle_link_override", scope: TIMELINE_SELECTION },
   // Nudge — one key, two subjects: a keyframe selection moves by frames, and
-  // with none armed the same key slips the selected audio (ADR 0038). The pair
+  // with none armed the same key slips the selected audio's source (ADR 0038). The pair
   // of tiers serves both, because ONE SAMPLE is 0.042 px at the 2000 px/s zoom
   // ceiling — sample precision is unreachable by dragging, so keys and numbers
   // are the entry points, and a single-sample step alone would be unusable for
@@ -380,7 +380,7 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   nudgeLargeBack:    { defaultKeys: ["Alt+Shift+ArrowLeft"],  labelKey: "actions.nudge_large_back",   hintKey: "hints.nudge_large_back",   repeatable: true, scope: TIMELINE_SELECTION },
   nudgeLargeForward: { defaultKeys: ["Alt+Shift+ArrowRight"], labelKey: "actions.nudge_large_forward", hintKey: "hints.nudge_large_forward", repeatable: true, scope: TIMELINE_SELECTION },
   // Zero the derived sync offset — the companion to the nudges, since the offset is
-  // geometry with no field to reset.
+  // derived from the two source windows, with no field to reset.
   resyncAudioToVideo:      { defaultKeys: ["Alt+Shift+S"],          labelKey: "actions.resync_audio_to_video" },
   // Playhead movement — composition-frame grid. Repeatable so holding
   // the arrow steps continuously.

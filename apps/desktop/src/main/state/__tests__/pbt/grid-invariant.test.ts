@@ -71,33 +71,19 @@ function isCanonical(tUs: number, num: number, den: number): boolean {
   return timeUsAtFrame(frameIndexRound(tUs, num, den), num, den) === tUs
 }
 
-// The audio lattice, stated INDEPENDENTLY of `snap.ts`'s `AUDIO_GRID` so this file
-// is a real cross-check rather than a tautology: a sample boundary is the frame
-// grid at 48000/1, which is `round(i * 1e6 / 48000)` (spec R2-D6).
-const AUDIO_RATE = 48_000
-function layerRate(kind: string, fps: { num: number; den: number }): { num: number; den: number } {
-  return kind === 'Audio' ? { num: AUDIO_RATE, den: 1 } : fps
-}
-
 function offGridFields(p: WireProject): string[] {
   const { num, den } = wireRoot(p).fps
   const bad: string[] = []
-  const check = (what: string, t: number, rate = { num, den }) => {
-    if (!isCanonical(t, rate.num, rate.den)) bad.push(`${what}=${t}`)
+  const check = (what: string, t: number) => {
+    if (!isCanonical(t, num, den)) bad.push(`${what}=${t}`)
   }
-  // The composition duration stays a FRAME count even when the furthest-reaching
-  // content is audio — `applyDurationAutofit` rounds the high-water mark up.
   check('composition.duration_us', wireRoot(p).duration_us)
   const geometry = new Map<string, WireLayer>()
   for (const t of wireRoot(p).tracks) for (const l of t.layers) {
     geometry.set(l.id, l)
-    // Per-KIND lattice. This is the assertion that fails if ANY of the three
-    // enforcement sites — validate's predicate, a mutation snap (incl. move's link
-    // fan-out), or serialize's load repair — is left frame-only for audio, or
-    // conversely starts letting a visual layer off the frame grid.
-    const rate = layerRate(l.params.kind, { num, den })
-    check(`layer ${l.id} (${l.params.kind}).t_start_us`, l.t_start_us, rate)
-    check(`layer ${l.id} (${l.params.kind}).t_end_us`, l.t_end_us, rate)
+    // Every kind, Audio included, on the composition frame grid (ADR 0038).
+    check(`layer ${l.id} (${l.params.kind}).t_start_us`, l.t_start_us)
+    check(`layer ${l.id} (${l.params.kind}).t_end_us`, l.t_end_us)
   }
   for (const m of wireRoot(p).markers) {
     check(`marker ${m.id}.t_us`, m.t_us)

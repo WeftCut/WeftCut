@@ -31,9 +31,8 @@ under 2^53.
   `approxFrameDurUs`, for display and estimates only, never a time step.
 - **Validation is the backstop.** The commit validator rejects any layer
   endpoint, `composition.duration_us` or marker time that is not canonical on
-  its field's grid. The endpoint grid is chosen per layer kind
-  (`gridForLayerKind`), which is how audio sits on the 48 kHz lattice
-  (ADR 0038). Grid errors carry `snap_to`.
+  its field's grid. Every layer endpoint, Audio's included, is on the frame
+  grid (ADR 0038). Grid errors carry `snap_to`.
 - **Deliberately unenforced.** `transition.duration_us` / `extended_us` are
   distances, not boundary times (a one-frame transition at 30000/1001 is
   33 367 µs at one cut and 33 366 µs at the next), so only `overlap ==

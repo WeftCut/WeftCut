@@ -1,6 +1,6 @@
 import { cropProblem } from '../../shared/crop'
 import { SCHEMA_VERSION, defaultSettings, type Animated, type Link, type Project } from './model'
-import { frameGrid, gridForLayerKind, snapOnGrid, snapUpOnGrid, type Grid } from './snap'
+import { AUDIO_GRID, frameGrid, gridIndex, snapOnGrid, snapUpOnGrid, timeUsAtGridIndex, type Grid } from './snap'
 import { scaleTracksTwins } from './mutations/scaleLink'
 import { positionProblem } from '../../shared/position'
 import { isUuid } from './ids'
@@ -21,8 +21,8 @@ export function serializeProject(p: Project): unknown {
   return { ...p, compositions }
 }
 
-/** One timeline field the load pass had to move: onto its own lattice (the
- *  composition frame grid, or the 48 kHz sample lattice for audio), or up to 0. */
+/** One timeline field the load pass had to move: onto the composition frame
+ *  grid, or up to 0. */
 export interface GridRepair {
   entity: 'Layer' | 'Composition' | 'Marker' | 'Transition'
   /** Entity id (for `'Composition'` the composition's own id); null only when
@@ -63,13 +63,12 @@ function warnGridRepair(repairs: readonly GridRepair[]): void {
  *  trim clamped against an arbitrary media duration — refuse to OPEN. Repair on
  *  load, reject on edit (spec D4).
  *
- *  KIND-KEYED, and that is load-bearing (spec § Two data-loss dependencies, #2):
- *  it asks the same `gridForLayerKind` the mutators and validate ask, so an Audio
- *  layer is repaired onto the 48 kHz lattice. A kind-BLIND version would snap
- *  sample-aligned audio back onto the composition frame grid on EVERY open,
- *  destroying every sync offset the user authored — silently, since a repair that
- *  "succeeds" looks like a no-op. It runs on the wire shape, so it reads
- *  `layer.params.kind` defensively rather than a typed union.
+ *  Every layer edge goes to the composition frame grid, Audio included (ADR 0038).
+ *  An Audio layer written when audio edges lived on the 48 kHz lattice keeps where
+ *  its sound plays: when its start moves by whole samples, the source window moves
+ *  with it (`keepAudioInPlace`), so the sample that played at a timeline instant
+ *  still plays there. It runs on the wire shape, so it reads `layer.params`
+ *  defensively rather than a typed union.
  *
  *  Idempotent by construction: every write is a snap, and a snapped value snaps to
  *  itself, so a repaired project that is saved and reopened reports nothing.
@@ -131,6 +130,30 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     repairs.push({ entity: 'Layer', id, field: 't_start_us', from: start, to: 0 })
     return parkAt
   }
+  /** An Audio layer whose start the frame snap moved: shift its source window so
+   *  the sound stays where it played. Counted in samples, the mixer's own unit, so a
+   *  start that moved by less than half a sample — the grid residue every pair at
+   *  29.97/59.94 carried — leaves the source untouched and the mix identical; a
+   *  slipped one moves both source ends by exactly the samples its start moved. The
+   *  mixer plays the source window's length whatever the edges say, so keeping that
+   *  length keeps every sample where it played. Nothing is clamped: an end that
+   *  moves past the media reads silence there (`padsWithSilence`), which is what the
+   *  legacy edge played, so a slip near the media's head or tail survives too. A
+   *  retimed layer (`time_map`) maps time non-linearly and is left to its edges. Automation keys are layer-local and are not rebased, so on a
+   *  slipped layer they move against the sound by less than half a frame. */
+  const keepAudioInPlace = (id: string | null, params: Record<string, unknown>, fromStart: number, toStart: number): void => {
+    if (params.time_map !== undefined) return
+    const moved = gridIndex(toStart, AUDIO_GRID) - gridIndex(fromStart, AUDIO_GRID)
+    if (moved === 0) return
+    const shift = (field: 'src_in_us' | 'src_out_us'): void => {
+      const cur = params[field]
+      if (typeof cur !== 'number') return
+      const next = timeUsAtGridIndex(gridIndex(cur, AUDIO_GRID) + moved, AUDIO_GRID)
+      if (next !== cur) { params[field] = next; repairs.push({ entity: 'Layer', id, field, from: cur, to: next }) }
+    }
+    shift('src_in_us')
+    shift('src_out_us')
+  }
   /** Push an end that the snap collapsed onto its own start out to the next lattice
    *  point, so the repair itself can never manufacture an `InvalidLayerRange` /
    *  zero-span region out of a legacy sub-quantum entity. */
@@ -170,12 +193,14 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
       for (const layer of layers) {
         if (layer === null || typeof layer !== 'object') continue
         const id = typeof layer.id === 'string' ? layer.id : null
-        const kind = (layer.params as { kind?: unknown } | undefined)?.kind
-        const grid = gridForLayerKind(typeof kind === 'string' ? kind : '', { num, den })
-        parkAt = repairNegativeStart(id, layer, grid, parkAt)
-        const start = snapField('Layer', id, layer, 't_start_us', grid)
-        let end = snapField('Layer', id, layer, 't_end_us', grid)
-        if (start !== null && end !== null && end <= start) end = widenToOneQuantum('Layer', id, layer, 't_end_us', start, grid)
+        const params = layer.params as Record<string, unknown> | undefined
+        parkAt = repairNegativeStart(id, layer, compGrid, parkAt)
+        const before = { start: layer.t_start_us }
+        const start = snapField('Layer', id, layer, 't_start_us', compGrid)
+        let end = snapField('Layer', id, layer, 't_end_us', compGrid)
+        if (start !== null && end !== null && end <= start) end = widenToOneQuantum('Layer', id, layer, 't_end_us', start, compGrid)
+        if (params?.kind === 'Audio' && start !== null && typeof before.start === 'number' && start !== before.start)
+          keepAudioInPlace(id, params, before.start, start)
         if (id !== null && start !== null && end !== null) geometry.set(id, { start, end })
       }
     }
@@ -198,15 +223,14 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
       }
     }
 
-    // The composition duration is a FRAME count regardless of which kind reaches
-    // furthest (validateComposition), so it snaps on the composition grid even when
-    // the content that defines it is audio on the sample lattice.
+    // The composition duration is a FRAME count (validateComposition).
     const snappedDuration = snapField('Composition', compId, comp, 'duration_us', compGrid)
-    // Repairing an audio endpoint can push it up to one sample PAST the stored
-    // duration, so grow the duration to enclose the repaired content — the same
-    // overflow guard `applyDurationAutofit` applies, and for the same reason: a
-    // composition shorter than its content silently drops the tail. Grow-only, so a
-    // deliberately pinned longer duration is never shortened here.
+    // Repairing an endpoint can push it up to half a frame PAST the stored duration
+    // (an audio end written on the sample lattice), so grow the duration to enclose
+    // the repaired content — the same overflow guard `applyDurationAutofit` applies,
+    // and for the same reason: a composition shorter than its content silently drops
+    // the tail. Grow-only, so a deliberately pinned longer duration is never
+    // shortened here.
     if (snappedDuration !== null) {
       let maxEnd = 0
       for (const g of geometry.values()) if (g.end > maxEnd) maxEnd = g.end

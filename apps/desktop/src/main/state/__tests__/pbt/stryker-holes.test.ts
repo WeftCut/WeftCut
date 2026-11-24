@@ -92,9 +92,13 @@ describe('validate: checkSrcRange negative srcIn', () => {
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
-  it('rejects an Audio layer with srcIn < 0', () => {
+  it('rejects a retimed Audio layer with srcIn < 0, and accepts an un-retimed one (silence, ADR 0038)', () => {
     const p = projectWithMedia()
-    root(p).tracks[0].layers = [audioLayer('a1', 0, 1_000_000, -100, 1_000_000)]
+    const a = audioLayer('a1', 0, 1_000_000, -100, 999_900)
+    root(p).tracks[0].layers = [a]
+    expect(() => validate(p)).not.toThrow()
+    Object.assign(a.params, { time_map: { kind: 'Affine', rate: { num: 2, den: 1 } }, src_out_us: 1_999_900 })
+    a.t_end_us = 1_000_000
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })

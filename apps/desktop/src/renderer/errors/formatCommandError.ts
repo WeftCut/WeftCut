@@ -2,7 +2,6 @@ import i18n from "../i18n";
 import { formatTimecode } from "../frames";
 import { layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
-import { audioUnits, formatAudioTime } from "../state/audioUnitsStore";
 import { getMotif } from "../render/motifs/catalog";
 import { currentOpenComposition, useProjectStore } from "../state/projectStore";
 import type {
@@ -144,10 +143,9 @@ export function liveRefusalContext(
     },
     retimeDuration(us, layerId) {
       const store = useProjectStore.getState();
-      const layer = store.layerById.get(layerId);
       const compId = store.compositionIdByLayerId.get(layerId);
       const comp = compId ? store.summary?.compositions[compId] : currentOpenComposition();
-      return formatAudioTime(us, layer?.params.kind === 'Audio' ? audioUnits() : 'frames', comp?.fps_num ?? 30, comp?.fps_den ?? 1);
+      return formatTimecode(us, comp?.fps_num ?? 30, comp?.fps_den ?? 1);
     },
   };
 }

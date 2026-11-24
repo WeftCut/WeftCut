@@ -136,13 +136,18 @@ describe('validate: a clip\'s source window', () => {
     Object.assign(ref.params, { src_in_us: 9, src_out_us: 9 })
     expect(validationError(p)).toEqual({ rule: 'InvalidSrcRange', layer: refLayerId, src_in: 9, src_out: 9 })
   })
-  it('refuses a window past the media, by its exact end, on both media kinds', () => {
-    for (const make of [videoParams, audioParams]) {
+  it('refuses a window past the media, by its exact end, on a picture and on retimed audio', () => {
+    const retimedAudio = (over: object = {}) => audioParams({ time_map: { kind: 'Affine', rate: { num: 1, den: 1 } }, ...over })
+    for (const make of [videoParams, retimedAudio]) {
       expect(validationError(withParams(make({ src_out_us: MEDIA_US + 1 })))).toEqual({ rule: 'SrcRangeExceedsMedia', layer: 'l', src_in: 0, src_out: MEDIA_US + 1, media_duration: MEDIA_US })
       // A quarter microsecond over: the comparison is exact, not rounded to whole µs.
       expect(validationError(withParams(make({ src_out_us: MEDIA_US, source_phase: { in: exact(0, 1), out: exact(1, 4) } })))).toMatchObject({ rule: 'SrcRangeExceedsMedia', layer: 'l', media_duration: MEDIA_US })
       expect(() => validate(withParams(make({ src_out_us: MEDIA_US })))).not.toThrow()
     }
+  })
+  it('accepts an un-retimed audio window past either end of its media: that part plays silence', () => {
+    expect(() => validate(withParams(audioParams({ src_in_us: -5, src_out_us: MEDIA_US + 5 })))).not.toThrow()
+    expect(() => validate(withParams(audioParams({ src_in_us: MEDIA_US + 1, src_out_us: MEDIA_US + 2 })))).not.toThrow()
   })
   it('accepts any window on media of unknown length', () => {
     for (const duration_us of [null, undefined]) {

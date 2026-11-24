@@ -11,22 +11,21 @@
 //   and re-measures the transitions it carries, exactly as a ripple delete
 //   would.
 //
-// Each member moves by whole points of its own grid (`travelOnGrids` in
-// `../snap`), so a set lands exactly where a drag of the same set would.
+// Every member moves by the same whole frames (`travelOnGrid` in `../snap`), so a set lands exactly where a drag of the same set would.
 // Overlap is validate's (`LayerOverlap` names the pair); a locked lane refuses
 // before anything moves; a travel that would carry a member before 0 is
 // refused, and a gesture that floors does so before it calls (ADR 0048).
 import type { Composition, Layer, Project, Uuid } from '../model'
 import { rootComposition } from '../model'
 import { CommandFailure } from '../errors'
-import { gridForLayerKind, snapOnGrid, travelBy, travelCrossesZero, travelOnGrids, type ShiftMember, type Travel } from '../snap'
+import { travelBy, travelCrossesZero, travelOnGrid, type ShiftMember, type Travel } from '../snap'
 import { locateLayerIn, requireSameComposition } from './helpers'
 import { linkSiblingsExcluding } from './links'
 import { planRippleSpan, type RippleMove } from '../../../renderer/ripple/plan'
 import { applySweep, rippleViewOfComposition } from './ripple'
 
 /** What the shift touched: the layers re-timed (partners included) and the
- *  delta the set travelled, before each member's own grid landing. Where a
+ *  delta the set travelled, before the grid snap. Where a
  *  member landed is in the snapshot; the MCP record reads it back per layer. */
 export interface ShiftLayersResult { moved: Uuid[]; delta_us: number }
 
@@ -54,9 +53,7 @@ export function applyShiftLayers(p: Project, ids: readonly Uuid[], travel: Trave
 
 /** Shift every layer of a composition (the root when `compositionId` is null)
  *  that STARTS at or after `fromTUs`, on `trackIds` or on every track — "shift
- *  everything after t". "At or after" is read on each layer's own lattice
- *  (`startsFrom`), so a sweep from a video cut takes the linked audio piece
- *  that starts at that cut's nearest sample.
+ *  everything after t".
  *
  *  A positive delta opens room: a link the time (or the lane filter) splits is
  *  refused as `ShiftLinkStraddles`, because a link is "these move together"
@@ -80,7 +77,7 @@ export function applyShiftLayersFrom(
   if (trackIds) for (const t of trackIds) if (!c.tracks.some((x) => x.id === t)) throw new CommandFailure({ error: 'TrackNotFound', track: t })
   const lanes = trackIds ? new Set(trackIds) : null
   const ids: Uuid[] = []
-  const from = (l: Layer): boolean => startsFrom(l, fromTUs, c)
+  const from = (l: Layer): boolean => l.t_start_us >= fromTUs
   for (const t of c.tracks) {
     if (lanes && !lanes.has(t.id)) continue
     for (const l of t.layers) if (from(l)) ids.push(l.id)
@@ -104,7 +101,7 @@ export function applyShiftLayersFrom(
   // A delta smaller than a grid step rounds every layer home. Thrown from inside
   // the recipe, so the draft goes with it.
   if (strict && spans.every(({ layer, start, end }) => layer.t_start_us === start && layer.t_end_us === end))
-    throw new CommandFailure({ error: 'InvalidArgument', field: 'delta_us', detail: `on their own grids every layer lands where it already is after ${deltaUs} µs, so the sweep would move nothing` })
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'delta_us', detail: `on the frame grid every layer lands where it already is after ${deltaUs} µs, so the sweep would move nothing` })
   return result
 }
 
@@ -130,11 +127,6 @@ function shiftLeftOf(c: Composition, lanes: ReadonlySet<Uuid> | null, s: number,
   return { moved: applySweep(c, plan.moves), delta_us: s - e }
 }
 
-/** True when `l` starts at or after `tUs` as its own lattice reads `tUs`. */
-function startsFrom(l: Layer, tUs: number, c: Composition): boolean {
-  return l.t_start_us >= snapOnGrid(tUs, gridForLayerKind(l.params.kind, c.fps))
-}
-
 function shiftInComposition(c: Composition, ids: readonly Uuid[], travel: Travel): ShiftLayersResult {
   if (ids.length === 0) return { moved: [], delta_us: 0 }
   const located = ids.map((id) => {
@@ -143,12 +135,12 @@ function shiftInComposition(c: Composition, ids: readonly Uuid[], travel: Travel
     return loc
   })
   for (const loc of located) if (loc.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: loc.track.id })
-  const movers: ShiftMember[] = located.map(({ layer }) => ({ id: layer.id, kind: layer.params.kind, tStartUs: layer.t_start_us, tEndUs: layer.t_end_us }))
+  const movers: ShiftMember[] = located.map(({ layer }) => ({ id: layer.id, tStartUs: layer.t_start_us, tEndUs: layer.t_end_us }))
   if (travelCrossesZero(movers, travel, c.fps)) {
     const earliest = movers.reduce((a, b) => (b.tStartUs < a.tStartUs ? b : a))
     throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: earliest.id, t_start: earliest.tStartUs + travel.toUs - travel.fromUs } })
   }
-  const landings = travelOnGrids(movers, travel, c.fps)
+  const landings = travelOnGrid(movers, travel, c.fps)
   // `applySweep` writes each landing on the mover's own lane and keeps the
   // frame count of a transition both of whose participants move.
   const moves: RippleMove[] = located.map(({ layer, track }) => ({ layer: layer.id, track: track.id, t_start_us: landings.get(layer.id)!.tStartUs, t_end_us: landings.get(layer.id)!.tEndUs }))

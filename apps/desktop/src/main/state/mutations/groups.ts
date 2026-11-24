@@ -9,7 +9,7 @@ import type { Animated, Composition, CompositionRefParams, Layer, Project, Track
 import { eachLayer, newComposition } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
-import { frameGrid, gridForLayerKind, snapOnGrid } from '../snap'
+import { frameGrid, snapOnGrid } from '../snap'
 import { layerOverlapClass } from '../validate'
 import { applyAddTrack, defaultTransform } from './add'
 import {
@@ -39,8 +39,8 @@ export function compositionRefCount(p: Project, compositionId: Uuid): number {
 /** Pre-compose (spec § Pre-compose, steps 1–5): move `layerIds` — one or more
  *  layers of ONE composition P — into a new composition C that copies P's
  *  settings and the reserved A/B skeleton, and place C back in P as one Group
- *  layer at the set's earliest start. Members shift by `-t0` on their own
- *  lattice (keyframes are layer-local, so a whole-layer shift leaves them alone
+ *  layer at the set's earliest start. Members shift by `-t0` on the frame
+ *  grid (keyframes are layer-local, so a whole-layer shift leaves them alone
  *  — same as `applyMoveLayer`). P's tracks that held members map bottom-up onto
  *  C's A roll, B roll, then fresh transient lanes, so relative z-order survives.
  *
@@ -87,8 +87,8 @@ export function applyGroupsCreate(p: Project, idGen: IdGen, layerIds: readonly U
     const loc = locateLayerIn(parent, id)!
     const layer = loc.track.layers.splice(loc.layerIndex, 1)[0]
     // `-t0` is a delta between two canonical times, which at a fractional rate
-    // is not itself canonical — re-snap on the layer's OWN grid, as move does.
-    const grid = gridForLayerKind(layer.params.kind, fps)
+    // is not itself canonical — re-snap on the frame grid, as move does.
+    const grid = frameGrid(fps)
     layer.t_start_us = snapOnGrid(layer.t_start_us - t0, grid)
     layer.t_end_us = snapOnGrid(layer.t_end_us - t0, grid)
     insertSorted(child.tracks.find((t) => t.id === laneOf.get(loc.track.id))!, layer)
@@ -244,7 +244,7 @@ export function applyGroupsUngroup(p: Project, idGen: IdGen, layerId: Uuid): voi
       const cutOut = l.t_end_us - b
       if (hasSourceWindow(copy.params)) { copy.params.src_in_us += cutIn; copy.params.src_out_us -= cutOut }
       if (cutIn > 0) shiftLayerKeyframes(copy.params, -cutIn)
-      const grid = gridForLayerKind(copy.params.kind, parent.fps)
+      const grid = frameGrid(parent.fps)
       copy.t_start_us = snapOnGrid(a + offset, grid)
       copy.t_end_us = snapOnGrid(b + offset, grid)
       lane.layers.push(copy) // `hits` is t-sorted and shifts uniformly, so this stays sorted

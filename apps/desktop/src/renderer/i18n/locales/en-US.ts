@@ -179,9 +179,10 @@ const enUS = {
       "InvalidSnapshot": "The clip timing is invalid.",
       "InvalidTarget": "Enter a positive rate or duration.",
       "Numeric": "The requested timing exceeds the supported precision.",
-      "DurationTooShort": "The duration must span at least one frame or audio sample.",
+      "DurationTooShort": "The duration must span at least one frame.",
       "Transition": "This change would invalidate an existing transition.",
-      "Collision": "The new duration overlaps another clip. Shorten it or increase the rate."
+      "Collision": "The new duration overlaps another clip. Shorten it or increase the rate.",
+      "SilencePadded": "This audio plays silence past its media. Trim the silence away before changing speed."
     },
     "rate": "Speed",
     "duration": "Target duration",
@@ -1124,13 +1125,13 @@ const enUS = {
   // rule itself is stated.
   hints: {
     nudge_back:
-      "Moves the selected keyframes one frame earlier; with no keyframes selected, slips the selected audio one sample.",
+      "Moves the selected keyframes one frame earlier; with no keyframes selected, slips the selected audio's sound one sample earlier inside its clip.",
     nudge_forward:
-      "Moves the selected keyframes one frame later; with no keyframes selected, slips the selected audio one sample.",
+      "Moves the selected keyframes one frame later; with no keyframes selected, slips the selected audio's sound one sample later inside its clip.",
     nudge_large_back:
-      "Moves the selected keyframes ten frames earlier; with no keyframes selected, slips the selected audio one millisecond.",
+      "Moves the selected keyframes ten frames earlier; with no keyframes selected, slips the selected audio's sound one millisecond earlier inside its clip.",
     nudge_large_forward:
-      "Moves the selected keyframes ten frames later; with no keyframes selected, slips the selected audio one millisecond.",
+      "Moves the selected keyframes ten frames later; with no keyframes selected, slips the selected audio's sound one millisecond later inside its clip.",
     delete_selected:
       "Deletes the selected keyframes when any are selected, else the selected clips. A selected gap closes instead — everything after it moves left.",
     ripple_delete_selected:
@@ -1376,10 +1377,6 @@ const enUS = {
     bake_dot_ready: "Baked",
     bake_dot_error: "Pre-bake failed",
     audio_slipped: "Audio slipped {{offset}} from its video",
-    audio_units: "Audio units",
-    audio_units_frames: "Timecode (HH:MM:SS:FF)",
-    audio_units_ms: "Milliseconds (HH:MM:SS.mmm)",
-    audio_units_samples: "Samples (48 kHz)",
     // Transition create entries — shown when the right-click lands within
     // the tolerance band of a cut between adjacent visual layers.
     add_transition_crossfade: "Add crossfade",
@@ -2684,8 +2681,6 @@ const enUS = {
     advanced: "Advanced",
     label: "Label",
     enabled: "Enabled",
-    audio_units_hint:
-      "Audio edits land on exact 48 kHz samples, so these fields read and accept sub-frame times. Dragging still snaps to frames — samples are 0.042 px wide at maximum zoom. Use Alt+←/→ to nudge one sample, Alt+Shift+←/→ for 1 ms.",
     t_start: "Start",
     t_start_hint: "Move the clip, keeping its duration.",
     t_end: "End",

@@ -1,6 +1,6 @@
 import type { Layer, LayerParams, Marker, MarkerAnchor, Project, Rgba, TextParams, TrackRole, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { gridForLayerKind, snapOnGrid } from '../snap'
+import { frameGrid, snapOnGrid } from '../snap'
 import { authoredExtentPx } from '../quantize'
 import { applyDurationAutofit, compositionOf, locateTrack, scopeComposition } from './helpers'
 import { snapMarkerTimes } from './markers'
@@ -48,16 +48,9 @@ export function defaultTransform(x = 0, y = 0) {
   return { position: staticPosition(x, y), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: s(0.5), anchor_y: s(0.5), scale_linked: true }
 }
 
-/** Snaps both edges onto the new layer's OWN grid — the 48 kHz sample lattice for an
- *  Audio layer, the composition frame grid otherwise (spec R2-D6) — inserts
- *  t-start-sorted, autofits.
- *
- *  An auto-paired A/V drop therefore gives the two members the same REQUESTED time
- *  resolved on two lattices. At the six rates where the frame lattice is an exact
- *  sublattice of 48 kHz they land identically; at 29.97 / 59.94 the audio lands on
- *  the sample boundary nearest the video frame — which is where the mixer would have
- *  played it anyway (`mix.rs` rounds `t_start_us` to a sample), so this stores what
- *  renders instead of a value that renders as something else.
+/** Snaps both edges onto the composition frame grid, whatever the kind (ADR 0038),
+ *  inserts t-start-sorted, autofits. An auto-paired A/V drop therefore lands both
+ *  members on identical edges.
  *
  *  The composition is the TRACK's: a track lives in exactly one, so the lane
  *  names the scope and no separate composition argument is needed.
@@ -67,7 +60,7 @@ export function applyAddLayer(p: Project, idGen: IdGen, trackId: Uuid, params: L
   const dest = locateTrack(p, trackId)
   if (!dest) throw new CommandFailure({ error: 'TrackNotFound', track: trackId })
   const { comp: c, track } = dest
-  const grid = gridForLayerKind(params.kind, c.fps)
+  const grid = frameGrid(c.fps)
   const t0 = snapOnGrid(tStartUs, grid)
   const t1 = snapOnGrid(tEndUs, grid)
   const layerId = idGen()

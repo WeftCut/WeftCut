@@ -143,11 +143,12 @@ const ANCHOR: DragSubject = {
   name: "Beach",
   locked: false,
 };
-/// Its linked partner, half a second behind it and half a second long.
+/// Its linked partner, 0.4 s behind it and 0.6 s long: whole frames at both 25
+/// and 30 fps, so the destination's grid holds it as stored.
 const PARTNER: DragSubject = {
   layerId: "src-b",
   trackId: "s-2",
-  originalTStart: 3_500_000,
+  originalTStart: 3_400_000,
   originalTEnd: 4_000_000,
   kind: "Audio",
   name: "Beach audio",
@@ -324,8 +325,8 @@ describe("ForeignDragGhost", () => {
     // landing gives, and the difference IS the jump this removes.
     expect(first!.dataset.startUs).toBe("520000");
     expect(first!.dataset.startUs).not.toBe(String(LANDING_AT_25FPS));
-    // The offset positions the set; it does not disturb it. Still 2.5 s behind.
-    expect(second!.dataset.startUs).toBe(String(520_000 + 2_500_000));
+    // The offset positions the set; it does not disturb it. Still 2.4 s behind.
+    expect(second!.dataset.startUs).toBe(String(520_000 + 2_400_000));
     // And the claim carries the same head the block was drawn at, so the release
     // commits what the ghost promised.
     expect(view.claim()?.anchorTStartUs).toBe(520_000);
@@ -385,13 +386,13 @@ describe("ForeignDragGhost", () => {
     const [first, second] = view.ghosts();
     expect(view.ghosts()).toHaveLength(2);
     expect(first!.dataset.startUs).toBe(String(LANDING_AT_25FPS));
-    // 2.5 s behind the anchor in the source, 2.5 s behind it here.
-    expect(second!.dataset.startUs).toBe(String(LANDING_AT_25FPS + 2_500_000));
+    // 2.4 s behind the anchor in the source, 2.4 s behind it here.
+    expect(second!.dataset.startUs).toBe(String(LANDING_AT_25FPS + 2_400_000));
     // Both on the row the pointer picked: the primitive puts every source block
     // on a named destination lane, whatever lane it came from.
     expect(first!.dataset.trackId).toBe("d-2");
     expect(second!.dataset.trackId).toBe("d-2");
-    expect(second!.style.width).toBe("50px");
+    expect(second!.style.width).toBe("60px");
   });
 
   it("reads a locked MEMBER of the dragged link as locked", () => {
@@ -412,14 +413,14 @@ describe("ForeignDragGhost", () => {
     }
   });
 
-  it("stops the set as one body at zero, rather than clamping each member", () => {
+  it("stops the set as one body at zero, rather than clamping each member, and commits that stop", async () => {
     // A member that starts BEFORE the anchor, which is what makes the two
     // behaviours differ: dragged far enough left, it is the one that runs out
-    // of room first.
+    // of room first. Frame 12 at 25 fps, 13 frames before the anchor.
     const early: DragSubject = {
       ...PARTNER,
-      originalTStart: 500_000,
-      originalTEnd: 900_000,
+      originalTStart: 480_000,
+      originalTEnd: 880_000,
     };
     const view = mountGhost({
       drag: { subjects: [ANCHOR, early] },
@@ -429,21 +430,28 @@ describe("ForeignDragGhost", () => {
 
     const [first, second] = view.ghosts();
     const start = (ghost: HTMLElement | undefined) => Number(ghost!.dataset.startUs);
-    // Clamping per member would put BOTH at zero and flatten the 500 ms
+    const anchorHead = start(first);
+    // Clamping per member would put BOTH at zero and flatten the 520 ms
     // between them. Worse, it would draw a landing the commit refuses:
     // `applyMoveLayersToComposition` refuses a member before zero outright and
     // never clamps, so the ghost has to stop where the command still accepts.
-    expect(start(second)).toBeGreaterThanOrEqual(0);
-    expect(start(first) - start(second)).toBe(
+    // The set stops on the first frame at which nobody is before zero: the
+    // earliest member exactly on it, the anchor its 13 frames later.
+    expect(start(second)).toBe(0);
+    expect(anchorHead - start(second)).toBe(
       ANCHOR.originalTStart - early.originalTStart,
     );
-    // The anchor stops on the first frame of the DESTINATION's grid at which
-    // nobody is before zero. 500 000 µs, where the raw shift would put it, is
-    // half a frame at 25 fps, so the set stops at 520 000 with the audio 20 ms
-    // in: a video frame cannot sit 500 ms after time 0's sample, and the ghost's
-    // job is to say what will happen rather than what was asked for.
-    expect(start(first)).toBe(520_000);
-    expect(start(first) - 40_000 - (ANCHOR.originalTStart - early.originalTStart)).toBeLessThan(0);
+
+    // The commit asks for the head the ghost drew; the command floors that
+    // request to the same travel.
+    await view.release();
+    expect(mocks.moveLayersToComposition).toHaveBeenCalledWith(
+      [ANCHOR.layerId, early.layerId],
+      DEST,
+      ANCHOR.layerId,
+      anchorHead,
+      "d-1",
+    );
   });
 
   it("snaps to a boundary THIS composition owns", () => {

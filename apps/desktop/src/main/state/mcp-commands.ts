@@ -1051,10 +1051,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
   // hand), so surface it — the agent must not re-derive the lattice arithmetic.
   if (e.error === 'ValidationFailed' && e.detail.rule === 'OffGridLayerBoundary') {
     const d = e.detail
-    // Name the lattice, not just the numbers: an Audio rejection reports fps 48000/1
-    // and would otherwise read as an absurd 48000 fps composition.
-    const lattice = d.grid === 'sample' ? `the ${d.fps.num} Hz audio sample lattice` : `the ${d.fps.num}/${d.fps.den} composition frame grid`
-    return { code: 'invalid_params', message: `layer ${d.layer} ${d.field} ${d.t} µs is not on ${lattice}; nearest is ${d.snap_to}`, data: {
+    return { code: 'invalid_params', message: `layer ${d.layer} ${d.field} ${d.t} µs is not on the ${d.fps.num}/${d.fps.den} composition frame grid; nearest is ${d.snap_to}`, data: {
       error: 'OffGridLayerBoundary', layer: d.layer, field: d.field,
       requested_us: d.t, snap_to_us: d.snap_to, grid: d.grid, rate: [d.fps.num, d.fps.den],
       options: [{ action: 'retry_snapped', field: d.field, t_us: d.snap_to }],
@@ -1588,7 +1585,7 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   letter_spacing: { type: 'number', description: 'Letter spacing, px.' },
   outline_width: { type: 'number', description: 'Stroke width, composition px; 0 removes the outline.' },
   outline_color: { ...RGBA_SCHEMA, description: 'Stroke colour.' },
-  src_in_us: { type: 'integer', description: 'Source in point, µs — a slip: the window moves and keeps its length, so the span is unchanged. Its end follows; change the length with trim_layer.' },
+  src_in_us: { type: 'integer', description: 'Source in point, µs — a slip: the window moves and keeps its length, so the span is unchanged. Its end follows; change the length with trim_layer. An un-retimed Audio window may start before 0 or end past its media; that part plays silence.' },
   scale_x: { type: 'number', description: 'Horizontal scale factor; 1 = native size.' },
   scale_y: { type: 'number', description: 'Vertical scale factor; 1 = native size.' },
   scale_linked: { type: 'boolean', description: 'After the scale fields: true links the pair, copying the scale_x track onto scale_y (destructive to an animated scale_y); false unlinks.' },
@@ -1636,7 +1633,7 @@ const ADD_LAYER_CONTENT_SCHEMA = {
       audio: { type: 'string', enum: ['linked', 'none'], description: "`linked`: also place its audio as a linked dialogue Audio layer (refused without an audio stream); `none`: picture only. Default: settings `auto_pair_audio_on_import`." },
     }, ['media_id', 'src_in_us']),
     addLayerArm('image', 'An Image item, a still over the span.', { media_id: ID_SCHEMA('Image media'), graphic_role: GRAPHIC_ROLE_SCHEMA }, ['media_id']),
-    addLayerArm('audio', "An Audio item, or a Video item's audio alone: unlinked, on the track's audio lane; window `src_in_us` plus the span, edges on the 48 kHz lattice.", {
+    addLayerArm('audio', "An Audio item, or a Video item's audio alone: unlinked, on the track's audio lane; window `src_in_us` plus the span, edges on the frame grid.", {
       media_id: ID_SCHEMA('Media'), src_in_us: SRC_IN_SCHEMA,
       role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'Mixing bus; default music.' },
     }, ['media_id', 'src_in_us']),
@@ -2500,7 +2497,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The VideoClip to split.' }, min_shot_us: US_SCHEMA('Shortest shot to keep; default 500000'), drop_short: { type: 'boolean', description: 'Also delete segments shorter than min_shot_us, with the overlapping members of their link. Default false.' } }, required: ['layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), min_shot_us: parseNumOpt(a.min_shot_us, 'min_shot_us'), drop_short: parseBoolOpt(a.drop_short, 'drop_short', false) }) },
   { name: 'remove_pauses', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Cut pauses out of the audio a clip plays and ripple downstream, as one edit. `layer_id` is an Audio layer, or a VideoClip read through its linked Audio member; link members are cut together, on the frame grid when picture is linked. `pauses` cuts exactly those ranges (`detect_pauses` output, e.g. the subset the user kept); without it the clip is detected at `threshold_db` / `min_pause_us` (detect_pauses' defaults). `pad_us` keeps 100000 µs of each pause on each side; a pause at a clip edge trims whole. Returns `{ surviving_layer_ids, removed, removed_us }`. To review first: `detect_pauses`, then one `create_tacks` batch. Refuses whole, before any write: `RippleInsideHole` (a layer on another track starts inside a pause), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked`, `InvalidArgument` (pad too large, a pause outside the clip or overlapping another, a clip silent end to end).",
+    description: "Cut pauses out of the audio a clip plays and ripple downstream, as one edit. `layer_id` is an Audio layer, or a VideoClip read through its linked Audio member; link members are cut together, on the frame grid. `pauses` cuts exactly those ranges (`detect_pauses` output, e.g. the subset the user kept); without it the clip is detected at `threshold_db` / `min_pause_us` (detect_pauses' defaults). `pad_us` keeps 100000 µs of each pause on each side; a pause at a clip edge trims whole. Returns `{ surviving_layer_ids, removed, removed_us }`. To review first: `detect_pauses`, then one `create_tacks` batch. Refuses whole, before any write: `RippleInsideHole` (a layer on another track starts inside a pause), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked`, `InvalidArgument` (pad too large, a pause outside the clip or overlapping another, a clip silent end to end).",
     inputSchema: { type: 'object', properties: {
       layer_id: { type: 'string', description: 'Target Audio layer id, or a VideoClip id that delegates to its linked Audio layer.' },
       pauses: { type: 'array', minItems: 1, maxItems: REMOVE_PAUSES_MAX, description: 'Timeline ranges to cut, as `detect_pauses` returned them; replaces detection, so not with `threshold_db` / `min_pause_us`.', items: { type: 'object', properties: {

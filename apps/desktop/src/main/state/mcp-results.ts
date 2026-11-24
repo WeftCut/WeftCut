@@ -14,7 +14,8 @@
 // text block, which is the part every client shows the model.
 //
 // `adjusted[]` names each numeric field whose applied value differs from the
-// requested one (today: the frame/sample-grid snap). The policy for what may be
+// requested one (today: the frame-grid snap, or the sample-lattice snap of an
+// audio automation key). The policy for what may be
 // adjusted silently and what must refuse lives with the mutations; this file
 // only reports the difference.
 import type { Composition, Layer, Project, Uuid } from './model'
@@ -432,9 +433,9 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
     }
   },
   // `moved` is every layer the sweep re-timed, each with where it landed and
-  // `adjusted` for its own grid snap: the set has no single applied delta,
-  // since a frame-grid member and a sample-grid member land different
-  // distances from one request.
+  // `adjusted` for its grid snap: the set has no single applied delta in µs,
+  // since at a fractional rate the same whole frames span a different µs
+  // count from each start.
   shift_layers: (c) => {
     const v = c.value as { moved: Uuid[]; delta_us: number }
     const requested = typeof c.args.delta_us === 'number' ? c.args.delta_us : v.delta_us
