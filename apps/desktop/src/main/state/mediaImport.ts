@@ -77,6 +77,10 @@ export interface MediaImporter {
   /** Refuse a path `ensureImported` would refuse by name, before anything is
    *  read or written; answers the absolute path. */
   checkPath(asked: string, field?: string): string
+  /** Resolves once no import has a pool row still being hashed or its copy
+   *  still to be queued; rejects with the signal's reason when `signal`
+   *  aborts first. Imports started meanwhile are waited for too. */
+  idle(signal: AbortSignal): Promise<void>
 }
 
 export function createMediaImporter(deps: MediaImportDeps): MediaImporter {
@@ -91,7 +95,20 @@ export function createMediaImporter(deps: MediaImportDeps): MediaImporter {
       return ensureImported(asked, deps, (command, args) => deps.actor.dispatch(command, args, by), inFlight, reserved)
     },
     checkPath(asked, field) { return checkImportPath(asked, deps, field) },
+    async idle(signal) {
+      while (inFlight.size > 0) await untilAborted(signal, Promise.allSettled(inFlight.values()))
+      signal.throwIfAborted()
+    },
   }
+}
+
+/** `work`, or the signal's reason as soon as `signal` aborts. */
+export async function untilAborted(signal: AbortSignal, work: Promise<unknown>): Promise<void> {
+  signal.throwIfAborted()
+  let abort = () => {}
+  const aborted = new Promise<never>((_, reject) => { abort = () => reject(signal.reason) })
+  signal.addEventListener('abort', abort, { once: true })
+  try { await Promise.race([work, aborted]) } finally { signal.removeEventListener('abort', abort) }
 }
 
 /** The `Media/` name each queued copy is reserved to land at, by media id. */

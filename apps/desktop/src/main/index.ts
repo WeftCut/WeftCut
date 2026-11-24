@@ -87,6 +87,7 @@ import { setMotifFontSource } from './motif/fontProps.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
+import { createImportCopies } from './state/importCopies.js'
 import { ComputeCancelledError, ComputeJobs } from './compute/jobs.js'
 import { COMPUTE_CANCELLED_FIELD, COMPUTE_JOB_CANCEL_CHANNEL, COMPUTE_JOBS_SNAPSHOT_CHANNEL, COMPUTE_REQUEST_ID_ARG } from '../shared/compute-jobs.js'
 import { SINGLE_MEDIA_CHANNELS, WAVEFORM_KEY_CHANNELS, resolveSingleMediaArgs, resolveWaveformKeyArg } from './state/single-media-forward.js'
@@ -736,6 +737,10 @@ app.whenReady().then(async () => {
   // Construct + init the Backend before creating the window
   const workspaceEvents = createWorkspaceEventGate()
   let importDiagnostics: ImportDiagnostics | undefined
+  const importCopies = createImportCopies(async () => {
+    const entries = JSON.parse(await backend!.invoke('import_queue_list', '{}')) as unknown
+    return Array.isArray(entries) ? entries : []
+  })
   backend = new Backend(
     app.getPath('userData'),
     dataRoot.cacheDir,
@@ -746,6 +751,7 @@ app.whenReady().then(async () => {
       if (!workspaceEvents.accept(message.payload)) return
       const payload = event === 'import:queue' && message.payload?.entries
         ? message.payload.entries : message.payload
+      if (event === 'import:queue' && Array.isArray(payload)) importCopies.observe(payload)
       if (event === 'import:diagnostic' || event === 'import:diagnostic-plan') {
         importDiagnostics?.native(event, payload)
         return
@@ -1022,6 +1028,7 @@ app.whenReady().then(async () => {
       try {
         const generation = await napiFacade.commitWorkspace(p)
         workspaceEvents.activate(generation)
+        importCopies.reset()
         emitToRenderer('import:queue', [])
       } catch (error) {
         if (previous !== null) workspaceEvents.activate(previous)
@@ -1043,6 +1050,7 @@ app.whenReady().then(async () => {
       motifBakes?.reset()
       const generation = await backend!.endWorkspace()
       workspaceEvents.activate(generation)
+      importCopies.reset()
       wsCache = null
       setMotifProject(null)
       motifReader?.workspaceChanged()
@@ -1255,6 +1263,7 @@ app.whenReady().then(async () => {
     napi: napiFacadeWithCache,
     compute: computeFacade,
     enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p, workspaceEvents.requireCurrent()),
+    importCopies,
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     rasterizeSvg: (p) => rasterizeSvg(p, path.join(dataRoot.cacheDir, 'svg-import')),
     statPath: (p) => {

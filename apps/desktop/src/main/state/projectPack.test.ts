@@ -43,6 +43,7 @@ function rig(opts: { schema?: number; packSchema?: number; targetNames?: string[
       },
     },
     current: () => ({ dir: '/home/u/Example', name: 'Example: Project', motifIds: ['title-card'] }),
+    importsSettled: async () => { log.push('imports settled') },
     settle: async () => { log.push('settle'); return { dir: '/home/u/Example', name: 'Example Project', motifIds: ['title-card'] } },
     list: async (dir, ids) => {
       log.push(`list ${dir} ${ids.join(',')}`)
@@ -83,7 +84,7 @@ describe('pack', () => {
     const { packer, log, calls, runs, atNative } = rig()
     const done = packer.pack('/home/u/out/Example.weftcut')
     await atNative()
-    expect(log).toEqual(['settle', 'list /home/u/Example title-card', 'project_pack'])
+    expect(log).toEqual(['imports settled', 'settle', 'list /home/u/Example title-card', 'project_pack'])
     expect(calls[0]!.args).toEqual({
       jobId: 'job-1', folder: '/home/u/Example', archive: '/home/u/out/Example.weftcut',
       files: ['project.json', 'Media/clip.mp4'], appVersion: '1.2.3', schemaVersion: SCHEMA_VERSION - 1,
@@ -130,6 +131,42 @@ describe('pack', () => {
     expect(packer.cancel()).toBe(true)
     release()
     await expect(done).resolves.toEqual({ outcome: 'cancelled' })
+    expect(rigged.calls.map(c => c.cmd)).not.toContain('project_pack')
+  })
+
+  it('flushes, lists and packs nothing until the imports into the project have landed in Media/', async () => {
+    const rigged = rig()
+    let land!: () => void
+    const landed = new Promise<void>(r => { land = r })
+    const packer = createProjectPacker({ ...rigged.deps, importsSettled: async () => { await landed; rigged.log.push('imports settled') } })
+    const done = packer.pack('/home/u/out/Example.weftcut')
+    for (let turn = 0; turn < 50; turn++) await Promise.resolve()
+    expect(rigged.log).toEqual([])
+    land()
+    await rigged.atNative()
+    expect(rigged.log).toEqual(['imports settled', 'settle', 'list /home/u/Example title-card', 'project_pack'])
+    rigged.runs[0]!.resolve(JSON.stringify({ files: 2 }))
+    await expect(done).resolves.toMatchObject({ outcome: 'done' })
+  })
+
+  it('cancelled while it waits for imports, answers cancelled at once and never packs', async () => {
+    const rigged = rig()
+    const importsSettled = (signal: AbortSignal) => new Promise<void>((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    })
+    const packer = createProjectPacker({ ...rigged.deps, importsSettled })
+    const done = packer.pack('/home/u/out/Example.weftcut')
+    expect(packer.cancel()).toBe(true)
+    await expect(done).resolves.toEqual({ outcome: 'cancelled' })
+    expect(rigged.log).toEqual([])
+    expect(rigged.progress.at(-1)).toBeNull()
+  })
+
+  it('packs nothing when another project opened while it waited', async () => {
+    const rigged = rig()
+    const settle = async () => ({ dir: '/home/u/Other', name: 'Other', motifIds: [] })
+    const packer = createProjectPacker({ ...rigged.deps, settle })
+    await expect(packer.pack('/home/u/out/Example.weftcut')).resolves.toEqual({ outcome: 'cancelled' })
     expect(rigged.calls.map(c => c.cmd)).not.toContain('project_pack')
   })
 

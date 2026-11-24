@@ -28,7 +28,8 @@ import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView,
 import { rangesToReview } from './reviewRanges'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
-import { captureImportSession, createMediaImporter, type MediaImporter } from './mediaImport'
+import { captureImportSession, createMediaImporter, untilAborted, type MediaImporter } from './mediaImport'
+import type { ImportCopies } from './importCopies'
 import { createPoolFiles, type PoolFiles, type PoolFilesFs } from './poolFiles'
 import { BUILTIN_MANIFESTS, type Manifest } from '../../shared/motifs/catalog'
 import { libraryHost, type ProjectMotifs, type UnavailableMotif } from '../../shared/motifs/projectMotifs'
@@ -122,6 +123,10 @@ export interface TsActorHostDeps {
   compute: ComputeNapi
   /** Queue the background workspace-copy job (Backend.enqueueWorkspaceCopy). */
   enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<string | null | void>
+  /** The workspace copies still queued or running (importCopies.ts), which a
+   *  pack waits for. Absent (tests): a pack waits only for the imports in
+   *  this host. */
+  importCopies?: Pick<ImportCopies, 'settled'>
   /** node:fs readFile (utf8) — for the subtitle hybrid. */
   readFile: (p: string) => string
   /** node:fs stat folded to `PathFacts` — `import_media` refuses on it before any write. */
@@ -454,9 +459,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     assertCurrent()
     return holds ? actor.snapshot().media_pool[item.id] ?? null : null
   })
+  // The open's recovery pass, which a pack waits for: it queues the copy of
+  // every file still outside the folder.
+  let recovery: Promise<void> = Promise.resolve()
   const enqueueDerivatives = (project: import('./model').Project): void => {
     enqueuePreparedDerivatives(project)
-    void recoverInterruptedImports(hybridDeps, (mediaId, error) => {
+    recovery = recoverInterruptedImports(hybridDeps, (mediaId, error) => {
       deps.emitLog?.({ level: 'error', category: { kind: 'Import' }, source: { kind: 'System' },
         message: `Import recovery failed: ${String(error)}`, details: { media_id: mediaId } })
     }, async (item) => (await poolFiles.settle(item)) === 'present').catch(error => { console.warn('[media] import recovery stopped', error) })
@@ -766,6 +774,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   const packer = deps.packNative && deps.contentFs ? createProjectPacker({
     native: deps.packNative,
     current: packSource,
+    importsSettled: async (signal) => {
+      await untilAborted(signal, recovery)
+      await mediaImporter.idle(signal)
+      await deps.importCopies?.settled(signal)
+    },
     // What Save As writes before it copies, in its order, queued behind any
     // open or close so the folder answered is the one that stays open.
     settle: () => {

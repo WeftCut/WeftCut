@@ -51,6 +51,11 @@ plays elsewhere. Two gaps remained:
   - A ZIP, not a tar, because an open reads the manifest and `project.json`
     without walking the archive, and refuses a newer schema before writing
     anything. OS file managers can also look inside.
+- **A pack waits for imports.** A file still being copied into `Media/` is
+  recorded at its source outside the folder until the copy lands, so a pack
+  started meanwhile waits for every import into the project, the open's
+  recovery of unfinished ones included, to land or fail. Cancel ends the wait.
+  A copy that failed leaves its file outside, as the portability check says.
 - **An archive is checked before anything is written.** Every entry must be
   listed in the manifest at the size it gives. Every path must be a project
   path under a content entry; links and names one case-insensitive volume
