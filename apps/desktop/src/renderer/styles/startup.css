@@ -528,7 +528,7 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
 
 .startup-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: calc(12 * var(--ui-px));
 }
 
@@ -586,6 +586,30 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
   font-size: var(--font-size-label);
   font-weight: 500;
 }
+
+/* An unpack started here (Open packed project): the screen has no work pill. */
+.startup-unpack {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--ui-px));
+  padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  font-size: var(--font-size-body);
+}
+.startup-unpack-line {
+  display: flex;
+  justify-content: space-between;
+  gap: calc(8 * var(--ui-px));
+  color: var(--muted-foreground);
+}
+.startup-unpack-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+}
+.startup-unpack-cancel { align-self: flex-end; }
 
 .startup-error {
   margin: 0;

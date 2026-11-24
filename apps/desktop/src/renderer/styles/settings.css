@@ -1093,3 +1093,9 @@
   overflow-wrap: anywhere;
 }
 .portability-row-tag { flex: none; }
+/* Pack project (pack/PackDialog.tsx): the same report, its actions row under
+   the scrolling body. */
+.pack-dialog-actions {
+  padding: calc(12 * var(--ui-px)) calc(16 * var(--ui-px));
+  border-top: 1px solid var(--border-soft);
+}

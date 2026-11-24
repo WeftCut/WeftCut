@@ -731,6 +731,11 @@ Motifs whose folder is gone or holds no package, fonts excluded from `Fonts/`
 or resolving nowhere, and a `TASTE.md` style the folder lacks; it also names
 folders under `Motifs/` no layer places, which a copy leaves behind.
 
+A **pack** (`.weftcut`, ADR 0178) is a ZIP of exactly that content, every
+entry stored, behind a `weftcut-pack.json` manifest of each file's size and
+modification time; opening one unpacks it into a new folder (`.gitignore`
+added when absent) and opens that.
+
 ### Saving
 
 There is no explicit Save: autosave (`state/autosave.ts`) writes every commit,

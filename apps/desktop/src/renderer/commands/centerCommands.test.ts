@@ -43,6 +43,8 @@ const menu = {
   applyDefaultTransition: () => {},
   openVoiceoverDialog: () => {},
   checkPortability: () => {},
+  packProject: () => {},
+  openPackedProject: () => {},
 };
 const flags = {
   busy: false,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_GITIGNORE, copyLateFiles, copyProjectContent, ensureGitignore, placeFilePlans, type ProjectContentFs } from './projectContent'
+import { DEFAULT_GITIGNORE, PACK_TOP_LEVEL, PROJECT_CONTENT, PROJECT_MACHINE_LOCAL, copyLateFiles, copyProjectContent, ensureGitignore, packFiles, placeFilePlans, type ProjectContentFs } from './projectContent'
 import { parseProjectPath } from '../../shared/projectPath'
 import { errno } from './__tests__/fixtures/memAtomicIo'
 import { memDisk } from './__tests__/fixtures/memDisk'
@@ -152,6 +152,73 @@ describe('copyProjectContent on volumes that refuse', () => {
     expect(disk.read('/to/Media/.DS_Store')).toBeUndefined()
     expect(disk.read('/to/Media/new.mp4.tmp')).toBeUndefined()
     expect(disk.read('/to/Fonts/.Example-Bold.ttf.0f1e.part')).toBeUndefined()
+  })
+})
+
+describe('packFiles', () => {
+  /** The project of `projectAt`, with Motif folders its table names and one
+   *  it does not, Motif backups, and files no copy carries. */
+  function packable() {
+    const project = projectAt('/from')
+    const { disk } = project
+    disk.put('/from/Motifs/title-card/index.html', 'html')
+    disk.put('/from/Motifs/title-card/.motif-notes', 'kept whole')
+    disk.put('/from/Motifs/title-card/assets/logo.png', 'png')
+    disk.put('/from/Motifs/lower-third/index.html', 'html')
+    disk.put('/from/Motifs/left-behind/index.html', 'untracked')
+    disk.put('/from/Backups/motifs/title-card/1/index.html', 'backup')
+    disk.put('/from/Media/.DS_Store', 'finder')
+    disk.put('/from/Media/new.mp4.tmp', 'half an import')
+    disk.entries.set('/from/Media/link.mp4', { kind: 'symlink', target: '/from/Media/clip.mp4' })
+    return project
+  }
+  const listed = async (disk: ReturnType<typeof memDisk>, ids = ['title-card', 'lower-third']) =>
+    (await packFiles('/from', ids, disk.contentFs, 'linux')).map(e => e.path as string)
+
+  it('holds exactly what Save As copies into a new folder, beside project.json and the table\'s Motifs', async () => {
+    const { disk } = packable()
+    await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
+    const savedAs = disk.files().filter(p => p.startsWith('/to/')).map(p => p.slice('/to/'.length))
+    const pack = await listed(disk)
+    expect(pack.filter(p => p !== 'project.json' && !p.startsWith('Motifs/')).sort()).toEqual(savedAs.sort())
+  })
+
+  it('puts project.json first, then the Motif folders the table names, whole', async () => {
+    const { disk } = packable()
+    const pack = await listed(disk)
+    expect(pack[0]).toBe('project.json')
+    expect(pack.filter(p => p.startsWith('Motifs/')).sort()).toEqual([
+      'Motifs/lower-third/index.html', 'Motifs/title-card/.motif-notes', 'Motifs/title-card/assets/logo.png', 'Motifs/title-card/index.html',
+    ])
+  })
+
+  it('leaves out machine-local entries, Motif backups, untracked Motif folders, scratch files and links', async () => {
+    const { disk, local } = packable()
+    const pack = await listed(disk)
+    for (const p of local.filter(p => !p.endsWith('/project.json'))) expect(pack).not.toContain(p.slice('/from/'.length))
+    for (const p of pack) {
+      expect(p.startsWith('Backups/'), p).toBe(false)
+      expect(p.startsWith('Motifs/left-behind/'), p).toBe(false)
+    }
+    expect(pack).not.toContain('Media/.DS_Store')
+    expect(pack).not.toContain('Media/new.mp4.tmp')
+    expect(pack).not.toContain('Media/link.mp4')
+  })
+
+  it('gives each file its size', async () => {
+    const { disk } = packable()
+    for (const e of await packFiles('/from', [], disk.contentFs, 'linux')) expect(e.size, e.path).toBe(disk.read(`/from/${e.path}`)!.length)
+  })
+
+  it('allows at the top level exactly project.json, the project content and Motifs/, none of them machine-local', () => {
+    expect([...PACK_TOP_LEVEL].sort()).toEqual(['project.json', 'Motifs', ...PROJECT_CONTENT].sort())
+    const localTops = PROJECT_MACHINE_LOCAL.map(p => p.replace(/^\//, '').replace(/\/$/, ''))
+    for (const top of PACK_TOP_LEVEL) expect(localTops, top).not.toContain(top)
+  })
+
+  it('names under the allowed tops only', async () => {
+    const { disk } = packable()
+    for (const p of await listed(disk)) expect(PACK_TOP_LEVEL, p).toContain(p.split('/')[0])
   })
 })
 

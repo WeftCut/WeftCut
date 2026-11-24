@@ -17,11 +17,14 @@ import type { AgentActivity } from "../../shared/agent-activity";
 import type { ComputeJob } from "../../shared/compute-jobs";
 import { exportPhaseView, type ExportState } from "../panels/ExportPanel";
 import { listenForFontCopies, useFontCopiesStore, type FontCopies } from "./fontCopiesStore";
+import { cancelPackJob, packBytes, packPercent } from "../pack/packJobs";
+import { listenForPackJobs, usePackJobStore } from "../pack/packJobStore";
+import type { PackJobProgress } from "../../shared/projectPack";
 import { workView, type MediaWork, type WorkView } from "./workView";
 
 /// What is running, as one pill: a background export (preview during export),
-/// clip-compute jobs, agent calls and derivative jobs, its details in a popover
-/// grouped by owner, the export first. Layout and behaviour:
+/// a pack or unpack, clip-compute jobs, agent calls and derivative jobs, its
+/// details in a popover grouped by owner, the export first. Layout and behaviour:
 /// `docs/status-log.md` § Work pill.
 export function WorkPill({ backgroundExport }: {
   /// A running export that leaves the editor usable; a foreground export
@@ -34,6 +37,8 @@ export function WorkPill({ backgroundExport }: {
   const derivativeJobs = useDerivativeJobsStore((s) => s.jobs);
   const fontCopies = useFontCopiesStore((s) => s.copies);
   useEffect(listenForFontCopies, []);
+  const pack = usePackJobStore((s) => s.job);
+  useEffect(listenForPackJobs, []);
   // Work held back by the show delay comes due without a store change: one
   // re-render at that moment, no standing clock.
   const [, rerender] = useReducer((n: number) => n + 1, 0);
@@ -42,6 +47,7 @@ export function WorkPill({ backgroundExport }: {
     activities: activities ?? [],
     derivatives: Object.values(derivativeJobs),
     fontCopies,
+    pack,
     now: Date.now(),
   });
   useEffect(() => {
@@ -61,12 +67,16 @@ export function WorkPill({ backgroundExport }: {
   if (total === 0) return null;
 
   const waiting = !backgroundExport && view.waiting;
+  // A pack leads after the export: both are the user's own and measured.
+  const packLead = !exportView && view.pack ? { phase: packLabel(t, view.pack), percent: packPercent(view.pack) } : null;
   const label = exportView
     ? exportLabel(t, exportView.percent, view.count)
-    : pillLabel(t, view);
+    : packLead
+      ? view.count > 1 ? t("status_bar.work.with_more", { label: packLead.phase, count: view.count - 1 }) : packLead.phase
+      : pillLabel(t, view);
   // One group's rows say what they are, beside a trigger that names them, so
   // a lone group goes untitled; several are each titled to tell them apart.
-  const groupCount = [backgroundExport, view.compute.length, view.agent.length, view.derivatives.length, view.fonts]
+  const groupCount = [backgroundExport, view.pack, view.compute.length, view.agent.length, view.derivatives.length, view.fonts]
     .filter(Boolean).length;
   const titled = groupCount > 1;
   return (
@@ -82,7 +92,9 @@ export function WorkPill({ backgroundExport }: {
       >
         {exportView
           ? <ProgressRing phase={exportView.phase} percent={exportView.percent} />
-          : waiting
+          : packLead
+            ? <ProgressRing phase={packLead.phase} percent={packLead.percent} />
+            : waiting
             ? <AppIcon icon={Hourglass} size="label" aria-hidden />
             : <span className="status-bar-spinner" aria-hidden="true" />}
         {label}
@@ -92,6 +104,11 @@ export function WorkPill({ backgroundExport }: {
           {backgroundExport && exportView && exportStartedAt !== null && (
             <WorkGroup title={t("status_bar.work.group_export")} titled={titled}>
               <ExportRow state={backgroundExport} phase={exportView.phase} percent={exportView.percent} startedAt={exportStartedAt} />
+            </WorkGroup>
+          )}
+          {view.pack && (
+            <WorkGroup title={t("status_bar.work.group_pack")} titled={titled}>
+              <PackRow job={view.pack} />
             </WorkGroup>
           )}
           <WorkDetails view={view} titled={titled} onLeave={close} />
@@ -128,6 +145,47 @@ function pillLabel(t: TFunction, view: WorkView): string {
   if (job) return t(job.tool === "transcribe_clip" ? "status_bar.work.transcribing" : "status_bar.work.describing");
   if (view.fonts) return fontCopiesLabel(t, view.fonts);
   return t(view.agent.length > 0 ? "status_bar.work.agent" : "status_bar.work.derivatives");
+}
+
+/// "Packing 42%", "Unpacking 42%"; without a total yet, the work alone.
+function packLabel(t: TFunction, job: PackJobProgress): string {
+  const percent = packPercent(job);
+  const kind = job.kind === "pack" ? "packing" : "unpacking";
+  return percent === undefined ? t(`status_bar.work.${kind}`) : t(`status_bar.work.${kind}_percent`, { percent });
+}
+
+/// The pack file, the bar, then the bytes with Cancel. Percent and bytes only:
+/// by product decision long work never shows a remaining-time estimate.
+function PackRow({ job }: { job: PackJobProgress }) {
+  const { t } = useTranslation();
+  const percent = packPercent(job);
+  const status = job.cancelling ? t("status_bar.work.pack_cancelling") : packBytes(t, job);
+  return (
+    <li className="work-row" data-work="pack">
+      <div className="work-row-line">
+        <span className="work-row-name">{job.file}</span>
+        <span className="work-row-elapsed">{packLabel(t, job)}</span>
+      </div>
+      {percent !== undefined && (
+        <div className="progress-track work-row-progress" aria-hidden="true">
+          <div className="progress-fill" style={{ width: `${percent}%` }} />
+        </div>
+      )}
+      <div className="work-row-detail">
+        <span>{status}</span>
+        {!job.cancelling && (
+          <button
+            type="button"
+            className="compute-job-cancel"
+            onClick={cancelPackJob}
+            aria-label={t(job.kind === "pack" ? "status_bar.work.cancel_pack" : "status_bar.work.cancel_unpack")}
+          >
+            {t("compute.ui.cancel")}
+          </button>
+        )}
+      </div>
+    </li>
+  );
 }
 
 /// "Copying fonts 2/6", or the close's wait for them.

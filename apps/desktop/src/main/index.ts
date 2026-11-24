@@ -767,6 +767,12 @@ app.whenReady().then(async () => {
         computeJobs?.phase(payload)
         return
       }
+      // A pack or unpack's bytes: the packer owns the run and publishes its
+      // own `project-pack:progress`, naming the file and the kind of run.
+      if (event === 'project_pack:progress') {
+        tsHost?.packer?.nativeProgress(payload)
+        return
+      }
       // `media:derivatives` write-back: apply the derivative patch to the TS
       // actor instead of forwarding to the renderer. tsHost is module-scoped
       // (set later); the closure captures it by reference.
@@ -1240,6 +1246,12 @@ app.whenReady().then(async () => {
     relinkFs,
     contentFs: fs.promises,
     join: path.join,
+    packNative: {
+      invoke: (cmd, argsJson) => backend!.invoke(cmd, argsJson),
+      cancelComputeJob: (jobId) => backend!.cancelComputeJob(jobId),
+    },
+    freeBytes: async (dir) => { const st = await fs.promises.statfs(dir); return st.bavail * st.bsize },
+    appVersion: app.getVersion(),
     napi: napiFacadeWithCache,
     compute: computeFacade,
     enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p, workspaceEvents.requireCurrent()),

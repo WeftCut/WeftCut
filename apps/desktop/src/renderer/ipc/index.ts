@@ -11,7 +11,7 @@ import type { CropRect } from '../../shared/crop';
 // from here, so every call site can import them from "../ipc". `@/` only
 // aliases src/renderer, hence the relative paths to `../../shared/`.
 
-import { invoke } from "@/bridge/ipc";
+import { invoke, invokeRaw } from "@/bridge/ipc";
 import type { PositionAnimation } from '../../shared/position';
 import type { ResourceHolder } from '../../shared/resource-policy';
 import { TACK_DELETE_CHANNEL, TACK_SET_STATUS_CHANNEL, type TackDeleteSelector, type TackStatus } from '../../shared/agent-activity';
@@ -869,6 +869,32 @@ export async function projectPortability(): Promise<PortabilityReport | null> {
 export async function trashUntrackedMotifFolder(name: string): Promise<void> {
   await invoke("project_trash_motif_folder", { name });
 }
+
+// Pack project / Open packed project (ADR 0178). Raw: none is an edit, and an
+// unpack opens its project through main, which announces it with
+// `project:opened` as an agent's open does.
+import type { PackInspection, PackOutcome, PackPlan } from '../../shared/projectPack';
+export type { PackInspection, PackJobProgress, PackOutcome, PackPlan } from '../../shared/projectPack';
+
+/// What a pack of the open project would hold now.
+export const projectPackPlan = (): Promise<PackPlan> => invokeRaw<PackPlan>("project_pack_plan");
+
+/// Packs the open project into `archive`, after writing what Save As writes
+/// first; resolves when the pack is complete or cancelled.
+export const projectPack = (archive: string): Promise<PackOutcome<{ archive: string; files: number }>> =>
+  invokeRaw("project_pack", { archive });
+
+/// Stops the running pack or unpack; false when none runs.
+export const projectPackCancel = (): Promise<boolean> => invokeRaw<boolean>("project_pack_cancel");
+
+/// Reads a pack file before anything is written; rejects for one this app
+/// cannot open.
+export const projectUnpackInspect = (archive: string): Promise<PackInspection> =>
+  invokeRaw<PackInspection>("project_unpack_inspect", { archive });
+
+/// Unpacks `archive` into a new folder in `parent` and opens it.
+export const projectUnpack = (archive: string, parent: string): Promise<PackOutcome<{ dir: string }>> =>
+  invokeRaw("project_unpack", { archive, parent });
 
 // ============================================================
 // Workspace lifecycle (docs/data-model.md)
