@@ -41,6 +41,19 @@ test.describe("packed project", () => {
       const layers = await layerCount(page);
       const media = (await invokeCmd<MediaSummary>(page, "project_summary")).media.map((m) => m.label).sort();
       expect(layers).toBeGreaterThan(0);
+      // `import_media` answers before its copy into Media/ lands, and until
+      // then the record names the source outside the folder. A pack holds the
+      // folder only, so the project must carry its media before it is packed.
+      const source = await invokeCmd<string>(page, "workspace_dir");
+      await expect
+        .poll(
+          async () =>
+            (await invokeCmd<MediaSummary>(page, "project_summary")).media.every(
+              (m) => !path.relative(source, m.path).startsWith(".."),
+            ),
+          { timeout: 60_000, message: "every imported file is copied into the project's Media/" },
+        )
+        .toBe(true);
 
       const outDir = tmpDir("weftcut-pack-out-");
       const archive = path.join(outDir, "pack-source.weftcut");
