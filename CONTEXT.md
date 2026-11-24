@@ -957,7 +957,8 @@ _Avoid_: relative path, workspace path
 A font face (family, weight, italic, read from the font's own tables) copied
 into the project's `Fonts/` because a layer draws with its family: a Text
 layer's characters, or a Motif's string props walked through its font slots.
-Every face of such a family is copied, automatically; looked up before system and bundled fonts. Bundled and generic
+Every face of such a family is copied, automatically; looked up before system and bundled fonts. A font file put
+into `Fonts/` any other way (by hand, or with a received folder) is a project font too. Bundled and generic
 families and a Motif package's own fonts are never project fonts. See ADR 0176.
 _Avoid_: embedded font, packed font, collected font file
 
