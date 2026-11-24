@@ -93,7 +93,7 @@ async function open(library: UserMotifStore): Promise<{ project: Project; report
   const deps = {
     actor: { replaceState: (p: Project) => { installed = p }, snapshot: () => installed!, dispatch: vi.fn() },
     napi: { commitWorkspace: vi.fn(async () => {}), pushRecent: vi.fn(), setLastNewProjectParent: vi.fn(), enqueueJobsForMedia: vi.fn() },
-    fs: nodeFs, join: path.join, idGen: seededGen(), platform: 'linux', contentFs: fsp,
+    fs: nodeFs, join: path.join, idGen: seededGen(), platform: process.platform, contentFs: fsp,
     onSchemaUpgrade: (r: SchemaUpgradeReport) => { report = r },
     ...legacyMigration(library, builtins),
   } as unknown as OrchestratorDeps
