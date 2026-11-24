@@ -155,7 +155,6 @@ export function AttributePanel({
         <LayerReadOnly value={[transition.from_layer, transition.to_layer].some(id => layerIsReadOnly(compForTransition?.tracks ?? [], id))}>
         <TransitionFields
           transition={transition}
-          audioOnly={(compForTransition?.tracks ?? []).some(track => track.layers.some(layer => layer.id === transition.from_layer && layer.kind === "Audio"))}
           fpsNum={fpsNum}
           fpsDen={fpsDen}
           onMutated={onMutated}

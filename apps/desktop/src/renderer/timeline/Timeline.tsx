@@ -323,7 +323,6 @@ export const Timeline = memo(function Timeline({
     x: number;
     y: number;
     transition: TransitionSummary;
-    audioOnly: boolean;
   } | null>(null);
   // The gap's context menu — the third right-click surface. It carries no
   // target of its own: the right-click selected the gap first, and the menu's
@@ -1166,7 +1165,7 @@ export const Timeline = memo(function Timeline({
   // Delete-key path below (remove + clear selection).
   const onChipContextMenu = useCallback(
     (e: React.MouseEvent, chip: TrackTransitionChip) => {
-      setChipMenu({ x: e.clientX, y: e.clientY, transition: chip.transition, audioOnly: chip.fromLayer.kind === "Audio" });
+      setChipMenu({ x: e.clientX, y: e.clientY, transition: chip.transition });
     },
     [],
   );
@@ -2128,7 +2127,6 @@ export const Timeline = memo(function Timeline({
             x={chipMenu.x}
             y={chipMenu.y}
             transition={chipMenu.transition}
-            audioOnly={chipMenu.audioOnly}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
             onClose={() => setChipMenu(null)}
