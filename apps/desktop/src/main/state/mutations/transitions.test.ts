@@ -388,6 +388,35 @@ describe('linked audio transitions follow their visual transition', () => {
     applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
     expect(root(p).transitions).toHaveLength(1)
   })
+  it('at 30000/1001 every linked step passes the commit, and undo returns to the start', () => {
+    const { p, gen, v1, v2, a1 } = linkedCut({ num: 30_000, den: 1001 }, 61)
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    const start = actor.snapshot()
+    const add = actor.dispatch('add_transition', { from: v1, to: v2, duration_us: 1_000_000 })
+    expect(add.ok).toBe(true)
+    const id = (add as { ok: true; value: string }).value
+    expect(root(actor.snapshot()).transitions).toHaveLength(2)
+    expect(actor.dispatch('update_transition', { transition: id, duration_us: 500_000 }).ok).toBe(true)
+    expect(actor.dispatch('update_transition', { transition: id, extended_us: 200_000 }).ok).toBe(true)
+    expect(actor.dispatch('remove_transition', { transition: id }).ok).toBe(true)
+    expect(root(actor.snapshot()).transitions).toEqual([])
+    for (let i = 0; i < 4; i++) expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(actor.snapshot()).toEqual(start)
+    // The audio transition's own removal mints a lane inside the commit.
+    expect(actor.dispatch('redo', {}).ok).toBe(true)
+    const audio = audioTransitionOf(actor.snapshot(), a1)!
+    expect(actor.dispatch('remove_transition', { transition: audio.id }).ok).toBe(true)
+    expect(root(actor.snapshot()).transitions.map((t) => t.id)).toEqual([id])
+  })
+  it('a locked audio lane refuses a linked extend whole; audio none adds the picture alone', () => {
+    const { p, gen, v1, v2 } = linkedCut()
+    root(p).tracks[1].locked = true
+    const before = structuredClone(p)
+    expectCmd(() => applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE, 'extend'), 'TrackLocked')
+    expect(p).toEqual(before)
+    applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE, 'extend', 'none')
+    expect(root(p).transitions).toHaveLength(1)
+  })
   it("the actor's add_transition takes the audio option", () => {
     const { p, gen, v1, v2 } = linkedCut()
     const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
