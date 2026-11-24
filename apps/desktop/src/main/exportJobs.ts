@@ -8,6 +8,7 @@ import type { TsActorHost } from './state/ts-actor-host';
 import { rootComposition, type Project } from './state/model';
 import type { UnavailableMotif } from '../shared/motifs/projectMotifs';
 import { snapFrameRound } from './state/snap';
+import { enterClock, rootAt, ROOT_CLOCK, type CompositionClock } from '../renderer/render/compositionClock';
 import { resolveExportRequest, resolveExportOptions, EXPORT_COMPATIBILITY, ExportValidationError } from '../shared/exportValidation';
 import { exportTerminal, exportWire, type ExportCanceller, type ExportJob, type ExportRun } from '../shared/exportJob';
 
@@ -58,34 +59,35 @@ function exportQueued(value: unknown): NonNullable<ExportJob['queued']> {
 }
 
 /** The Motifs an export of `range` draws: those of the enabled layers on
- *  enabled root tracks that `range` overlaps, and those of every enabled layer
- *  inside a Group so placed. A Group's own timing (windows, retiming) is not
- *  followed, so it counts whole: a superset of what the renderer bakes
- *  (`renderer/render/exportBake.ts`), never less. */
+ *  enabled tracks whose root-time placement overlaps `range`, entering each
+ *  Group through its own window and clock as the renderer's walk does
+ *  (`forEachLayerInTime`, which `renderer/render/exportBake.ts` bakes from). */
 export function exportedMotifIds(p: Pick<Project, 'compositions' | 'root_id'>, range: { startUs: number; endUs: number }): Set<string> {
   const ids = new Set<string>();
-  const entered = new Set<string>();
-  const walk = (compositionId: string, within: { startUs: number; endUs: number } | null) => {
+  // Validation refuses a reference cycle, so the walk ends; a Group placed twice
+  // is entered once per placement, each through its own window.
+  const walk = (compositionId: string, clock: CompositionClock, windowStartUs: number, windowEndUs: number) => {
     for (const track of p.compositions[compositionId]?.tracks ?? []) {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
         if (!layer.enabled) continue;
-        if (within && (layer.t_end_us <= within.startUs || layer.t_start_us >= within.endUs)) continue;
+        const startUs = Math.max(rootAt(clock, layer.t_start_us), windowStartUs);
+        const endUs = Math.min(rootAt(clock, layer.t_end_us), windowEndUs);
+        if (startUs >= endUs || endUs <= range.startUs || startUs >= range.endUs) continue;
         if (layer.params.kind === 'Motif') ids.add(layer.params.motif_id);
-        else if (layer.params.kind === 'CompositionRef' && !entered.has(layer.params.composition)) {
-          entered.add(layer.params.composition);
-          walk(layer.params.composition, null);
-        }
+        else if (layer.params.kind === 'CompositionRef') walk(layer.params.composition, enterClock(clock, layer), startUs, endUs);
       }
     }
   };
-  walk(p.root_id, range);
+  walk(p.root_id, ROOT_CLOCK, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY);
   return ids;
 }
 
 /** The project's Motifs that cannot render and that the export of `range`
- *  draws: it would draw nothing where they play (spec § Project Motifs). */
-function unrenderableMotifs(h: TsActorHost, range: { startUs: number; endUs: number }): UnavailableMotif[] {
+ *  draws: it would draw nothing where they play (spec § Project Motifs). An
+ *  export without video draws none. */
+function unrenderableMotifs(h: TsActorHost, settings: ExportSettings, range: { startUs: number; endUs: number }): UnavailableMotif[] {
+  if (!settings.includeVideo) return [];
   const unavailable = h.unavailableMotifs?.() ?? [];
   if (!unavailable.length) return [];
   const drawn = exportedMotifIds(h.actor.snapshot(), range);
@@ -323,7 +325,7 @@ export class ExportJobs {
   private async plan(h: TsActorHost, preset: ExportPreset | undefined, a: Record<string, unknown>, agent: boolean, policy: Entry['policy']) {
     const resolved = resolveExportRequest(await this.savedSettings(h, preset), agent ? exportWire(a.settings, false) : a.settings,
       this.composition(h), (agent ? exportWire(a.range, false) : a.range) as ExportJob['range'] | undefined, !agent || a.allow_experimental_10bit === true, snapFrameRound);
-    const motifs = unrenderableMotifs(h, resolved.range);
+    const motifs = unrenderableMotifs(h, resolved.settings, resolved.range);
     if (motifs.length) {
       const ids = motifs.map(m => m.motif_id);
       const trust = motifs.some(m => m.status === 'untrusted') ? 'the user trusts an untrusted one in the Motifs panel; ' : ''
