@@ -540,9 +540,12 @@ after it. With no neighbours overlapping, the shift is the clip's length.
 
 **Several clips.** The selection is removed first; each hole is measured against
 what remains; touching or overlapping holes across tracks merge; every remaining
-layer starting at or after a hole shifts left by the total length of the holes
-ahead of it — one snap of the summed delta per layer on its own lattice, so A/V
-slips survive. One commit, one undo.
+layer starting at or after a hole shifts left by the holes ahead of it, counted
+in points of its own lattice (frames for picture, 48 kHz samples for audio), so
+A/V slips survive exactly. Each layer is also measured against a hole as its own
+lattice sees it: at 29.97/59.94 a linked pair's edges sit a few µs apart, and the
+audio piece after a cut is not "inside" the video's hole (ADR 0178). One commit,
+one undo.
 
 **Who moves, stays, blocks.** A layer starting at or after a hole's end moves;
 one starting before it stays, even if it spans the cut. An unselected layer

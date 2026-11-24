@@ -17,10 +17,10 @@ import { create } from "zustand";
 import type { LayerParamsView } from "../ipc";
 import { SPAWN_TRACK_ID, type PlacementValidity } from "./placement";
 import {
-  floorShiftAtZero,
+  floorTravelAtZero,
   gridForLayerKind,
-  shiftOnGrids,
   snapOnGrid,
+  travelOnGrids,
   type RateLike,
   type ShiftMember,
 } from "../grid";
@@ -56,12 +56,12 @@ export interface MoveLandings {
 /// lanes draw and hold the project to, and the drop strip's own ghost. The
 /// mutation runs the same three on the other side of the commit, so a promise
 /// computed any other way is one the project can never satisfy — see
-/// `shiftOnGrids` for the two rules a hand-written copy gets wrong.
+/// `travelOnGrids` for the rule a hand-written copy gets wrong.
 ///
 /// The anchor's REQUESTED head goes through its own lattice first, then the set
-/// is floored at zero as one body (`floorShiftAtZero`, never per member), then
-/// every member snaps on ITS lattice. `deltaUs` is the gesture's raw shift; the
-/// landings are what the user is being shown.
+/// is floored at zero as one body (`floorTravelAtZero`, never per member), then
+/// every member moves by whole points of ITS lattice. `deltaUs` is the
+/// gesture's raw shift; the landings are what the user is being shown.
 export function moveLandings(
   drag: DragState,
   deltaUs: number,
@@ -72,18 +72,22 @@ export function moveLandings(
     (subject) => subject.layerId === drag.layerId,
   );
   const anchorGrid = gridForLayerKind(anchor?.kind ?? "VideoClip", fps);
-  const requestedDeltaUs =
-    snapOnGrid(drag.originalTStart + deltaUs, anchorGrid) - drag.originalTStart;
-  const actualDeltaUs = floorShiftAtZero(movers, requestedDeltaUs);
-  const byLayerId = shiftOnGrids(movers, actualDeltaUs, fps);
+  const travel = floorTravelAtZero(
+    movers,
+    {
+      fromUs: drag.originalTStart,
+      toUs: snapOnGrid(drag.originalTStart + deltaUs, anchorGrid),
+    },
+    fps,
+    anchorGrid,
+  );
+  const byLayerId = travelOnGrids(movers, travel, fps);
   return {
     byLayerId,
     // `buildDragSubjects` always carries the seed, so the fallback is reached
     // only when the summary has lost the layer the gesture names — the same
     // case its own fallback subject covers.
-    anchorTStartUs:
-      byLayerId.get(drag.layerId)?.tStartUs ??
-      snapOnGrid(drag.originalTStart + actualDeltaUs, anchorGrid),
+    anchorTStartUs: byLayerId.get(drag.layerId)?.tStartUs ?? travel.toUs,
   };
 }
 

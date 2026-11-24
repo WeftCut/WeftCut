@@ -5,6 +5,7 @@ import { blankProject, type Layer, type LayerParams } from '../model'
 import { applyAddLayer, colorParams } from './add'
 import { applyMoveLayer, applyMoveLayersToNewTrack } from './move'
 import { isCommandFailure } from '../errors'
+import { AUDIO_GRID, frameGrid, gridIndex, timeUsAtGridIndex } from '../snap'
 import { applyLinksCreate } from './links'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
@@ -105,10 +106,12 @@ describe('move link lock checks (not corpus-gated)', () => {
     expect(a.t_end_us - a.t_start_us).toBe(1_000_000) // left b at [0, -400_000)
   })
 
-  it('lets a sample-aligned audio member decide where the link stops', () => {
+  it('lets a sample-aligned audio member decide where the link stops, keeping its slip', () => {
     // The stop is driven by whichever member is earliest, on WHICHEVER lattice — an
     // `earliestStart` that only scanned the frame grid would walk the audio negative.
-    // 999_979 µs is sample 47 999 at 48 kHz; it is not a 30 fps frame boundary.
+    // 999_979 µs is sample 47 999 at 48 kHz, one sample ahead of the video's
+    // 1 s (sample 48 000); it is not a 30 fps frame boundary. With the video on
+    // frame 0 the audio would sit at sample -1, so the set stops at frame 1.
     const p = blankProject(seededGen(), 't')
     const au = color('au', 999_979, 1_999_979)
     au.params = {
@@ -120,10 +123,13 @@ describe('move link lock checks (not corpus-gated)', () => {
     root(p).tracks[1].layers = [au]
     applyLinksCreate(p, seededGen(), ['v', 'au'], false)
 
+    const slip = (q: typeof p) => gridIndex(root(q).tracks[1].layers[0].t_start_us, AUDIO_GRID) - gridIndex(root(q).tracks[0].layers[0].t_start_us, AUDIO_GRID)
+    const before = slip(p)
     applyMoveLayer(p, 'v', root(p).tracks[0].id, -3_000_000, false)
 
-    expect(root(p).tracks[1].layers[0].t_start_us).toBe(0)
-    expect(root(p).tracks[0].layers[0].t_start_us).toBeGreaterThanOrEqual(0)
+    expect(root(p).tracks[1].layers[0].t_start_us).toBeGreaterThanOrEqual(0)
+    expect(root(p).tracks[0].layers[0].t_start_us).toBe(timeUsAtGridIndex(1, frameGrid(root(p).fps)))
+    expect(slip(p)).toBe(before)
   })
 
   it('cross-track link move changes only the target track and shifts siblings in place', () => {

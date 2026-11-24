@@ -428,18 +428,22 @@ describe("ForeignDragGhost", () => {
     });
 
     const [first, second] = view.ghosts();
+    const start = (ghost: HTMLElement | undefined) => Number(ghost!.dataset.startUs);
     // Clamping per member would put BOTH at zero and flatten the 500 ms
     // between them. Worse, it would draw a landing the commit refuses:
     // `applyMoveLayersToComposition` refuses a member before zero outright and
     // never clamps, so the ghost has to stop where the command still accepts.
-    expect(second!.dataset.startUs).toBe("0");
-    // 520 000, not the 500 000 the raw shift arrives at: the anchor's landing
-    // re-snaps on the DESTINATION's frame grid, and 500 000 µs is half a frame
-    // at 25 fps. The command lands it on 520 000 for the same reason, so this is
-    // the number the ghost has to promise — the two do not round trip at a rate
-    // whose frame the shift is not a multiple of, and the ghost's job is to say
-    // what will happen rather than what was asked for.
-    expect(first!.dataset.startUs).toBe("520000");
+    expect(start(second)).toBeGreaterThanOrEqual(0);
+    expect(start(first) - start(second)).toBe(
+      ANCHOR.originalTStart - early.originalTStart,
+    );
+    // The anchor stops on the first frame of the DESTINATION's grid at which
+    // nobody is before zero. 500 000 µs, where the raw shift would put it, is
+    // half a frame at 25 fps, so the set stops at 520 000 with the audio 20 ms
+    // in: a video frame cannot sit 500 ms after time 0's sample, and the ghost's
+    // job is to say what will happen rather than what was asked for.
+    expect(start(first)).toBe(520_000);
+    expect(start(first) - 40_000 - (ANCHOR.originalTStart - early.originalTStart)).toBeLessThan(0);
   });
 
   it("snaps to a boundary THIS composition owns", () => {

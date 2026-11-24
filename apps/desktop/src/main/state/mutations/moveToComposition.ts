@@ -9,7 +9,7 @@ import { eachLayer } from '../model'
 import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
-import { shiftOnGrids } from '../snap'
+import { travelOnGrids } from '../snap'
 import { layerOverlapClass } from '../validate'
 import { applyAddTrack, compositionRefPath } from './add'
 import {
@@ -128,26 +128,25 @@ export function applyMoveLayersToComposition(
   }
 
   const anchor = located.find((m) => m.layer.id === anchorLayerId)!
-  const offset = anchorTStartUs - anchor.layer.t_start_us
   // The remedy the refusal offers is the SET's bound, not the reporting
   // member's: the earliest member is the one that runs out of room first, and a
   // bound read off whichever member happened to be checked first would be a
   // number the caller can retry and be refused at again. Round-to-nearest never
   // takes a non-negative time below zero, so this pre-snap arithmetic is exact.
   const earliestStartUs = Math.min(...located.map((m) => m.layer.t_start_us))
-  // The shift the cross-Panel ghost already drew, from the module both sides
+  // The travel the cross-Panel ghost already drew, from the module both sides
   // share (`renderer/grid.ts`): the preview and this landing are then the same
-  // numbers rather than two roundings of one intention. Every member snaps on
+  // numbers rather than two roundings of one intention. Every member lands on
   // its own lattice at the DESTINATION's rate, which is why two compositions at
   // different rates do not round trip.
-  const shifted = shiftOnGrids(
+  const shifted = travelOnGrids(
     located.map((m) => ({ id: m.layer.id, kind: m.layer.params.kind, tStartUs: m.layer.t_start_us, tEndUs: m.layer.t_end_us })),
-    offset, dest.fps,
+    { fromUs: anchor.layer.t_start_us, toUs: anchorTStartUs }, dest.fps,
   )
   const landing = new Map<Uuid, { t0: number; t1: number }>()
   for (const m of located) {
     const { tStartUs: t0, tEndUs: t1 } = shifted.get(m.layer.id)!
-    // No floor, deliberately — `floorShiftAtZero` is the timeline gesture's rule
+    // No floor, deliberately — `floorTravelAtZero` is the timeline gesture's rule
     // and not this op's. A member before zero is REFUSED here, on the grounds
     // that sliding a set off the picture it was placed against is not a repair.
     if (t0 < 0)

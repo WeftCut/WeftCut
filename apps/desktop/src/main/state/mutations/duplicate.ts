@@ -4,7 +4,7 @@ import type { IdGen } from '../ids'
 import { applyDurationAutofit, cloneLayer, compositionOf, locateTrack, requireLayer, requireSameComposition } from './helpers'
 import { applyLinksCreate } from './links'
 import { CommandFailure } from '../errors'
-import { gridForLayerKind, shiftOnGrids, snapOnGrid } from '../snap'
+import { gridForLayerKind, snapOnGrid, travelOnGrids } from '../snap'
 import { layerOverlapClass } from '../validate'
 
 export interface PasteLayerInterval {
@@ -25,9 +25,9 @@ export function pasteLayerInterval(p: Project, id: Uuid, tStartUs: number): Past
   // (`renderer/grid.ts`) — which is also what the timeline's duplicate preview
   // draws with, so the ghost under the pointer and the clone that lands are the
   // same two numbers.
-  return shiftOnGrids(
+  return travelOnGrids(
     [{ id: source.id, kind: source.params.kind, tStartUs: source.t_start_us, tEndUs: source.t_end_us }],
-    snappedStart - source.t_start_us,
+    { fromUs: source.t_start_us, toUs: snappedStart },
     c.fps,
   ).get(source.id)!
 }

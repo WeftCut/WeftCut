@@ -50,7 +50,7 @@ import {
   type DragState,
   type DragSubject,
 } from "./layerDragStore";
-import { floorShiftAtZero, shiftOnGrids } from "../grid";
+import { floorTravelAtZero, gridForLayerKind, travelOnGrids } from "../grid";
 import {
   evaluateTimelinePlacements,
   SPAWN_TRACK_ID,
@@ -271,6 +271,11 @@ function resolveForeignDrop(
   const trackId = destination?.trackId ?? null;
   const movers = shiftMembersOf(drag.subjects);
   const fps = { num: fpsNum, den: fpsDen };
+  // The travel every landing below is measured by: from the anchor's start to
+  // the head the gesture names, floored as one body at this composition's 0.
+  const anchorGrid = gridForLayerKind(anchor.kind, fps);
+  const travelTo = (toUs: number) =>
+    floorTravelAtZero(movers, { fromUs: anchor.originalTStart, toUs }, fps, anchorGrid);
   if (trackId === null) {
     // Inside the Panel, over no row — its ruler, or the band under the last
     // lane. There is no geometry to draw in and no lane to validate against,
@@ -287,7 +292,7 @@ function resolveForeignDrop(
     // no band to draw.
     return {
       trackId: null,
-      anchorTStartUs: anchor.originalTStart + floorShiftAtZero(movers, griddedUs - anchor.originalTStart),
+      anchorTStartUs: travelTo(griddedUs).toUs,
       validity: "collision",
       snapBoundaryUs: null,
       band: null,
@@ -331,11 +336,11 @@ function resolveForeignDrop(
       // Clamping per member would flatten the set's phase against the boundary
       // and draw a landing the commit refuses — `applyMoveLayersToComposition`
       // refuses a member before zero outright and never clamps.
-      const phaseDeltaUs = floorShiftAtZero(movers, deltaUs);
+      const travel = travelTo(anchor.originalTStart + deltaUs);
       // The same arithmetic `applyMoveLayersToComposition` runs on the other
       // side of the commit (`renderer/grid.ts`), which is what makes the ghost
       // a promise rather than an approximation of one.
-      const landings = shiftOnGrids(movers, phaseDeltaUs, fps);
+      const landings = travelOnGrids(movers, travel, fps);
       // Every subject lands on the ONE hit lane: the command with a named
       // destination puts every source block there, whatever lane it came from
       // (`main/state/mutations/moveToComposition.ts`). A ghost that scattered
@@ -362,13 +367,13 @@ function resolveForeignDrop(
         // Listing them would only be a way to silence a real collision.
         replacedLayerIds: new Set(),
       });
-      // The command derives its offset as `anchorTStartUs - anchor.t_start_us`,
-      // so the number sent is the RAW shifted head, not the snapped one: the
-      // snapped head would hand it a different offset from the one every block
-      // above was drawn with, and the set's phase would land off its preview.
+      // The command travels from `anchor.t_start_us` to `anchorTStartUs`, so
+      // the number sent is the travel's own head, not the anchor's landing: a
+      // landing is a different instant, and every other lattice would project
+      // it to a different count than the one each block above was drawn with.
       return {
         anchor: landings.get(anchor.layerId)!,
-        anchorTStartUs: anchor.originalTStart + phaseDeltaUs,
+        anchorTStartUs: travel.toUs,
         blocks,
         validity,
       };
