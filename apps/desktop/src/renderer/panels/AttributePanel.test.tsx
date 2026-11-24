@@ -21,7 +21,6 @@ vi.mock("../ipc", async (importActual) => {
 import { retimeLayers, updateLayer, updateLayerParams, moveLayer, trimLayer, setLayersEnabled } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
-import { setAudioUnits } from "../state/audioUnitsStore";
 import { setLayerBakeStatuses } from "../timeline/motifBakeStatusStore";
 import { clearPropSectionMemory } from "../properties/PropSection";
 
@@ -58,7 +57,6 @@ afterEach(() => {
   clearLayerSelection();
   clearPropSectionMemory();
   setLayerBakeStatuses({});
-  setAudioUnits("frames");
 });
 
 function colorTrack(): TrackSummary {
@@ -354,62 +352,30 @@ describe("AttributePanel envelope command routing", () => {
     changeTimecode(start, "00:00:01:00");
     fireEvent.blur(start);
     await vi.waitFor(() =>
-      // escapeLink=false: a VISUAL start edit moves the whole link, as it always
-      // has. Only an audio edit escapes, because a sub-frame audio start is a SLIP
-      // (ADR 0038) and dragging the video member with it would put that member off
-      // its own grid.
+      // escapeLink=false: a start edit moves the whole link.
       expect(moveLayer).toHaveBeenCalledWith("layer-1", "track-1", 1_000_000, false),
     );
     expect(trimLayer).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(onMutated).toHaveBeenCalledOnce());
   });
 
-  // ── Sub-frame audio entry (ADR 0038) ─────────────────────────────────────────
-  it("offers the audio-units selector on an audio layer only", () => {
+  // ── Audio timing is frames, like every layer's (ADR 0038) ────────────────────
+  it("edits an audio layer's Start as timecode and moves it with its link", async () => {
     summaryWithLinks([]);
-    renderPanel(audioTrack(), "layer-a1");
-    expect(within(timingSection()).getByLabelText("Audio units")).toBeTruthy();
-    cleanup();
-    clearPropSectionMemory();
-    summaryWithLinks([]);
-    renderPanel(colorTrack());
-    expect(within(timingSection()).queryByLabelText("Audio units")).toBeNull();
-  });
-
-  it("round-trips a sample-grid position through the Start field in samples", async () => {
-    summaryWithLinks([]);
-    setAudioUnits("samples");
     const onMutated = renderPanel(audioTrack(), "layer-a1");
+    // No unit switch: an audio clip's sub-frame placement is its source slip,
+    // which the nudge commands author, not this field.
+    expect(within(timingSection()).queryByLabelText("Audio units")).toBeNull();
     const start = within(timingSection()).getByLabelText("Start");
-    // The field READS the mixer's sample index for the stored µs…
-    expect(start).toHaveProperty("value", "0");
-    // …and a typed index commits the exact µs of THAT sample. 1608 → 33_500 µs, which
-    // is half a frame off the 30 fps grid (frame 1 is 33_333) — the whole point: this
-    // position is unreachable by dragging and unrepresentable on the frame grid.
-    fireEvent.change(start, { target: { value: "1608" } });
+    expectTimecode(start, "00:00:00:00");
+    changeTimecode(start, "00:00:01:00");
     fireEvent.blur(start);
+    // escapeLink=false: the edit is a move of the clip and its link, as for a
+    // visual layer.
     await vi.waitFor(() =>
-      // escapeLink=true — a sub-frame audio start is a SLIP, so the video member must
-      // not follow (it would land off its own grid).
-      expect(moveLayer).toHaveBeenCalledWith("layer-a1", "track-a", 33_500, true),
+      expect(moveLayer).toHaveBeenCalledWith("layer-a1", "track-a", 1_000_000, false),
     );
     await vi.waitFor(() => expect(onMutated).toHaveBeenCalledOnce());
-  });
-
-  it("reads the same audio time in milliseconds when the unit is switched", () => {
-    summaryWithLinks([]);
-    setAudioUnits("ms");
-    renderPanel(audioTrack(), "layer-a1");
-    expect(within(timingSection()).getByLabelText("Start")).toHaveProperty("value", "00:00:00.000");
-    setAudioUnits("frames");
-    // …and the visual layer's readouts are untouched by the mode.
-    cleanup();
-    clearPropSectionMemory();
-    setAudioUnits("ms");
-    summaryWithLinks([]);
-    renderPanel(colorTrack());
-    expectTimecode(within(timingSection()).getByLabelText("Start"), "00:00:00:00");
-    setAudioUnits("frames");
   });
 
   it("routes duration through the link-aware trim command", async () => {
@@ -845,19 +811,6 @@ describe('direct retime duration editing', () => {
     fireEvent.focus(seconds);
     fireEvent.blur(seconds);
     expect(retimeLayers).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['ms', '00:00:01.500', 1_500_000],
-    ['samples', '72000', 1_500_000],
-  ] as const)('uses the selected audio %s unit for target duration', async (units, value, durationUs) => {
-    const audio = audioTrack();
-    useProjectStore.getState().apply(summaryFixture({ root: { tracks: [audio] } }));
-    setAudioUnits(units);
-    renderPanel(audio, 'layer-a1');
-    fireEvent.change(screen.getByLabelText('Target duration'), { target: { value } });
-    fireEvent.blur(screen.getByLabelText('Target duration'));
-    await vi.waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['layer-a1'], { kind: 'Duration', duration_us: durationUs }));
   });
 
   it.each([

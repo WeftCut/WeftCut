@@ -16,14 +16,7 @@
 import { create } from "zustand";
 import type { LayerParamsView } from "../ipc";
 import { SPAWN_TRACK_ID, type PlacementValidity } from "./placement";
-import {
-  floorTravelAtZero,
-  gridForLayerKind,
-  snapOnGrid,
-  travelOnGrids,
-  type RateLike,
-  type ShiftMember,
-} from "../grid";
+import { floorTravelAtZero, frameGrid, snapOnGrid, travelOnGrid, type RateLike, type ShiftMember } from "../grid";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
@@ -36,7 +29,6 @@ export function shiftMembersOf(
 ): ShiftMember[] {
   return subjects.map((subject) => ({
     id: subject.layerId,
-    kind: subject.kind,
     tStartUs: subject.originalTStart,
     tEndUs: subject.originalTEnd,
   }));
@@ -56,11 +48,11 @@ export interface MoveLandings {
 /// lanes draw and hold the project to, and the drop strip's own ghost. The
 /// mutation runs the same three on the other side of the commit, so a promise
 /// computed any other way is one the project can never satisfy — see
-/// `travelOnGrids` for the rule a hand-written copy gets wrong.
+/// `travelOnGrid` for the rule a hand-written copy gets wrong.
 ///
-/// The anchor's REQUESTED head goes through its own lattice first, then the set
-/// is floored at zero as one body (`floorTravelAtZero`, never per member), then
-/// every member moves by whole points of ITS lattice. `deltaUs` is the
+/// The anchor's REQUESTED head snaps to the frame grid first, then the set is
+/// floored at zero as one body (`floorTravelAtZero`, never per member), then
+/// every member moves by the same whole frames. `deltaUs` is the
 /// gesture's raw shift; the landings are what the user is being shown.
 export function moveLandings(
   drag: DragState,
@@ -68,20 +60,15 @@ export function moveLandings(
   fps: RateLike,
 ): MoveLandings {
   const movers = shiftMembersOf(drag.subjects);
-  const anchor = drag.subjects.find(
-    (subject) => subject.layerId === drag.layerId,
-  );
-  const anchorGrid = gridForLayerKind(anchor?.kind ?? "VideoClip", fps);
   const travel = floorTravelAtZero(
     movers,
     {
       fromUs: drag.originalTStart,
-      toUs: snapOnGrid(drag.originalTStart + deltaUs, anchorGrid),
+      toUs: snapOnGrid(drag.originalTStart + deltaUs, frameGrid(fps)),
     },
     fps,
-    anchorGrid,
   );
-  const byLayerId = travelOnGrids(movers, travel, fps);
+  const byLayerId = travelOnGrid(movers, travel, fps);
   return {
     byLayerId,
     // `buildDragSubjects` always carries the seed, so the fallback is reached

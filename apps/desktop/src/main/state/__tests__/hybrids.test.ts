@@ -1589,12 +1589,9 @@ describe('runHybrid: remove_pauses', () => {
   })
 
   // The detector's boundaries sit between frames (its peaks window is ~8 ms).
-  // Cut there, the audio lands on the sample lattice and the picture is
-  // re-snapped onto the frame grid up to half a frame away, and the picture
-  // piece of a KEPT segment then laps into the next hole — which the fan-out
-  // read as membership and the planner refused as a hole that ate the clip.
-  // Snapping the cores onto the frame grid first puts both cuts on one instant.
-  it('lands a picture-linked cut on the frame grid, so grid drift cannot doom a kept piece', async () => {
+  // Both members are cut on the nearest frame, one instant, so a kept piece
+  // abuts the next hole rather than lapping into it.
+  it('lands a picture-linked cut on the frame grid, so no kept piece laps into a hole', async () => {
     const { actor, layerId } = withLinkedAudio(6_000_000)
     const deps = makeDeps(actor)
     withPauses(deps, [[1_253_151, 2_993_197], [3_256_598, 4_996_643]])
@@ -1611,16 +1608,14 @@ describe('runHybrid: remove_pauses', () => {
     expect(removedResult(raw).removed_us).toBe(3_066_666)
   })
 
-  it('keeps sample precision on an UNLINKED audio clip — nothing else has to be cut where it is cut', async () => {
+  it('cuts an UNLINKED audio clip on the frame grid too', async () => {
     const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
     withPauses(deps, [[1_253_151, 2_993_197]])
     await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 100_000 }, deps)
-    const spans = spansOfKind(actor, 'Audio')
-    expect(spans).toHaveLength(2)
-    // The actor re-snaps onto the 48 kHz lattice (≤ 21 µs), not onto a frame.
-    expect(Math.abs(spans[0][1] - 1_353_151)).toBeLessThanOrEqual(21)
-    expect(Math.abs(spans[0][1] - 1_366_667)).toBeGreaterThan(1_000)
+    // Core [1 353 151, 2 893 197) → 30 fps frames 41 / 87: [1 366 667, 2 900 000),
+    // 1 533 333 µs closed up.
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 1_366_667], [1_366_667, 4_466_667]])
   })
 
   it('refuses a clip that plays no sound, in its OWN verb', async () => {

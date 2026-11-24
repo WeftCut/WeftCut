@@ -97,8 +97,8 @@ function placeOf(layer: Layer, at: SourceInstant): number | null {
   const kept = byAt.get(at)
   if (kept !== undefined) return kept
   // A tack follows displacement, not a marker's frame-snapped source anchor.
-  // Snapping the covered clip's start shifts a just-created range over audio
-  // whose sample-grid start falls between video frames.
+  // Snapping it would shift a just-created range over audio whose source is
+  // slipped by samples, so its content sits between video frames.
   const t_us = shows(layer, at) ? Math.round(layer.t_start_us + approximateTime(localAtContent(layer.params, addTime(exactTime(at.src_us), at.src_fraction ?? ZERO_TIME)))) : null
   byAt.set(at, t_us)
   return t_us

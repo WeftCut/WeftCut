@@ -335,6 +335,34 @@ mod tests {
     }
 
     #[test]
+    fn a_window_reaching_past_the_media_reads_only_the_media_and_keeps_the_sound_in_place() {
+        let media = audio_media(PathBuf::from("source.wav"), 2_000_000);
+        // Slipped 100 ms later: the clip's first 100 ms are silence before the media.
+        let mut head = audio_layer(media.id, 1_000_000, 2_000_000);
+        if let LayerParams::Audio(ref mut p) = head.params {
+            p.src_in_us = -100_000;
+            p.src_out_us = 1_900_000;
+        }
+        let resolved = resolve_clip_audio_source(Some(&head), Some(&media), head.id, None, None)
+            .expect("a slipped clip is transcribable");
+        assert_eq!(resolved.source_in_us, 0);
+        assert_eq!(resolved.timeline_start_us, 1_100_000);
+        // Slipped 100 ms earlier: the clip's last 100 ms are silence past the media.
+        let mut tail = audio_layer(media.id, 1_000_000, 2_000_000);
+        if let LayerParams::Audio(ref mut p) = tail.params {
+            p.src_in_us = 100_000;
+            p.src_out_us = 2_100_000;
+        }
+        let resolved = resolve_clip_audio_source(Some(&tail), Some(&media), tail.id, None, None)
+            .expect("a slipped clip is transcribable");
+        assert_eq!(
+            (resolved.source_in_us, resolved.source_out_us),
+            (100_000, 2_000_000)
+        );
+        assert_eq!(resolved.timeline_start_us, 1_000_000);
+    }
+
+    #[test]
     fn sample_rounded_audio_end_stays_inside_source_window() {
         // A source end between 48 kHz samples rounds up by 9 microseconds
         // when placed on the timeline. Transcription must still read it.

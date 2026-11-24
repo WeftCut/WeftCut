@@ -1,36 +1,34 @@
-// Audio geometry lives on the fixed 48 kHz mix lattice while visual geometry stays
-// on the composition frame grid (ADR 0038), and the ONE `gridForLayerKind` lookup
-// is honoured at all three enforcement sites.
-//
-// Both DATA-LOSS dependencies are covered here WITH NEGATIVE CONTROLS, because the
-// failure mode they guard is silent: a kind-blind snap does not error, it just quietly
-// moves the user's audio. A passing assertion means nothing unless the kind-blind
-// version of the same code demonstrably fails it — so each control re-implements the
-// pre-fix behaviour inline and asserts it produces the wrong answer.
+// Every layer edge, Audio's included, sits on the composition frame grid, and audio
+// sample precision lives in the source window (ADR 0038). The 48 kHz lattice is
+// still where a slip is counted, where audio automation keys sit, and the unit the
+// mixer plays in, so these tests read both lattices.
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type Project } from '../model'
+import { blankProject, type Layer, type Project } from '../model'
 import { createActor } from '../actor'
 import { parseProject, serializeProject, type GridRepair } from '../serialize'
 import { serializeProjectToJson } from '../persistence'
-import { AUDIO_GRID, frameGrid, gridIndex, snapFrameRound, timeUsAtGridIndex } from '../snap'
+import { AUDIO_GRID, frameGrid, gridIndex, isCanonicalOnGrid, snapFrameRound, timeUsAtGridIndex } from '../snap'
+import { nudgedSource, syncOffsetSamples, type SlipLayer } from '../../../renderer/timeline/audioSlip'
 import { root } from './fixtures/project'
+import { layerParamsView } from '../summary'
 
 // 29.97 is the discriminating rate: 48000 * 1001/30000 = 1601.6 samples per frame, so
-// the frame lattice is NOT a sublattice of the 48 kHz one and each grid rejects the
-// other's boundaries. At 24/25/30/50/60 and 23.976 the ratio IS an integer
-// (2000/1920/1600/960/800/2002), so the two coincide and no test there can tell a
-// kind-blind snap from a correct one.
+// the frame lattice is NOT a sublattice of the 48 kHz one and an audio edge written
+// on samples is off the frame grid. At 24/25/30/50/60 and 23.976 the ratio IS an
+// integer (2000/1920/1600/960/800/2002), so no test there can tell the two apart.
 const FPS = { num: 30_000, den: 1001 }
-const AUDIO_MEDIA = 'audio-grid-media'
-const VIDEO_MEDIA = 'audio-grid-video'
+const AV_MEDIA = 'audio-grid-av'
+const MEDIA_US = 10_000_000
+/** Where both members start reading, far enough in that a slip either way stays
+ *  inside the media. */
+const SRC_IN = 1_000_000
 
 /** Canonical µs of sample index `i` — the mixer's own lattice. */
 const sample = (i: number) => timeUsAtGridIndex(i, AUDIO_GRID)
 /** Canonical µs of composition frame `i` at 29.97. */
 const frame = (i: number) => timeUsAtGridIndex(i, frameGrid(FPS))
-/** One sample's width in µs (~20.83, so 20 or 21 depending on the pair). */
-const sampleSpanUs = (i: number) => sample(i + 1) - sample(i)
+const onFrames = (t: number) => isCanonicalOnGrid(t, frameGrid(FPS))
 
 /** The first frame index at or after `from` whose canonical µs is NOT a sample
  *  boundary. LANDMINE for anyone hand-picking fixture times: at 29.97 one frame is
@@ -58,20 +56,18 @@ interface Fixture {
   audioTrack: string
 }
 
-/** A linked A/V pair on separate tracks, both REQUESTED at the same time — which
- *  each resolves on its own lattice, so at 29.97 they start ~8 µs apart (that is where
- *  the mixer would have played the audio anyway). */
-function pairedFixture(): Fixture {
+/** A linked picture/sound pair of ONE recording, on separate tracks, both reading
+ *  the media from `srcIn` for `spanUs`. */
+function pairedFixture(srcIn = SRC_IN, spanUs = 2_000_000): Fixture {
   const idGen = seededGen()
   const initial = blankProject(idGen, 'audio-grid')
   root(initial).fps = FPS
   const actor = createActor({ initial, idGen, clock: () => '<TS>' })
-  actor.dispatch('add_media', { id: VIDEO_MEDIA, kind: 'Video', duration_us: 10_000_000, with_audio: false })
-  actor.dispatch('add_media', { id: AUDIO_MEDIA, kind: 'Audio', duration_us: 10_000_000, with_audio: true })
+  actor.dispatch('add_media', { id: AV_MEDIA, kind: 'Video', duration_us: MEDIA_US, with_audio: true })
   const [videoTrack, audioTrack] = root(actor.snapshot()).tracks.map((t) => t.id)
   const at = frame(V_START_FRAME())
-  const v = actor.dispatch('add_layer', { track: videoTrack, kind: 'video', media: VIDEO_MEDIA, src_in_us: 0, src_out_us: 2_000_000, t_start_us: at, t_end_us: at + 2_000_000 })
-  const a = actor.dispatch('add_layer', { track: audioTrack, kind: 'audio', media: AUDIO_MEDIA, src_in_us: 0, src_out_us: 2_000_000, t_start_us: at, t_end_us: at + 2_000_000 })
+  const v = actor.dispatch('add_layer', { track: videoTrack, kind: 'video', media: AV_MEDIA, src_in_us: srcIn, src_out_us: srcIn + spanUs, t_start_us: at, t_end_us: at + spanUs })
+  const a = actor.dispatch('add_layer', { track: audioTrack, kind: 'audio', media: AV_MEDIA, src_in_us: srcIn, src_out_us: srcIn + spanUs, t_start_us: at, t_end_us: at + spanUs })
   expect([v.ok, a.ok]).toEqual([true, true])
   const videoLayer = v.ok ? (v.value as string) : ''
   const audioLayer = a.ok ? (a.value as string) : ''
@@ -79,20 +75,50 @@ function pairedFixture(): Fixture {
   return { actor, videoLayer, audioLayer, videoTrack, audioTrack }
 }
 
-const findLayer = (p: Project, id: string) => root(p).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
+const stateOf = (f: Fixture): Project => f.actor.snapshot()
+const findLayer = (p: Project, id: string): Layer => root(p).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
 
-describe('audio grid — the 48 kHz mix lattice', () => {
+/** A model layer as the timeline's summary row carries it, through the summary's
+ *  own `layerParamsView`, so the slip helpers read the shape they get in the app. */
+function slipLayer(l: Layer, p: Project): SlipLayer {
+  return { id: l.id, t_start_us: l.t_start_us, t_end_us: l.t_end_us, kind: l.params.kind, params: layerParamsView(l.params, p.media_pool) }
+}
+
+const srcIn = (l: Layer) => (l.params as { src_in_us: number }).src_in_us
+const srcOut = (l: Layer) => (l.params as { src_out_us: number }).src_out_us
+
+/** The mix sample the layer's source time 0 lands on: the mixer reads source sample
+ *  `n - this` at timeline sample `n`, so two states with the same value play every
+ *  sample at the same instant. */
+const mixOrigin = (l: Layer) => gridIndex(l.t_start_us, AUDIO_GRID) - gridIndex(srcIn(l), AUDIO_GRID)
+
+/** Slip the audio layer's sound `samples` later through the command the nudge
+ *  sends, returning whether the actor took it. */
+function trySlip(f: Fixture, samples: number): boolean {
+  const snap = f.actor.snapshot()
+  const next = nudgedSource(slipLayer(findLayer(snap, f.audioLayer), snap), samples)
+  expect(next).not.toBeNull()
+  return f.actor.dispatch('update_layer_params', { layer: f.audioLayer, patch: { kind: 'Audio', ...next! } }).ok
+}
+function slip(f: Fixture, samples: number): void {
+  expect(trySlip(f, samples)).toBe(true)
+}
+
+function offsetOf(p: Project, f: Fixture): number | null {
+  return syncOffsetSamples(slipLayer(findLayer(p, f.audioLayer), p), [slipLayer(findLayer(p, f.videoLayer), p), slipLayer(findLayer(p, f.audioLayer), p)])
+}
+
+describe('audio grid — edges on frames, precision in the source', () => {
   it('the authoring index IS the mixer sample index (leaf twin, not a parallel implementation)', () => {
     // `gridIndex(us, AUDIO_GRID)` is `frame_index_round(us, 48000, 1)`, and the mixer
     // uses `us_to_frame(us, 48000)`. Both reduce to `(us*48000 + 500000)/1000000` in
-    // the leaf, so a one-sample nudge is exactly one mix sample rather than
-    // approximately one. Guarded here so a future "shortcut" cannot drift them apart
-    // the way `snapFrameFloor` once did.
+    // the leaf, so a one-sample slip is exactly one mix sample rather than
+    // approximately one.
     for (const us of [0, 1, 17, 20_833, 33_367, 1_000_000, 3_600_000_000]) {
       expect(gridIndex(us, AUDIO_GRID)).toBe(Math.floor((us * 48 + 500) / 1000))
     }
     // And the inverse is distinct + invertible at ~20.83 µs spacing, so µs storage
-    // represents the lattice exactly (spec R2-D6).
+    // represents the lattice exactly.
     for (let i = 0; i < 1000; i++) {
       expect(gridIndex(sample(i), AUDIO_GRID)).toBe(i)
       if (i > 0) expect(sample(i)).toBeGreaterThan(sample(i - 1))
@@ -104,158 +130,83 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     expect(snapFrameRound(sample(1602), FPS.num, FPS.den)).not.toBe(sample(1602))
   })
 
-  // ── Acceptance 1: both assertions in one test ────────────────────────────────
-  it('an audio layer trims and moves to any sample boundary; a visual layer cannot leave the frame grid', () => {
-    const { actor, videoLayer, audioLayer, audioTrack } = pairedFixture()
-
-    // Audio MOVE to a sample boundary that is not a frame boundary.
-    const target = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 7)
-    expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: target, escape_link: true }).ok).toBe(true)
-    expect(findLayer(actor.snapshot(), audioLayer).t_start_us).toBe(target)
-
-    // Audio TRIM to a sample boundary — one sample, the minimum audio duration.
-    const outEdge = findLayer(actor.snapshot(), audioLayer).t_end_us
-    const trimTo = sample(gridIndex(outEdge, AUDIO_GRID) - 1)
-    expect(actor.dispatch('trim_layer', { layer: audioLayer, edge: 'out', new_t_us: trimTo, escape_link: true }).ok).toBe(true)
-    expect(findLayer(actor.snapshot(), audioLayer).t_end_us).toBe(trimTo)
-
-    // The VISUAL layer asked for the same sub-frame time snaps back to its frame
-    // grid — the request is honoured to the nearest frame, never persisted raw.
-    const videoTarget = sample(gridIndex(frame(60), AUDIO_GRID) + 7)
-    expect(videoTarget).not.toBe(snapFrameRound(videoTarget, FPS.num, FPS.den))
-    expect(actor.dispatch('move_layer', { layer: videoLayer, to_track: root(actor.snapshot()).tracks[0].id, t_start_us: videoTarget, escape_link: true }).ok).toBe(true)
-    const movedVideo = findLayer(actor.snapshot(), videoLayer)
-    expect(movedVideo.t_start_us).toBe(snapFrameRound(videoTarget, FPS.num, FPS.den))
-    expect(movedVideo.t_start_us).not.toBe(videoTarget)
-  })
-
-  // ── Acceptance 2 + data-loss dependency #1: move.ts's link fan-out ──────────
-  it('a whole-link move preserves a slipped audio offset EXACTLY (sample index shifts by the travel\'s projection)', () => {
-    const { actor, videoLayer, audioLayer, audioTrack, videoTrack } = pairedFixture()
-
-    // Slip the audio 7 samples late, escaping the link so only it moves.
-    const slipped = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 7)
-    expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: slipped, escape_link: true }).ok).toBe(true)
-    const before = actor.snapshot()
-    const offsetBefore = findLayer(before, audioLayer).t_start_us - findLayer(before, videoLayer).t_start_us
-    const audioIndexBefore = gridIndex(findLayer(before, audioLayer).t_start_us, AUDIO_GRID)
-    expect(offsetBefore).not.toBe(0)
-
-    // Now move the WHOLE link by dragging the video member.
-    const newVideoStart = frame(V_MOVE_FRAME())
-    expect(actor.dispatch('move_layer', { layer: videoLayer, to_track: videoTrack, t_start_us: newVideoStart, escape_link: false }).ok).toBe(true)
-    const after = actor.snapshot()
-
-    // The audio's SAMPLE INDEX moved by the video's travel projected onto the
-    // sample lattice — not by a re-snap onto the video frame grid, and not by
-    // the µs delta re-snapped on its own lattice, which re-rounds the residue.
-    // That is what keeps the offset intact through any number of moves.
-    const audioIndexAfter = gridIndex(findLayer(after, audioLayer).t_start_us, AUDIO_GRID)
-    expect(audioIndexAfter - audioIndexBefore).toBe(
-      gridIndex(findLayer(after, videoLayer).t_start_us, AUDIO_GRID) - gridIndex(findLayer(before, videoLayer).t_start_us, AUDIO_GRID),
-    )
-    // …and the slip survives the move at sample precision.
-    const offsetAfter = findLayer(after, audioLayer).t_start_us - findLayer(after, videoLayer).t_start_us
-    expect(Math.abs(offsetAfter - offsetBefore)).toBeLessThanOrEqual(sampleSpanUs(0))
-    expect(gridIndex(offsetAfter, AUDIO_GRID)).toBe(gridIndex(offsetBefore, AUDIO_GRID))
-  })
-
-  it('NEGATIVE CONTROL: the kind-blind fan-out destroys the slip', () => {
-    // A kind-blind fan-out snaps every link sibling on the COMPOSITION grid
-    // instead of each member's own lattice. Applied to the same slipped state, it
-    // must fail the assertion above — proving that test discriminates rather than
-    // passing by luck.
-    const { actor, videoLayer, audioLayer, audioTrack } = pairedFixture()
-    const slipped = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 7)
-    expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: slipped, escape_link: true }).ok).toBe(true)
-    const before = actor.snapshot()
-    const audioStart = findLayer(before, audioLayer).t_start_us
-    const offsetBefore = audioStart - findLayer(before, videoLayer).t_start_us
-    const delta = frame(V_MOVE_FRAME()) - findLayer(before, videoLayer).t_start_us
-
-    const kindBlind = snapFrameRound(audioStart + delta, FPS.num, FPS.den)
-    const kindAware = snapFrameRound(audioStart + delta, AUDIO_GRID.num, AUDIO_GRID.den)
-    expect(kindBlind).not.toBe(kindAware)
-    // The offset the user authored is gone: the audio lands exactly on the video's
-    // new frame, silently re-syncing it.
-    expect(kindBlind).toBe(frame(V_MOVE_FRAME()))
-    expect(offsetBefore).not.toBe(0)
-    // …and the result is not even legal any more — validate's audio arm would reject
-    // it, so the kind-blind fan-out cannot even be "wrong but harmless".
-    expect(snapFrameRound(kindBlind, AUDIO_GRID.num, AUDIO_GRID.den)).not.toBe(kindBlind)
-  })
-
-  // ── Acceptance 3 + data-loss dependency #2: serialize.ts's repairGrid ────────
-  it('a project with sample-aligned audio reopens with ZERO repairs and byte-identical geometry', () => {
+  it('an audio layer asked for a sample time lands on the nearest frame, moved or trimmed', () => {
     const { actor, audioLayer, audioTrack } = pairedFixture()
-    const slipped = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 7)
-    expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: slipped, escape_link: true }).ok).toBe(true)
 
-    const saved = serializeProjectToJson(actor.snapshot())
+    const target = sample(gridIndex(frame(V_MOVE_FRAME()), AUDIO_GRID) + 7)
+    expect(onFrames(target)).toBe(false)
+    expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: target, escape_link: true }).ok).toBe(true)
+    expect(findLayer(actor.snapshot(), audioLayer).t_start_us).toBe(snapFrameRound(target, FPS.num, FPS.den))
+
+    const outEdge = findLayer(actor.snapshot(), audioLayer).t_end_us
+    const trimTo = sample(gridIndex(outEdge, AUDIO_GRID) - 7)
+    expect(onFrames(trimTo)).toBe(false)
+    expect(actor.dispatch('trim_layer', { layer: audioLayer, edge: 'out', new_t_us: trimTo, escape_link: true }).ok).toBe(true)
+    expect(findLayer(actor.snapshot(), audioLayer).t_end_us).toBe(snapFrameRound(trimTo, FPS.num, FPS.den))
+  })
+
+  it('a linked pair shares its edges exactly, and a whole-link move keeps them shared', () => {
+    const { actor, videoLayer, audioLayer, videoTrack } = pairedFixture()
+    const edges = (p: Project, id: string) => [findLayer(p, id).t_start_us, findLayer(p, id).t_end_us]
+    expect(edges(actor.snapshot(), audioLayer)).toEqual(edges(actor.snapshot(), videoLayer))
+
+    expect(actor.dispatch('move_layer', { layer: videoLayer, to_track: videoTrack, t_start_us: frame(V_MOVE_FRAME()), escape_link: false }).ok).toBe(true)
+    const after = actor.snapshot()
+    expect(edges(after, videoLayer)[0]).toBe(frame(V_MOVE_FRAME()))
+    expect(edges(after, audioLayer)).toEqual(edges(after, videoLayer))
+  })
+
+  it('a one-sample nudge slips the audio source under fixed edges; the picture is untouched', () => {
+    const f = pairedFixture()
+    const before = stateOf(f)
+    expect(offsetOf(before, f)).toBe(0)
+
+    slip(f, 1)
+    const after = stateOf(f)
+    const audioBefore = findLayer(before, f.audioLayer)
+    const audioAfter = findLayer(after, f.audioLayer)
+    expect([audioAfter.t_start_us, audioAfter.t_end_us]).toEqual([audioBefore.t_start_us, audioBefore.t_end_us])
+    expect(gridIndex(srcIn(audioAfter), AUDIO_GRID)).toBe(gridIndex(srcIn(audioBefore), AUDIO_GRID) - 1)
+    expect(mixOrigin(audioAfter)).toBe(mixOrigin(audioBefore) + 1)
+    expect(offsetOf(after, f)).toBe(1)
+    expect(findLayer(after, f.videoLayer)).toEqual(findLayer(before, f.videoLayer))
+  })
+
+  it('a whole-link move carries a slip exactly: the source window rides along unchanged', () => {
+    const f = pairedFixture()
+    slip(f, 7)
+    const before = stateOf(f)
+    expect(f.actor.dispatch('move_layer', { layer: f.videoLayer, to_track: f.videoTrack, t_start_us: frame(V_MOVE_FRAME()), escape_link: false }).ok).toBe(true)
+    const after = stateOf(f)
+    expect(findLayer(after, f.audioLayer).t_start_us).toBe(frame(V_MOVE_FRAME()))
+    expect([srcIn(findLayer(after, f.audioLayer)), srcOut(findLayer(after, f.audioLayer))])
+      .toEqual([srcIn(findLayer(before, f.audioLayer)), srcOut(findLayer(before, f.audioLayer))])
+    expect(offsetOf(after, f)).toBe(7)
+  })
+
+  it('a linked In trim after a slip moves both edges together and keeps the slip', () => {
+    const f = pairedFixture()
+    slip(f, 7)
+    const trimTo = frame(V_START_FRAME() + 10)
+    expect(f.actor.dispatch('trim_layer', { layer: f.videoLayer, edge: 'in', new_t_us: trimTo, escape_link: false }).ok).toBe(true)
+    const after = stateOf(f)
+    expect(findLayer(after, f.videoLayer).t_start_us).toBe(trimTo)
+    expect(findLayer(after, f.audioLayer).t_start_us).toBe(trimTo)
+    expect(offsetOf(after, f)).toBe(7)
+  })
+
+  it('a slipped project reopens with no repair and byte-identical geometry', () => {
+    const f = pairedFixture()
+    slip(f, 7)
+    const saved = serializeProjectToJson(stateOf(f))
     const reported: GridRepair[][] = []
     const reopened = parseProject(JSON.parse(saved), { onGridRepair: (r) => reported.push([...r]) })
-    expect(reported).toEqual([]) // the repair must be a no-op, not a "successful" move
+    expect(reported).toEqual([])
     expect(JSON.stringify(serializeProject(reopened))).toBe(JSON.stringify(JSON.parse(saved)))
-    expect(findLayer(reopened, audioLayer).t_start_us).toBe(slipped)
+    expect(offsetOf(reopened, f)).toBe(7)
   })
 
-  it('NEGATIVE CONTROL: the kind-blind load repair moves the audio on every open', () => {
-    // A kind-blind repair snaps EVERY layer endpoint on the composition frame grid
-    // regardless of kind. Because it runs on load, the damage compounds silently —
-    // open, save, open again and the slip is simply gone.
-    const { actor, audioLayer, audioTrack } = pairedFixture()
-    const slipped = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 7)
-    expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: slipped, escape_link: true }).ok).toBe(true)
-    const wire = JSON.parse(serializeProjectToJson(actor.snapshot())) as {
-      compositions: Record<string, {
-        fps: { num: number; den: number }
-        tracks: Array<{ layers: Array<{ id: string; t_start_us: number; t_end_us: number }> }>
-      }>
-      root_id: string
-    }
-    const wireRoot = wire.compositions[wire.root_id]
-
-    const moved: string[] = []
-    for (const track of wireRoot.tracks) {
-      for (const l of track.layers) {
-        const snappedStart = snapFrameRound(l.t_start_us, wireRoot.fps.num, wireRoot.fps.den)
-        if (snappedStart !== l.t_start_us) moved.push(l.id)
-      }
-    }
-    expect(moved).toContain(audioLayer) // the kind-blind pass DOES report a repair here
-    // The current, kind-keyed pass reports nothing for the same project (asserted in
-    // the test above) — that difference is the whole fix.
-  })
-
-  it('a legacy frame-aligned audio layer IS repaired onto the sample lattice on load (repair, never reject)', () => {
-    // The other direction: a legacy project holds its audio on frame boundaries,
-    // which at 29.97 are not sample boundaries. They must OPEN — repaired by
-    // ≤ half a sample (~10 µs, inaudible) — not be rejected.
-    const { actor, audioLayer } = pairedFixture()
-    const wire = JSON.parse(serializeProjectToJson(actor.snapshot())) as Record<string, unknown> & {
-      compositions: Record<string, { tracks: Array<{ layers: Array<Record<string, unknown>> }> }>
-      root_id: string
-    }
-    for (const track of wire.compositions[wire.root_id].tracks) {
-      for (const l of track.layers) {
-        if (l.id !== audioLayer) continue
-        l.t_start_us = frame(V_START_FRAME()) // legacy: frame-aligned audio
-        l.t_end_us = frame(V_MOVE_FRAME())
-      }
-    }
-    const reported: GridRepair[][] = []
-    const reopened = parseProject(wire, { onGridRepair: (r) => reported.push([...r]) })
-    const audio = findLayer(reopened, audioLayer)
-    expect(reported.length).toBe(1)
-    expect(audio.t_start_us).toBe(snapFrameRound(frame(V_START_FRAME()), AUDIO_GRID.num, AUDIO_GRID.den))
-    expect(Math.abs(audio.t_start_us - frame(V_START_FRAME()))).toBeLessThan(sampleSpanUs(0))
-    // Idempotent: the repaired project reopens clean.
-    const second: GridRepair[][] = []
-    parseProject(JSON.parse(serializeProjectToJson(reopened)), { onGridRepair: (r) => second.push([...r]) })
-    expect(second).toEqual([])
-  })
-
-  it('composition.duration_us stays on the FRAME grid even when audio reaches furthest', () => {
+  it('composition.duration_us is a frame count that encloses the audio tail', () => {
     const { actor, audioLayer, videoLayer } = pairedFixture()
     // Delete the video so the audio tail alone defines the duration.
     expect(actor.dispatch('delete_layers', { layers: [videoLayer] }).ok).toBe(true)
@@ -263,57 +214,19 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     expect(actor.dispatch('trim_layer', { layer: audioLayer, edge: 'out', new_t_us: end, escape_link: true }).ok).toBe(true)
     const comp = root(actor.snapshot())
     const audio = findLayer(actor.snapshot(), audioLayer)
-    expect(audio.t_end_us).toBe(end)
-    expect(snapFrameRound(comp.duration_us, FPS.num, FPS.den)).toBe(comp.duration_us)
-    // Rounded UP, so the composition still contains the audio tail rather than
-    // clipping it — a nearest-snap could land below `t_end_us`.
+    expect(onFrames(audio.t_end_us)).toBe(true)
+    expect(onFrames(comp.duration_us)).toBe(true)
     expect(comp.duration_us).toBeGreaterThanOrEqual(audio.t_end_us)
   })
 
-  // ── One-sample audio nudge, at the mutation level ────────────────────────────
-  it('a one-sample nudge moves the audio alone; the video member stays put', () => {
-    const { actor, videoLayer, audioLayer, audioTrack } = pairedFixture()
-    const before = actor.snapshot()
-    const videoStart = findLayer(before, videoLayer).t_start_us
-    const audioStart = findLayer(before, audioLayer).t_start_us
-    const audioEnd = findLayer(before, audioLayer).t_end_us
-
-    // Exactly what the nudge command sends: one sample INDEX later, escaping the link.
-    const oneSampleLater = sample(gridIndex(audioStart, AUDIO_GRID) + 1)
-    expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: oneSampleLater, escape_link: true }).ok).toBe(true)
-
-    const after = actor.snapshot()
-    expect(findLayer(after, audioLayer).t_start_us).toBe(oneSampleLater)
-    expect(gridIndex(findLayer(after, audioLayer).t_start_us, AUDIO_GRID)).toBe(gridIndex(audioStart, AUDIO_GRID) + 1)
-    // The span rides along on its own lattice — a nudge slips, it does not trim.
-    expect(gridIndex(findLayer(after, audioLayer).t_end_us, AUDIO_GRID)).toBe(gridIndex(audioEnd, AUDIO_GRID) + 1)
-    // …and the video member has not moved at all.
-    expect(findLayer(after, videoLayer).t_start_us).toBe(videoStart)
-  })
-
-  it('trimming the video member after a slip leaves the audio where it is', () => {
-    // `trim.ts`'s aligned set requires COINCIDING edges, so once the audio is slipped
-    // the video's In trim no longer pulls it — which is the right outcome for a
-    // deliberately slipped track, and is documented rather than "fixed" (R2-D7).
-    const { actor, videoLayer, audioLayer, audioTrack } = pairedFixture()
-    const slipped = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 7)
-    expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: slipped, escape_link: true }).ok).toBe(true)
-
-    const trimTo = frame(V_START_FRAME() + 10)
-    expect(actor.dispatch('trim_layer', { layer: videoLayer, edge: 'in', new_t_us: trimTo, escape_link: false }).ok).toBe(true)
-    const after = actor.snapshot()
-    expect(findLayer(after, videoLayer).t_start_us).toBe(trimTo)
-    expect(findLayer(after, audioLayer).t_start_us).toBe(slipped)
-  })
-
   it('composition.sample_rate is untouched by all of this (export target, not a grid)', () => {
-    const { actor, audioLayer, audioTrack } = pairedFixture()
-    const before = root(actor.snapshot()).sample_rate
-    expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: sample(1234567), escape_link: true }).ok).toBe(true)
-    expect(root(actor.snapshot()).sample_rate).toBe(before)
-    // And it is still freely settable — no lock (spec finding 8).
-    expect(actor.dispatch('set_composition', { sample_rate: 44_100 }).ok).toBe(true)
-    expect(root(actor.snapshot()).sample_rate).toBe(44_100)
+    const f = pairedFixture()
+    const before = root(stateOf(f)).sample_rate
+    slip(f, 1234)
+    expect(root(stateOf(f)).sample_rate).toBe(before)
+    // And it is still freely settable — no lock.
+    expect(f.actor.dispatch('set_composition', { sample_rate: 44_100 }).ok).toBe(true)
+    expect(root(stateOf(f)).sample_rate).toBe(44_100)
   })
 
   it('audio param tracks (gain/pan) normalize on the sample lattice, visual params on the frame grid', () => {
@@ -335,7 +248,134 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     const videoParams = findLayer(actor.snapshot(), videoLayer).params
     if (videoParams.kind !== 'VideoClip' || videoParams.opacity.mode !== 'Keyframed') throw new Error('expected a keyframed opacity')
     expect(videoParams.opacity.value[0]!.t_us).toBe(snapFrameRound(raw, FPS.num, FPS.den))
-    // The two land on different times from the same request — the point of the change.
     expect(audioT).not.toBe(videoParams.opacity.value[0]!.t_us)
+  })
+})
+
+describe('silence past the media: a slip at the media\'s ends', () => {
+  it('a clip read from the media\'s first sample slips later: the head plays silence and the offset reads the slip', () => {
+    const f = pairedFixture(0)
+    slip(f, 7)
+    const audio = findLayer(stateOf(f), f.audioLayer)
+    expect(gridIndex(srcIn(audio), AUDIO_GRID)).toBe(-7)
+    expect(offsetOf(stateOf(f), f)).toBe(7)
+  })
+
+  it('a clip spanning the whole media slips both ways, and back to where it was', () => {
+    const f = pairedFixture(0, MEDIA_US)
+    const start = findLayer(stateOf(f), f.audioLayer)
+    slip(f, 48)
+    expect(offsetOf(stateOf(f), f)).toBe(48)
+    slip(f, -96)
+    expect(srcOut(findLayer(stateOf(f), f.audioLayer))).toBeGreaterThan(MEDIA_US)
+    expect(offsetOf(stateOf(f), f)).toBe(-48)
+    slip(f, 48)
+    expect(findLayer(stateOf(f), f.audioLayer).params).toEqual(start.params)
+  })
+
+  it('a cut inside the head silence splits the pair, the left piece silent throughout', () => {
+    const f = pairedFixture(0)
+    slip(f, 4_800) // 100 ms of silence at the head: frames 0-2 of the clip
+    const cut = frame(V_START_FRAME() + 1)
+    expect(f.actor.dispatch('split_layer', { layer: f.videoLayer, at_t_us: cut, escape_link: false }).ok).toBe(true)
+    const audioPieces = root(stateOf(f)).tracks.find((t) => t.id === f.audioTrack)!.layers
+    expect(audioPieces).toHaveLength(2)
+    expect(srcOut(audioPieces[0]!)).toBeLessThanOrEqual(0)
+  })
+
+  it('a trim does not reach further into the silence, and an inward trim of a padded edge is free', () => {
+    const f = pairedFixture(0)
+    slip(f, 4_800) // 100 ms of silence at the head
+    const audio = () => findLayer(stateOf(f), f.audioLayer)
+    const t0 = audio().t_start_us
+    f.actor.dispatch('trim_layer', { layer: f.audioLayer, edge: 'in', new_t_us: frame(V_START_FRAME() - 2), escape_link: true })
+    expect(audio().t_start_us).toBe(t0)
+    expect(f.actor.dispatch('trim_layer', { layer: f.audioLayer, edge: 'in', new_t_us: frame(V_START_FRAME() + 1), escape_link: true }).ok).toBe(true)
+    expect(audio().t_start_us).toBe(frame(V_START_FRAME() + 1))
+    expect(offsetOf(stateOf(f), f)).toBe(4_800)
+  })
+
+  it('a speed change is refused by name while the sound plays silence past its media', () => {
+    const f = pairedFixture(0)
+    slip(f, 7)
+    const r = f.actor.dispatch('retime_layers', { layers: [f.audioLayer], target: { kind: 'Rate', value: { num: 2, den: 1 } } })
+    expect(r.ok).toBe(false)
+    expect(JSON.stringify(r)).toContain('SilencePadded')
+  })
+
+  it('a picture still reads inside its media', () => {
+    const f = pairedFixture(0)
+    expect(f.actor.dispatch('update_layer_params', { layer: f.videoLayer, patch: { kind: 'VideoClip', src_in_us: -1000, src_out_us: 1_999_000 } }).ok).toBe(false)
+  })
+})
+
+/** The wire project the actor would save, as a mutable record. */
+type WireLayer = Record<string, unknown> & { id: string; t_start_us: number; t_end_us: number; params: Record<string, unknown> }
+function wireOf(p: Project): { wire: Record<string, unknown>; layer: (id: string) => WireLayer } {
+  const wire = JSON.parse(serializeProjectToJson(p)) as Record<string, unknown> & {
+    compositions: Record<string, { tracks: Array<{ layers: WireLayer[] }> }>
+    root_id: string
+  }
+  const layer = (id: string) => wire.compositions[wire.root_id].tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
+  return { wire, layer }
+}
+
+describe('load repair of audio edges written on the sample lattice', () => {
+  /** The pair as a project saved when audio edges lived on samples: the audio's
+   *  edges sit `slipSamples` past the samples nearest the picture's frames, and its
+   *  source window reads from `SRC_IN` for as many samples as its edges span, as
+   *  every edit of that time wrote it. */
+  function legacyPair(slipSamples: number, srcIn = SRC_IN) {
+    const f = pairedFixture(srcIn)
+    const { wire, layer } = wireOf(stateOf(f))
+    const audio = layer(f.audioLayer)
+    audio.t_start_us = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + slipSamples)
+    audio.t_end_us = sample(gridIndex(audio.t_end_us, AUDIO_GRID) + slipSamples)
+    const spanSamples = gridIndex(audio.t_end_us, AUDIO_GRID) - gridIndex(audio.t_start_us, AUDIO_GRID)
+    audio.params.src_out_us = sample(gridIndex(audio.params.src_in_us as number, AUDIO_GRID) + spanSamples)
+    expect(onFrames(audio.t_start_us)).toBe(false)
+    expect(onFrames(audio.t_end_us)).toBe(false)
+    const legacyOrigin = gridIndex(audio.t_start_us, AUDIO_GRID) - gridIndex(audio.params.src_in_us as number, AUDIO_GRID)
+    return { f, wire, legacy: { ...audio, params: { ...audio.params } }, legacyOrigin }
+  }
+
+  function open(wire: unknown) {
+    const reported: GridRepair[][] = []
+    const project = parseProject(wire, { onGridRepair: (r) => reported.push([...r]) })
+    return { project, repairs: reported.flat() }
+  }
+
+  it.each([
+    ['grid residue only', 0, SRC_IN],
+    ['a 7-sample slip', 7, SRC_IN],
+    ['a 7-sample slip read from the media\'s first sample', 7, 0],
+  ])('%s: edges move onto the picture\'s frames, every sample plays where it did, and the repair is reported once', (_name, slipSamples, srcInUs) => {
+    const { f, wire, legacy, legacyOrigin } = legacyPair(slipSamples, srcInUs)
+    const { project, repairs } = open(wire)
+    const audio = findLayer(project, f.audioLayer)
+    const video = findLayer(project, f.videoLayer)
+
+    expect([audio.t_start_us, audio.t_end_us]).toEqual([video.t_start_us, video.t_end_us])
+    expect(mixOrigin(audio)).toBe(legacyOrigin)
+    // The mixer plays the source window's length, so its length in samples is
+    // what keeps the last sample where it played.
+    const windowSamples = (inUs: number, outUs: number) => gridIndex(outUs, AUDIO_GRID) - gridIndex(inUs, AUDIO_GRID)
+    expect(windowSamples(srcIn(audio), srcOut(audio))).toBe(windowSamples(legacy.params.src_in_us as number, legacy.params.src_out_us as number))
+    if (slipSamples === 0) {
+      // The residue is under half a sample, so the mixer already played these
+      // samples: the source is left exactly as it was.
+      expect([srcIn(audio), srcOut(audio)]).toEqual([legacy.params.src_in_us, legacy.params.src_out_us])
+    } else {
+      expect(gridIndex(srcIn(audio), AUDIO_GRID)).toBe(gridIndex(legacy.params.src_in_us as number, AUDIO_GRID) - slipSamples)
+      expect(offsetOf(project, f)).toBe(slipSamples)
+    }
+
+    const fields = repairs.filter((r) => r.id === f.audioLayer).map((r) => r.field)
+    expect(fields).toEqual(expect.arrayContaining(['t_start_us', 't_end_us']))
+    if (slipSamples === 0) expect(fields).not.toContain('src_in_us')
+    else expect(fields).toContain('src_in_us')
+    expect(repairs.every((r) => r.id === f.audioLayer || r.entity === 'Composition')).toBe(true)
+
+    expect(open(JSON.parse(serializeProjectToJson(project))).repairs).toEqual([])
   })
 })

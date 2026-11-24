@@ -60,6 +60,7 @@ import { openComposition } from "../state/compositionAnchorStore";
 import { revealTrackWithoutSelection } from "../state/navigation";
 import {
   useCompositionDurationUs,
+  useMediaDurationUs,
   useGroupOrdinals,
 } from "../state/projectStore";
 import { currentSelection, layerIdsOf, setLayerSelection } from "../state/selectionStore";
@@ -421,6 +422,9 @@ export function LayerBlock({
   // Null for every other kind, and for a Group whose composition the summary no
   // longer carries — `sourceWindowTail` reads that as "draw neither affordance".
   const groupSourceDurationUs = useCompositionDurationUs(groupCompositionId);
+  const audioMediaDurationUs = useMediaDurationUs(
+    layer.params.kind === "Audio" ? layer.params.media_id : null,
+  );
   // The sample-region gesture, instantiated per block: only one clip can be
   // under a region drag and only that clip draws the band, so its preview
   // re-renders this block and nothing else.
@@ -526,6 +530,22 @@ export function LayerBlock({
 
   /// The clip's head in SOURCE time — 0 for the kinds that window no source.
   const srcInUs = approximateTime(sourceIn(layer.params));
+  /// The part of the clip that plays media, on the timeline: an Audio window may
+  /// reach past its media, which plays silence (ADR 0038), and a noise-profile
+  /// region must name sound the media has. Source span and timeline span map 1:1
+  /// over the source window at the layer's rate.
+  const sound = (() => {
+    const rate = layerRateNumber(layer.params);
+    const srcOutUs = "src_out_us" in layer.params ? approximateTime(sourceOut(layer)) : srcInUs;
+    const lo = Math.max(srcInUs, 0);
+    const hi = audioMediaDurationUs === null ? srcOutUs : Math.min(srcOutUs, audioMediaDurationUs);
+    return {
+      srcLoUs: lo,
+      srcHiUs: hi,
+      tStartUs: layer.t_start_us + Math.round((lo - srcInUs) / rate),
+      tEndUs: layer.t_end_us - Math.round((srcOutUs - hi) / rate),
+    };
+  })();
 
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it
@@ -602,8 +622,8 @@ export function LayerBlock({
     if (
       !locked && regionDrag.startRegionDrag(e, {
         layerId: layer.id,
-        tStartUs: layer.t_start_us,
-        tEndUs: layer.t_end_us,
+        tStartUs: sound.tStartUs,
+        tEndUs: sound.tEndUs,
         srcInUs,
         rate: layerRateNumber(layer.params),
         pxPerSec,
@@ -1040,8 +1060,8 @@ export function LayerBlock({
           // this offset is what keeps the band over its own audio for the
           // length of that gesture, and is 0 the rest of the time.
           blockLeftPx={((layer.t_start_us - liveStart) / 1_000_000) * pxPerSec}
-          visibleLoUs={srcInUs}
-          visibleHiUs={approximateTime(sourceOut(layer))}
+          visibleLoUs={sound.srcLoUs}
+          visibleHiUs={sound.srcHiUs}
           preview={regionDrag.preview}
           onHandlePointerDown={(e, bound) => {
             const bounds = regionBoundsCompUs(regionBandCard);
@@ -1050,8 +1070,8 @@ export function LayerBlock({
               e,
               {
                 layerId: layer.id,
-                tStartUs: layer.t_start_us,
-                tEndUs: layer.t_end_us,
+                tStartUs: sound.tStartUs,
+                tEndUs: sound.tEndUs,
                 srcInUs,
                 rate: layerRateNumber(layer.params),
                 pxPerSec,

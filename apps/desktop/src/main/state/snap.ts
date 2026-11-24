@@ -15,10 +15,10 @@ export {
   initEval,
 } from '../../renderer/eval'
 
-// The kind-keyed grid policy (ADR 0038) lives beside the leaf wrappers in
+// The grid policy (ADR 0037, 0038) lives beside the leaf wrappers in
 // `renderer/grid.ts`, for the same reason the leaf itself does: BOTH sides need it —
-// the actor for its three enforcement sites, the timeline UI for nudges and
-// readouts — and a copy on each side is exactly the drift the single seam prevents.
+// the actor for its enforcement sites, the timeline UI for nudges and readouts —
+// and a copy on each side is exactly the drift the single seam prevents.
 export {
   AUDIO_GRID,
   AUDIO_SAMPLE_RATE_HZ,
@@ -30,24 +30,22 @@ export {
   snapDownOnGrid,
   snapOnGrid,
   snapUpOnGrid,
-  spanOnGrid,
   timeUsAtGridIndex,
   travelBy,
   travelCrossesZero,
-  travelOnGrids,
+  travelOnGrid,
   type Grid,
   type ShiftMember,
   type Travel,
 } from '../../renderer/grid'
 
-import { gridForLayerKind as gridForKindString } from '../../renderer/grid'
+import { automationGrid as automationGridOfString } from '../../renderer/grid'
 import type { Grid as GridT } from '../../renderer/grid'
 import type { LayerParams, Rational } from './model'
 
-/** THE grid lookup, narrowed to the actor's own `LayerParams['kind']` union so a
- *  typo in a mutation is a compile error rather than a silent frame-grid fallback.
- *  `string` is still accepted because `serialize.ts::repairGrid` runs on the WIRE
- *  shape, before the cast to `Project`, and so has only an `unknown` kind to pass. */
-export function gridForLayerKind(kind: LayerParams['kind'] | string, fps: Rational): GridT {
-  return gridForKindString(kind, fps)
+/** The automation-key lattice, narrowed to the actor's own `LayerParams['kind']`
+ *  union so a typo in a mutation is a compile error rather than a silent
+ *  frame-grid fallback. */
+export function automationGrid(kind: LayerParams['kind'], fps: Rational): GridT {
+  return automationGridOfString(kind, fps)
 }

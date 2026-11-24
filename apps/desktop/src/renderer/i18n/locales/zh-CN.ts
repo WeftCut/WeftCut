@@ -181,9 +181,10 @@ const zhCN: Resources = {
       "InvalidSnapshot": "片段的时间数据无效。",
       "InvalidTarget": "请输入大于零的速率或时长。",
       "Numeric": "请求的时间超出了支持的精度范围。",
-      "DurationTooShort": "时长必须至少包含一帧或一个音频采样。",
+      "DurationTooShort": "时长必须至少包含一帧。",
       "Transition": "此变更会使现有转场失效。",
-      "Collision": "新的时长会与其他片段重叠，请缩短时长或提高速率。"
+      "Collision": "新的时长会与其他片段重叠，请缩短时长或提高速率。",
+      "SilencePadded": "此音频在素材之外播放静音，请先修剪掉静音部分再变速。"
     },
     "rate": "播放倍率",
     "duration": "目标时长",
@@ -1004,10 +1005,10 @@ const zhCN: Resources = {
   // 设置 → 键盘里每一行标签下面那句说明。只有按“当前选中的是什么”分派的动作
   // 才有：它们的标签只能说出两件事里的一件，规则本身就写在这句里。
   hints: {
-    nudge_back: "把选中的关键帧前移一帧；没有选中关键帧时，把选中的音频前移一个采样。",
-    nudge_forward: "把选中的关键帧后移一帧；没有选中关键帧时，把选中的音频后移一个采样。",
-    nudge_large_back: "把选中的关键帧前移十帧；没有选中关键帧时，把选中的音频前移一毫秒。",
-    nudge_large_forward: "把选中的关键帧后移十帧；没有选中关键帧时，把选中的音频后移一毫秒。",
+    nudge_back: "把选中的关键帧前移一帧；没有选中关键帧时，把选中音频的声音在片段内前移一个采样。",
+    nudge_forward: "把选中的关键帧后移一帧；没有选中关键帧时，把选中音频的声音在片段内后移一个采样。",
+    nudge_large_back: "把选中的关键帧前移十帧；没有选中关键帧时，把选中音频的声音在片段内前移一毫秒。",
+    nudge_large_forward: "把选中的关键帧后移十帧；没有选中关键帧时，把选中音频的声音在片段内后移一毫秒。",
     delete_selected: "有选中的关键帧时删除关键帧，否则删除选中的片段。选中的是间隙时则闭合它——其后的一切左移。",
     ripple_delete_selected:
       "和删除键一样，选中的关键帧和选中的转场先拿到这个键；否则删除选中的片段，并把其后的一切左移。选中的是间隙时则闭合它。",
@@ -1194,10 +1195,6 @@ const zhCN: Resources = {
     bake_dot_ready: "已烘焙",
     bake_dot_error: "预烘焙失败",
     audio_slipped: "音频相对视频偏移 {{offset}}",
-    audio_units: "音频单位",
-    audio_units_frames: "时间码（HH:MM:SS:FF）",
-    audio_units_ms: "毫秒（HH:MM:SS.mmm）",
-    audio_units_samples: "采样（48 kHz）",
     // 转场创建入口——右键落在相邻可视片段剪切点的容差范围内时显示。
     add_transition_crossfade: "添加交叉溶解",
     add_transition_wipe: "添加划像 · {{direction}}",
@@ -2424,8 +2421,6 @@ const zhCN: Resources = {
     label: "标签",
     enabled: "启用",
     t_start: "开始位置",
-    audio_units_hint:
-      "音频编辑对齐到精确的 48 kHz 采样，因此这些字段可读取并接受帧内时间。拖拽仍吸附到帧——最大缩放下一个采样仅 0.042 像素宽。使用 Alt+←/→ 微调一个采样，Alt+Shift+←/→ 微调 1 毫秒。",
     t_start_hint: "移动片段，保持时长。",
     t_end: "结束",
     kind: "类型",
@@ -2767,7 +2762,6 @@ const zhCN: Resources = {
     excluded_not_installed: "已排除 · 本机未安装",
     fonts_manage: "打开 设置 > 项目 > 字体",
     fonts_missing: "缺失的字体",
-    italic: "斜体",
     style_outside: "不在文件夹中的风格",
     untracked: "副本不会携带",
     untracked_hint: "没有图层使用这些 Motif 文件夹。",

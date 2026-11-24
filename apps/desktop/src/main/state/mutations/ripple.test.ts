@@ -18,7 +18,7 @@ import { applyLinksCreate } from './links'
 import { audioParams, mediaItemTemplate, videoClipParams } from './media'
 import { applyAddTransition } from './transitions'
 import { applyRippleDeleteGap, applyRippleDeleteLayers } from './ripple'
-import { AUDIO_GRID, frameGrid, gridIndex, timeUsAtGridIndex } from '../snap'
+import { frameGrid, timeUsAtGridIndex } from '../snap'
 import { isCommandFailure, type CommandError } from '../errors'
 import { groupedProject, root, withGroup } from '../__tests__/fixtures/project'
 
@@ -30,10 +30,9 @@ const VIDEO = '00000000-0000-0000-0000-0000000000bb'
 const SOUND = '00000000-0000-0000-0000-0000000000cc'
 const CROSSFADE = { kind: 'Crossfade' as const }
 
-/** Canonical µs of frame `i` / of second `n` / of 48 kHz sample `i`. */
+/** Canonical µs of frame `i` / of second `n`. */
 const f = (i: number) => timeUsAtGridIndex(i, FRAME)
 const sec = (n: number) => f(n * 30)
-const smp = (i: number) => timeUsAtGridIndex(i, AUDIO_GRID)
 
 /** An IdGen that reports how many ids it handed out — the id-burn convention (a
  *  refused path consumes ZERO) is otherwise invisible. */
@@ -150,16 +149,14 @@ describe('applyRippleDeleteLayers closes the span the deletion vacated', () => {
     expect(rc.duration_us).toBe(sec(3))
   })
 
-  it('lands each mover on ITS OWN lattice — audio exact, visual on the nearest frame', () => {
-    // A 10 000-sample hole is 208 333 µs, which is 6¼ frames: the visual mover
-    // cannot land on the audio answer and must not try to.
+  it('moves every mover, audio or visual, by the same whole frames', () => {
     const x = fx()
-    const a1 = sound(x, x.bRoll, smp(0), smp(10_000))
-    const a2 = sound(x, x.bRoll, smp(10_000), smp(20_000))
+    const a1 = sound(x, x.bRoll, f(0), f(6))
+    const a2 = sound(x, x.bRoll, f(6), f(12))
     const v = color(x, x.aRoll, f(30), f(60))
     applyRippleDeleteLayers(x.p, [a1])
     const rc = root(x.p)
-    expect(spanOf(rc, a2)).toEqual([smp(0), smp(10_000)])
+    expect(spanOf(rc, a2)).toEqual([f(0), f(6)])
     expect(spanOf(rc, v)).toEqual([f(24), f(54)])
   })
 
@@ -305,18 +302,23 @@ describe('dispatch: ripple_delete_layers and its transitions', () => {
     expect(tr.extended_us).toBe(0)
   })
 
-  it('preserves the sample count of an audio transition borrowed tail after ripple', () => {
+  it('re-measures an audio transition\'s borrowed tail as the same frame count', () => {
+    // Audio edges sit on frames like every edge (ADR 0038), so an audio
+    // crossfade's borrow is a frame count too, and a one-frame shift that
+    // changes its microseconds must leave it the whole overlap.
     const x = fx()
-    const head = sound(x, x.aRoll, smp(0), smp(1))
-    const a = sound(x, x.aRoll, smp(100), smp(4000))
-    const b = sound(x, x.aRoll, smp(4000), smp(8000))
-    const id = applyAddTransition(x.p, x.gen, a, b, smp(1601), CROSSFADE, 'extend').id
+    const head = sound(x, x.aRoll, f(0), f(1))
+    const a = sound(x, x.aRoll, f(1), f(3))
+    const b = sound(x, x.aRoll, f(3), f(5))
+    const tid = applyAddTransition(x.p, x.gen, a, b, f(1), CROSSFADE, 'extend').id
     const actor = x.open()
+
     expect(ripple(actor, [head]).ok).toBe(true)
-    const c = root(actor.snapshot())
-    const tr = c.transitions.find(t => t.id === id)!
-    const end = layerOf(c, a).t_end_us
-    expect(gridIndex(end, AUDIO_GRID) - gridIndex(end - tr.extended_us, AUDIO_GRID)).toBe(1601)
+    const rc = root(actor.snapshot())
+    expect(spanOf(rc, a)).toEqual([f(0), f(3)])
+    expect(spanOf(rc, b)).toEqual([f(2), f(4)])
+    const tr = rc.transitions.find((t) => t.id === tid)!
+    expect(tr.duration_us).toBe(f(3) - f(2))
     expect(tr.extended_us).toBe(tr.duration_us)
   })
 

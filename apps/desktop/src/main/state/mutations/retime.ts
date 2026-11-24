@@ -4,9 +4,9 @@ import { TimeMappingError } from '../../../shared/timeMapping';
 import { planRetime, type RetimeClip } from '../../../renderer/retimePlan';
 import { addTime, exactTime, multiplyTime, ZERO_TIME } from '../../../renderer/timeMapping';
 import { keyTimeExact, layerContentTiming, splitExact, writeKeyTime, writeLayerTiming } from '../../../renderer/layerTiming';
-import { gridForLayerKind, layerOverlapClass } from '../snap';
+import { frameGrid, layerOverlapClass } from '../snap';
 import { eachLayer } from '../model';
-import { applyDurationAutofit, requireLayer, checkLayerEditable } from './helpers';
+import { applyDurationAutofit, locateLayer, requireLayer, checkLayerEditable } from './helpers';
 import { forEachAnimatedF64, forEachAnimatedRgba } from './animated';
 import { CommandFailure } from '../errors';
 import { validate } from '../validate';
@@ -20,13 +20,27 @@ export function canRetime(p: Project, layer: Layer): boolean {
   return ['VideoClip', 'Audio', 'Motif', 'CompositionRef'].includes(pa.kind);
 }
 
+/** True when `layer` reads silence past its media (ADR 0038). A time map has no
+ *  silence to stretch, so such a layer is refused a speed change by name rather
+ *  than by the source-range rule the retimed window would then break. */
+function readsSilence(p: Project, layer: Layer): boolean {
+  const pa = layer.params;
+  if (pa.kind !== 'Audio') return false;
+  const duration = p.media_pool[pa.media]?.metadata.duration_us;
+  return pa.src_in_us < 0 || (duration != null && pa.src_out_us > duration);
+}
+
 export function applyRetimeLayers(p: Project, ids: readonly string[], target: RetimeTarget) {
+  for (const id of ids) {
+    const layer = locateLayer(p, id)?.layer;
+    if (layer && readsSilence(p, layer)) throw new CommandFailure({ error: 'RetimeRejected', reason: { kind: 'SilencePadded', layer_id: id } });
+  }
   try {
     const clips: RetimeClip[] = [];
     for (const { layer, track, composition: comp } of eachLayer(p)) {
       clips.push({ id: layer.id, composition_id: comp.id, track_id: track.id,
         t_start_us: layer.t_start_us, t_end_us: layer.t_end_us,
-        grid: gridForLayerKind(layer.params.kind, comp.fps), overlap_class: layerOverlapClass(layer.params),
+        grid: frameGrid(comp.fps), overlap_class: layerOverlapClass(layer.params),
         timing: canRetime(p, layer) ? layerContentTiming(layer) : null,
         locked: layer.locked || track.locked,
         ...(layer.params.kind === 'CompositionRef' ? { composition_ref: layer.params.composition } : {}),

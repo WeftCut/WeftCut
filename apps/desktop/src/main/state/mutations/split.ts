@@ -3,7 +3,7 @@ import { exactTime } from '../../../renderer/timeMapping'
 // apps/desktop/src/main/state/mutations/split.ts
 import type { Animated, Keyframe, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { gridForLayerKind, snapOnGrid } from '../snap'
+import { frameGrid, snapOnGrid } from '../snap'
 import { CommandFailure } from '../errors'
 import { cloneLayer, hasSourceWindow, locateLayerIn, requireLayer } from './helpers'
 import { linkSiblingsExcluding, checkLinkLock } from './links'
@@ -24,10 +24,9 @@ function splitTrackHalf<T>(a: Animated<T>, splitOffset: number, right: boolean):
  *  left reuses the original id, right gets a fresh one and is inserted at li+1. */
 function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number): { left: Uuid; right: Uuid } {
   const { comp: c, track, layer: original, layerIndex: li } = requireLayer(p, id)
-  // The cut resolves on THIS layer's grid, not the composition's — so a linked A/V
-  // split cuts the audio on the nearest sample boundary while the video cuts on the
-  // frame boundary (spec R2-D6). Locate first: the grid depends on `params.kind`.
-  const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(original.params.kind, c.fps))
+  // The cut resolves on the frame grid, so a linked A/V split cuts both members
+  // at the same instant.
+  const atTUs = snapOnGrid(atTUsRaw, frameGrid(c.fps))
   if (atTUs <= original.t_start_us || atTUs >= original.t_end_us) throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: atTUs })
   const splitOffset = atTUs - original.t_start_us
 
@@ -68,9 +67,9 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
   const c = target.comp
   if (target.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: target.track.id })
   const tgt = target.layer
-  // Snapped on the TARGET's grid for the pre-flight + containment tests; each
-  // spanning sibling then re-snaps `atTUs` on its own grid inside splitSingleLayer.
-  const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(tgt.params.kind, c.fps))
+  // Snapped for the pre-flight + containment tests; each spanning sibling is cut
+  // at this same `atTUs`.
+  const atTUs = snapOnGrid(atTUsRaw, frameGrid(c.fps))
   if (atTUs <= tgt.t_start_us || atTUs >= tgt.t_end_us) throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: atTUs })
 
   // Spanning siblings: members whose interval strictly contains atTUs (sorted order).
@@ -120,7 +119,7 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
  *  Unlike detector-derived cuts, invalid endpoints are errors, not skipped. */
 export function applySplitLayerBatch(p: Project, idGen: IdGen, id: Uuid, rawCuts: number[], escapeLink: boolean): { layer_ids: Uuid[]; at_t_us: number[] } {
   const { comp, layer } = requireLayer(p, id)
-  const grid = gridForLayerKind(layer.params.kind, comp.fps)
+  const grid = frameGrid(comp.fps)
   const cuts = [...new Set(rawCuts.map((at) => snapOnGrid(at, grid)))].sort((a, b) => a - b)
   for (const at of cuts) {
     if (at <= layer.t_start_us || at >= layer.t_end_us)

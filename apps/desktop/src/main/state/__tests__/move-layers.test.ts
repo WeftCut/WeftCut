@@ -131,20 +131,20 @@ describe('an edit the grid settles back where it was records nothing', () => {
     expect(a.snapshot()).toBe(before)
   })
 
-  it('move_layers still records when only a partner on a finer grid moves, or only the lane changes', () => {
+  it('move_layers refuses a sub-frame move of a linked A/V pair, and still records when only the lane changes', () => {
     const { a, tA, tB } = setup()
     const v = video(a, tA, S, 2 * S)
     const au = audio(a, tA, S, 2 * S)
     idOf(a.dispatch('links_create', { layers: [v, au] }))
     const len = a.historyStatus().len
-    ok(call(a, 'move_layers', { layer_ids: [v], delta_us: 1000 }))
-    expect(span(a, v)).toEqual([S, 2 * S])
-    expect(span(a, au)[0]).toBeGreaterThan(S)
-    expect(a.historyStatus().len).toBe(len + 1)
+    // Every member's edges are on the frame grid, so a 1 ms travel moves none of them.
+    expect(refused(call(a, 'move_layers', { layer_ids: [v], delta_us: 1000 })).message).toMatch(/^delta_us: .*nothing would move/)
+    expect([span(a, v), span(a, au)]).toEqual([[S, 2 * S], [S, 2 * S]])
+    expect(a.historyStatus().len).toBe(len)
     const lone = color(a, tA, 5 * S, 6 * S)
     ok(call(a, 'move_layers', { layer_ids: [lone], delta_us: 1, track_id: tB }))
     expect(where(a, lone)).toEqual({ track: tB, span: [5 * S, 6 * S] })
-    expect(a.historyStatus().len).toBe(len + 3)
+    expect(a.historyStatus().len).toBe(len + 2)
   })
 
   it('shift_layers refuses a sweep that rounds home, in either direction', () => {

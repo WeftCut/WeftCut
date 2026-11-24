@@ -170,18 +170,21 @@ describe('Tack range contract — adversarial cases', () => {
     expect(replay(s.actor.snapshot(), pb)!.same).toBe(true)
   })
 
-  it('a newly created range covering a sample-aligned audio start must be current at its requested place', () => {
+  it('a newly created range covering an audio start between whole milliseconds must be current at its requested place', () => {
     const s = setup(false, false, true)
-    s.mcp('move_layers', { layer_ids: [s.a], t_start_us: 1_010_000, track_id: s.track })
-    expect(s.find(s.a).t_start_us).toBe(1_010_000) // Audio's sample lattice, not a video frame boundary.
+    // 30 fps frames 31 and 32: starts that are no whole number of milliseconds.
+    const [frame31, frame32] = [1_033_333, 1_066_667]
+    s.mcp('move_layers', { layer_ids: [s.a], t_start_us: frame31, track_id: s.track })
+    expect(s.find(s.a).t_start_us).toBe(frame31)
     const store = new TackStore({
       project: () => s.actor.snapshot(), changed: () => {},
       caller: () => ({ session_id: null, connection_id: 'audit', client: 'audit', activity_id: 'audit' }),
     })
     store.create([{ label: 'Check the music entrance', body: '', kind: 'question', t_us: 500_000, end_t_us: 2 * S, composition_id: null }])
     expect(store.views()[0]).toMatchObject({ t_us: 500_000, end_t_us: 2 * S, outdated: false })
-    s.mcp('move_layers', { layer_ids: [s.a], t_start_us: 1_020_000, track_id: s.track })
-    expect(store.views()[0]).toMatchObject({ t_us: 510_000, end_t_us: 2_010_000, outdated: false })
+    s.mcp('move_layers', { layer_ids: [s.a], t_start_us: frame32, track_id: s.track })
+    const travel = frame32 - frame31
+    expect(store.views()[0]).toMatchObject({ t_us: 500_000 + travel, end_t_us: 2 * S + travel, outdated: false })
     s.mcp('undo', {})
     expect(store.views()[0]).toMatchObject({ t_us: 500_000, end_t_us: 2 * S, outdated: false })
   })

@@ -3,7 +3,7 @@ import { addTime, multiplyTime, exactTime, approximateTime } from '../../../rend
 import type { Composition, Layer, Project, Transition, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
-import { AUDIO_GRID, AUDIO_SAMPLE_RATE_HZ, frameIndexRound, gridIndex, snapOnGrid, timeUsAtFrame, timeUsAtGridIndex, travelBy, travelOnGrids, type Travel } from '../snap'
+import { frameIndexRound, timeUsAtFrame, travelBy, travelOnGrid, type Travel } from '../snap'
 import { applyDurationAutofit, hasSourceWindow, locateLayerIn, pickFreeOverlayTrack, requireLayer, sourceDurationUs } from './helpers'
 import { applyAddTrack } from './add'
 import { checkLinkLock, linkSiblingsExcluding, indexLinks } from './links'
@@ -112,25 +112,22 @@ function rejectAudioParticipant(layer: Layer): void {
  *  and the pre-check that guards it read this one map, so they cannot round
  *  apart. An unlocatable member simply has no entry. */
 function shiftedSpans(c: Composition, memberIds: readonly Uuid[], travel: Travel): Map<Uuid, { tStartUs: number; tEndUs: number }> {
-  return travelOnGrids(
+  return travelOnGrid(
     memberIds.flatMap((id) => {
       const loc = locateLayerIn(c, id)
-      return loc ? [{ id, kind: loc.layer.params.kind, tStartUs: loc.layer.t_start_us, tEndUs: loc.layer.t_end_us }] : []
+      return loc ? [{ id, tStartUs: loc.layer.t_start_us, tEndUs: loc.layer.t_end_us }] : []
     }),
     travel, c.fps,
   )
 }
 
 /** Move a moving set (the incoming layer + its link siblings) by ONE travel,
- *  stated from the incoming layer's start, each member moving by whole points of
- *  its OWN lattice, and re-insert each at its track's sorted position — the
+ *  stated from the incoming layer's start, every member moving by the same whole
+ *  frames, and re-insert each at its track's sorted position — the
  *  applyMoveLayer discipline verbatim.
  *
  *  Not "the same as move.ts" by convention — literally the same function
- *  (`travelOnGrids`, `renderer/grid.ts`), which owns the reason a member moves
- *  on ITS OWN grid: on the frame grid a linked audio member would be dragged to
- *  the nearest video frame on every duration edit and a deliberately slipped
- *  sync offset would silently go with it. An unlocatable member is skipped, the
+ *  (`travelOnGrid`, `renderer/grid.ts`). An unlocatable member is skipped, the
  *  move loop's own tolerance for a stale id. */
 function shiftLayerSet(c: Composition, memberIds: readonly Uuid[], travel: Travel): void {
   if (travel.toUs === travel.fromUs) return
@@ -496,7 +493,7 @@ function updateAudioTransition(p: Project, c: Composition, tr: Transition, patch
  *  gets the tail-handle pre-check — shrinking and pure-placement growth touch
  *  no source material.
  *
- *  B's move takes its link siblings along on their own lattices (shiftLayerSet).
+ *  B's move takes its link siblings along by the same travel (shiftLayerSet).
  *  Collisions from B's move and a negative B start are deliberately NOT checked
  *  here: commit's validate is the backstop (LayerOverlap / NegativeLayerStart →
  *  whole-commit refusal) — no clamping, no bouncing. A following transition
@@ -634,8 +631,8 @@ function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], tr
  *  routed by provenance: shrink the outgoing layer's tail by `extended_us`
  *  (back to its sacred end S — only borrowed material is returned, never real
  *  content of a pre-positioned overlap) and move the incoming layer RIGHT by
- *  `duration_us − extended_us` (its link siblings following on their own
- *  lattices), restoring adjacency exactly: B.start′ = S = A.end′. Since e ≤ d
+ *  `duration_us − extended_us` (its link siblings following by the same
+ *  travel), restoring adjacency exactly: B.start′ = S = A.end′. Since e ≤ d
  *  the move is never negative, so B cannot cross 0 here.
  *
  *  A locked home lane refuses first (TrackLocked), then the restore move is

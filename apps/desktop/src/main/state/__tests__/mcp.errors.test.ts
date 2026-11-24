@@ -25,19 +25,7 @@ describe('mapCommandError — grid and bounds rules are self-correcting', () => 
       options: [{ action: 'retry_snapped', field: 't_end_us', t_us: 3_000_000 }],
     })
     expect(out.message).toContain('3000000')
-  })
-
-  it('names the AUDIO lattice rather than reporting 48000/1 as a frame rate', () => {
-    // Without this the message reads as an absurd 48 000 fps composition, which is
-    // the one way a caller could misread the two-lattice model (spec R2-D6).
-    const out = mapCommandError(validationFailed({
-      rule: 'OffGridLayerBoundary', layer: 'A1', field: 't_start_us',
-      t: 33_367, fps: { num: 48_000, den: 1 }, grid: 'sample', snap_to: 33_375,
-    }))
-    expect(out.message).toContain('48000 Hz audio sample lattice')
-    expect(out.message).not.toContain('fps')
-    expect((out.data as { grid: string }).grid).toBe('sample')
-    expect((out.data as { snap_to_us: number }).snap_to_us).toBe(33_375)
+    expect(out.message).toContain('30/1 composition frame grid')
   })
 
   it('echoes snap_to for an off-grid composition duration and marker time', () => {

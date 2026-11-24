@@ -300,17 +300,16 @@ Quick Actions toggle shows pressed and link accents dim to 40 %. Nothing is writ
 memberships stay, no history entry, not persisted. MCP is unaffected (agents
 pass `escape_link`).
 
-**A/V sync offset.** An audio member slipped off its video (audio is on the
-48 kHz lattice — [audio.md](audio.md)) has an offset **derived from geometry,
-never stored**: `audio.t_start_us − video.t_start_us`, measured in samples so the
-~10 µs lattice residue at 29.97/59.94 does not read as a slip. A non-zero offset
-shows as a badge on the audio clip (`+3 smp`, `−2.00 ms`). A whole-link move
-preserves it; a video trim does not drag slipped audio (edges no longer
-coincide). `Alt+←/→` slips the selected audio one sample, `Alt+Shift+←/→` one
+**A/V sync offset.** A linked audio member shares its video's frame edges; its
+sound can be slipped inside them by whole samples ([audio.md](audio.md)). The
+offset is **derived, never stored**: the difference between where the audio's
+and its same-media video's source time 0 land, in samples. A non-zero offset
+shows as a badge on the audio clip (`+3 smp`, `−2.00 ms`), and every move keeps
+it. `Alt+←/→` slips the selected audio's sound one sample, `Alt+Shift+←/→` one
 millisecond (48 samples), `Alt+Shift+S` re-syncs it to its video — all commands
-(palette, Settings → Keyboard, agent-callable). Pointer drags never reach sample
-precision (one sample is 0.042 px at the 2000 px/s ceiling); the inspector's
-audio fields switch units (timecode / ms / samples); the ruler stays frame-based.
+(palette, Settings → Keyboard, agent-callable). A slip past the media's start
+or end plays silence there, drawn as no waveform; a trim never reaches further
+into that silence. Pointer drags, the inspector and the ruler work in frames.
 
 Mutations: `apps/desktop/src/main/state/mutations/links.ts`, with fan-out in
 `move.ts` / `trim.ts` / `split.ts`. Agents read links from `project://links`
@@ -490,7 +489,7 @@ primitive `mutations/moveToComposition.ts`.
 Video, Audio, animated images, Motifs and Group clips take a constant playback
 rate ([ADR 0092](adr/0092-constant-time-remapping-preserves-content-windows.md)).
 The inspector's Timing group stacks Start, Duration and a read-only End
-(exclusive, Start + Duration, in frame or audio units); Start moves the clip and
+(exclusive, Start + Duration, in frames); Start moves the clip and
 Duration trims its out edge. Beneath them one **Retime** row holds a target
 duration, a speed multiplier (a text button until clicked, then an input with a
 trailing ×; Enter or blur commits, Escape cancels), *Reset to 1×*, and, for Audio
@@ -546,12 +545,8 @@ after it. With no neighbours overlapping, the shift is the clip's length.
 
 **Several clips.** The selection is removed first; each hole is measured against
 what remains; touching or overlapping holes across tracks merge; every remaining
-layer starting at or after a hole shifts left by the holes ahead of it, counted
-in points of its own lattice (frames for picture, 48 kHz samples for audio), so
-A/V slips survive exactly. Each layer is also measured against a hole as its own
-lattice sees it: at 29.97/59.94 a linked pair's edges sit a few µs apart, and the
-audio piece after a cut is not "inside" the video's hole (ADR 0178). One commit,
-one undo.
+layer starting at or after a hole shifts left by the whole frames of the holes
+ahead of it, so A/V slips survive exactly. One commit, one undo.
 
 **Who moves, stays, blocks.** A layer starting at or after a hole's end moves;
 one starting before it stays, even if it spans the cut. An unselected layer
@@ -744,7 +739,7 @@ cut); in the ruler it hangs the cut's timecode on a flag, in the label band and
 clear of the ticks. The playhead, the guide and the blade mark share one
 geometry and one overlay (Time mark in [CONTEXT.md](../CONTEXT.md)). Holding
 Mod (Ctrl; ⌘ on macOS) suspends the magnet for that event, including when held
-before the press; the frame and audio sample grids still apply. The chosen target never depends on the lane under the pointer: a
+before the press; the frame grid still applies. The chosen target never depends on the lane under the pointer: a
 vertical-only move keeps its time, and a landing that does not fit shows as a
 collision at the aligned position. Escape, pointer cancel or a tool change
 abandons a clip drag; Escape or pointer cancel abandons a marker drag. Solver:

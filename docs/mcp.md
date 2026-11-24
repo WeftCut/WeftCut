@@ -591,8 +591,8 @@ deleted entities keep a name).
   (`{ field, requested, applied, reason }`). Readers live in
   `main/state/mcp-results.ts`.
 - **Snap and echo, clamp and refuse.** A sent time changes in exactly one way:
-  it lands on the layer's lattice (composition frame grid, or 48 kHz samples
-  for Audio), with `reason: "grid"`. Every adjustment the UI's drag would make
+  it lands on the composition frame grid (a keyframe time on its layer's
+  lattice: 48 kHz samples for Audio automation), with `reason: "grid"`. Every adjustment the UI's drag would make
   for a user who sees the ghost (floor at 0, clamp at the other edge or source
   end) is a refusal over MCP before any write (`NegativeLayerStart`,
   `TrimEdgeOutOfRange`). The mutations share one implementation; MCP parsers
@@ -801,7 +801,9 @@ Layers: `add_layers` places 1–50 layers in one recorded edit, all or nothing
 plus the span at rate 1; `audio` defaults to `auto_pair_audio_on_import` and
 `linked` lands and links the dialogue Audio on the same track's audio lane),
 `image` (a still), `audio` (the only path for audio-only media; never paired;
-sample-lattice endpoints; `role` defaults to `music`), `text` (born in the
+frame-grid endpoints like every layer, sub-frame sync is a slip of
+`src_in_us` through `update_layer_params`, and the window may reach past the
+media into silence; `role` defaults to `music`), `text` (born in the
 style's tokens for its `graphic_role`), `color` (the composition's size),
 `motif` (props validated against `props_schema`; omitted props take style
 tokens, then manifest defaults; a `media` prop names `"<media_id>"` or
@@ -867,8 +869,8 @@ expanded"); geometry tools (`move_layers`, `trim_layer`, `split_layer`) carry
 link partners unless `escape_link`.
 
 Deletes: `delete_layers` — `ripple: false` lifts (spans stay empty);
-`ripple: true` closes each span on every track of the composition, each layer
-on its own lattice. A ripple refuses whole: `RippleInsideHole`,
+`ripple: true` closes each span on every track of the composition, every layer
+by the same whole frames. A ripple refuses whole: `RippleInsideHole`,
 `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked`.
 A gap closes with `shift_layers` and a negative delta, by the same rules
 ([features.md](features.md#ripple-delete)). The remedy each refusal names

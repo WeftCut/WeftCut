@@ -1,5 +1,5 @@
 import { enterClock, ROOT_CLOCK, type CompositionClock } from '../../renderer/render/compositionClock'
-import { layerRate, sourceIn, sourceOut, validateTimeFraction, keyTimeExact } from '../../renderer/layerTiming'
+import { layerRate, padsWithSilence, sourceIn, sourceOut, validateTimeFraction, keyTimeExact } from '../../renderer/layerTiming'
 import { approximateTime, exactTime, compareTime, ZERO_TIME } from '../../renderer/timeMapping'
 import { forEachAnimatedF64, forEachAnimatedRgba } from './mutations/animated'
 import { TimeMappingError } from '../../shared/timeMapping'
@@ -12,7 +12,7 @@ import { CommandFailure } from './errors'
 import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
 import { eachLayer } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
-import { AUDIO_GRID, AUDIO_SAMPLE_RATE_HZ, frameGrid, gridForLayerKind, gridIndex, isCanonicalOnGrid, layerOverlapClass, snapFrameRound, snapOnGrid, type Grid } from './snap'
+import { frameGrid, isCanonicalOnGrid, layerOverlapClass, snapFrameRound, snapOnGrid, type Grid } from './snap'
 // The `src_in_us`/`src_out_us` family, from the mutations layer. No cycle: this
 // is a leaf helper module (model + errors + snap + animated), and nothing it
 // reaches imports back here — the mutation modules that DO import validate
@@ -92,16 +92,15 @@ function validateLattice(c: Composition, root: Composition): void {
 // off-grid project unopenable. `parseProject` repairs on load instead, in one
 // pass, so validate only ever sees canonical input.
 
-/** The grid a layer's timeline endpoints must land on. Delegates to the ONE lookup
- *  in `snap.ts` — the mutation snaps and `serialize.ts`'s load repair ask the same
- *  function, which is what stops the three sites from disagreeing about where audio
- *  lives (spec § Two data-loss dependencies).
+/** The grid a layer's timeline endpoints must land on: the composition frame grid,
+ *  for every kind (ADR 0038), the same grid the mutation snaps and `serialize.ts`'s
+ *  load repair use.
  *
  *  Deliberately still NOT `i >= 0`: a negative canonical time passes this predicate
  *  and is caught by `NegativeLayerStart` instead. Bounds and lattice stay separate
  *  rules because they have different fixes — folding them together would report
  *  "off grid" for a time that is exactly on it. */
-const layerEndpointGrid = gridForLayerKind
+const layerEndpointGrid = frameGrid
 
 /** Strip the `Grid` down to its wire shape for the error payload: `fps` carries the
  *  lattice rational, `grid` names which lattice it is. Built here rather than
@@ -118,10 +117,7 @@ function offGridBoundary(layer: Uuid, field: 't_start_us' | 't_end_us', t: numbe
 function validateComposition(c: Composition): void {
   if (c.width === 0 || c.height === 0) fail({ rule: 'InvalidCanvas', width: c.width, height: c.height })
   if (c.fps.num === 0 || c.fps.den === 0) fail({ rule: 'InvalidFps', num: c.fps.num, den: c.fps.den })
-  // The composition duration is a FRAME count even when the content reaching
-  // furthest is audio on the sample lattice — `applyDurationAutofit` rounds the
-  // high-water mark UP to the enclosing frame, so a sub-frame audio tail still fits
-  // inside the composition rather than pushing its duration off grid.
+  // The composition duration is a FRAME count, on the same grid as every layer edge.
   const compGrid = frameGrid(c.fps)
   if (!isCanonicalOnGrid(c.duration_us, compGrid))
     fail({ rule: 'OffGridTime', entity: 'Composition', id: c.id, field: 'duration_us', t: c.duration_us, fps: c.fps, snap_to: snapOnGrid(c.duration_us, compGrid) })
@@ -197,7 +193,7 @@ function buildTransitionLayerIndex(c: Composition): TransitionLayerIndex {
  *  [0, duration_us]) is deliberately NOT here — no layer edit can produce
  *  those, so they stay validate-only failures; a reconcile that silently
  *  swallowed them would mask real bugs. */
-function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex, c: Composition): ValidationError | null {
+function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex): ValidationError | null {
   const from = idx.get(tr.from_layer)
   if (!from) return { rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.from_layer }
   const to = idx.get(tr.to_layer)
@@ -216,10 +212,15 @@ function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex, c: 
   const overlapStart = Math.max(from.start, to.start)
   const overlapEnd = Math.min(from.end, to.end)
   const overlap = Math.max(overlapEnd - overlapStart, 0)
-  if (fromAudio && gridIndex(overlapEnd, AUDIO_GRID) - gridIndex(overlapStart, AUDIO_GRID) < Math.floor(AUDIO_SAMPLE_RATE_HZ * c.fps.den / c.fps.num))
-    return { rule: 'TransitionDurationOutOfRange', transition: tr.id, duration: tr.duration_us }
-  // Duration is a distance between lattice points, not itself a lattice point.
-  // At fractional rates the same number of frames can differ by 1 µs.
+  // This equality IS the transition's frame-grid rule, for audio pairs too
+  // (every layer edge sits on frames, ADR 0038), and there is deliberately
+  // no `isCanonicalOn(tr.duration_us)` beside it: a duration is a DISTANCE
+  // between two canonical boundaries, and at fractional rates a distance is not
+  // itself a canonical time (a 1-frame transition at 30000/1001 is 33_367 µs at
+  // cut frame 0 and 33_366 µs at cut frame 1). Both participants' endpoints are
+  // grid-checked below, so overlap === duration_us already forces the duration to
+  // be a whole number of frames — asserting canonicality on top would be false at
+  // every fractional rate.
   if (overlap !== tr.duration_us) return { rule: 'TransitionDurationMismatch', transition: tr.id, duration: tr.duration_us, overlap }
   return null
 }
@@ -245,7 +246,7 @@ function validateTransitions(c: Composition): Map<string, number> {
     // past the parse backfill.
     if (!(tr.extended_us >= 0 && tr.extended_us <= tr.duration_us))
       fail({ rule: 'TransitionExtendedOutOfRange', transition: tr.id, extended: tr.extended_us, duration: tr.duration_us })
-    const invariantErr = transitionInvariantError(tr, idx, c)
+    const invariantErr = transitionInvariantError(tr, idx)
     if (invariantErr !== null) fail(invariantErr)
     if (asFrom.has(tr.from_layer)) fail({ rule: 'LayerInMultipleTransitions', layer: tr.from_layer })
     asFrom.add(tr.from_layer)
@@ -276,7 +277,7 @@ export function reconcileTransitions(p: Project): DroppedTransition[] {
     const kept: Transition[] = []
     let droppedHere = false
     for (const tr of c.transitions) {
-      const reason = transitionInvariantError(tr, idx, c)
+      const reason = transitionInvariantError(tr, idx)
       if (reason === null) kept.push(tr)
       else { dropped.push({ id: tr.id, from_layer: tr.from_layer, to_layer: tr.to_layer, reason }); droppedHere = true }
     }
@@ -418,8 +419,11 @@ function validateLayerParams(p: Project, layer: Layer): void {
       if (pa.frame_interpolation && pa.frame_interpolation.kind !== 'FrameSampling')
         throw new CommandFailure({ error: 'InvalidArgument', field: 'frame_interpolation', detail: 'This build supports FrameSampling only' });
       const start = sourceIn(pa), end = sourceOut(layer);
-      if (compareTime(start, ZERO_TIME) < 0 || compareTime(start, end) >= 0) fail({ rule: 'InvalidSrcRange', layer: layer.id, src_in: approximateTime(start), src_out: approximateTime(end) });
-      if (pa.kind === 'VideoClip' || pa.kind === 'Audio') {
+      // An un-retimed Audio window may reach past either end of its media; that
+      // part plays as silence (ADR 0038), so it has no media bound at all.
+      const padded = padsWithSilence(pa);
+      if ((!padded && compareTime(start, ZERO_TIME) < 0) || compareTime(start, end) >= 0) fail({ rule: 'InvalidSrcRange', layer: layer.id, src_in: approximateTime(start), src_out: approximateTime(end) });
+      if (!padded && (pa.kind === 'VideoClip' || pa.kind === 'Audio')) {
         const duration = p.media_pool[pa.media]?.metadata.duration_us;
         if (duration != null && compareTime(end, exactTime(duration)) > 0)
           fail({ rule: 'SrcRangeExceedsMedia', layer: layer.id, src_in: approximateTime(start), src_out: approximateTime(end), media_duration: duration });
@@ -470,7 +474,7 @@ function validateTrack(p: Project, c: Composition, track: Track, authorized: Map
     // the sign, not the quantum). `t_end` needs no companion rule — start >= 0 and
     // start < end together force it positive.
     if (layer.t_start_us < 0) fail({ rule: 'NegativeLayerStart', layer: layer.id, t_start: layer.t_start_us })
-    const grid = layerEndpointGrid(layer.params.kind, c.fps)
+    const grid = layerEndpointGrid(c.fps)
     if (!isCanonicalOnGrid(layer.t_start_us, grid))
       fail(offGridBoundary(layer.id, 't_start_us', layer.t_start_us, grid))
     if (!isCanonicalOnGrid(layer.t_end_us, grid))
@@ -478,11 +482,8 @@ function validateTrack(p: Project, c: Composition, track: Track, authorized: Map
     validateLayerParams(p, layer)
     const cls = layerOverlapClass(layer.params)
     const prev = cls === 'visual' ? prevVisual : prevAudio
-    // Half-open `[t_start, t_end)`, which is what makes this correct at the audio
-    // lattice's 20.83 µs quantum for free: two audio layers whose edges differ by
-    // ONE SAMPLE do not overlap, and abutting ones (start === prev end) do not
-    // either. No sample-aware special case is wanted here — a tolerance would be
-    // the bug, not the fix.
+    // Half-open `[t_start, t_end)`: abutting layers (start === prev end) do not
+    // overlap. No tolerance is wanted here — a tolerance would be the bug, not the fix.
     if (prev && layer.t_start_us < prev.t_end_us) {
       const overlap = prev.t_end_us - layer.t_start_us
       const allowed = authorized.get(pairKey(prev.id, layer.id)) ?? 0

@@ -56,10 +56,9 @@ export type ValidationError =
   // lattice point — the value it should have sent — so the retry is mechanical
   // instead of the caller re-deriving `round(i * 1e6 * den / num)` from `fps`.
   //
-  // On `OffGridLayerBoundary` there are TWO lattices (spec R2-D6): `grid` names
-  // which one, and `fps` carries that lattice's rational — so for an Audio layer it
-  // reads `48000/1`, the 48 kHz mix lattice, NOT a frame rate. Without `grid` a
-  // caller could not tell a 48 kHz audio rejection from an absurd 48000 fps comp.
+  // Every layer edge is on the composition frame grid (ADR 0038), so on
+  // `OffGridLayerBoundary` `grid` is always `frame` and `fps` the composition's
+  // rate. `grid` stays in the payload: MCP clients read it.
   | { rule: 'OffGridLayerBoundary'; layer: Uuid; field: 't_start_us' | 't_end_us'; t: TimeUs; fps: Rational; grid: GridDomain; snap_to: TimeUs }
   | { rule: 'OffGridTime'; entity: 'Composition' | 'Marker'; id: Uuid | null; field: string; t: TimeUs; fps: Rational; snap_to: TimeUs }
   | { rule: 'MissingMedia'; layer: Uuid; media: Uuid }

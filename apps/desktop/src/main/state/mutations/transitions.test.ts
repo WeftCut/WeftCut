@@ -834,43 +834,45 @@ describe('applyRemoveTransition', () => {
 })
 
 describe('link siblings follow the incoming layer', () => {
-  /** twoAdjacent + an audio sibling linked with a2, slipped +500µs off a2's
-   *  start — sample-aligned (500µs = 24 samples) but NOT frame-aligned, so any
-   *  wrong-grid snap in the follow logic destroys the offset visibly. */
-  function withSlippedSibling() {
+  /** twoAdjacent + an audio sibling linked with a2, placed two frames after a2's
+   *  start and reading a slipped source window, so a follow that moved it by
+   *  anything but a2's whole frames, or touched its source, shows. */
+  const fr = (i: number) => timeUsAtFrame(i, 30, 1)
+  const SLIPPED_SRC = { src_in_us: 500, src_out_us: 2_000_500 }
+  function withOffsetSibling() {
     const base = twoAdjacent()
     addMedia(base.p, 'm', 'Audio', 10_000_000)
-    const aud = applyAddLayer(base.p, base.gen, root(base.p).tracks[1].id, audioParams('m', 0, 2_000_000), 2_000_500, 4_000_500)
+    const aud = applyAddLayer(base.p, base.gen, root(base.p).tracks[1].id, audioParams('m', SLIPPED_SRC.src_in_us, SLIPPED_SRC.src_out_us), fr(62), fr(122))
     root(base.p).links.push({ id: 'g', members: [base.a2, aud].sort() })
     return { ...base, aud }
   }
   const offsetOf = (p: Project, aud: string, a2: string) => layerOf(p, aud).t_start_us - layerOf(p, a2).t_start_us
+  const expectFollowed = (p: Project, aud: string, a2: string, a2Frame: number) => {
+    expect(layerOf(p, a2).t_start_us).toBe(fr(a2Frame))
+    expect([layerOf(p, aud).t_start_us, layerOf(p, aud).t_end_us]).toEqual([fr(a2Frame + 2), fr(a2Frame + 62)])
+    expect(offsetOf(p, aud, a2)).toBe(fr(a2Frame + 2) - fr(a2Frame))
+    expect(layerOf(p, aud).params).toMatchObject(SLIPPED_SRC)
+  }
 
-  it('overlap add: siblings shift by the SAME delta and land on their OWN lattice — the slipped offset survives the ADD itself', () => {
-    const { p, gen, a1, a2, aud } = withSlippedSibling()
+  it('overlap add: siblings shift by the same whole frames, their source untouched', () => {
+    const { p, gen, a1, a2, aud } = withOffsetSibling()
     const { bounces } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
     expect(bounces).toEqual([]) // nothing occupies the sibling's shifted span
-    expect(layerOf(p, a2).t_start_us).toBe(1_000_000)
-    expect([layerOf(p, aud).t_start_us, layerOf(p, aud).t_end_us]).toEqual([1_000_500, 3_000_500])
-    expect(offsetOf(p, aud, a2)).toBe(500) // slipped sync intact
+    expectFollowed(p, aud, a2, 30)
   })
-  it('update: siblings shift by the SAME delta and land on their OWN lattice — the slipped offset survives', () => {
-    const { p, gen, a1, a2, aud } = withSlippedSibling()
+  it('update: siblings shift by the same whole frames, their source untouched', () => {
+    const { p, gen, a1, a2, aud } = withOffsetSibling()
     const tid = addT(p, gen, a1, a2, 1_000_000, 'extend')
     applyUpdateTransition(p, tid, { duration_us: 1_500_000 }) // growth → B moves left 500k
-    expect(layerOf(p, a2).t_start_us).toBe(1_500_000)
-    expect([layerOf(p, aud).t_start_us, layerOf(p, aud).t_end_us]).toEqual([1_500_500, 3_500_500])
-    expect(offsetOf(p, aud, a2)).toBe(500) // slipped sync intact
+    expectFollowed(p, aud, a2, 45)
   })
-  it('remove: siblings follow the restore move by the same delta on their own lattice', () => {
-    const { p, gen, a1, a2, aud } = withSlippedSibling()
+  it('remove: siblings follow the restore move by the same whole frames', () => {
+    const { p, gen, a1, a2, aud } = withOffsetSibling()
     const tid = addT(p, gen, a1, a2, 1_000_000, 'extend')
-    applyUpdateTransition(p, tid, { duration_us: 1_500_000 }) // B at 1.5M, sibling at 1_500_500
+    applyUpdateTransition(p, tid, { duration_us: 1_500_000 }) // B at 1.5M
     applyRemoveTransition(p, tid) // e = 1M, m = 500k → B back to 2M
-    expect(layerOf(p, a2).t_start_us).toBe(2_000_000)
     expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, a1).t_end_us) // adjacency exact
-    expect([layerOf(p, aud).t_start_us, layerOf(p, aud).t_end_us]).toEqual([2_000_500, 4_000_500])
-    expect(offsetOf(p, aud, a2)).toBe(500)
+    expectFollowed(p, aud, a2, 60)
   })
 })
 

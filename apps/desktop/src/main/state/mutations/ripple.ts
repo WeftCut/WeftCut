@@ -16,7 +16,7 @@ import { CommandFailure } from '../errors'
 import { planRipple, planRippleGap, type RippleMove, type RippleView } from '../../../renderer/ripple/plan'
 import { applyDeleteLayer } from './delete'
 import { applyDurationAutofit, insertSorted, locateLayerIn, requireSameComposition, requireTrack } from './helpers'
-import { gridForLayerKind, gridIndex, timeUsAtGridIndex } from '../snap'
+import { frameGrid, gridIndex, timeUsAtGridIndex } from '../snap'
 
 /** What the ripple touched: the layers it removed, the ones it re-timed, and the
  *  lanes emptying left behind. The actor names all three in its history refs. */
@@ -108,23 +108,24 @@ export function applySweep(c: Composition, plannedMoves: readonly RippleMove[]):
   // planner authorized this pair on the overlap it LANDS with, so the stored
   // duration has to follow the landing or reconcile drops the transition for a
   // rounding artefact. `extended_us` is the same kind of number — the borrowed
-  // tail is a whole count of grid points past the hard cut — so it is re-measured
-  // as that count on the participant's lattice at the new position, NOT shifted by the duration's change:
+  // tail is a whole count of frames past the hard cut — so it is re-measured
+  // as that count at the new position, NOT shifted by the duration's change:
   // a pure-placement overlap (nothing borrowed) must still read 0 afterwards,
   // or removing the transition later would shrink the outgoing layer by a
   // phantom microsecond and put its end off the grid. The count is read off
   // the OLD geometry, before the sweep moves anything.
   //
   // No delta check: the planner refuses a pair whose participants moved by
-  // different amounts, so both-moved already means uniformly moved. Both
-  // participants are visual (validate's rule), hence the composition frame grid.
+  // different amounts, so both-moved already means uniformly moved. Every
+  // layer edge sits on frames (ADR 0038), an audio pair's too, hence the
+  // composition frame grid.
   const movedSet = new Set(plannedMoves.map((m) => m.layer))
-  const borrowedUnits = new Map<Uuid, number>()
+  const grid = frameGrid(c.fps)
+  const borrowedFrames = new Map<Uuid, number>()
   for (const tr of c.transitions) {
     if (!movedSet.has(tr.from_layer) || !movedSet.has(tr.to_layer)) continue
-    const from = locateLayerIn(c, tr.from_layer)!.layer
-    const grid = gridForLayerKind(from.params.kind, c.fps)
-    borrowedUnits.set(tr.id, gridIndex(from.t_end_us, grid) - gridIndex(from.t_end_us - tr.extended_us, grid))
+    const fromEnd = locateLayerIn(c, tr.from_layer)!.layer.t_end_us
+    borrowedFrames.set(tr.id, gridIndex(fromEnd, grid) - gridIndex(fromEnd - tr.extended_us, grid))
   }
 
   const moved: Uuid[] = []
@@ -138,13 +139,12 @@ export function applySweep(c: Composition, plannedMoves: readonly RippleMove[]):
   }
 
   for (const tr of c.transitions) {
-    const units = borrowedUnits.get(tr.id)
-    if (units === undefined) continue
+    const frames = borrowedFrames.get(tr.id)
+    if (frames === undefined) continue
     const from = locateLayerIn(c, tr.from_layer)!.layer
-    const grid = gridForLayerKind(from.params.kind, c.fps)
     const to = locateLayerIn(c, tr.to_layer)!.layer
     tr.duration_us = from.t_end_us - to.t_start_us
-    tr.extended_us = from.t_end_us - timeUsAtGridIndex(gridIndex(from.t_end_us, grid) - units, grid)
+    tr.extended_us = from.t_end_us - timeUsAtGridIndex(gridIndex(from.t_end_us, grid) - frames, grid)
   }
 
   // The sweep lowered the high-water mark; each delete's own autofit ran before

@@ -9,7 +9,7 @@ import { eachLayer } from '../model'
 import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
-import { travelOnGrids } from '../snap'
+import { travelOnGrid } from '../snap'
 import { layerOverlapClass } from '../validate'
 import { applyAddTrack, compositionRefPath } from './add'
 import {
@@ -29,11 +29,11 @@ import {
  *  two round trips, so a `base + delta` computed there would eat the previous
  *  commit. Every caller resolves its own number and hands over one.
  *
- *  Both endpoints of every member re-snap on that member's OWN grid at the
- *  DESTINATION's rate: the delta between two canonical times is not itself
- *  canonical at a fractional rate. Two compositions at different rates therefore
- *  do not round trip — A → B → A need not return a layer to the microsecond it
- *  left (ADR 0037, ADR 0038). Keyframes are layer-local, so the whole-layer
+ *  Both endpoints of every member re-snap on the DESTINATION's frame grid: the
+ *  delta between two canonical times is not itself canonical at a fractional
+ *  rate. Two compositions at different rates therefore do not round trip —
+ *  A → B → A need not return a layer to the microsecond it left (ADR 0037,
+ *  ADR 0038). Keyframes are layer-local, so the whole-layer
  *  shift leaves them alone.
  *
  *  Destination lanes are assigned per SOURCE TRACK, never per member. Members of
@@ -137,10 +137,10 @@ export function applyMoveLayersToComposition(
   // The travel the cross-Panel ghost already drew, from the module both sides
   // share (`renderer/grid.ts`): the preview and this landing are then the same
   // numbers rather than two roundings of one intention. Every member lands on
-  // its own lattice at the DESTINATION's rate, which is why two compositions at
-  // different rates do not round trip.
-  const shifted = travelOnGrids(
-    located.map((m) => ({ id: m.layer.id, kind: m.layer.params.kind, tStartUs: m.layer.t_start_us, tEndUs: m.layer.t_end_us })),
+  // the DESTINATION's frame grid, which is why two compositions at different
+  // rates do not round trip.
+  const shifted = travelOnGrid(
+    located.map((m) => ({ id: m.layer.id, tStartUs: m.layer.t_start_us, tEndUs: m.layer.t_end_us })),
     { fromUs: anchor.layer.t_start_us, toUs: anchorTStartUs }, dest.fps,
   )
   const landing = new Map<Uuid, { t0: number; t1: number }>()

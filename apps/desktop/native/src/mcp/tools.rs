@@ -2013,7 +2013,6 @@ pub(super) fn resolve_clip_audio_source(
     let to_source = |t: i64| {
         t.checked_sub(layer.t_start_us)
             .map(|offset| timing.content_time(src_in_us, offset as f64).round() as i64)
-            .filter(|t| *t >= 0)
             .ok_or_else(|| {
                 McpToolError::invalid_params(
                     "audio window maps outside supported source timestamps",
@@ -2021,12 +2020,21 @@ pub(super) fn resolve_clip_audio_source(
                 )
             })
     };
-    let source_in = to_source(t_start)?;
-    // Timeline endpoints are snapped to the layer's sample/frame grid while
-    // its source range keeps the original endpoint. A valid placed clip can
-    // therefore end just after its source does. Read only the intersection,
-    // preserving source phase and rate instead of rejecting the entire clip.
-    let source_out = to_source(t_end)?.min(timing.source_end(src_out_us).ceil() as i64);
+    let requested_in = to_source(t_start)?;
+    // An Audio window may reach before its media (ADR 0038); that part is
+    // silence with nothing to read, so the read starts at the media's first
+    // sample and the timeline start moves with it, keeping every offset the
+    // caller maps back (`t_start_us + w / rate`) on the sound it names.
+    let source_in = requested_in.max(0);
+    let t_start = t_start + ((source_in - requested_in) as f64 / timing.rate()).round() as i64;
+    // Timeline endpoints are snapped to the frame grid while the source range
+    // keeps the original endpoint, and an Audio window may reach past its
+    // media's end. Read only the media inside the window, preserving source
+    // phase and rate instead of rejecting the entire clip.
+    let media_end = media.metadata.duration_us.unwrap_or(i64::MAX);
+    let source_out = to_source(t_end)?
+        .min(timing.source_end(src_out_us).ceil() as i64)
+        .min(media_end);
     if source_out <= source_in {
         return Err(McpToolError::invalid_params(
             "audio window contains no source audio within the layer's source range",

@@ -18,10 +18,8 @@ import {
   type RippleView,
 } from "./plan";
 import {
-  AUDIO_GRID,
   frameGrid,
   layerOverlapClass,
-  snapOnGrid,
   timeUsAtGridIndex,
 } from "../grid";
 import type { CommandError } from "../../shared/commandErrors";
@@ -29,10 +27,9 @@ import type { CommandError } from "../../shared/commandErrors";
 const FPS = { num: 30, den: 1 };
 const FRAME = frameGrid(FPS);
 
-/** Canonical µs of frame `i` / of second `n` / of 48 kHz sample `i`. */
+/** Canonical µs of frame `i` / of second `n`. */
 const f = (i: number) => timeUsAtGridIndex(i, FRAME);
 const sec = (n: number) => f(Math.round(n * 30));
-const smp = (i: number) => timeUsAtGridIndex(i, AUDIO_GRID);
 
 function layerAt(id: string, kind: string, tStartUs: number, tEndUs: number, locked = false): RippleLayerView {
   return { id, kind, t_start_us: tStartUs, t_end_us: tEndUs, locked };
@@ -359,26 +356,30 @@ describe("links and locks", () => {
   });
 });
 
-describe("two lattices in one ripple", () => {
-  it("lands audio movers exactly and visual movers on the nearest frame when the hole is sample-sized", () => {
-    // The deleted audio ends one sample past a whole second: canonical at 48 kHz,
-    // 21 µs off the 30 fps frame grid.
-    const cut = smp(48_001);
-    const view = viewOf([
-      track("TA", [layerAt("A1", "Audio", 0, cut), layerAt("A2", "Audio", cut, smp(96_002))]),
-      track("TV", [vis("V1", 2, 3)]),
-    ]);
-    const plan = accepted(planRipple(view, ["A1"]));
-    expect(plan.holes).toEqual([{ s: 0, e: cut }]);
-
-    const [audio, visual] = plan.moves;
-    // The audio partner lands on the sample it was authored on, to the µs.
-    expect(shape(audio!)).toEqual(["A2", "TA", 0, smp(48_001)]);
-    // The visual mover cannot: `t_start − cut` is off the frame grid, so it snaps —
-    // the same drift budget a link move across two lattices already accepts.
-    expect(sec(2) - cut).not.toBe(snapOnGrid(sec(2) - cut, FRAME));
-    expect(shape(visual!)).toEqual(["V1", "TV", snapOnGrid(sec(2) - cut, FRAME), snapOnGrid(sec(3) - cut, FRAME)]);
-    expect(visual!.t_start_us).toBe(sec(1));
+describe("one frame grid for every kind", () => {
+  it("moves audio and visual movers by the same whole frames at a rate whose frames are not samples", () => {
+    // 29.97: a frame is 1601.6 samples, so any arithmetic that read audio on
+    // another lattice would land the linked pair's two members apart.
+    const fps = { num: 30_000, den: 1001 };
+    const g = frameGrid(fps);
+    const fr = (i: number) => timeUsAtGridIndex(i, g);
+    for (const cut of [1, 7, 29, 31]) {
+      const view: RippleView = {
+        fps,
+        tracks: [
+          track("TV", [layerAt("V0", "VideoClip", fr(0), fr(cut)), layerAt("V1", "VideoClip", fr(cut), fr(cut + 60))]),
+          track("TA", [layerAt("A0", "Audio", fr(0), fr(cut)), layerAt("A1", "Audio", fr(cut), fr(cut + 60))]),
+        ],
+        links: [{ id: "L0", members: ["V0", "A0"] }, { id: "L1", members: ["V1", "A1"] }],
+        transitions: [],
+      };
+      const plan = accepted(planRipple(view, ["V0", "A0"]));
+      expect(plan.holes).toEqual([{ s: 0, e: fr(cut) }]);
+      expect(plan.moves.map(shape), `cut at frame ${cut}`).toEqual([
+        ["V1", "TV", 0, fr(60)],
+        ["A1", "TA", 0, fr(60)],
+      ]);
+    }
   });
 });
 
@@ -393,18 +394,16 @@ const RUNS = Number(process.env.WEFTCUT_PBT_RUNS ?? 300);
 interface SpanSpec { gap: number; len: number }
 const spanArb = fc.record({ gap: fc.integer({ min: 0, max: 3 }), len: fc.integer({ min: 1, max: 5 }) });
 
-/** A lane of non-overlapping spans laid out on its own lattice, gaps and lengths
- *  counted in lattice steps so every edge is canonical by construction. */
+/** A lane of non-overlapping spans, gaps and lengths counted in frames so every
+ *  edge is canonical by construction. */
 function lane(id: string, kind: "Color" | "Audio", specs: readonly SpanSpec[]): RippleTrackView {
-  const grid = kind === "Audio" ? AUDIO_GRID : FRAME;
-  const step = kind === "Audio" ? 1200 : 1; // 25 ms of samples, or one frame
   const layers: RippleLayerView[] = [];
   let cursor = 0;
   specs.forEach((sp, i) => {
-    cursor += sp.gap * step;
+    cursor += sp.gap;
     const start = cursor;
-    cursor += sp.len * step;
-    layers.push(layerAt(`${id}-${i}`, kind, timeUsAtGridIndex(start, grid), timeUsAtGridIndex(cursor, grid)));
+    cursor += sp.len;
+    layers.push(layerAt(`${id}-${i}`, kind, f(start), f(cursor)));
   });
   return track(id, layers);
 }

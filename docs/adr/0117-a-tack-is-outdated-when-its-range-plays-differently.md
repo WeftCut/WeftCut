@@ -38,8 +38,8 @@ still what plays here?
 - **The range keeps its length and moves with its content**: displaced by as
   far as the first covered layer (track order) that still shows its covered
   content moved — by source time for a layer with a source window, by offset
-  for titles, colours and images; in µs, without frame snap, so audio on the
-  sample grid stays put. A ripple upstream moves it and leaves it current. If
+  for titles, colours and images; in µs, without frame snap, so audio slipped
+  by samples stays put. A ripple upstream moves it and leaves it current. If
   no covered layer shows its content it stays put and is outdated; a tack whose
   composition is gone is listed, outdated, and cannot be located or converted.
 

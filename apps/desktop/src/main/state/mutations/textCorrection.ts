@@ -2,7 +2,7 @@ import type { Composition, Layer, Project, TextParams, Track } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { scopeComposition, locateLayer, cloneLayer } from './helpers'
-import { gridForLayerKind, snapOnGrid } from '../snap'
+import { frameGrid, snapOnGrid } from '../snap'
 import { alignedShare, createTextCorrector, type CorrectedText, type CorrectionPiece } from '../../../shared/textCorrection'
 import { CAPTION_TIMING_KEY, readCaptionTiming, type CaptionTiming, type CaptionWord, type TranscriptPayload } from '../../../shared/captionTiming'
 import { applyAddCaptionTrack, type Cue } from './captions'
@@ -22,7 +22,7 @@ export function applyTranscripts(p: Project, ids: IdGen, transcripts: Transcript
   const c = scopeComposition(p, compositionId)
   if (!Array.isArray(transcripts) || transcripts.length > 1000) throw invalid('transcripts')
   const cues: Cue[] = []
-  const grid = gridForLayerKind('Text', c.fps)
+  const grid = frameGrid(c.fps)
   for (const [n, t] of transcripts.entries()) {
     if (!t || !Array.isArray(t.segments) || !['exact', 'interpolated_from_cue', 'none'].includes(t.word_timing)) throw invalid('transcripts')
     const source = (t.source?.id ?? sourceIds[n]) ? locateLayer(p, (t.source?.id ?? sourceIds[n])!)?.layer : undefined
@@ -217,7 +217,7 @@ function resegment(p: Project, c: Composition, track: Track, group: Layer[], ids
       chunks.push(chunk); chunk = []
     }
   }
-  const first = group[0]!, last = group[group.length - 1]!, grid = gridForLayerKind('Text', c.fps)
+  const first = group[0]!, last = group[group.length - 1]!, grid = frameGrid(c.fps)
   const replacements: Layer[] = []
   for (let i = 0; i < chunks.length; i++) {
     const ws = chunks[i]!, a = ws[0]!, b = ws[ws.length - 1]!

@@ -357,6 +357,14 @@ export const useCompositionDurationUs = (
     compositionId ? (s.summary?.compositions[compositionId]?.duration_us ?? null) : null,
   );
 
+/// A media item's probed length, or null when it is unknown or the id is not in
+/// the pool — the bound an Audio clip's sound ends at when its source window
+/// reaches past the media (ADR 0038).
+export const useMediaDurationUs = (mediaId: string | null): number | null =>
+  useProjectStore((s) =>
+    mediaId ? (s.summary?.media.find((m) => m.id === mediaId)?.duration_us ?? null) : null,
+  );
+
 /// The media whose thumbnail stands in for a Group clip: the earliest-starting
 /// video clip inside the composition, or inside a Group nested in it. Null when
 /// the Group holds no video at all, which is when the clip falls back to its

@@ -4,7 +4,7 @@ import type { IdGen } from '../ids'
 import { applyDurationAutofit, cloneLayer, compositionOf, locateTrack, requireLayer, requireSameComposition } from './helpers'
 import { applyLinksCreate } from './links'
 import { CommandFailure } from '../errors'
-import { gridForLayerKind, snapOnGrid, travelOnGrids } from '../snap'
+import { frameGrid, snapOnGrid, travelOnGrid } from '../snap'
 import { layerOverlapClass } from '../validate'
 
 export interface PasteLayerInterval {
@@ -13,20 +13,18 @@ export interface PasteLayerInterval {
 }
 
 /** Resolve the exact snapped interval used when a copied layer is pasted, on the
- *  SOURCE layer's own grid (spec R2-D6) — so a duplicated audio clip keeps its
- *  sample alignment instead of being pulled onto the video frame grid. The source
- *  layer's duration is shifted the same way as a normal move, which preserves its
- *  quantum span on fractional frame-rate grids. */
+ *  composition frame grid. The source layer's duration is shifted the same way as
+ *  a normal move, which preserves its whole-frame span on fractional rates. */
 export function pasteLayerInterval(p: Project, id: Uuid, tStartUs: number): PasteLayerInterval {
   const { comp: c, layer: source } = requireLayer(p, id)
-  const grid = gridForLayerKind(source.params.kind, c.fps)
+  const grid = frameGrid(c.fps)
   const snappedStart = snapOnGrid(tStartUs, grid)
   // A set of one, through the arithmetic every landing shares
   // (`renderer/grid.ts`) — which is also what the timeline's duplicate preview
   // draws with, so the ghost under the pointer and the clone that lands are the
   // same two numbers.
-  return travelOnGrids(
-    [{ id: source.id, kind: source.params.kind, tStartUs: source.t_start_us, tEndUs: source.t_end_us }],
+  return travelOnGrid(
+    [{ id: source.id, tStartUs: source.t_start_us, tEndUs: source.t_end_us }],
     { fromUs: source.t_start_us, toUs: snappedStart },
     c.fps,
   ).get(source.id)!
@@ -64,9 +62,9 @@ export function applyPasteLayer(
 }
 
 /** Paste a SET of layers as one edit — the whole-link duplicate. Every clone
- *  shifts by the shared `deltaUs` and then snaps on ITS OWN lattice
- *  (`pasteLayerInterval`), which is the same rule `applyMoveLayer` fans out
- *  under and what keeps a slipped A/V offset intact. Only the SEED
+ *  shifts by the shared `deltaUs` and then lands on the frame grid
+ *  (`pasteLayerInterval`), the rule `applyMoveLayer` fans out under, which keeps
+ *  a slipped A/V offset intact. Only the SEED
  *  (`layerIds[0]`) changes track, onto `targetTrackId`; every other clone lands
  *  on its source's track, mirroring the move rule. Two or more clones are linked
  *  to each other — never to their sources.

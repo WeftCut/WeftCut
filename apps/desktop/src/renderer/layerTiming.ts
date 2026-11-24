@@ -13,6 +13,13 @@ export interface TimedLayer { params: TimedParams; t_start_us: number; t_end_us:
 export function layerRate(params: TimingFields | { kind: string }): TimeRatio {
   return "time_map" in params && params.time_map ? readTimeMap(params.time_map).rate : UNIT_RATE;
 }
+/** True when the layer's source window may reach past its media, the part outside
+ *  playing as silence (ADR 0038): an un-retimed Audio layer, whose sample slip
+ *  moves the window under fixed edges. A picture has no silence to show, and a
+ *  retimed layer maps time through `time_map`, so both stay inside their media. */
+export function padsWithSilence(params: { kind?: string; time_map?: unknown }): boolean {
+  return params.kind === 'Audio' && !params.time_map;
+}
 export function layerRateNumber(params: TimingFields | { kind: string }): number { return approximateTime(layerRate(params)); }
 export function sourceIn(params: TimedParams): ExactTime {
   return addTime(exactTime(params.content_window?.in_us ?? params.src_in_us ?? 0), params.source_phase?.in ?? ZERO_TIME);

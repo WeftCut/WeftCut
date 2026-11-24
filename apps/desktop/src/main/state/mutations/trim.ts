@@ -3,7 +3,7 @@ import { contentAt, sourceIn, sourceOut, writeSourceWindow, layerRateNumber, lay
 import { exactTime, approximateTime, addTime, multiplyTime } from '../../../renderer/timeMapping'
 // apps/desktop/src/main/state/mutations/trim.ts
 import type { Layer, Project, Uuid } from '../model'
-import { gridForLayerKind, snapDownOnGrid, snapOnGrid, snapUpOnGrid, type Grid } from '../snap'
+import { frameGrid, snapDownOnGrid, snapOnGrid, snapUpOnGrid, type Grid } from '../snap'
 import { applyDurationAutofit, hasSourceWindow, locateLayerIn, requireLayer, shiftLayerKeyframes, sourceDurationUs } from './helpers'
 import { CommandFailure } from '../errors'
 import { linkSiblingsExcluding, checkLinkLock } from './links'
@@ -26,6 +26,11 @@ export function clampSigned(d: number, min: number, max: number): number {
  *  overhangs its composition (legal in state, ADR 0052 §6) may not grow, and
  *  must not be dragged back either — an outward drag is refused, not inverted.
  *
+ *  A window that already reads silence past its media (`padsWithSilence`) is
+ *  bounded by the media widened to include it: an edge already in silence may
+ *  not reach further out (no trim grows the silence), and any inward trim stays
+ *  legal.
+ *
  *  LANDMINE: every `- 1` below is a STRICT-inequality exclusion (`t_start` must
  *  land strictly before `t_end`; `src_in` strictly before `src_out`), never a
  *  minimum duration — `trimEdgeWindowUs`' inward snap is what widens each of
@@ -44,34 +49,39 @@ export function trimDeltaBounds(
     const timelineMin = -layer.t_start_us
     const timelineMax = dur - 1
     let srcMin = -INF, srcMax = INF
-    if (hasSourceWindow(pa)) { srcMin = -approximateTime(sourceIn(pa)) / rate; srcMax = (approximateTime(sourceOut(layer)) - approximateTime(sourceIn(pa))) / rate - 1 }
+    if (hasSourceWindow(pa)) {
+      const sIn = approximateTime(sourceIn(pa)), sOut = approximateTime(sourceOut(layer))
+      // Floored at zero for the same reason as the Out cap below: an in point
+      // already before the media (a padded Audio window) may not reach further.
+      srcMin = -Math.max(0, sIn) / rate
+      srcMax = (sOut - sIn) / rate - 1
+    }
     return { min: Math.max(timelineMin, srcMin), max: Math.min(timelineMax, srcMax) }
   } else {
     const timelineMin = -(dur - 1)
     let srcMin = -INF; let srcMax = INF
     if (hasSourceWindow(pa)) {
-      srcMin = -((approximateTime(sourceOut(layer)) - approximateTime(sourceIn(pa))) / rate - 1)
-      if (sourceDurationUs != null) srcMax = Math.max(0, (sourceDurationUs - approximateTime(sourceOut(layer))) / rate)
+      const sIn = approximateTime(sourceIn(pa)), sOut = approximateTime(sourceOut(layer))
+      srcMin = -((sOut - sIn) / rate - 1)
+      if (sourceDurationUs != null) srcMax = Math.max(0, (sourceDurationUs - sOut) / rate)
     }
     return { min: Math.max(timelineMin, srcMin), max: srcMax }
   }
 }
 
-/** The absolute window the trimmed edge may land in, as canonical points of the
- *  LAYER'S OWN grid — the composition frame grid for a visual kind, the 48 kHz
- *  sample lattice for Audio (spec R2-D6): `trimDeltaBounds` snapped INWARD (ceil the
- *  low end, floor the high end). Because both ends come out of that grid, a clamp
- *  can only ever persist a canonical `t_start_us` / `t_end_us` — the endpoint
- *  invariant in `docs/data-model.md` (Timeline-field alignment).
+/** The absolute window the trimmed edge may land in, as canonical points of
+ *  `grid` — the composition frame grid, for every kind: `trimDeltaBounds` snapped
+ *  INWARD (ceil the low end, floor the high end). Because both ends come out of
+ *  that grid, a clamp can only ever persist a canonical `t_start_us` /
+ *  `t_end_us` — the endpoint invariant in `docs/data-model.md` (Timeline-field
+ *  alignment).
  *
  *  Inward is the load-bearing half. A source-derived bound is arbitrary µs (a
- *  media duration is not a frame boundary), so the layer gives up to one quantum of
+ *  media duration is not a frame boundary), so the layer gives up to one frame of
  *  media back rather than persisting an off-grid endpoint, and the strict µs
- *  exclusions become a one-quantum minimum duration — one composition frame for
- *  visual kinds, ONE SAMPLE (~20.83 µs) for audio, which is what makes sample-level
- *  audio trims reachable at all. `hi < lo` means no legal point is left —
- *  `applyTrimLayer` reports `TrimEdgeOutOfRange` instead of committing a sub-quantum
- *  sliver. `INF` stays a sentinel: an OUT trim with no source cap has no upper bound
+ *  exclusions become a one-frame minimum duration. `hi < lo` means no legal point
+ *  is left — `applyTrimLayer` reports `TrimEdgeOutOfRange` instead of committing a
+ *  sub-frame sliver. `INF` stays a sentinel: an OUT trim with no source cap has no upper bound
  *  to put on the grid. */
 export function trimEdgeWindowUs(
   layer: Layer,
@@ -101,7 +111,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   const fps = c.fps
   if (located.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: located.track.id })
   const target = located.layer
-  const snapped = snapOnGrid(newTUs, gridForLayerKind(target.params.kind, fps))
+  const snapped = snapOnGrid(newTUs, frameGrid(fps))
   const curStart = target.t_start_us, curEnd = target.t_end_us
   const curEdgeT = edge === 'In' ? curStart : curEnd
 
@@ -130,7 +140,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   let hi = INF
   for (const mid of aligned) {
     const m = locateLayerIn(c, mid)!.layer
-    const w = trimEdgeWindowUs(m, edge, gridForLayerKind(m.params.kind, fps), sourceDurationUs(p, m.params))
+    const w = trimEdgeWindowUs(m, edge, frameGrid(fps), sourceDurationUs(p, m.params))
     lo = Math.max(lo, w.lo)
     hi = Math.min(hi, w.hi)
   }
@@ -142,15 +152,10 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   for (const mid of aligned) {
     const m = locateLayerIn(c, mid)!.layer
     const params = m.params
-    // Re-derive the delta on each member's OWN grid. Aligned members share one
-    // `curEdgeT` (that is what "aligned" means), so at the six rates where the frame
-    // lattice is an exact sublattice of 48 kHz this is exactly `clamped`. It differs
-    // only when a video and an audio edge coincide at 29.97 / 59.94, where the shared
-    // time is a frame boundary that is NOT a sample boundary: then the audio member
-    // adjusts by ≤ half a sample so its endpoint stays canonical instead of the whole
-    // trim being rejected by the grid backstop. `src_*` shifts by the SAME per-member
+    // Aligned members share one `curEdgeT` (that is what "aligned" means) and one
+    // frame grid, so this is `clamped` for every member. `src_*` shifts by the SAME
     // delta, so content stays glued to the edge.
-    const delta = snapOnGrid(curEdgeT + clamped, gridForLayerKind(params.kind, fps)) - curEdgeT
+    const delta = snapOnGrid(curEdgeT + clamped, frameGrid(fps)) - curEdgeT
     if (hasSourceWindow(params) || params.kind === 'Motif' || params.kind === 'ImageOverlay') {
       writeSourceWindow(params, edge === 'In' ? contentAt(params, exactTime(delta)) : sourceIn(params),
         edge === 'Out' ? addTime(sourceOut(m), multiplyTime(exactTime(delta), layerRate(params))) : sourceOut(m));

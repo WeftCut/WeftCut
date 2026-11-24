@@ -77,10 +77,13 @@ interface SegmentGeom {
 /// The strip's fetch window in SOURCE time: the union of the VISIBLE canvas
 /// segments extended by one segment width each side (near-viewport peaks warm
 /// before they scroll in), clamped to the strip, then mapped px→us across the
-/// layer's [srcInUs, srcOutUs) span. Null when no segment is visible —
-/// nothing to assemble. Hidden segments contribute nothing — memory bound, see
-/// TimelineFilmstrip's `visibleSegmentWindows`.
-function visibleWindowUs(
+/// layer's [srcInUs, srcOutUs) span, then clamped to start at source 0: an
+/// Audio window may begin before its media (ADR 0038), and that silence has no
+/// peaks, so it draws blank. Null when no segment is visible, or when every
+/// visible one lies in that silence — nothing to assemble. Hidden segments
+/// contribute nothing — memory bound, see TimelineFilmstrip's
+/// `visibleSegmentWindows`.
+export function visibleWindowUs(
   segments: SegmentGeom[],
   isSegmentVisible: (startPx: number) => boolean,
   totalWidthPx: number,
@@ -98,10 +101,9 @@ function visibleWindowUs(
   loPx = Math.max(0, loPx);
   hiPx = Math.min(totalWidthPx, hiPx);
   const span = srcOutUs - srcInUs;
-  return {
-    loUs: Math.round(srcInUs + (loPx / totalWidthPx) * span),
-    hiUs: Math.round(srcInUs + (hiPx / totalWidthPx) * span),
-  };
+  const loUs = Math.max(0, Math.round(srcInUs + (loPx / totalWidthPx) * span));
+  const hiUs = Math.round(srcInUs + (hiPx / totalWidthPx) * span);
+  return hiUs > loUs ? { loUs, hiUs } : null;
 }
 
 interface WindowData {

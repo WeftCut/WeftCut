@@ -143,81 +143,53 @@ describe('validate — frame-grid backstop', () => {
     }
   })
 
-  // ── The two grids, asserted against each other ──────────────────────────────
-  // Both halves in one test on purpose: a predicate that
-  // accepted everything for audio, or that had quietly stayed frame-only, would pass
-  // one half and fail the other.
-  it('holds Audio to the 48 kHz sample lattice and visual kinds to the composition frame grid', () => {
+  // Audio and visual kinds asserted side by side: a predicate that had kept a
+  // separate lattice for audio would pass the visual half and fail the audio one.
+  it('holds every layer kind, Audio included, to the composition frame grid', () => {
     const audioMedia = (p: Project) => {
       p.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: 10_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null }
     }
     // 29.97, where the two lattices genuinely differ: frame 1 is 33_367 µs and
-    // sample 1602 is 33_375 µs, so each grid rejects the other's boundary.
+    // sample 1602 is 33_375 µs, so a sample boundary is off the frame grid.
     const FPS = { num: 30000, den: 1001 }
     const FRAME_1 = 33_367
     const SAMPLE_1602 = 33_375
-
-    // Audio ACCEPTS a sample boundary the frame grid would reject...
-    const ok = blankProject(seededGen(), 't')
-    root(ok).fps = FPS
-    root(ok).duration_us = timeUsAtFrame(2, FPS.num, FPS.den) // encloses the tail
-    audioMedia(ok)
-    root(ok).tracks[0].layers = [audioLayer('a', 'm', 0, SAMPLE_1602)]
-    expect(() => validate(ok)).not.toThrow()
-
-    // ...and REJECTS a frame boundary that is not a sample boundary, with the
-    // lattice it was measured against named in the error.
-    const bad = blankProject(seededGen(), 't')
-    root(bad).fps = FPS
-    root(bad).duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
-    audioMedia(bad)
-    root(bad).tracks[0].layers = [audioLayer('a', 'm', 0, FRAME_1)]
-    try { validate(bad); throw new Error('expected OffGridLayerBoundary for frame-aligned audio at 29.97') }
-    catch (e) {
-      if (!isValidationFailure(e)) throw e
-      // `snap_to` is the OTHER constant: the two lattices are 8 µs apart here, so the
-      // repair the caller is told to make lands exactly on sample 1602.
-      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_end_us', t: FRAME_1, fps: { num: 48_000, den: 1 }, grid: 'sample', snap_to: SAMPLE_1602 })
+    const at = (layer: Layer, withMedia: boolean) => {
+      const p = blankProject(seededGen(), 't')
+      root(p).fps = FPS
+      root(p).duration_us = timeUsAtFrame(2, FPS.num, FPS.den) // encloses the tail
+      if (withMedia) audioMedia(p)
+      root(p).tracks[0].layers = [layer]
+      return p
     }
 
-    // A VISUAL layer is the mirror image: the frame boundary passes, the sample
-    // boundary does not. This is the assertion that fails if the predicate ever
-    // collapses back to one grid for both kinds.
-    const vis = blankProject(seededGen(), 't')
-    root(vis).fps = FPS
-    root(vis).duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
-    root(vis).tracks[0].layers = [colorLayer('v', 0, FRAME_1)]
-    expect(() => validate(vis)).not.toThrow()
-    const visBad = blankProject(seededGen(), 't')
-    root(visBad).fps = FPS
-    root(visBad).duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
-    root(visBad).tracks[0].layers = [colorLayer('v', 0, SAMPLE_1602)]
-    try { validate(visBad); throw new Error('expected OffGridLayerBoundary for sample-aligned video at 29.97') }
-    catch (e) {
-      if (!isValidationFailure(e)) throw e
-      // ...and symmetrically back: the visual repair lands on frame 1.
-      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'v', field: 't_end_us', t: SAMPLE_1602, fps: FPS, grid: 'frame', snap_to: FRAME_1 })
+    expect(() => validate(at(audioLayer('a', 'm', 0, FRAME_1), true))).not.toThrow()
+    expect(() => validate(at(colorLayer('v', 0, FRAME_1), false))).not.toThrow()
+
+    for (const [layer, withMedia] of [[audioLayer('a', 'm', 0, SAMPLE_1602), true], [colorLayer('v', 0, SAMPLE_1602), false]] as const) {
+      try { validate(at(layer, withMedia)); throw new Error(`expected OffGridLayerBoundary for a sample-aligned ${layer.params.kind} edge at 29.97`) }
+      catch (e) {
+        if (!isValidationFailure(e)) throw e
+        expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: layer.id, field: 't_end_us', t: SAMPLE_1602, fps: FPS, grid: 'frame', snap_to: FRAME_1 })
+      }
     }
   })
 
-  it('does not flag two audio layers whose edges differ by one sample as overlapping', () => {
-    // The half-open `[t_start, t_end)` comparison gives this for free at 20.83 µs
-    // precision — the regression exists so nobody "fixes" it with a tolerance.
-    const p = blankProject(seededGen(), 't')
-    root(p).fps = { num: 30000, den: 1001 }
-    p.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: 10_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null }
-    const s = (i: number) => timeUsAtFrame(i, 48_000, 1)
-    root(p).duration_us = timeUsAtFrame(1, 30000, 1001)
-    // Abutting at sample 480, then one more layer starting exactly one sample later.
-    root(p).tracks[0].layers = [audioLayer('a', 'm', s(0), s(480)), audioLayer('b', 'm', s(480), s(960))]
-    expect(() => validate(p)).not.toThrow()
-    // And a one-sample genuine overlap IS still caught.
-    const q = blankProject(seededGen(), 't')
-    root(q).fps = { num: 30000, den: 1001 }
-    q.media_pool['m'] = p.media_pool['m']
-    root(q).duration_us = timeUsAtFrame(1, 30000, 1001)
-    root(q).tracks[0].layers = [audioLayer('a', 'm', s(0), s(481)), audioLayer('b', 'm', s(480), s(960))]
-    expectRule(q, 'LayerOverlap')
+  it('does not flag abutting audio layers as overlapping, and catches one frame of overlap', () => {
+    // The half-open `[t_start, t_end)` comparison gives this for free — the
+    // regression exists so nobody "fixes" it with a tolerance.
+    const fps = { num: 30000, den: 1001 }
+    const f = (i: number) => timeUsAtFrame(i, fps.num, fps.den)
+    const withAudio = (layers: Layer[]) => {
+      const p = blankProject(seededGen(), 't')
+      root(p).fps = fps
+      p.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: 10_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null }
+      root(p).duration_us = f(60)
+      root(p).tracks[0].layers = layers
+      return p
+    }
+    expect(() => validate(withAudio([audioLayer('a', 'm', f(0), f(30)), audioLayer('b', 'm', f(30), f(60))]))).not.toThrow()
+    expectRule(withAudio([audioLayer('a', 'm', f(0), f(31)), audioLayer('b', 'm', f(30), f(60))]), 'LayerOverlap')
   })
 
   it('accepts canonical endpoints at a fractional rate and rejects the neighbouring µs', () => {

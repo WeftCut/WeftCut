@@ -229,8 +229,8 @@ export function useLayerDrag(opts: {
         : tracks.find((t) => t.id === placement.trackId);
       const layer = track?.layers.find((l) => l.id === placement.layerId);
       if (!layer) return false;
-      // A clone has landed the moment it exists: the actor placed it where its
-      // own lattice says (`paste_layers` re-snaps every member), so holding the
+      // A clone has landed the moment it exists: the actor placed it where the
+      // frame grid says (`paste_layers` re-snaps every member), so holding the
       // ghost to the projected time could pin it over the real clip for good.
       if (placement.sourceLayerId !== undefined) return true;
       return (
