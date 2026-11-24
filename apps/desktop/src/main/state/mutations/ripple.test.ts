@@ -18,7 +18,7 @@ import { applyLinksCreate } from './links'
 import { audioParams, mediaItemTemplate, videoClipParams } from './media'
 import { applyAddTransition } from './transitions'
 import { applyRippleDeleteGap, applyRippleDeleteLayers } from './ripple'
-import { AUDIO_GRID, frameGrid, timeUsAtGridIndex } from '../snap'
+import { AUDIO_GRID, frameGrid, gridIndex, timeUsAtGridIndex } from '../snap'
 import { isCommandFailure, type CommandError } from '../errors'
 import { groupedProject, root, withGroup } from '../__tests__/fixtures/project'
 
@@ -303,6 +303,21 @@ describe('dispatch: ripple_delete_layers and its transitions', () => {
     // Nothing was borrowed, so nothing is borrowed afterwards: the duration
     // gained a microsecond, the borrow did not gain a phantom one.
     expect(tr.extended_us).toBe(0)
+  })
+
+  it('preserves the sample count of an audio transition borrowed tail after ripple', () => {
+    const x = fx()
+    const head = sound(x, x.aRoll, smp(0), smp(1))
+    const a = sound(x, x.aRoll, smp(100), smp(4000))
+    const b = sound(x, x.aRoll, smp(4000), smp(8000))
+    const id = applyAddTransition(x.p, x.gen, a, b, smp(1601), CROSSFADE, 'extend').id
+    const actor = x.open()
+    expect(ripple(actor, [head]).ok).toBe(true)
+    const c = root(actor.snapshot())
+    const tr = c.transitions.find(t => t.id === id)!
+    const end = layerOf(c, a).t_end_us
+    expect(gridIndex(end, AUDIO_GRID) - gridIndex(end - tr.extended_us, AUDIO_GRID)).toBe(1601)
+    expect(tr.extended_us).toBe(tr.duration_us)
   })
 
   it('re-measures a borrowed tail as the same frame count, so removing the transition afterwards restores an on-grid cut', () => {

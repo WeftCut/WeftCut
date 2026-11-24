@@ -220,7 +220,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // Transitions (spec § Command surface). Pure renaming — kind/direction are
   // validated actor-side by parseTransitionKind (Crossfade REJECTS direction;
   // Wipe/Slide REQUIRE one), so undefined passes through untouched.
-  add_transition: (a) => ({ op: 'add_transition', args: { from: a.fromLayerId, to: a.toLayerId, duration_us: a.durationUs, kind: a.kind, direction: a.direction } }),
+  add_transition: (a) => ({ op: 'add_transition', args: { from: a.fromLayerId, to: a.toLayerId, duration_us: a.durationUs, kind: a.kind, direction: a.direction, placement: a.placement, audio: a.audio } }),
   update_transition: (a) => ({ op: 'update_transition', args: { transition: a.transitionId, duration_us: a.durationUs, kind: a.kind, direction: a.direction, extended_us: a.extendedUs } }),
   remove_transition: (a) => ({ op: 'remove_transition', args: { transition: a.transitionId } }),
   restyle_captions: (a) => ({ op: 'restyle_captions', args: { patch: a.patch } }),

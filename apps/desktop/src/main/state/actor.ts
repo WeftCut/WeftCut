@@ -58,7 +58,7 @@ import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { mediaPropProblem } from '../../shared/motifs/mediaProp'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, checkEffectPatchAgainst, checkEffectParamValues, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, mcpDef, easingSegment, TEXT_SCALE_RULE, type AddLayerSpec, type McpCallResult, type McpToolErrorJson, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, checkEffectPatchAgainst, checkEffectParamValues, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, parseTransitionAudio, McpArgError, shapeGetParamTrack, keyframePresent, mcpDef, easingSegment, TEXT_SCALE_RULE, type AddLayerSpec, type McpCallResult, type McpToolErrorJson, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity } from './keyframeEdits'
 import { MCP_RESULT_READERS, adjusted, committedTrackResult, keyframeByIdResult, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, splitSiblings, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack, parseEffectParamKey } from './mutations/params'
@@ -1590,12 +1590,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // to 'overlap' (spec D1).
           const kind = parseTransitionKind(a.kind ?? 'Crossfade', a.direction)
           const placement = parseTransitionPlacement(a.placement)
+          const audio = parseTransitionAudio(a.audio)
           // Bounce info rides out via closure, NOT commit's return value: the
           // wire/MCP shape stays "the new transition id". Primitives only —
           // the recipe's draft is revoked once produce returns.
           let bounces: TransitionBounce[] = []
           const id = commit(HISTORY_SUMMARY.transitionAdd, layerRefs([a.from as Uuid, a.to as Uuid]), { kind: 'Coarse' }, (d) => {
-            const r = applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), kind, placement)
+            const r = applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), kind, placement, audio)
             bounces = r.bounces
             return r.id
           })
@@ -1613,7 +1614,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           commit(HISTORY_SUMMARY.transitionUpdate, transitionSideRefs(a.transition as Uuid), { kind: 'Coarse' }, (d) => applyUpdateTransition(d, a.transition as Uuid, patch))
           return { ok: true, value: null }
         }
-        case 'remove_transition': commit(HISTORY_SUMMARY.transitionRemove, transitionSideRefs(a.transition as Uuid), { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
+        case 'remove_transition': commit(HISTORY_SUMMARY.transitionRemove, transitionSideRefs(a.transition as Uuid), { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid, idGen)); return { ok: true, value: null }
         case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null, (a.with_audio as boolean | undefined) ?? false)) }
         // add_media_item — insert a FULL probed MediaItem (the import_media
         // hybrid: Rust probes/hashes, the TS host applies the write). Distinct from

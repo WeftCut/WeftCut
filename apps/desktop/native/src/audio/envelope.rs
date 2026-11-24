@@ -122,6 +122,75 @@ pub fn sample_gain(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct AudioCrossfade {
+    pub start_us: i64,
+    pub duration_us: i64,
+    pub incoming: bool,
+}
+
+pub fn crossfades_for_layer(
+    comp: &crate::state::Composition,
+    layer: &crate::state::layer::Layer,
+) -> Vec<AudioCrossfade> {
+    comp.transitions
+        .iter()
+        .filter_map(|transition| {
+            if transition.from_layer != layer.id && transition.to_layer != layer.id {
+                return None;
+            }
+            let (from, to) = comp.tracks.iter().find_map(|track| {
+                let from = track
+                    .layers
+                    .iter()
+                    .find(|candidate| candidate.id == transition.from_layer)?;
+                let to = track
+                    .layers
+                    .iter()
+                    .find(|candidate| candidate.id == transition.to_layer)?;
+                Some((from, to))
+            })?;
+            if !matches!(
+                transition.kind,
+                crate::state::transition::TransitionKind::Crossfade
+            ) || !matches!(from.params, crate::state::layer::LayerParams::Audio(_))
+                || !matches!(to.params, crate::state::layer::LayerParams::Audio(_))
+                || transition.duration_us <= 0
+            {
+                return None;
+            }
+            Some(AudioCrossfade {
+                start_us: to.t_start_us - layer.t_start_us,
+                duration_us: transition.duration_us,
+                incoming: transition.to_layer == layer.id,
+            })
+        })
+        .collect()
+}
+
+pub fn apply_crossfades(envelope: &mut Envelope, fades: &[AudioCrossfade]) {
+    if fades.is_empty() {
+        return;
+    }
+    let mut values = Vec::new();
+    let mut k = 0;
+    loop {
+        let t = (k * envelope.step_us).min(envelope.span_us);
+        let mut gain = envelope.eval(t);
+        for fade in fades {
+            let progress = (t - fade.start_us) as f64 / fade.duration_us as f64;
+            let (outgoing, incoming) = weftcut_eval::equal_power_crossfade(progress);
+            gain *= if fade.incoming { incoming } else { outgoing } as f32;
+        }
+        values.push(gain);
+        if t >= envelope.span_us {
+            break;
+        }
+        k += 1;
+    }
+    envelope.values = values;
+}
+
 /// Pan envelope: plain sampling of Animated pan, clamped to [-1, 1].
 pub fn sample_pan(pan: &Animated<f64>, span_us: i64) -> Envelope {
     if !pan.is_animated() {
@@ -245,6 +314,20 @@ mod tests {
     use super::*;
     use crate::state::animated::{Animated, Continuity, Extrapolation, Keyframe, Segment, Tangent};
     use crate::state::ids::new_id;
+
+    #[test]
+    fn crossfade_multiplies_user_fades() {
+        let mut gain = sample_gain(&Animated::Static(0.0), 1_000_000, 0, 2_000_000);
+        apply_crossfades(
+            &mut gain,
+            &[AudioCrossfade {
+                start_us: 0,
+                duration_us: 1_000_000,
+                incoming: true,
+            }],
+        );
+        assert!((gain.eval(500_000) - 0.5 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+    }
 
     fn kf(t_us: i64, value: f64) -> Keyframe<f64> {
         Keyframe {

@@ -26,7 +26,7 @@ library (`from` set) and one missing entry (`revision` and `from` null). The
 step also drops `motif_version` from Motif layers and keys an id in another
 form by its lowercase slug (`migrate.projectMotifs.test.ts`). v5 has no Motif
 layer, so the step writes an empty table for it and changes no layer; the
-entries are written in by hand for breadth. `v7.json` is the current
+entries are written in by hand for breadth. `v8.json` is the identity upgrade of `v7.json`; the new version allows audio transitions. `v7.json` is the
 project-path generation, in the disk form a save writes (`state/projectFile.ts`):
 v6 run through the step, so its one media item keeps `path_rel`
 `Media/clip.mp4` and loses `path_abs`, the derivative paths and the route's

@@ -3,7 +3,7 @@ import { addTime, multiplyTime, exactTime, approximateTime } from '../../../rend
 import type { Composition, Layer, Project, Transition, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
-import { frameIndexRound, gridForLayerKind, shiftOnGrids, snapOnGrid, timeUsAtFrame } from '../snap'
+import { AUDIO_GRID, AUDIO_SAMPLE_RATE_HZ, frameIndexRound, gridForLayerKind, gridIndex, shiftOnGrids, snapOnGrid, timeUsAtFrame, timeUsAtGridIndex } from '../snap'
 import { applyDurationAutofit, hasSourceWindow, locateLayerIn, pickFreeOverlayTrack, requireLayer, sourceDurationUs } from './helpers'
 import { applyAddTrack } from './add'
 import { checkLinkLock, linkSiblingsExcluding, indexLinks } from './links'
@@ -101,8 +101,7 @@ function checkTransitionTrackLock(c: Composition, trackIdx: number): void {
     throw new CommandFailure({ error: 'TrackLocked', track: c.tracks[trackIdx].id })
 }
 
-/** Audio participants are rejected here (precise, pre-id-mint error); validate's
- *  TransitionUnsupportedLayerKind rule is the backstop no path can bypass. */
+/** Reject an Audio participant in a mixed or unsupported transition. */
 function rejectAudioParticipant(layer: Layer): void {
   if (layer.params.kind === 'Audio')
     throw new CommandFailure({ error: 'TransitionUnsupportedLayerKind', layer: layer.id, kind: layer.params.kind })
@@ -179,10 +178,10 @@ export interface TransitionBounce { layer: Uuid; from_track: Uuid; to_track: Uui
  *  itself never bounces — an unauthorized overlap from ITS move is a
  *  whole-commit validate refusal. No pruneEmptiedTrack: the blocking layer that
  *  caused the bounce stays on the vacated lane, so a bounce can never empty it. */
-function bounceCollidingSiblings(p: Project, c: Composition, idGen: IdGen, memberIds: readonly Uuid[], toLayer: Uuid, out: TransitionBounce[]): void {
+function bounceCollidingSiblings(p: Project, c: Composition, idGen: IdGen, memberIds: readonly Uuid[], toLayer: Uuid, out: TransitionBounce[], authorizedAudio?: Uuid): void {
   const moving = new Set(memberIds)
   for (const id of memberIds) {
-    if (id === toLayer) continue
+    if (id === toLayer || id === authorizedAudio) continue
     const loc = locateLayerIn(c, id)
     if (!loc) continue
     const track = loc.track
@@ -213,6 +212,64 @@ function requireTransition(p: Project, id: Uuid): { comp: Composition; transitio
   throw new CommandFailure({ error: 'TransitionNotFound', transition: id })
 }
 
+function audioPartner(c: Composition, layer: Layer): Layer | undefined {
+  if (layer.params.kind !== 'VideoClip') return undefined
+  const audio = linkSiblingsExcluding(c, layer.id)
+    .map(id => locateLayerIn(c, id)?.layer)
+    .filter((candidate): candidate is Layer => candidate?.params.kind === 'Audio')
+  const media = layer.params.kind === 'VideoClip' ? layer.params.media : undefined
+  return audio.find(candidate => candidate.params.kind === 'Audio' && candidate.params.media === media)
+    ?? (audio.length === 1 ? audio[0] : undefined)
+}
+
+/** Add an audio crossfade without moving a linked visual layer. */
+function addAudioTransition(
+  p: Project, c: Composition, idGen: IdGen, from: Layer, to: Layer,
+  durationUs: number, placement: 'overlap' | 'extend',
+): { id: Uuid; bounces: TransitionBounce[] } {
+  const samples = gridIndex(durationUs, AUDIO_GRID)
+  const minimum = Math.floor(AUDIO_SAMPLE_RATE_HZ * c.fps.den / c.fps.num)
+  if (samples < minimum || samples < 1)
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'duration_us', detail: 'an audio transition must span at least one frame' })
+  const fromEnd = from.t_end_us
+  const toStart = to.t_start_us
+  const overlap = fromEnd - toStart
+  let duration: number
+  let extended = 0
+  if (overlap === 0) {
+    if (placement === 'extend') {
+      const end = timeUsAtGridIndex(gridIndex(fromEnd, AUDIO_GRID) + samples, AUDIO_GRID)
+      duration = end - fromEnd
+      const available = tailHandleUs(p, from)
+      if (available < duration)
+        throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: from.id, available_us: available })
+      if (duration > to.t_end_us - toStart)
+        throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'TransitionDurationOutOfRange', transition: null, duration } })
+      extendLayerTEnd(from, duration)
+      extended = duration
+    } else {
+      const start = timeUsAtGridIndex(gridIndex(fromEnd, AUDIO_GRID) - samples, AUDIO_GRID)
+      duration = fromEnd - start
+      if (duration > Math.min(fromEnd - from.t_start_us, to.t_end_us - toStart))
+        throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'TransitionDurationOutOfRange', transition: null, duration } })
+      const moving = incomingMoveSet(c, to.id)
+      if (moving.includes(from.id))
+        throw new CommandFailure({ error: 'TransitionParticipantsShareLink', from: from.id, to: to.id })
+      if (moving.some(id => locateLayerIn(c, id)?.layer.params.kind !== 'Audio'))
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'from_layer_id', detail: 'an audio transition cannot move a linked visual layer' })
+      shiftLayerSet(c, moving, -duration)
+    }
+    applyDurationAutofit(c)
+  } else {
+    duration = fromEnd - toStart
+    if (gridIndex(fromEnd, AUDIO_GRID) - gridIndex(toStart, AUDIO_GRID) !== samples)
+      throw new CommandFailure({ error: 'TransitionLayersNotAdjacent', from: from.id, to: to.id, duration: durationUs })
+  }
+  const id = idGen()
+  c.transitions.push({ id, from_layer: from.id, to_layer: to.id, duration_us: duration, kind: { kind: 'Crossfade' }, extended_us: extended })
+  return { id, bounces: [] }
+}
+
 /** add_transition. Both layers must live on the SAME track. Cases:
  *
  *  - exact-adjacent cut, `placement: 'overlap'` (the default): the incoming
@@ -239,7 +296,7 @@ function requireTransition(p: Project, id: Uuid): { comp: Composition; transitio
  *  is minted before the transition id by design. */
 export function applyAddTransition(
   p: Project, idGen: IdGen, fromLayer: Uuid, toLayer: Uuid, durationUs: number,
-  kind: Transition['kind'], placement: 'overlap' | 'extend' = 'overlap',
+  kind: Transition['kind'], placement: 'overlap' | 'extend' = 'overlap', audio: 'linked' | 'none' = 'linked',
 ): { id: Uuid; bounces: TransitionBounce[] } {
   const from = requireLayer(p, fromLayer)
   const c = from.comp
@@ -254,6 +311,10 @@ export function applyAddTransition(
 
   const fromLayerObj = from.layer
   const toLayerObj = from.track.layers[toIdx]
+  if (fromLayerObj.params.kind === 'Audio' && toLayerObj.params.kind === 'Audio') {
+    if (kind.kind !== 'Crossfade') rejectAudioParticipant(fromLayerObj)
+    return addAudioTransition(p, c, idGen, fromLayerObj, toLayerObj, durationUs, placement)
+  }
   rejectAudioParticipant(fromLayerObj)
   rejectAudioParticipant(toLayerObj)
 
@@ -261,6 +322,19 @@ export function applyAddTransition(
   const toStart = toLayerObj.t_start_us
   const curOverlap = Math.max(fromEnd - toStart, 0)
   const bounces: TransitionBounce[] = []
+  let pairedAudio: { from: Layer; to: Layer } | undefined
+  let pairedAudioExtended = 0
+  if (audio === 'linked' && fromEnd === toStart) {
+    const audioFrom = audioPartner(c, fromLayerObj)
+    const audioTo = audioPartner(c, toLayerObj)
+    const fromLoc = audioFrom && locateLayerIn(c, audioFrom.id)
+    const toLoc = audioTo && locateLayerIn(c, audioTo.id)
+    if (audioFrom && audioTo && fromLoc && toLoc && fromLoc.track.id === toLoc.track.id
+      && audioFrom.t_end_us === audioTo.t_start_us
+      && audioFrom.t_end_us === snapOnGrid(fromEnd, AUDIO_GRID)
+      && !c.transitions.some(t => t.from_layer === audioFrom.id || t.to_layer === audioTo.id))
+      pairedAudio = { from: audioFrom, to: audioTo }
+  }
   let durUs: number
   let extendedUs: number
   if (curOverlap === 0 && fromEnd === toStart) {
@@ -269,6 +343,17 @@ export function applyAddTransition(
       const available = tailHandleUs(p, fromLayerObj)
       if (available < durUs)
         throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: fromLayer, available_us: available })
+      if (pairedAudio) {
+        const audioEnd = snapOnGrid(pairedAudio.from.t_end_us + durUs, AUDIO_GRID)
+        pairedAudioExtended = audioEnd - pairedAudio.from.t_end_us
+        const audioAvailable = tailHandleUs(p, pairedAudio.from)
+        if (audioAvailable < pairedAudioExtended)
+          throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: pairedAudio.from.id, available_us: audioAvailable })
+        if (pairedAudioExtended > pairedAudio.to.t_end_us - pairedAudio.to.t_start_us)
+          throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'TransitionDurationOutOfRange', transition: null, duration: pairedAudioExtended } })
+        checkLinkLock(c, fromLayer, [pairedAudio.from.id])
+        extendLayerTEnd(pairedAudio.from, pairedAudioExtended)
+      }
       extendLayerTEnd(fromLayerObj, durUs)
       extendedUs = durUs // the whole overlap is borrowed tail
     } else {
@@ -307,8 +392,18 @@ export function applyAddTransition(
         if (destStart < 0)
           throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: id, t_start: destStart } })
       }
+      if (pairedAudio) {
+        const dest = shiftedSpans(c, [pairedAudio.to.id], -durUs).get(pairedAudio.to.id)
+        const track = locateLayerIn(c, pairedAudio.to.id)?.track
+        const overlap = dest ? pairedAudio.from.t_end_us - dest.tStartUs : 0
+        const minSamples = Math.floor(AUDIO_SAMPLE_RATE_HZ * c.fps.den / c.fps.num)
+        if (!dest || !track || overlap <= 0 || overlap > Math.min(pairedAudio.from.t_end_us - pairedAudio.from.t_start_us, dest.tEndUs - dest.tStartUs) || gridIndex(pairedAudio.from.t_end_us, AUDIO_GRID) - gridIndex(dest.tStartUs, AUDIO_GRID) < minSamples
+          || track.layers.some(other => other.id !== pairedAudio!.from.id && other.id !== pairedAudio!.to.id
+            && other.params.kind === 'Audio' && other.t_start_us < dest.tEndUs && dest.tStartUs < other.t_end_us))
+          pairedAudio = undefined
+      }
       shiftLayerSet(c, moveSet, -durUs)
-      bounceCollidingSiblings(p, c, idGen, moveSet, toLayer, bounces)
+      bounceCollidingSiblings(p, c, idGen, moveSet, toLayer, bounces, pairedAudio?.to.id)
       extendedUs = 0
     }
     applyDurationAutofit(c) // both adjacent branches retime an edge (A.end grows / B's set moves)
@@ -320,7 +415,71 @@ export function applyAddTransition(
 
   const id = idGen() // after ALL checks, before commit's validate (keystone)
   c.transitions.push({ id, from_layer: fromLayer, to_layer: toLayer, duration_us: durUs, kind, extended_us: extendedUs })
+  if (pairedAudio) c.transitions.push({
+    id: idGen(), from_layer: pairedAudio.from.id, to_layer: pairedAudio.to.id,
+    duration_us: pairedAudio.from.t_end_us - pairedAudio.to.t_start_us,
+    kind: { kind: 'Crossfade' }, extended_us: pairedAudioExtended,
+  })
   return { id, bounces }
+}
+
+function linkedAudioTransition(c: Composition, visual: Transition): Transition | undefined {
+  const from = locateLayerIn(c, visual.from_layer)?.layer
+  const to = locateLayerIn(c, visual.to_layer)?.layer
+  if (!from || !to || from.params.kind === 'Audio' || to.params.kind === 'Audio') return undefined
+  const a = audioPartner(c, from)
+  const b = audioPartner(c, to)
+  return a && b ? c.transitions.find(t => t.from_layer === a.id && t.to_layer === b.id) : undefined
+}
+
+function followAudioTransition(c: Composition, tr: Transition | undefined): void {
+  if (!tr) return
+  const from = locateLayerIn(c, tr.from_layer)?.layer
+  const to = locateLayerIn(c, tr.to_layer)?.layer
+  if (!from || !to) return
+  const overlap = Math.min(from.t_end_us, to.t_end_us) - Math.max(from.t_start_us, to.t_start_us)
+  if (overlap <= 0) {
+    const index = c.transitions.indexOf(tr)
+    if (index >= 0) c.transitions.splice(index, 1)
+  } else {
+    tr.duration_us = overlap
+    tr.extended_us = Math.min(tr.extended_us, overlap)
+  }
+}
+
+function updateAudioTransition(p: Project, c: Composition, tr: Transition, patch: { duration_us?: number; kind?: Transition['kind']; extended_us?: number }): void {
+  const from = locateLayerIn(c, tr.from_layer)?.layer
+  const to = locateLayerIn(c, tr.to_layer)?.layer
+  if (!from || !to) return
+  if (patch.kind && patch.kind.kind !== 'Crossfade') rejectAudioParticipant(from)
+  if (patch.duration_us === undefined && patch.extended_us === undefined) return
+  const end = gridIndex(from.t_end_us, AUDIO_GRID)
+  const sacred = gridIndex(from.t_end_us - tr.extended_us, AUDIO_GRID)
+  const currentDuration = end - gridIndex(to.t_start_us, AUDIO_GRID)
+  const currentExtended = end - sacred
+  const duration = patch.duration_us === undefined ? currentDuration : gridIndex(patch.duration_us, AUDIO_GRID)
+  const minimum = Math.floor(AUDIO_SAMPLE_RATE_HZ * c.fps.den / c.fps.num)
+  if (duration < Math.max(minimum, 1))
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'duration_us', detail: 'an audio transition must span at least one frame' })
+  const change = duration - currentDuration
+  const extended = patch.extended_us === undefined ? (change >= 0 ? currentExtended : Math.max(0, currentExtended + change)) : gridIndex(patch.extended_us, AUDIO_GRID)
+  if (extended > duration) throw new CommandFailure({ error: 'InvalidArgument', field: 'extended_us', detail: 'extended_us exceeds the transition duration' })
+  const newEnd = timeUsAtGridIndex(sacred + extended, AUDIO_GRID)
+  const newStart = timeUsAtGridIndex(sacred + extended - duration, AUDIO_GRID)
+  const startDelta = newStart - to.t_start_us
+  const endDelta = newEnd - from.t_end_us
+  const moving = startDelta ? incomingMoveSet(c, tr.to_layer) : []
+  if (moving.some(id => locateLayerIn(c, id)?.layer.params.kind !== 'Audio'))
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'duration_us', detail: 'an audio transition cannot move a linked visual layer' })
+  if (endDelta > 0) {
+    const available = tailHandleUs(p, from)
+    if (available < endDelta) throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: from.id, available_us: available })
+    extendLayerTEnd(from, endDelta)
+  } else if (endDelta < 0) shrinkLayerTEnd(from, -endDelta)
+  shiftLayerSet(c, moving, startDelta)
+  tr.duration_us = newEnd - newStart
+  tr.extended_us = Math.max(0, newEnd - timeUsAtGridIndex(sacred, AUDIO_GRID))
+  applyDurationAutofit(c)
 }
 
 /** update_transition — patch { duration_us?, kind?, extended_us? } on one
@@ -357,6 +516,11 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
   // healthy state always has both (reconcile drops orphans on every commit).
   const gateLoc = locateLayerIn(c, tr.from_layer) ?? locateLayerIn(c, tr.to_layer)
   if (gateLoc) checkTransitionTrackLock(c, gateLoc.trackIndex)
+  if (gateLoc?.layer.params.kind === 'Audio') {
+    updateAudioTransition(p, c, tr, patch)
+    return
+  }
+  const linkedAudio = linkedAudioTransition(c, tr)
   const requestedDur = patch.duration_us
   const requestedExt = patch.extended_us
   if (requestedDur !== undefined || requestedExt !== undefined) {
@@ -406,11 +570,27 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
     if (endDelta !== 0 || startDelta !== 0) {
       // Link-lock refusal before any write (see incomingMoveSet).
       const moveSet = startDelta !== 0 ? incomingMoveSet(c, tr.to_layer) : []
+      const audioFrom = linkedAudio && locateLayerIn(c, linkedAudio.from_layer)?.layer
+      const audioDelta = audioFrom ? snapOnGrid(audioFrom.t_end_us + endDelta, AUDIO_GRID) - audioFrom.t_end_us : 0
+      if (audioFrom && endDelta !== 0) {
+        checkLinkLock(c, tr.from_layer, [audioFrom.id])
+        if (audioDelta > 0) {
+          const available = tailHandleUs(p, audioFrom)
+          if (available < audioDelta) throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: audioFrom.id, available_us: available })
+        }
+      }
       if (endDelta > 0) {
         // e′ > e is the ONLY handle-consuming direction, so only it pre-checks.
         const available = tailHandleUs(p, fromLayerObj)
         if (available < endDelta)
           throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: tr.from_layer, available_us: available })
+      }
+      if (audioFrom && audioDelta !== 0) {
+        if (audioDelta > 0) extendLayerTEnd(audioFrom, audioDelta)
+        else shrinkLayerTEnd(audioFrom, -audioDelta)
+        linkedAudio!.extended_us = Math.max(0, linkedAudio!.extended_us + audioDelta)
+      }
+      if (endDelta > 0) {
         extendLayerTEnd(fromLayerObj, endDelta)
       } else if (endDelta < 0) shrinkLayerTEnd(fromLayerObj, -endDelta)
       shiftLayerSet(c, moveSet, startDelta)
@@ -422,6 +602,7 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
     }
   }
   if (patch.kind !== undefined) tr.kind = patch.kind
+  followAudioTransition(c, linkedAudio)
 }
 
 /** Destination-collision pre-check for remove's restore move: each moving
@@ -468,15 +649,29 @@ function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], de
  *  (tolerance for a participant a prior edit removed). Like update, a
  *  following B→C transition broken by B's move is commit-reconcile's designed
  *  drop. */
-export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
+export function applyRemoveTransition(p: Project, transitionId: Uuid, idGen?: IdGen): void {
   const { comp: c, transition: tr, index: idx } = requireTransition(p, transitionId)
   const moveUs = tr.duration_us - tr.extended_us // ≥ 0: validate holds e ≤ d
   const fromLoc = locateLayerIn(c, tr.from_layer)
   const toLoc = locateLayerIn(c, tr.to_layer)
+  const linkedAudio = linkedAudioTransition(c, tr)
   // Whole-command lock gate on whichever participant halves still exist —
   // lock outranks the collision pre-check below (see checkTransitionTrackLock).
   for (const loc of [fromLoc, toLoc]) if (loc) checkTransitionTrackLock(c, loc.trackIndex)
 
+  if (fromLoc?.layer.params.kind === 'Audio' && toLoc && moveUs > 0
+    && linkSiblingsExcluding(c, tr.to_layer).some(id => locateLayerIn(c, id)?.layer.params.kind !== 'Audio')) {
+    const layer = toLoc.layer
+    const free = pickFreeOverlayTrack(c, layer.t_start_us, layer.t_end_us)
+    if (free === null && !idGen) throw new CommandFailure({ error: 'InvalidArgument', field: 'transition', detail: 'an id generator is required to create a track' })
+    const destId = free ?? applyAddTrack(p, idGen!, null, undefined, c.id)
+    const dest = c.tracks.find(t => t.id === destId)!
+    toLoc.track.layers.splice(toLoc.layerIndex, 1)
+    const at = dest.layers.findIndex(l => l.t_start_us > layer.t_start_us)
+    dest.layers.splice(at < 0 ? dest.layers.length : at, 0, layer)
+    c.transitions.splice(idx, 1)
+    return
+  }
   let moveSet: Uuid[] = []
   if (toLoc && moveUs > 0) {
     moveSet = incomingMoveSet(c, tr.to_layer)
@@ -484,8 +679,15 @@ export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
     precheckRestoreCollision(c, moveSet, moveUs, tr.from_layer, shrunkFromEnd)
   }
 
+  const audioFrom = linkedAudio?.extended_us ? locateLayerIn(c, linkedAudio.from_layer)?.layer : undefined
+  if (audioFrom) checkLinkLock(c, tr.from_layer, [audioFrom.id])
   c.transitions.splice(idx, 1)
+  if (audioFrom && linkedAudio) {
+    shrinkLayerTEnd(audioFrom, linkedAudio.extended_us)
+    linkedAudio.extended_us = 0
+  }
   if (fromLoc) shrinkLayerTEnd(fromLoc.layer, tr.extended_us)
   shiftLayerSet(c, moveSet, moveUs)
+  followAudioTransition(c, linkedAudio)
   applyDurationAutofit(c)
 }

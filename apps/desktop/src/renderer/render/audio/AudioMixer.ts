@@ -21,6 +21,7 @@ import type { AudioRole, AudioView } from "../../ipc";
 import type { AudioGraph } from "./AudioGraph";
 import {
   type Envelope,
+  type AudioCrossfade,
   evalEnvelope,
   sampleGain,
   samplePan,
@@ -48,6 +49,7 @@ export interface AudioMixerInit {
   /// Layer placement in composition time (µs).
   layerTStartUs: number;
   layerTEndUs: number;
+  crossfades?: readonly AudioCrossfade[];
 }
 
 /// Unique ownership token for one scheduled-or-pending source chunk. The map
@@ -94,6 +96,7 @@ export class AudioMixer {
   private layerTEndUs: number;
   private srcInFrame = 0;
   private srcOutFrame = 0;
+  private crossfades: readonly AudioCrossfade[];
   private gainEnv: Envelope;
   private panEnv: Envelope;
   /// The Role's linear gain, folded onto this layer's own gain envelope — the
@@ -116,6 +119,7 @@ export class AudioMixer {
     this.view = init.view;
     this.layerTStartUs = init.layerTStartUs;
     this.layerTEndUs = init.layerTEndUs;
+    this.crossfades = init.crossfades ?? [];
 
     const ctx = graph.ctx;
     this.gainNode = ctx.createGain();
@@ -252,6 +256,7 @@ export class AudioMixer {
       this.view.fade_in_us,
       this.view.fade_out_us,
       spanUs,
+      this.crossfades,
     );
     this.panEnv = samplePan(this.view.pan, spanUs);
     // Fold the Role gain here (preview twin — see roleGate.ts). This is the
@@ -281,6 +286,7 @@ export class AudioMixer {
     layerTStartUs: number,
     layerTEndUs: number,
     roleGainLinear: number,
+    crossfades: readonly AudioCrossfade[] = [],
   ): void {
     this.view = view;
     if (view.role !== this.connectedRole) {
@@ -297,6 +303,7 @@ export class AudioMixer {
     this.layerTStartUs = layerTStartUs;
     this.layerTEndUs = layerTEndUs;
     this.roleGainLinear = roleGainLinear;
+    this.crossfades = crossfades;
     this.preparationEpoch++;
     this.teardown(true);
     this.lastAnchor = null;

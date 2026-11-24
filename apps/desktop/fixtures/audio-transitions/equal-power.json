@@ -1,0 +1,9 @@
+[
+  { "progress": -0.5, "outgoing": 1, "incoming": 0 },
+  { "progress": 0, "outgoing": 1, "incoming": 0 },
+  { "progress": 0.25, "outgoing": 0.9238795325112867, "incoming": 0.3826834323650898 },
+  { "progress": 0.5, "outgoing": 0.7071067811865476, "incoming": 0.7071067811865475 },
+  { "progress": 0.75, "outgoing": 0.38268343236508984, "incoming": 0.9238795325112867 },
+  { "progress": 1, "outgoing": 0, "incoming": 1 },
+  { "progress": 1.5, "outgoing": 0, "incoming": 1 }
+]

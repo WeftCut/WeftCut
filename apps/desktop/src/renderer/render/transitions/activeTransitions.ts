@@ -30,9 +30,8 @@ export interface ActiveTransition {
   progress: number;
 }
 
-/// Layer kinds a transition may composite. Audio participants are rejected
-/// at the mutation seam; this is the render-side backstop so a stale
-/// snapshot can never divert an Audio layer into the visual node.
+/// Layer kinds a visual transition may composite. Audio transitions are
+/// rendered by the mixer and never enter the visual node.
 export const VISUAL_LAYER_KINDS: ReadonlySet<string> = new Set([
   "VideoClip",
   "ImageOverlay",

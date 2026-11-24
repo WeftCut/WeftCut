@@ -71,6 +71,7 @@ interface Exports {
   role_audible(muted: number, solo: number, anySolo: number): number
   pan_coeff(pan: number, channels: number, idx: number): number
   fade_mul(tUs: number, spanUs: number, fadeInUs: number, fadeOutUs: number): number
+  crossfade_gain(progress: number, incoming: number): number
 }
 
 let ex: Exports | null = null
@@ -458,4 +459,9 @@ export function fadeMul(
   fadeOutUs: number,
 ): number {
   return E().fade_mul(tUs, spanUs, fadeInUs, fadeOutUs)
+}
+
+/** Equal-power audio transition multiplier, shared with the native mixers. */
+export function crossfadeGain(progress: number, incoming: boolean): number {
+  return E().crossfade_gain(progress, incoming ? 1 : 0)
 }

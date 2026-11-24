@@ -47,15 +47,16 @@ describe('validate', () => {
     expect(() => validate(p)).not.toThrow()
   })
 
-  it('rejects a transition with an Audio participant in either seat (visual-only backstop)', () => {
+  it('accepts audio crossfades and rejects mixed or non-crossfade participants', () => {
     const mediaItem = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio' as const, metadata: { duration_us: 10_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' as const }, conform_path: null, waveform_path: null, thumbnails_dir: null }
-    // Audio from-layer: an otherwise-valid audio↔audio transition (overlap === duration).
+    // Two audio participants can crossfade.
     const p = blankProject(seededGen(), 't')
     p.media_pool['m'] = mediaItem
     root(p).tracks[0].layers = [audioLayer('a', 'm', 0, 1_000_000), audioLayer('b', 'm', 800_000, 1_800_000)]
     root(p).transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 }]
-    try { validate(p); throw new Error('expected TransitionUnsupportedLayerKind, but validate passed') }
-    catch (e) { if (!isValidationFailure(e)) throw e; expect(e.err).toEqual({ rule: 'TransitionUnsupportedLayerKind', transition: 'tr', layer: 'a' }) }
+    expect(() => validate(p)).not.toThrow()
+    root(p).transitions[0].kind = { kind: 'Wipe', direction: 'left' }
+    expectRule(p, 'TransitionUnsupportedLayerKind')
     // Audio to-layer behind a visual from-layer.
     const q = blankProject(seededGen(), 't')
     q.media_pool['m'] = mediaItem

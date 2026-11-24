@@ -365,6 +365,12 @@ describe("presetTransitionDurationUs", () => {
 // ── chip geometry ────────────────────────────────────────────────────────────
 
 describe("transitionChipsForTrack", () => {
+  it("does not draw visual chips for audio transitions", () => {
+    const a = audioLayer("a", 0, 2_000_000);
+    const b = audioLayer("b", 1_000_000, 3_000_000);
+    expect(transitionChipsForTrack(track([a, b]), [crossfade("t", "a", "b", 1_000_000)])).toEqual([]);
+  });
+
   const a = visualLayer("a", 0, 2_500_000); // extended by the 0.5s overlap
   const b = visualLayer("b", 2_000_000, 4_000_000);
   const tr = crossfade("tr-1", "a", "b", 500_000);

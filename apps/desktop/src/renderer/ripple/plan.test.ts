@@ -141,6 +141,18 @@ describe("a transition's participants", () => {
     });
   });
 
+  it("preserves an audio transition when both participants ripple together", () => {
+    const tracks = [track("TA", [aud("X", 0, 2), aud("P", 4, 8), aud("Q", 7, 10)])];
+    const withTransition = viewOf(tracks, {
+      transitions: [{ from_layer: "P", to_layer: "Q", duration_us: sec(1) }],
+    });
+    const plan = accepted(planRipple(withTransition, ["X"]));
+    expect(plan.moves.map(shape)).toEqual([
+      ["P", "TA", sec(2), sec(6)], ["Q", "TA", sec(5), sec(8)],
+    ]);
+    expect(refused(planRipple(viewOf(tracks), ["X"]))).toMatchObject({ error: "RippleCollision" });
+  });
+
   it("stays authorized when the shift keeps the frame count but changes the microseconds by one", () => {
     // 30 fps frames fall at 0, 33333, 66667, 100000, 133333 µs: one frame is
     // 33333 or 33334 µs depending on where it sits. X [f0,f1) deleted; P [f1,f3)

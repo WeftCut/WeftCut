@@ -504,6 +504,9 @@ export const STEPS: readonly MigrationStep[] = [{
       item.file_hash_blake3 = `pending-${id}`
     }
   },
+}, {
+  from: 7,
+  apply() {},
 }]
 
 export interface UpgradeOutcome {

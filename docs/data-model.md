@@ -47,16 +47,17 @@ Outside the boundary rule:
 - `transition.duration_us` / `extended_us` are *distances* between canonical
   boundaries. What is enforced is `overlap == duration_us` and
   `0 ≤ extended_us ≤ duration_us`; canonical endpoints then make both whole
-  frame counts. A transition duration is measured from the cut (backward for
+  frame counts for visual transitions and sample counts for audio transitions.
+  A transition duration is measured from the cut (backward for
   placement overlap, forward for an extend's borrowed tail, ADR 0048) — a
   duration derived from the rate alone cannot stay on grid at 29.97 / 23.976.
 - Keyframe `t_us` is snapped on write but **not enforced**: trim and split
   rebase keys by a delta, and re-snapping would dedupe-merge two keys that
   landed on one frame.
 
-Requests below half a frame are rejected, not rounded down: a transition and a
-region marker each span at least one frame. A marker dropped mid-frame moves up
-to half a frame.
+Visual transition and region-marker requests below half a frame are rejected.
+Audio transitions must span at least one frame after sample rounding. A marker
+dropped mid-frame moves up to half a frame.
 
 **Structural, not per-mutation.** The commit validator rejects any off-grid
 endpoint, duration or marker time (`OffGridLayerBoundary` / `OffGridTime`, with
@@ -607,6 +608,7 @@ MCP tool error with a reason and, where useful, options).
 | Endpoints, `duration_us`, marker times on their grid (see Time) | snap in the mutator, then reject (`OffGridLayerBoundary` / `OffGridTime`, carrying `snap_to`); a loaded project is repaired instead |
 | `fps` changes only while no layer exists in the timeline or any stored snapshot / checkpoint | reject (`FpsLockedByContent`, `locked_by: current \| history`) — the unrecorded rate change writes every snapshot, so undo could otherwise resurrect old-grid layers |
 | `transition.duration_us` == the participants' overlap; `0 ≤ extended_us ≤ duration_us` | reject |
+| Transition participants are visual layers, or Audio layers using Crossfade; audio transitions span at least one frame | reject (`TransitionUnsupportedLayerKind` / `TransitionDurationOutOfRange`) |
 | `0 ≤ src_in < src_out`, and `src_out ≤ media duration` for VideoClip / Audio (exact, through the layer's time map) | reject (`InvalidSrcRange`, `SrcRangeExceedsMedia`); a CompositionRef has no upper bound |
 | No two same-class layers on one track overlap in `[t_start, t_end)` | reject (`LayerOverlap`, with options) |
 | `duration_us == max(t_end_us)` unpinned; `≥` pinned | autofit (pinned: grow only) |

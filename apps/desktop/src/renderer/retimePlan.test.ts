@@ -57,6 +57,13 @@ describe('retime plans preserve selected content and explicit targets', () => {
     expect(rate([video, linkedAudio], ['video', 'linked-audio'], 2)).toEqual({ ok: false, conflict: { kind: 'Locked', layer_id: 'linked-audio' } });
   });
 
+  it('keeps an unchanged audio transition authorized when retiming', () => {
+    const a = clip('a', 0, 2_000_000, { track_id: 'audio', overlap_class: 'audio', grid: AUDIO_GRID });
+    const b = clip('b', 1_000_000, 3_000_000, { track_id: 'audio', overlap_class: 'audio', grid: AUDIO_GRID });
+    const transitions = [{ id: 't', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, extended_us: 0 }];
+    expect(rate([a, b], ['a', 'b'], 1, 1, transitions).ok).toBe(true);
+  });
+
   it('rejects unsupported content, missing targets and empty selections', () => {
     expect(rate([clip('still', 0, 1_000_000, { timing: null })], ['still'], 2)).toMatchObject({ ok: false, conflict: { kind: 'UnsupportedContent' } });
     expect(rate([], ['missing'], 2)).toMatchObject({ ok: false, conflict: { kind: 'LayerMissing' } });

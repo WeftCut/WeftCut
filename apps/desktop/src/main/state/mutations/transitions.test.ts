@@ -54,6 +54,13 @@ function audioParams(media: string, srcIn: number, srcOut: number): LayerParams 
     gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 },
     fade_in_us: 0, fade_out_us: 0, mute: false, role: 'dialogue' }
 }
+function twoAdjacentVideo() {
+  const base = twoAdjacent()
+  addMedia(base.p, 'm', 'Video', 10_000_000)
+  layerOf(base.p, base.a1).params = videoParams('m', 0, 2_000_000)
+  layerOf(base.p, base.a2).params = videoParams('m', 2_000_000, 4_000_000)
+  return base
+}
 /** VideoClip A1=[0,2M] (media 'm' src 0..2M, media duration mediaDurUs) then Color A2=[2M,4M]. */
 function videoThenColor(mediaDurUs: number | null): { p: Project; gen: IdGen; a1: string; a2: string } {
   const gen = seededGen()
@@ -105,6 +112,126 @@ describe('extendLayerTEnd / shrinkLayerTEnd', () => {
 })
 
 describe('applyAddTransition', () => {
+  it('creates a linked audio transition on its lane with the visual transition', () => {
+    const { p, gen, a1, a2 } = twoAdjacentVideo()
+    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
+    const { bounces } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
+    expect(bounces).toEqual([])
+    expect(root(p).tracks[1].layers.map(l => l.id)).toEqual([a, b])
+    expect(root(p).transitions).toHaveLength(2)
+    expect(root(p).transitions[1]).toMatchObject({ from_layer: a, to_layer: b, duration_us: 1_000_000, kind: CROSSFADE })
+  })
+  it('records the landed sample overlap at a fractional frame rate', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    root(p).fps = { num: 30_000, den: 1001 }
+    addMedia(p, 'm', 'Video', 10_000_000)
+    const cut = timeUsAtFrame(60, 30_000, 1001)
+    const end = timeUsAtFrame(120, 30_000, 1001)
+    const videoTrack = root(p).tracks[0].id, audioTrack = root(p).tracks[1].id
+    const v1 = applyAddLayer(p, gen, videoTrack, videoParams('m', 0, cut), 0, cut)
+    const v2 = applyAddLayer(p, gen, videoTrack, videoParams('m', cut, end), cut, end)
+    const a1 = applyAddLayer(p, gen, audioTrack, audioParams('m', 0, cut), 0, cut)
+    const a2 = applyAddLayer(p, gen, audioTrack, audioParams('m', cut, end), cut, end)
+    root(p).links.push({ id: 'l1', members: [v1, a1].sort() }, { id: 'l2', members: [v2, a2].sort() })
+    applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
+    const [visual, audio] = root(p).transitions
+    expect(audio.duration_us).toBe(layerOf(p, a1).t_end_us - layerOf(p, a2).t_start_us)
+    expect(Math.abs(audio.duration_us - visual.duration_us)).toBeLessThanOrEqual(21)
+  })
+  it('follows a visual duration change and removal in the linked audio transition', () => {
+    const { p, gen, a1, a2 } = twoAdjacentVideo()
+    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
+    const { id } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
+    applyUpdateTransition(p, id, { duration_us: 500_000 })
+    expect(root(p).transitions[1].duration_us).toBe(500_000)
+    applyRemoveTransition(p, id)
+    expect(root(p).transitions).toEqual([])
+    expect(layerOf(p, b).t_start_us).toBe(2_000_000)
+  })
+  it('leaves linked audio untouched when a visual update lacks a handle', () => {
+    const { p, gen, a1, a2 } = twoAdjacentVideo()
+    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
+    const { id } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
+    const video = layerOf(p, a1).params
+    if (video.kind !== 'VideoClip') throw new Error('expected video')
+    video.src_out_us = 9_900_000
+    const before = structuredClone(p)
+    expectCmd(() => applyUpdateTransition(p, id, { extended_us: 500_000 }), 'TransitionInsufficientHandle')
+    expect(p).toEqual(before)
+  })
+  it('removes an audio transition without moving linked picture', () => {
+    const { p, gen, a1, a2 } = twoAdjacentVideo()
+    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
+    const { id } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
+    const audioId = root(p).transitions[1].id
+    const pictureStart = layerOf(p, a2).t_start_us
+    const soundStart = layerOf(p, b).t_start_us
+    applyRemoveTransition(p, audioId, gen)
+    expect(root(p).transitions.map(t => t.id)).toEqual([id])
+    expect(layerOf(p, a2).t_start_us).toBe(pictureStart)
+    expect(layerOf(p, b).t_start_us).toBe(soundStart)
+    expect(root(p).tracks.find(t => t.layers.some(l => l.id === b))?.id).not.toBe(root(p).tracks[1].id)
+  })
+  it('refuses to move picture when editing an audio transition directly', () => {
+    const { p, gen, a1, a2 } = twoAdjacentVideo()
+    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
+    applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
+    const audioId = root(p).transitions[1].id
+    const before = [layerOf(p, a2).t_start_us, layerOf(p, b).t_start_us]
+    expectCmd(() => applyUpdateTransition(p, audioId, { duration_us: 500_000 }), 'InvalidArgument')
+    expect([layerOf(p, a2).t_start_us, layerOf(p, b).t_start_us]).toEqual(before)
+  })
+  it('refuses an audio-only add that would move linked picture', () => {
+    const { p, gen, a1, a2 } = twoAdjacentVideo()
+    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
+    expectCmd(() => applyAddTransition(p, gen, a, b, 1_000_000, CROSSFADE), 'InvalidArgument')
+    expect(layerOf(p, a2).t_start_us).toBe(2_000_000)
+    expect(layerOf(p, b).t_start_us).toBe(2_000_000)
+  })
+  it('borrows and restores linked audio for an extended visual transition', () => {
+    const { p, gen, a1, a2 } = twoAdjacentVideo()
+    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
+    const { id } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE, 'extend')
+    expect(layerOf(p, a).t_end_us).toBe(3_000_000)
+    expect(root(p).transitions[1]).toMatchObject({ from_layer: a, to_layer: b, duration_us: 1_000_000, extended_us: 1_000_000 })
+    applyRemoveTransition(p, id, gen)
+    expect(layerOf(p, a).t_end_us).toBe(2_000_000)
+    expect(root(p).transitions).toEqual([])
+  })
+  it('leaves linked audio unpaired when requested', () => {
+    const { p, gen, a1, a2 } = twoAdjacentVideo()
+    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
+    const { bounces } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE, 'overlap', 'none')
+    expect(root(p).transitions).toHaveLength(1)
+    expect(bounces).toHaveLength(1)
+  })
+  it('honors the audio policy through the actor command', () => {
+    const { p, gen, a1, a2 } = twoAdjacentVideo()
+    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    const result = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, audio: 'none' })
+    expect(result.ok).toBe(true)
+    expect(root(actor.snapshot()).transitions).toHaveLength(1)
+  })
   it('default overlap placement: the incoming layer moves LEFT by the duration; the outgoing layer is untouched (id #6)', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     const { id: tid, bounces } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE) // #7
@@ -270,15 +397,15 @@ describe("applyAddTransition tail-handle pre-check (placement 'extend' only)", (
 })
 
 describe('applyAddTransition audio rejection', () => {
-  it('Audio from-layer → TransitionUnsupportedLayerKind naming it; NO id burned', () => {
+  it('adds an audio crossfade on the sample lattice without moving picture', () => {
     const gen = seededGen()
-    const p = blankProject(gen, 't') // #1 A #2 B #3 project
+    const p = blankProject(gen, 't')
     addMedia(p, 'm', 'Audio', 10_000_000)
-    const a1 = applyAddLayer(p, gen, root(p).tracks[0].id, audioParams('m', 0, 2_000_000), 0, 2_000_000) // #5
-    const a2 = applyAddLayer(p, gen, root(p).tracks[0].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000) // #6
-    expect(expectCmdErr(() => applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)))
-      .toEqual({ error: 'TransitionUnsupportedLayerKind', layer: a1, kind: 'Audio' })
-    expect(applyAddLayer(p, gen, root(p).tracks[1].id, color(), 0, 1_000_000)).toBe('00000000-0000-0000-0000-000000000007') // #7 → no burn
+    const a1 = applyAddLayer(p, gen, root(p).tracks[0].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
+    const a2 = applyAddLayer(p, gen, root(p).tracks[0].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
+    const result = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
+    expect(layerOf(p, a2).t_start_us).toBe(1_000_000)
+    expect(root(p).transitions).toEqual([{ id: result.id, from_layer: a1, to_layer: a2, duration_us: 1_000_000, kind: CROSSFADE, extended_us: 0 }])
   })
   it('Audio to-layer → TransitionUnsupportedLayerKind names the to layer', () => {
     const gen = seededGen()

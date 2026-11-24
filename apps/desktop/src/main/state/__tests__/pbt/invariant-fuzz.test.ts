@@ -329,7 +329,7 @@ describe('rejected transition commands burn no ids (pre-mint failure paths)', ()
         expect(err(actor.dispatch('add_transition', { from: fc1, to: fc2, duration_us: 1_000_000 }))).toBe('ValidationFailed')
         // d > min(len_A, len_B) → pre-mint ValidationFailed(TransitionDurationOutOfRange, transition: null).
         expect(err(actor.dispatch('add_transition', { from: fc1, to: fc2, duration_us: 1_500_000 }))).toBe('ValidationFailed')
-        expect(err(actor.dispatch('add_transition', { from: fa1, to: fa2, duration_us: 100_000 }))).toBe('TransitionUnsupportedLayerKind')
+        expect(err(actor.dispatch('add_transition', { from: fa1, to: fa2, duration_us: 100_000, kind: 'Wipe', direction: 'left' }))).toBe('TransitionUnsupportedLayerKind')
         expect(err(actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 100_000, kind: 'Wipe' }))).toBe('InvalidArgument') // direction missing
         expect(err(actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 100_000, placement: 'diagonal' }))).toBe('InvalidArgument') // bad placement enum
         expect(err(actor.dispatch('add_transition', { from: fv2, to: fv1, duration_us: 100_000 }))).toBe('TransitionLayersNotAdjacent')

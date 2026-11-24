@@ -4,9 +4,8 @@
 //! that the no-overlap invariant would otherwise reject; the overlap span MUST
 //! equal `duration_us` so validation can reason about it.
 //!
-//! Rendering lives in the TS compositor: every kind is a two-input compositor
-//! node blending the outgoing and incoming layers over the window — `Crossfade`
-//! is the degenerate `mix()` case; `Wipe` and `Slide` add a motion direction.
+//! Visual transitions render in the TS compositor. Audio Crossfade transitions
+//! are consumed by the preview and native mixers (ADR 0177).
 //!
 //! LANDMINE: this module is a deserialize wire contract (same class as
 //! `MotifParams`) — the serde JSON shape must exactly mirror the TS model

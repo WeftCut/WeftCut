@@ -11,7 +11,7 @@ import { CommandFailure } from './errors'
 import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
 import { eachLayer } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
-import { frameGrid, gridForLayerKind, isCanonicalOnGrid, layerOverlapClass, snapFrameRound, snapOnGrid, type Grid } from './snap'
+import { AUDIO_GRID, AUDIO_SAMPLE_RATE_HZ, frameGrid, gridForLayerKind, gridIndex, isCanonicalOnGrid, layerOverlapClass, snapFrameRound, snapOnGrid, type Grid } from './snap'
 // The `src_in_us`/`src_out_us` family, from the mutations layer. No cycle: this
 // is a leaf helper module (model + errors + snap + animated), and nothing it
 // reaches imports back here — the mutation modules that DO import validate
@@ -186,23 +186,24 @@ function buildTransitionLayerIndex(c: Composition): TransitionLayerIndex {
 }
 
 /** The invariant an ordinary layer edit (trim/move/split/delete/track op) can
- *  break: participants exist, same track, visual-only, duration in range,
+ *  break: participants exist, share a track and class, duration in range,
  *  overlap exactly equals duration. Structural corruption (duplicate transition
  *  id, self-reference, LayerInMultipleTransitions, extended_us out of
  *  [0, duration_us]) is deliberately NOT here — no layer edit can produce
  *  those, so they stay validate-only failures; a reconcile that silently
  *  swallowed them would mask real bugs. */
-function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex): ValidationError | null {
+function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex, c: Composition): ValidationError | null {
   const from = idx.get(tr.from_layer)
   if (!from) return { rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.from_layer }
   const to = idx.get(tr.to_layer)
   if (!to) return { rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.to_layer }
   if (from.track !== to.track) return { rule: 'TransitionCrossTrack', transition: tr.id, from: tr.from_layer, to: tr.to_layer }
-  // Visual participants only (audio crossfade is a named fast-follow). Backstop
-  // for applyAddTransition's mutation-level check — no path sneaks in a
-  // semantically dead audio transition (deserialize, replace_state, ...).
-  if (from.kind === 'Audio') return { rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: tr.from_layer }
-  if (to.kind === 'Audio') return { rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: tr.to_layer }
+  const fromAudio = from.kind === 'Audio'
+  const toAudio = to.kind === 'Audio'
+  if (fromAudio !== toAudio)
+    return { rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: fromAudio ? tr.from_layer : tr.to_layer }
+  if (fromAudio && tr.kind.kind !== 'Crossfade')
+    return { rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: tr.from_layer }
   const fromLen = Math.max(from.end - from.start, 0)
   const toLen = Math.max(to.end - to.start, 0)
   if (tr.duration_us <= 0 || tr.duration_us > fromLen || tr.duration_us > toLen)
@@ -210,14 +211,10 @@ function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex): Va
   const overlapStart = Math.max(from.start, to.start)
   const overlapEnd = Math.min(from.end, to.end)
   const overlap = Math.max(overlapEnd - overlapStart, 0)
-  // This equality IS the transition's frame-grid rule, and there is deliberately
-  // no `isCanonicalOn(tr.duration_us)` beside it: a duration is a DISTANCE
-  // between two canonical boundaries, and at fractional rates a distance is not
-  // itself a canonical time (a 1-frame transition at 30000/1001 is 33_367 µs at
-  // cut frame 0 and 33_366 µs at cut frame 1). Both participants' endpoints are
-  // grid-checked below, so overlap === duration_us already forces the duration to
-  // be a whole number of frames — asserting canonicality on top would be false at
-  // every fractional rate.
+  if (fromAudio && gridIndex(overlapEnd, AUDIO_GRID) - gridIndex(overlapStart, AUDIO_GRID) < Math.floor(AUDIO_SAMPLE_RATE_HZ * c.fps.den / c.fps.num))
+    return { rule: 'TransitionDurationOutOfRange', transition: tr.id, duration: tr.duration_us }
+  // Duration is a distance between lattice points, not itself a lattice point.
+  // At fractional rates the same number of frames can differ by 1 µs.
   if (overlap !== tr.duration_us) return { rule: 'TransitionDurationMismatch', transition: tr.id, duration: tr.duration_us, overlap }
   return null
 }
@@ -243,7 +240,7 @@ function validateTransitions(c: Composition): Map<string, number> {
     // past the parse backfill.
     if (!(tr.extended_us >= 0 && tr.extended_us <= tr.duration_us))
       fail({ rule: 'TransitionExtendedOutOfRange', transition: tr.id, extended: tr.extended_us, duration: tr.duration_us })
-    const invariantErr = transitionInvariantError(tr, idx)
+    const invariantErr = transitionInvariantError(tr, idx, c)
     if (invariantErr !== null) fail(invariantErr)
     if (asFrom.has(tr.from_layer)) fail({ rule: 'LayerInMultipleTransitions', layer: tr.from_layer })
     asFrom.add(tr.from_layer)
@@ -274,7 +271,7 @@ export function reconcileTransitions(p: Project): DroppedTransition[] {
     const kept: Transition[] = []
     let droppedHere = false
     for (const tr of c.transitions) {
-      const reason = transitionInvariantError(tr, idx)
+      const reason = transitionInvariantError(tr, idx, c)
       if (reason === null) kept.push(tr)
       else { dropped.push({ id: tr.id, from_layer: tr.from_layer, to_layer: tr.to_layer, reason }); droppedHere = true }
     }

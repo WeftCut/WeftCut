@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseInterp, parseEasing, parseAnimatedTrack, parseAddEffectParams, parseTrackValue, parseTangentXy, parseContinuity, parseExtrapolate, parseSegment, isColorParam, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, parseTransitionPlacement, McpArgError, toolJson } from '../mcp-commands'
+import { parseInterp, parseEasing, parseAnimatedTrack, parseAddEffectParams, parseTrackValue, parseTangentXy, parseContinuity, parseExtrapolate, parseSegment, isColorParam, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, parseTransitionPlacement, parseTransitionAudio, McpArgError, toolJson } from '../mcp-commands'
 import { EASING_PRESETS } from '../../../shared/easing'
 
 describe('parseInterp', () => {
@@ -305,6 +305,14 @@ describe('parseRole', () => {
   })
   it('rejects an unknown role', () => { expect(() => parseRole('bogus')).toThrow(McpArgError) })
   it('rejects a non-string', () => { expect(() => parseRole(3)).toThrow(McpArgError) })
+})
+describe('parseTransitionAudio', () => {
+  it('defaults to linked and validates the explicit choice', () => {
+    expect(parseTransitionAudio(undefined)).toBe('linked')
+    expect(parseTransitionAudio('none')).toBe('none')
+    expect(parseTransitionAudio('linked')).toBe('linked')
+    expect(() => parseTransitionAudio('yes')).toThrow(McpArgError)
+  })
 })
 describe('parseTransitionPlacement', () => {
   it("absent (undefined/null) defaults to 'overlap' — spec D1", () => {

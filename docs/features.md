@@ -167,6 +167,12 @@ selection without moving the playhead; an unselected one is selected first.
 Not implemented: anchor-to-click range selection and "select forward on track"
 tools.
 
+Audio crossfades are separate transition records between Audio layers on one
+track. They use equal-power gains multiplied with the layer's own fades and gain.
+When linked audio meets at a visual cut, adding the visual transition also adds
+the audio crossfade unless `audio: "none"` is selected. Audio transitions do not
+move picture and are not drawn as visual transition chips (ADR 0177).
+
 ## Editing never moves the playhead
 
 Editing gestures leave the playhead where it is parked. A keyframe diamond

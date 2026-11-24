@@ -78,7 +78,7 @@ For each audio layer, the shared `weftcut-eval` leaf (native in Rust, wasm in
 the renderer; [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)) yields:
 
 ```
-gain = lerp-sample(gain_db, 10 ms) → 10^(dB/20) × fade-in ramp × fade-out ramp
+gain = lerp-sample(gain_db, 10 ms) → 10^(dB/20) × fade-in ramp × fade-out ramp × audio-transition gain
 pan  = lerp-sample(pan, 10 ms), clamped [-1, 1] → pan_coeffs → 2×2 matrix [a,b,c,d]
 ```
 
@@ -86,7 +86,7 @@ Both renderers linearly interpolate the same control points: Web Audio via
 `setValueCurveAtTime` (gain node and the four pan-matrix gains), Rust per
 sample. Static properties travel as scalars. A `Hold` keyframe becomes a
 ≤10 ms ramp. `db_to_linear`, `fade_multiplier`, `pan_coeffs` (equal-power) and
-`role_audible` are single-sourced in the leaf; the 10 ms sampling loop is
+`role_audible` and equal-power audio crossfade gains are single-sourced in the leaf; the 10 ms sampling loop is
 parallel Rust/TS code guarded by `audioEnvelopeGolden.fixture.json` and
 `panLawGolden.fixture.json`.
 
