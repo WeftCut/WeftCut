@@ -20,6 +20,18 @@ import { UserMotifStore } from './store'
 import { ALL_TRUSTED, type MotifTrustView } from './trust'
 
 const roots: string[] = []
+/** Whether the temp volume keeps two names that differ only in case apart
+ *  (Linux, usually) on macOS and Windows they are one folder. */
+function caseSensitiveTemp(): boolean {
+  const dir = mkdtempSync(path.join(tmpdir(), 'case-probe-'))
+  try {
+    writeFileSync(path.join(dir, 'a'), '')
+    return !existsSync(path.join(dir, 'A'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 function temp() { const root = mkdtempSync(path.join(tmpdir(), 'motif-tools-')); roots.push(root); return root }
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
@@ -326,12 +338,19 @@ describe('list_motifs', () => {
     expect(w.changes()).toBeGreaterThan(changes)
   })
 
-  it('refuses to rename a library folder when the new name is taken in any case, or the name is already valid', () => {
+  it('refuses to rename a library folder whose name is already valid', () => {
+    const w = world()
+    w.install('mymotif')
+    expect(() => w.call('rename_library_motif', { motif_id: 'mymotif' }, undefined)).toThrow(/already a valid folder name/)
+  })
+
+  // Two folders differing only in case exist only where the volume keeps them
+  // apart; on macOS and Windows the rename is the same folder's.
+  it.runIf(caseSensitiveTemp())('refuses to rename a library folder onto a name another folder has in any case', () => {
     const w = world()
     w.install('MyMotif')
     w.install('mymotif')
     expect(() => w.call('rename_library_motif', { motif_id: 'MyMotif' }, undefined)).toThrow(/already has a folder named “mymotif”/)
-    expect(() => w.call('rename_library_motif', { motif_id: 'mymotif' }, undefined)).toThrow(/already a valid folder name/)
     expect(w.rows('library').map(r => [r.id, r.status])).toEqual([['MyMotif', 'invalid'], ['mymotif', 'installed']])
   })
 
