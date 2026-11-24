@@ -269,8 +269,7 @@ one with the same keys.
   through each slot's list, are copied into the project with every weight
   and style, so its frames look the same on a machine without those fonts.
   Text a Motif draws should come from props for its fonts to travel with the
-  project: text written into the HTML is not seen. Only `font_<slot>` props
-  get this; a family written into the CSS uses whatever the machine has. The
+  project: text written into the HTML is not seen (*Fonts* below). The
   props form edits a font slot with a font picker; a pick is a one-family
   stack (`'Anton'`), and Motif default restores the manifest's list.
 - **Leaving.** A Motif that leaves, not just holds, declares a `number` prop
@@ -357,6 +356,25 @@ returning. Worker clocks are not virtualized. GPU output is not promised to
 be bit-identical across hardware.
 
 ### Fonts
+
+A Motif names a font in one of two ways, and only these travel with the
+project:
+
+- **Ship it.** Put the font file in the package's `assets/`, load it with
+  an `@font-face` rule from its relative path and declare it in the
+  manifest's `fonts`; a single-file Motif embeds it as a `data:` URI. It
+  draws the same on every machine.
+- **Take it from a `font_<slot>` prop.** A `string` prop named
+  `font_<slot>` holds a CSS family list, the manifest's default unless the
+  layer sets one. The app serves those families' faces to the page and
+  copies them into the project's `Fonts/` (*Font slots* under *Style
+  Motifs*). Any Motif may declare one, styled or not.
+
+A family written straight into the CSS or the script (`font-family: Inter`)
+is neither served nor copied: the page draws whatever the machine has, and a
+fallback where it lacks the family. The text a Motif draws should come from
+its `string` props as well: the app reads those, never the HTML, to know
+which families a slot needs.
 
 `await document.fonts.ready` is NOT sufficient — it can resolve before a lazy
 `@font-face` fetch even starts, letting the first capture paint a fallback

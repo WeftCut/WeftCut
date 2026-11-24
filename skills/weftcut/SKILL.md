@@ -189,5 +189,10 @@ prop; moving footage stays a video layer.
    in WeftCut's Motifs panel; `read_motif` inspects it without running it.
    Never ask the user to bypass trust.
 
+**Fonts**: a Motif names a font only by shipping it in its package or through
+a `font_<slot>` prop, and takes the text it draws from `string` props. A family
+written into its CSS does not travel with the project (`motif-authoring.md`,
+*Fonts*).
+
 **Three.js Motifs**: read `motif-three-model.md` and start from
 `templates/three-model.zip` beside this file.
