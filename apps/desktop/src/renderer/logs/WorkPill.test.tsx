@@ -10,7 +10,8 @@ import { formatComputeDuration } from "../compute/computeJobView";
 import { WorkPill } from "./WorkPill";
 
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
-vi.mock("@/bridge/ipc", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
+const raw = vi.hoisted(() => ({ invokeRaw: vi.fn() }));
+vi.mock("@/bridge/ipc", () => ({ invoke: vi.fn().mockResolvedValue(undefined), invokeRaw: raw.invokeRaw }));
 // Main's `project-fonts:progress` event, fired by hand.
 const fontEvents = vi.hoisted(() => ({ emit: null as null | ((p: FontCopyProgress | null) => void) }));
 vi.mock("../ipc", async (importActual) => ({
@@ -56,6 +57,9 @@ afterEach(async () => {
   resetDerivativeJobsForTests();
   const { resetFontCopiesForTests } = await import("./fontCopiesStore");
   resetFontCopiesForTests();
+  const { usePackJobStore } = await import("../pack/packJobStore");
+  usePackJobStore.setState({ job: null });
+  raw.invokeRaw.mockReset();
 });
 
 describe("work pill", () => {
@@ -191,6 +195,42 @@ describe("work pill", () => {
     expect(pill(container)!.textContent).toBe("Copying fonts into the project…");
 
     act(() => fontEvents.emit!(null));
+    expect(pill(container)).toBeNull();
+  });
+});
+
+describe("a pack in the work pill", () => {
+  const MB = 1024 * 1024;
+  const packAt = async (done: number, opts: { cancelling?: boolean } = {}) => {
+    const { usePackJobStore } = await import("../pack/packJobStore");
+    act(() => usePackJobStore.setState({ job: {
+      job_id: "pack-1", kind: "pack", file: "Example.weftcut", done, total: 3 * MB, cancelling: opts.cancelling ?? false,
+    } }));
+  };
+
+  it("shows at once with its percent on the ring, and its row the file, the bytes and Cancel, never a time left", async () => {
+    raw.invokeRaw.mockResolvedValue(true);
+    const { container } = render(<WorkPill />);
+    await packAt(1.5 * MB);
+    expect(pill(container)!.textContent).toBe("Packing 50%");
+    expect(container.querySelector('[role="progressbar"]')!.getAttribute("aria-valuenow")).toBe("50");
+    act(() => pill(container)!.click());
+    const row = container.querySelector<HTMLElement>('[data-work="pack"]')!;
+    expect(row.textContent).toContain("Example.weftcut");
+    expect(row.textContent).toContain("1.5 MB of 3.0 MB");
+    expect(row.textContent).not.toMatch(/left|remaining/i);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel pack" }));
+    expect(raw.invokeRaw).toHaveBeenCalledWith("project_pack_cancel");
+  });
+
+  it("drops Cancel once pressed, and goes when main says the run ended", async () => {
+    const { container } = render(<WorkPill />);
+    await packAt(MB, { cancelling: true });
+    act(() => pill(container)!.click());
+    expect(container.querySelector('[data-work="pack"]')!.textContent).toContain("Cancelling…");
+    expect(screen.queryByRole("button", { name: "Cancel pack" })).toBeNull();
+    const { usePackJobStore } = await import("../pack/packJobStore");
+    act(() => usePackJobStore.setState({ job: null }));
     expect(pill(container)).toBeNull();
   });
 });

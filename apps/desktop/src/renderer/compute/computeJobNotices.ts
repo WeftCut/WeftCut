@@ -68,6 +68,8 @@ export interface ComputeJobNoticeContent {
   /// A resource refusal a Performance setting can help with: the card offers
   /// the pane (`computeRefusalMessage.ts`).
   settings?: true;
+  /// A file the work wrote: the card offers to show it in its folder.
+  reveal?: string;
 }
 
 /// Whether a person waits on this job: they started it, or a press of theirs
@@ -124,6 +126,8 @@ function clipLabel(t: TFunction, job: ComputeJob): string {
 }
 
 // ---- The in-app slot ----
+// The app's one corner notice: a pack's end (`pack/packJobs.ts`) posts here
+// too, so two notices never stack.
 
 interface ComputeJobNoticeState {
   notice: ComputeJobNoticeContent | null;

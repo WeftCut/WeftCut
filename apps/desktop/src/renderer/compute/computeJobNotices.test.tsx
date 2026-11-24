@@ -4,7 +4,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import type { TFunction } from "i18next";
 import i18n from "../i18n";
 
-const mocks = vi.hoisted(() => ({ cancelComputeJob: vi.fn<(id: string) => Promise<boolean>>() }));
+const mocks = vi.hoisted(() => ({ cancelComputeJob: vi.fn<(id: string) => Promise<boolean>>(), reveal: vi.fn(async () => {}) }));
+vi.mock("@/bridge/shell", () => ({ reveal: mocks.reveal }));
 vi.mock("../ipc", async (importActual) => ({
   ...(await importActual<typeof import("../ipc")>()),
   cancelComputeJob: mocks.cancelComputeJob,
@@ -193,6 +194,17 @@ describe("ComputeJobNotice", () => {
     act(() => vi.advanceTimersByTime(NOTICE_VISIBLE_MS * 3));
     expect(screen.getByTestId("compute-notice")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByTestId("compute-notice")).toBeNull();
+  });
+
+  it("offers to show a file the work wrote in its folder, and goes once pressed", () => {
+    render(<ComputeJobNotice />);
+    act(() => useComputeJobNoticeStore.setState({ notice: {
+      jobId: "pack", outcome: "ok", title: "Project packed", body: "/home/u/out/Example.weftcut", reveal: "/home/u/out/Example.weftcut",
+    } }));
+    const show = screen.getAllByRole("button").find((b) => /folder|Finder|Explorer/.test(b.textContent ?? ""))!;
+    fireEvent.click(show);
+    expect(mocks.reveal).toHaveBeenCalledWith("/home/u/out/Example.weftcut");
     expect(screen.queryByTestId("compute-notice")).toBeNull();
   });
 

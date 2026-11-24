@@ -38,6 +38,8 @@ export const FILE_MENU: MenuSection = {
     "save",
     "saveAs",
     { id: "checkPortability", hintKey: "actions.check_portability_hint" },
+    { id: "packProject", hintKey: "actions.pack_project_hint" },
+    { id: "openPackedProject", hintKey: "actions.open_packed_project_hint" },
     { id: "closeProject", hintKey: "actions.save_and_close_hint" },
     "---",
     "export",

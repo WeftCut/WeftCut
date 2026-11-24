@@ -7,6 +7,9 @@ import { useTranslation } from "react-i18next";
 import { CircleAlert, CircleCheck, CircleSlash, X } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { Button } from "@/components/ui/button";
+import { reveal } from "@/bridge/shell";
+import { rendererOS } from "@/platform";
+import { REVEAL_KEY } from "../panels/ExportPanel";
 import { requestSettings } from "../settings/settingsRequest";
 import { dismissComputeJobNotice, useComputeJobNoticeStore } from "./computeJobNotices";
 import "./compute.css";
@@ -46,6 +49,19 @@ export function ComputeJobNotice() {
             }}
           >
             {t("compute.refusal.open_settings")}
+          </Button>
+        )}
+        {notice.reveal && (
+          <Button
+            variant="secondary"
+            size="sm"
+            className="compute-notice-action"
+            onClick={() => {
+              void reveal(notice.reveal!).catch((e: unknown) => console.warn("[notice] show in folder", e));
+              dismissComputeJobNotice(notice.jobId);
+            }}
+          >
+            {t(REVEAL_KEY[rendererOS])}
           </Button>
         )}
       </div>

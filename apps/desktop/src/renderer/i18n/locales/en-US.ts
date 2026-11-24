@@ -398,6 +398,8 @@ const enUS = {
     subtitle: "Pick a project to open, or create a new one.",
     new_project: "New project",
     open_project: "Open project…",
+    open_packed_project: "Open packed project…",
+    unpacking: "Unpacking {{file}}",
     open_dialog_title: "Open WeftCut project folder",
     recent_heading: "Recent",
     recent_loading: "Loading…",
@@ -1077,6 +1079,10 @@ const enUS = {
     open_voiceover: "Voiceover…",
     check_portability: "Check portability…",
     check_portability_hint: "List what the project folder does not carry.",
+    pack_project: "Pack project…",
+    pack_project_hint: "Put the project in one file to move or share it.",
+    open_packed_project: "Open packed project…",
+    open_packed_project_hint: "Unpack a project file into a new folder and open it.",
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
     review_shots: "Review shots…",
@@ -3006,6 +3012,31 @@ const enUS = {
   },
   // File > Check portability (portability/): what the project folder does
   // not carry.
+  // Pack project / Open packed project (pack/): the project in one file and
+  // back. Percent and bytes only, never a remaining-time estimate.
+  pack: {
+    title: "Pack project",
+    size_one: "{{count}} file · {{size}}",
+    size_other: "{{count}} files · {{size}}",
+    licence: "Check font licenses before you share the pack.",
+    cancel: "Cancel",
+    pack: "Pack…",
+    save_title: "Pack project",
+    filter: "WeftCut pack",
+    bytes: "{{done}} of {{total}}",
+    done_title: "Project packed",
+    failed_title: "Pack failed",
+    open_title: "Open packed project",
+    parent_title: "Choose where to put “{{folder}}”",
+    unpack_failed_title: "Couldn't open the packed project",
+    busy: "A pack or unpack is already running.",
+    no_project: "No project is open.",
+    not_a_pack: "That file isn't a WeftCut pack: {{detail}}",
+    folder_not_empty: "That folder already holds a non-empty “{{folder}}”. Pick another folder.",
+    no_space: "Not enough free space: the project needs {{needed}}, the drive has {{available}}.",
+    pack_failed: "Couldn't pack the project: {{detail}}",
+    unpack_failed: "Couldn't unpack the project: {{detail}}",
+  },
   portability: {
     title: "Portability check",
     loading: "Checking…",
@@ -3108,6 +3139,14 @@ const enUS = {
       group_fonts: "Fonts",
       fonts_copying: "Copying fonts {{done}}/{{total}}",
       fonts_closing: "Copying fonts into the project…",
+      group_pack: "Pack",
+      packing: "Packing",
+      packing_percent: "Packing {{percent}}%",
+      unpacking: "Unpacking",
+      unpacking_percent: "Unpacking {{percent}}%",
+      pack_cancelling: "Cancelling…",
+      cancel_pack: "Cancel pack",
+      cancel_unpack: "Cancel unpack",
       // The export leads the pill; the rest of the work is counted after it.
       with_more: "{{label}} · {{count}} more",
     },

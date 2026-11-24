@@ -30,6 +30,7 @@ const ALL_CHANNELS: readonly string[] = [
   'project_summary', 'project_publication', 'project_history_view', 'get_project_settings', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'project_save_status', 'agent_session_end', 'agent_session_begin',
   'project_portability', 'project_trash_motif_folder',
+  'project_pack_plan', 'project_pack', 'project_pack_cancel', 'project_unpack_inspect', 'project_unpack',
   'review_view', 'review_activity_view', 'review_approve_all', 'review_revert_all',
   'agent_tacks_set_status', 'agent_tacks_delete',
   // motif route (TS authoring + read + install + project copy update)
@@ -275,6 +276,13 @@ describe('routeChannel', () => {
       expect(routeChannel(ch), ch).toEqual({ kind: 'portability' })
       expect(PRODUCTION_OPS.has(ch), ch).toBe(false)
     }
+  })
+  it('routes pack and unpack to the host, never to a command or rust: the native pack commands are main-only', () => {
+    for (const ch of ['project_pack_plan', 'project_pack', 'project_pack_cancel', 'project_unpack_inspect', 'project_unpack']) {
+      expect(routeChannel(ch), ch).toEqual({ kind: 'pack' })
+      expect(PRODUCTION_OPS.has(ch), ch).toBe(false)
+    }
+    for (const ch of ['project_pack_inspect']) expect(routeChannel(ch).kind, ch).toBe('reject')
   })
   it('never routes a category-A state mutation to rust', () => {
     for (const ch of PRODUCTION_OPS) expect(routeChannel(ch).kind).not.toBe('rust')
