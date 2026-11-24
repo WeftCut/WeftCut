@@ -947,6 +947,18 @@ project fonts, `Styles/` the style `TASTE.md` extends; `Cache/` is derived,
 `TASTE.md` is hand-edited. Relative tool paths resolve against it. See ADR 0152.
 _Avoid_: project directory
 
+**Machine-local**:
+What a project folder keeps for this machine alone and a copy leaves behind:
+`Cache/`, `Backups/`, `Logs/`, `output/`, the pre-upgrade `project.pre-v*.json`
+files. Everything Save As copies is the project's content.
+_Avoid_: temp files, junk
+
+**Portability check**:
+The list of what the open project still needs from outside its folder for a
+copy to play the same elsewhere (File > Check portability,
+`project://portability`). An untrusted Motif is not on it: its files travel.
+_Avoid_: dependency scan, collect files
+
 **Project path**:
 Where a file sits inside the project folder, as `project.json` records it:
 `/`-separated, relative, every segment a name each OS accepts

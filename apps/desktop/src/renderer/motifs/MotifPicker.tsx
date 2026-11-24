@@ -3,7 +3,8 @@
 // into the project in the same undo step; there is no separate "add to
 // project". A project row says what it needs (an update, edits not in the
 // library, a broken folder, the user's Trust) and offers it; library rows keep placing, ZIP
-// export, version history and the trash. An agent's proposals sit on top.
+// export, version history and the trash, and a library folder whose name no
+// Motif can take offers its rename. An agent's proposals sit on top.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FolderInputIcon, PlusIcon } from "lucide-react";
@@ -31,6 +32,7 @@ import {
   listMotifCatalog,
   MOTIFS_CHANGED_EVENT,
   removeProjectMotif,
+  renameLibraryMotif,
   updateProjectMotif,
   type LibraryMotifRow,
   type MotifCatalog,
@@ -45,6 +47,7 @@ import { defaultPropsFor, MotifPreview, useDebounced } from "./MotifPreview";
 import { newMotifSource } from "../render/motifs/newMotifSource";
 import { syncProjectMotifsFromBackend } from "../render/motifs/syncCatalog";
 import { AppIcon } from "@/components/AppIcon";
+import { projectMotifKey } from "../../shared/motifs/projectMotifs";
 
 interface Props {
   onClose: () => void;
@@ -167,6 +170,10 @@ export function MotifPicker({
 
   const projectRows = useMemo(() => catalog && matchRows(catalog.project, query), [catalog, query]);
   const libraryRows = useMemo(() => catalog && matchRows(catalog.library, query), [catalog, query]);
+  const misnamed = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return catalog?.misnamed.filter((id) => id.toLowerCase().includes(q)) ?? [];
+  }, [catalog, query]);
 
   /// Runs a row action; its refusal shows in the panel's error line.
   const act = (fn: () => Promise<unknown>) => async () => {
@@ -221,6 +228,14 @@ export function MotifPicker({
     });
     if (!path) return;
     await exportMotif(row.id, path, row.group === "library" ? "library" : undefined);
+  });
+
+  /// The new id is main's; the renamed card is selected once the catalog
+  /// lists it.
+  const renameFolder = (id: string) => act(async () => {
+    const renamed = await renameLibraryMotif(id);
+    setSelectedKey(rowKey({ group: "library", id: renamed }));
+    await reload();
   });
 
   const removeItem = async () => {
@@ -323,8 +338,22 @@ export function MotifPicker({
                 </section>
                 <section aria-label={t("motif_picker.group_library")}>
                   <h3 className="motif-picker-group">{t("motif_picker.group_library")}</h3>
-                  {libraryRows.length === 0 && empty(catalog.library, t("motif_picker.empty"))}
+                  {libraryRows.length === 0 && misnamed.length === 0 && empty(catalog.library, t("motif_picker.empty"))}
                   {libraryRows.map(card)}
+                  {misnamed.map((id) => (
+                    <div key={id} className="motif-misnamed-row">
+                      <span className="motif-card-title">
+                        <span className="motif-card-name">{id}</span>
+                        <span className="motif-card-status status-invalid">{t("motif_picker.status.invalid")}</span>
+                      </span>
+                      <span className="motif-card-meta">{t("motif_picker.misnamed_hint", { to: projectMotifKey(id) })}</span>
+                      <Button variant="secondary" size="xs"
+                        aria-label={t("motif_picker.rename_folder_to", { id, to: projectMotifKey(id) })}
+                        onClick={() => void renameFolder(id)()}>
+                        {t("motif_picker.rename_folder")}
+                      </Button>
+                    </div>
+                  ))}
                 </section>
               </div>
             </div>

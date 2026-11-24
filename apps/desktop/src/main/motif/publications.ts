@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { assignUniqueId, BUILTIN_IDS, builtinLineage, idFromName, isBuiltinLineage, type Manifest } from '../../shared/motifs/catalog'
-import { proposalPreviewId, type ProjectMotifSource } from '../../shared/motifs/projectMotifs'
+import { isProjectMotifKey, projectMotifKey, proposalPreviewId, type ProjectMotifSource } from '../../shared/motifs/projectMotifs'
 import { newLineage } from './lineage'
 import { normalize, replacePackage } from './motifPackage'
 import { readMotifDirectory, type MotifFile } from './packageFiles'
@@ -408,5 +408,20 @@ export class LibraryPublications {
     if (!this.installed().has(id))
       throw new Error('Unknown Motif: ' + id)
     await this.store.trashMotif(id)
+  }
+
+  /** The user's rename of library Motif `id`, whose folder name cannot be
+   *  its host (`libraryIdDiagnostic`), to the key it would be placed under
+   *  (`projectMotifKey`). Answers the new id. */
+  rename(id: string): string {
+    if (!this.installed().has(id))
+      throw new Error('Unknown Motif: ' + id)
+    if (isProjectMotifKey(id))
+      throw new Error(`'${id}' is already a valid folder name`)
+    const to = projectMotifKey(id)
+    if (BUILTIN_IDS.includes(to))
+      throw new Error(`'${to}' is the id of a built-in Motif`)
+    this.store.renameMotif(id, to)
+    return to
   }
 }

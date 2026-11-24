@@ -30,7 +30,7 @@ import { captureImportSession, createMediaImporter, type MediaImporter } from '.
 import { createPoolFiles, type PoolFiles, type PoolFilesFs } from './poolFiles'
 import { BUILTIN_MANIFESTS, type Manifest } from '../../shared/motifs/catalog'
 import { libraryHost, type ProjectMotifs, type UnavailableMotif } from '../../shared/motifs/projectMotifs'
-import type { UserMotifStore } from '../motif/store'
+import type { Trash, UserMotifStore } from '../motif/store'
 import { runMotifTool } from '../motif/motifTools'
 import { legacyMigration } from '../motif/legacyResolve'
 import { copyProjectMotifs } from '../motif/projectCopy'
@@ -50,7 +50,10 @@ import type { ExportSettingsStore } from '../export-settings'
 import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
 import { tasteView } from '../taste/view'
-import { collectExtendedStyle } from '../taste/projectStyles'
+import { collectExtendedStyle, styleOutsideProject } from '../taste/projectStyles'
+import { portabilityReport } from './portability'
+import type { PortabilityReport } from '../../shared/portability'
+import { trashUntrackedMotifFolder } from './untrackedMotifFolder'
 import { AuditStore } from '../lint/audits'
 import { playheadView } from '../mcp/playheadView'
 import type { WorkspaceStore } from '../workspace'
@@ -60,7 +63,7 @@ import type { ProjectFontStore } from '../fonts/projectFonts'
 import type { MissingFontUse } from '../fonts/uses'
 
 /** What the host asks of the project font store. */
-export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'projectChanged' | 'published' | 'missing' | 'motifFolderChanged'>
+export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'projectChanged' | 'published' | 'missing' | 'view' | 'motifFolderChanged'>
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -150,6 +153,9 @@ export interface TsActorHostDeps {
    *  Optional → guard in runMotif throws if absent. Tests that don't exercise
    *  motif tools omit this so they don't need a real temp-dir store. */
   motifStore?: UserMotifStore
+  /** Moves a folder to the system trash (`shell.trashItem`). Absent → the
+   *  portability check's folder cleanup refuses: nothing is removed for good. */
+  trash?: Trash
   /** Built-in Motifs ({id, manifest, html}), loaded once at boot from the
    *  relocated served assets. Empty in tests that don't exercise built-ins.
    *  Optional — defaults to [] when absent. */
@@ -269,6 +275,10 @@ export interface TsActorHost {
   /** Families the open project asks for that resolve nowhere
    *  (`project://session` `fonts.missing`). Empty with no project open. */
   missingFonts?: () => MissingFontUse[]
+  /** What the open project still needs from outside its folder
+   *  (`project://portability`, `state/portability.ts`); null with no project
+   *  open. */
+  portability: () => PortabilityReport | null
   /** The open project's `Motifs/<id>/` changed on disk (`watchProjectMotifs`):
    *  a new revision of a Motif the project records becomes a recorded edit
    *  (`ProjectMotifRecords.folderChanged`). */
@@ -819,6 +829,21 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return out
   }
 
+  function portability(): PortabilityReport | null {
+    const summary = publication().summary
+    if (!opened || !summary || publishedProject === null) return null
+    const pool = publishedProject.media_pool
+    return portabilityReport({
+      media: summary.media.map(m => ({ id: m.id, label: m.label, path: m.path, path_rel: pool[m.id]?.path_rel ?? null, available: m.available })),
+      unavailableMotifs: unavailableMotifs(),
+      motifTable: Object.keys(publishedProject.motifs),
+      motifFolders: projectMotifs()?.ids() ?? [],
+      excludedFonts: deps.fonts?.view()?.excluded ?? [],
+      missingFonts: deps.fonts?.missing() ?? [],
+      outsideStyle: deps.styleDirs ? styleOutsideProject(deps.styleDirs, opened.dir) : null,
+    })
+  }
+
   function publishChange(e?: ChangeEvent, traceId?: string, newSession = false, settledWorkspace = false): void {
     publicationVersion = {
       session: publicationVersion.session + (newSession ? 1 : 0),
@@ -1074,6 +1099,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return actor.snapshot().settings
       case 'saveStatus':
         return saveStatus
+      case 'portability':
+        if (channel === 'project_portability') return portability()
+        return trashUntrackedMotifFolder({
+          report: portability,
+          folder: (name) => projectMotifs()!.folder(name),
+          trash: deps.trash ?? (async () => { throw new Error('No system trash is available') }),
+        }, args.name)
       case 'review': {
         if (channel === 'review_activity_view') return reviewActivityView((args as Partial<ReviewActivityArgs>).history_ids)
         const includeUser = (args as ReviewViewArgs).include_user === true
@@ -1255,6 +1287,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     motifTool: runMotif,
     unavailableMotifs,
     missingFonts: () => (opened ? deps.fonts?.missing() ?? [] : []),
+    portability,
     motifFolderChanged: (id, state) => {
       motifRecords.folderChanged(id, state)
       deps.fonts?.motifFolderChanged()

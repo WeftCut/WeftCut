@@ -40,6 +40,7 @@ function commandIds(): Set<string> {
       toggleMarkersVisible: () => {},
       applyDefaultTransition: () => {},
       openVoiceoverDialog: () => {},
+      checkPortability: () => {},
     },
     { busy: false, canUndo: false, canRedo: false, exportLocked: false },
   );

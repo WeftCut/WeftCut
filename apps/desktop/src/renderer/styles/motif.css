@@ -287,6 +287,17 @@
 }
 .motif-picker-group:first-child { margin-top: 0; }
 
+/* A library folder whose name no Motif can take: no cover and nothing to
+   select, only its rename. Inset like a card. */
+.motif-misnamed-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(4 * var(--ui-px));
+  padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px));
+}
+.motif-misnamed-row .motif-card-title { align-self: stretch; }
+
 /* An invalid package's error under the localized lead (MotifProblem). */
 .motif-problem-detail {
   display: block;

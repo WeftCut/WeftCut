@@ -29,12 +29,13 @@ const ALL_CHANNELS: readonly string[] = [
   // router special-cases (summary / history read / settings / persistence seam / agent-session)
   'project_summary', 'project_publication', 'project_history_view', 'get_project_settings', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'project_save_status', 'agent_session_end', 'agent_session_begin',
+  'project_portability', 'project_trash_motif_folder',
   'review_view', 'review_activity_view', 'review_approve_all', 'review_revert_all',
   'agent_tacks_set_status', 'agent_tacks_delete',
   // motif route (TS authoring + read + install + project copy update)
   'list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif',
   'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal',
-  'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'update_project_motif',
+  'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'rename_library_motif', 'update_project_motif',
   'motif_trust_summary', 'trust_motif',
   // pure native (no project actor)
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
@@ -266,8 +267,14 @@ describe('routeChannel', () => {
     }
   })
   it('routes motif authoring/read/install/project-copy channels to the motif route', () => {
-    for (const ch of ['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'update_project_motif', 'motif_trust_summary', 'trust_motif'])
+    for (const ch of ['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'rename_library_motif', 'update_project_motif', 'motif_trust_summary', 'trust_motif'])
       expect(routeChannel(ch).kind, ch).toBe('motif')
+  })
+  it('routes the portability check and its folder cleanup to the host, never to a command or rust', () => {
+    for (const ch of ['project_portability', 'project_trash_motif_folder']) {
+      expect(routeChannel(ch), ch).toEqual({ kind: 'portability' })
+      expect(PRODUCTION_OPS.has(ch), ch).toBe(false)
+    }
   })
   it('never routes a category-A state mutation to rust', () => {
     for (const ch of PRODUCTION_OPS) expect(routeChannel(ch).kind).not.toBe('rust')

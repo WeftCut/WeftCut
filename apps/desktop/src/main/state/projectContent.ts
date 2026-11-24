@@ -20,14 +20,36 @@ import { FONTS_DIR } from '../fonts/projectFonts'
 import type { FilePlan } from './migrate'
 import { toNative, type PathPlatform } from './projectPathNative'
 
+/** The project's ignore file. People edit it, so it is content that is
+ *  copied, never linked. */
+export const GITIGNORE = parseProjectPath('.gitignore')
+
 /** What Save As copies, beside `Motifs/` (motif/projectCopy.ts): each a
  *  folder copied whole or a file, when present. Everything else in the folder
- *  is this machine's (`Cache/`, `Backups/`, `Logs/`, the pre-upgrade
- *  `project.pre-v*.json` files, exports under `output/`) and stays behind. */
+ *  (`PROJECT_MACHINE_LOCAL` and anything the app did not put there) stays
+ *  behind. */
 export const PROJECT_CONTENT: readonly ProjectPath[] = [
   MEDIA, parseProjectPath(FONTS_DIR), parseProjectPath(STYLES_DIR), parseProjectPath(TASTE_FILE),
-  parseProjectPath('export.json'), parseProjectPath('view.json'),
+  parseProjectPath('export.json'), parseProjectPath('view.json'), GITIGNORE,
 ]
+
+/** What the app keeps in a project folder for this machine alone, as
+ *  `.gitignore` patterns: caches it rebuilds, autosave and Motif history
+ *  backups, logs, exports, and the pre-upgrade `project.pre-v*.json` files. */
+export const PROJECT_MACHINE_LOCAL: readonly string[] = [
+  '/Cache/', '/Backups/', '/Logs/', '/output/', '/project.pre-v*.json', '*.tmp',
+]
+
+/** The `.gitignore` a project gets when it has none. */
+export const DEFAULT_GITIGNORE =
+  `# This machine's files: WeftCut rebuilds or keeps them for this machine alone.\n${PROJECT_MACHINE_LOCAL.join('\n')}\n`
+
+/** Writes `DEFAULT_GITIGNORE` into the project folder `dir` when it holds no
+ *  `.gitignore`; one already there is the user's and stays. */
+export function ensureGitignore(dir: string, fs: { exists(path: string): boolean; writeFile(path: string, text: string): void }, join: (...parts: string[]) => string): void {
+  const file = join(dir, GITIGNORE)
+  if (!fs.exists(file)) fs.writeFile(file, DEFAULT_GITIGNORE)
+}
 
 /** The node:fs/promises calls a copy makes; node:fs/promises itself in
  *  production. `lstat` and `realpath` reject with ENOENT for a missing path. */

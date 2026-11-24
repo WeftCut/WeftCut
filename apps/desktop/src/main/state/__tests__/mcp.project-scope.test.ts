@@ -95,7 +95,7 @@ describe('no project open: every other tool refuses and commits nothing', () => 
     // The approval, project-copy and trust channels are the renderer's: over
     // MCP they are unknown tools (ME8), on the start screen as anywhere else.
     // Only the user trusts a Motif.
-    for (const name of ['update_project_motif', 'approve_motif_proposal', 'publish_motif', 'delete_library_motif', 'motif_trust_summary', 'trust_motif'])
+    for (const name of ['update_project_motif', 'approve_motif_proposal', 'publish_motif', 'delete_library_motif', 'rename_library_motif', 'motif_trust_summary', 'trust_motif'])
       await expect(call(ts, name, {}), name).rejects.toBeInstanceOf(UnknownToolError)
     for (const name of gated) {
       const out = await call(ts, name, { reason: 'x', label: 'x', layer_id: 'x' })

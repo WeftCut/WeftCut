@@ -42,6 +42,7 @@ const menu = {
   toggleMarkersVisible: () => {},
   applyDefaultTransition: () => {},
   openVoiceoverDialog: () => {},
+  checkPortability: () => {},
 };
 const flags = {
   busy: false,
