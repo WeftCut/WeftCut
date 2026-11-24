@@ -273,6 +273,11 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
       changed()
       return restored
     }
+    case 'rename_library_motif': {
+      const renamed = publications.rename(subject(a))
+      changed()
+      return { motif_id: renamed }
+    }
     case 'delete_library_motif': {
       const id = subject(a)
       return publications.delete(id).then(() => {

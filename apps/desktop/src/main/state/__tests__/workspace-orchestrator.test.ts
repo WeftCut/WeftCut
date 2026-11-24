@@ -3,6 +3,7 @@ import { WorkspaceFailure } from '../../../shared/workspaceErrors'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type OrchestratorDeps, type OrchestratorFs, type WorkspaceNapi } from '../workspace-orchestrator'
 import { CommandFailure } from '../errors'
 import { serializeProjectToJson, PROJECT_FILE } from '../persistence'
+import { DEFAULT_GITIGNORE } from '../projectContent'
 import { canonicalize } from '../canonical'
 import { serializeProject, type GridRepair } from '../serialize'
 import { applyAddLayer, colorParams } from '../mutations/add'
@@ -262,7 +263,7 @@ describe('saveProjectAs', () => {
     const copyMotifs = vi.fn((from: string, to: string, ids: readonly string[]) => { order.push(`copy:${from}->${to}:${ids.join(',')}`) })
     const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
     await saveProjectAs(d, '/out', '/ws')
-    expect(order).toEqual(['copy:/ws->/out:lower-third,title-card', `write:/out/${PROJECT_FILE}`])
+    expect(order).toEqual(['copy:/ws->/out:lower-third,title-card', 'write:/out/.gitignore', `write:/out/${PROJECT_FILE}`])
   })
 
   it('fails without writing project.json when a Motif folder cannot be copied', async () => {
@@ -296,6 +297,7 @@ describe('newWorkspace', () => {
     expect(out).toBe('/parent/Fresh')
     const written = JSON.parse((d.fs as any).files.get(`/parent/Fresh/${PROJECT_FILE}`))
     expect(root(written)).toMatchObject({ width: 1280, height: 720, fps: { num: 24, den: 1 } })
+    expect((d.fs as any).files.get('/parent/Fresh/.gitignore')).toBe(DEFAULT_GITIGNORE)
     expect(d.calls).toEqual(['commit:/parent/Fresh', 'replaceState', 'recent:/parent/Fresh:Fresh', 'parent:/parent'])
   })
 })

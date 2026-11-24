@@ -30,6 +30,8 @@ import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { WindowControls } from "../components/WindowControls";
 import { DiagnosticReport } from '../app/DiagnosticReport';
+import { cancelPackJob, openPackedProject, packBytes, packPercent } from "../pack/packJobs";
+import { listenForPackJobs, usePackJobStore } from "../pack/packJobStore";
 import { UpdateButton } from '../app/UpdateButton';
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +40,7 @@ import {
   ChevronUpIcon,
   FolderOpenIcon,
   GlobeIcon,
+  PackageOpenIcon,
   PlusIcon,
   SettingsIcon,
   XIcon,
@@ -50,6 +53,7 @@ import {
   recentsList,
   recentsRemove,
   type KeybindingsMap,
+  type PackJobProgress,
   type RecentEntry,
 } from "../ipc";
 import {
@@ -190,6 +194,18 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
     );
   }, [t, runProtected, onWorkspaceReady]);
 
+  // The project opens through main, which brings the editor along
+  // (`project:opened`); only a refusal comes back here.
+  const openPacked = useCallback(
+    () => runProtected(async () => {
+      const problem = await openPackedProject(t);
+      if (problem !== null) throw problem;
+    }, (e) => String(e)),
+    [t, runProtected],
+  );
+  const unpacking = usePackJobStore((s) => s.job);
+  useEffect(listenForPackJobs, []);
+
   const openRecent = useCallback(
     async (entry: RecentEntry) => {
       await runProtected(
@@ -309,8 +325,18 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
             <AppIcon icon={FolderOpenIcon} size="display" strokeWidth={1.5} aria-hidden />
             <span className="startup-action-label">{t("startup.open_project")}</span>
           </button>
+          <button
+            type="button"
+            className="startup-action"
+            onClick={() => void openPacked()}
+            disabled={busy}
+          >
+            <AppIcon icon={PackageOpenIcon} size="display" strokeWidth={1.5} aria-hidden />
+            <span className="startup-action-label">{t("startup.open_packed_project")}</span>
+          </button>
         </div>
 
+        {unpacking && <UnpackProgress job={unpacking} />}
         {error && <p className="startup-error">{error}</p>}
 
         <section className="startup-recent" style={RECENT_BODY_STYLE}>
@@ -405,6 +431,29 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
         />
       )}
       {reportOpen && <DiagnosticReport onClose={() => setReportOpen(false)} />}
+    </div>
+  );
+}
+
+/// The unpack the start screen started, with its Cancel: this screen has no
+/// work pill. Percent and bytes only, never a remaining-time estimate.
+function UnpackProgress({ job }: { job: PackJobProgress }) {
+  const { t } = useTranslation();
+  const percent = packPercent(job);
+  return (
+    <div className="startup-unpack" role="status" aria-label={t("startup.unpacking", { file: job.file })}>
+      <div className="startup-unpack-line">
+        <span className="startup-unpack-name">{t("startup.unpacking", { file: job.file })}</span>
+        <span>{job.cancelling ? t("status_bar.work.pack_cancelling") : packBytes(t, job)}</span>
+      </div>
+      <div className="progress-track" aria-hidden="true">
+        <div className="progress-fill" style={{ width: `${percent ?? 0}%` }} />
+      </div>
+      {!job.cancelling && (
+        <Button variant="secondary" size="sm" className="startup-unpack-cancel" onClick={cancelPackJob}>
+          {t("compute.ui.cancel")}
+        </Button>
+      )}
     </div>
   );
 }

@@ -947,6 +947,24 @@ project fonts, `Styles/` the style `TASTE.md` extends; `Cache/` is derived,
 `TASTE.md` is hand-edited. Relative tool paths resolve against it. See ADR 0152.
 _Avoid_: project directory
 
+**Machine-local**:
+What a project folder keeps for this machine alone and a copy leaves behind:
+`Cache/`, `Backups/`, `Logs/`, `output/`, the pre-upgrade `project.pre-v*.json`
+files. Everything Save As copies is the project's content.
+_Avoid_: temp files, junk
+
+**Pack**:
+One `.weftcut` file holding a project's content (what Save As copies), made by
+File > Pack project and opened into a new folder from the start screen or the
+File menu. Machine-local entries stay out. See ADR 0178.
+_Avoid_: export (that renders video), archive, bundle
+
+**Portability check**:
+The list of what the open project still needs from outside its folder for a
+copy to play the same elsewhere (File > Check portability,
+`project://portability`). An untrusted Motif is not on it: its files travel.
+_Avoid_: dependency scan, collect files
+
 **Project path**:
 Where a file sits inside the project folder, as `project.json` records it:
 `/`-separated, relative, every segment a name each OS accepts
@@ -957,7 +975,8 @@ _Avoid_: relative path, workspace path
 A font face (family, weight, italic, read from the font's own tables) copied
 into the project's `Fonts/` because a layer draws with its family: a Text
 layer's characters, or a Motif's string props walked through its font slots.
-Every face of such a family is copied, automatically; looked up before system and bundled fonts. Bundled and generic
+Every face of such a family is copied, automatically; looked up before system and bundled fonts. A font file put
+into `Fonts/` any other way (by hand, or with a received folder) is a project font too. Bundled and generic
 families and a Motif package's own fonts are never project fonts. See ADR 0176.
 _Avoid_: embedded font, packed font, collected font file
 

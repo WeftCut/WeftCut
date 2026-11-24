@@ -605,6 +605,13 @@ async function dispatchTool(
         throw e
       }
     }
+    // Gathered from the host's stores (media files, Motif folders, fonts,
+    // styles), not the actor: the same record `project://portability` serves.
+    if (name === 'read_project' && args.view === 'portability') {
+      mcpDef('read_project').parseDedicated!(args)
+      const report = tsHost.portability()
+      return report ? toolRecord(report as unknown as Record<string, unknown>) as unknown as ServerResult : noProjectOpenResult()
+    }
     // The effects vocabulary is a catalog, not project state, so it is answered
     // here — the same record `effects://catalog` serves.
     if (name === 'read_project' && args.view === 'effects') {
@@ -894,6 +901,12 @@ export async function handleReadResource(
     // protocol error, with the same text the tools answer.
     if (noProjectOpen(tsHost) && !APP_SCOPE_RESOURCES.has(uri)) throw new McpError(ErrorCode.InvalidRequest, NO_PROJECT_OPEN_MESSAGE)
     if (tsHost.agent && isTacksUri(uri)) return readTacksResource(tsHost.agent.tacks, uri)
+    if (uri === 'project://portability') {
+      // A close racing the read: the same refusal as the gate above.
+      const report = tsHost.portability()
+      if (!report) throw new McpError(ErrorCode.InvalidRequest, NO_PROJECT_OPEN_MESSAGE)
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(report, null, 2) }] } as unknown as ServerResult
+    }
     if (uri === 'project://playhead') {
       try { return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(await readPlayhead(tsHost), null, 2) }] } as unknown as ServerResult }
       catch (e) {

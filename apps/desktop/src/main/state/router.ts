@@ -17,6 +17,8 @@ export type Route =
   | { kind: 'tacks' }         // the user's tack actions from the agent panel (ADR 0115) — never a project write
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'saveStatus' }    // whether project.json is reaching disk (shared/save-status.ts) — READ-only
+  | { kind: 'portability' }   // the portability check (state/portability.ts) and its cleanup — never a project write
+  | { kind: 'pack' }          // Pack project / Open packed project (state/projectPack.ts) — no project write; an unpack opens through 'open'
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
   | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
   | { kind: 'agentSessionBegin' } // legacy local channel: request agent view only
@@ -130,12 +132,12 @@ export const AUDIO_FX_CHANNELS: ReadonlySet<string> = new Set([
  *  the user's own "Save to library" `publish_motif`, the approval card's
  *  `list_motif_proposals` / `approve_motif_proposal` / `reject_motif_proposal`
  *  (ADR 0046), the library card's `list_motif_versions` /
- *  `restore_motif_version` (ADR 0172) and `delete_library_motif`, and
- *  `update_project_motif`, the user's update of a project copy from the
- *  library, and the trust card's `motif_trust_summary` / `trust_motif`: only
+ *  `restore_motif_version` (ADR 0172), `delete_library_motif` and
+ *  `rename_library_motif`, and `update_project_motif`, the user's update of
+ *  a project copy from the library, and the trust card's `motif_trust_summary` / `trust_motif`: only
  *  the user trusts a Motif (spec § Trust). The renderer never calls
  *  `install_motif`, which proposes. */
-export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'update_project_motif', 'motif_trust_summary', 'trust_motif'])
+export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'rename_library_motif', 'update_project_motif', 'motif_trust_summary', 'trust_motif'])
 
 /** Native read/compute handlers that receive their project state slice (a MediaItem
  *  or the full Project) as an injected call argument — the TS host forwards it
@@ -180,6 +182,17 @@ export function routeChannel(channel: string): Route {
     case 'project_history_view': return { kind: 'historyView' }
     case 'get_project_settings': return { kind: 'projectSettings' }
     case SAVE_STATUS_CHANNEL: return { kind: 'saveStatus' }
+    // The check dialog's report, and its one action: a folder under Motifs/
+    // no layer places, to the system trash. Neither is project content.
+    case 'project_portability':
+    case 'project_trash_motif_folder': return { kind: 'portability' }
+    // A pack reads the project folder after the flush Save As makes; an
+    // unpack writes a new folder and opens it as Open… does (ADR 0178).
+    case 'project_pack_plan':
+    case 'project_pack':
+    case 'project_pack_cancel':
+    case 'project_unpack_inspect':
+    case 'project_unpack': return { kind: 'pack' }
     // Review: two reads (the baseline view; what one activity's ops did),
     // approve all and revert all, both checked against the view the user
     // acted on. Approval folds the current state into the Review baseline; it

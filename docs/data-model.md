@@ -686,12 +686,16 @@ The workspace folder **is** the project; originals are copied in on import.
 ├── project.json        canonical state; autosaved, replaced atomically (see Saving)
 ├── project.pre-v{n}.json  pre-upgrade bytes (see Versioning)
 ├── view.json           UI view state for this project
+├── .gitignore          written where a new project or a Save As target has
+│                       none: ignores the machine-local entries below; the
+│                       user's own is kept and copied as content
 ├── Media/              imported originals (workspace owns the bytes), any
 │                       subfolders; Voiceover/ holds synthesized speech
 ├── Motifs/<id>/        the Motifs the project renders, named in project.json's
 │                       motifs table; edited in place (see motifs.md)
 ├── Fonts/              every face of the families the project draws, one
 │                       face per file, copied automatically (ADR 0176);
+│                       a font put here by hand serves the project too;
 │                       `.part` files are copies in flight
 ├── Styles/<name>/      the user style TASTE.md extends, looked up before the
 │                       user's packages (ADR 0126)
@@ -705,8 +709,23 @@ The workspace folder **is** the project; originals are copied in on import.
 │                       is told apart from a first copy)
 ├── Backups/            project.json copy every 50 commits or 5 min; newest 20 kept;
 │                       motifs/: every Motif revision the table records, for undo
-└── Renders/            default export destination
+├── Logs/               this project's status log (status-log.md)
+└── output/             default export destination
 ```
+
+`Cache/`, `Backups/`, `Logs/`, `output/` and the `project.pre-v*.json` files
+are **machine-local**: kept for this machine alone, never copied by Save As
+(`PROJECT_MACHINE_LOCAL` in `state/projectContent.ts`). The **portability
+check** (File > Check portability, `project://portability`) lists what the
+project still needs from outside its folder: media outside it or missing,
+Motifs whose folder is gone or holds no package, fonts excluded from `Fonts/`
+or resolving nowhere, and a `TASTE.md` style the folder lacks; it also names
+folders under `Motifs/` no layer places, which a copy leaves behind.
+
+A **pack** (`.weftcut`, ADR 0178) is a ZIP of exactly that content, every
+entry stored, behind a `weftcut-pack.json` manifest of each file's size and
+modification time; opening one unpacks it into a new folder (`.gitignore`
+added when absent) and opens that.
 
 ### Saving
 
@@ -757,7 +776,7 @@ Save As… and Open folder ([status-log.md § Bar](status-log.md#bar)).
 Save As works out of a failing folder: it writes the whole project to the new
 one, so the old folder's failed flush does not stop it. It copies the project's
 content first (`state/projectContent.ts`: `Media/`, `Fonts/`, `Styles/`,
-`TASTE.md`, `export.json`, `view.json`; Motifs through their own copy), after
+`TASTE.md`, `export.json`, `view.json`, `.gitignore`; Motifs through their own copy), after
 pending font copies have finished, cloning each file where the
 filesystem can, else hard-linking a media file on one volume, else copying, and keeping
 modification times; `Cache/`, `Backups/` and logs stay behind, so the copy

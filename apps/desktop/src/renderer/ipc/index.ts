@@ -1,5 +1,6 @@
 import { parseManifestIsland } from '../../shared/motifs/catalog';
 import type { MotifStatus } from '../../shared/motifs/projectMotifs';
+import type { PortabilityReport } from '../../shared/portability';
 import type { TimingFields } from '../../shared/timeMapping'
 import type { CropRect } from '../../shared/crop';
 // Renderer-side IPC surface: typed `invoke` wrappers plus the wire shapes the
@@ -10,7 +11,7 @@ import type { CropRect } from '../../shared/crop';
 // from here, so every call site can import them from "../ipc". `@/` only
 // aliases src/renderer, hence the relative paths to `../../shared/`.
 
-import { invoke } from "@/bridge/ipc";
+import { invoke, invokeRaw } from "@/bridge/ipc";
 import type { PositionAnimation } from '../../shared/position';
 import type { ResourceHolder } from '../../shared/resource-policy';
 import { TACK_DELETE_CHANNEL, TACK_SET_STATUS_CHANNEL, type TackDeleteSelector, type TackStatus } from '../../shared/agent-activity';
@@ -855,6 +856,45 @@ export async function projectOpen(path: string): Promise<void> {
 export async function projectClose(): Promise<void> {
   return invoke<void>("project_close");
 }
+
+export type { PortabilityReport } from '../../shared/portability';
+
+/// The portability check; null with no project open.
+export async function projectPortability(): Promise<PortabilityReport | null> {
+  return invoke<PortabilityReport | null>("project_portability");
+}
+
+/// Moves `Motifs/<name>/` to the system trash. Main refuses a name its
+/// report does not list as untracked.
+export async function trashUntrackedMotifFolder(name: string): Promise<void> {
+  await invoke("project_trash_motif_folder", { name });
+}
+
+// Pack project / Open packed project (ADR 0178). Raw: none is an edit, and an
+// unpack opens its project through main, which announces it with
+// `project:opened` as an agent's open does.
+import type { PackInspection, PackOutcome, PackPlan } from '../../shared/projectPack';
+export type { PackInspection, PackJobProgress, PackOutcome, PackPlan } from '../../shared/projectPack';
+
+/// What a pack of the open project would hold now.
+export const projectPackPlan = (): Promise<PackPlan> => invokeRaw<PackPlan>("project_pack_plan");
+
+/// Packs the open project into `archive`, after writing what Save As writes
+/// first; resolves when the pack is complete or cancelled.
+export const projectPack = (archive: string): Promise<PackOutcome<{ archive: string; files: number }>> =>
+  invokeRaw("project_pack", { archive });
+
+/// Stops the running pack or unpack; false when none runs.
+export const projectPackCancel = (): Promise<boolean> => invokeRaw<boolean>("project_pack_cancel");
+
+/// Reads a pack file before anything is written; rejects for one this app
+/// cannot open.
+export const projectUnpackInspect = (archive: string): Promise<PackInspection> =>
+  invokeRaw<PackInspection>("project_unpack_inspect", { archive });
+
+/// Unpacks `archive` into a new folder in `parent` and opens it.
+export const projectUnpack = (archive: string, parent: string): Promise<PackOutcome<{ dir: string }>> =>
+  invokeRaw("project_unpack", { archive, parent });
 
 // ============================================================
 // Workspace lifecycle (docs/data-model.md)
@@ -2950,6 +2990,9 @@ export interface LibraryMotifRow {
 export interface MotifCatalog {
   project: ProjectMotifRow[];
   library: LibraryMotifRow[];
+  /// Library folders whose name cannot be a Motif's host (`MyMotif`): each
+  /// is offered for nothing until renamed (`renameLibraryMotif`).
+  misnamed: string[];
 }
 
 type WireMotifRow = Record<string, unknown> & { group: "project" | "library"; id: string };
@@ -2965,7 +3008,7 @@ function wireMotif(row: WireMotifRow): MotifSummary | null {
 /// `list_motifs`, split into its two groups. `group` asks for one of them.
 export async function listMotifCatalog(group?: "project" | "library"): Promise<MotifCatalog> {
   const rows = await invoke<WireMotifRow[]>("list_motifs", group ? { group } : {});
-  const out: MotifCatalog = { project: [], library: [] };
+  const out: MotifCatalog = { project: [], library: [], misnamed: [] };
   for (const row of rows) {
     if (row.group === "project") {
       out.project.push({
@@ -2976,6 +3019,8 @@ export async function listMotifCatalog(group?: "project" | "library"): Promise<M
         ...(row.publication ? { publication: row.publication as MotifPublication } : {}),
         motif: row.status === "ok" || row.status === "untrusted" ? wireMotif(row) : null,
       });
+    } else if (row.status === "invalid") {
+      out.misnamed.push(row.id);
     } else {
       const motif = wireMotif(row);
       if (!motif) continue;
@@ -3158,6 +3203,13 @@ export async function saveToLibrary(id: string, revision: string, replace?: { id
 /// nothing, when the trash refuses. No project changes: projects hold copies.
 export async function deleteLibraryMotif(id: string): Promise<void> {
   await invoke("delete_library_motif", { motif_id: id });
+}
+
+/// Renames library folder `id`, whose name cannot be a Motif's host, to the
+/// key main derives from it; answers the new id. Main refuses a name taken.
+export async function renameLibraryMotif(id: string): Promise<string> {
+  const result = await invoke<{ motif_id: string }>("rename_library_motif", { motif_id: id });
+  return result.motif_id;
 }
 
 /// One saved version of an installed Motif (ADR 0172). Mirrors

@@ -2,6 +2,7 @@ import { snapFrameRound } from "../frames";
 import { canEditCrop, canResetCrop, editCrop, resetCrop } from './cropCommands';
 import { canScaleLayer, scalePrimaryLayer } from './scaleCommands';
 import { useCropEditingStore } from '../state/cropEditingStore';
+import { usePackJobStore } from '../pack/packJobStore';
 import {
   logEmit,
   updateLayerParamTracks,
@@ -137,6 +138,13 @@ export const MENU_ONLY_COMMAND_IDS = [
   // rebindable row for a key that acts on no object (`shortcuts/defs.ts` states
   // the same rule for the self-contained block below).
   "openVoiceoverDialog",
+  // A read of the whole project, with no object to act on and no reflex
+  // behind it: the File menu and the palette are its homes.
+  "checkPortability",
+  // The whole project into one file and back (ADR 0178): the same homes, for
+  // the same reason.
+  "packProject",
+  "openPackedProject",
 ] as const;
 
 export type MenuOnlyCommandId = (typeof MENU_ONLY_COMMAND_IDS)[number];
@@ -157,6 +165,9 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   toggleMarkersVisible: "actions.toggle_markers_visible",
   applyDefaultTransition: "actions.apply_default_transition",
   openVoiceoverDialog: "actions.open_voiceover",
+  checkPortability: "actions.check_portability",
+  packProject: "actions.pack_project",
+  openPackedProject: "actions.open_packed_project",
 };
 
 /// Commands implemented HERE, in full. They differ from `MENU_ONLY_COMMAND_IDS`
@@ -512,6 +523,9 @@ export function buildAppCommands(
     // Live-read for the same reason as `clearRange`: whether an eligible cut
     // exists changes with every edit, and App renders on none of them.
     applyDefaultTransition: hasTransitionCut,
+    // One pack or unpack at a time (main refuses a second).
+    packProject: () => usePackJobStore.getState().job === null,
+    openPackedProject: () => usePackJobStore.getState().job === null,
   };
 
   // …and check state, same shape and same rule as `checkedFor` above: a

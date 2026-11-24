@@ -6,8 +6,11 @@
 // following it there with its undo history intact.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { createTsActorHost } from '../ts-actor-host'
+import { createTsActorHost, type TsActorHostDeps } from '../ts-actor-host'
+import type { PackNative } from '../projectPack'
+import { PROJECT_OPENED_EVENT } from '../../../shared/project-events'
 import { openProject, saveProjectAs, type OrchestratorDeps, type SchemaUpgradeReport, type WorkspaceNapi } from '../workspace-orchestrator'
+import { DEFAULT_GITIGNORE } from '../projectContent'
 import type { MediaDerivativesPatch } from '../mutations/media'
 import type { MediaItem, Project } from '../model'
 import { blankProject } from '../model'
@@ -139,7 +142,7 @@ describe('saveProjectAs — the content goes first', () => {
 })
 
 describe('the open project in its folder (host)', () => {
-  function makeHost(disk: MemDisk, patches: (dir: string) => Record<string, MediaDerivativesPatch> = () => ({})) {
+  function makeHost(disk: MemDisk, patches: (dir: string) => Record<string, MediaDerivativesPatch> = () => ({}), extra: Partial<TsActorHostDeps> = {}) {
     let wsDir: string | null = null
     const sent: { event: string; payload: unknown }[] = []
     const hashMediaSource = vi.fn(async () => 'f'.repeat(64))
@@ -160,9 +163,10 @@ describe('the open project in its folder (host)', () => {
       readFile: (p: string) => disk.fs.readFile(p),
       statPath: () => ({ kind: 'file' as const, readable: true }),
       workspaceDir: () => wsDir,
+      ...extra,
     })
     host.start()
-    return { host, hashMediaSource, enqueueJobsForMedia }
+    return { host, hashMediaSource, enqueueJobsForMedia, sent }
   }
   const media = (t: ReturnType<typeof makeHost>) => t.host.publication().summary!.media
 
@@ -187,6 +191,37 @@ describe('the open project in its folder (host)', () => {
     const t = makeHost(disk, () => ({ [MEDIA_ID]: { full_proxy_landed: proxy } }))
     await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
     expect(media(t)[0]!.decode_route).toMatchObject({ route: 'proxied', full_proxy: proxy })
+    t.host.stop()
+  })
+
+  it('the portability check finds a complete folder portable, and nothing to check on the start screen', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    const t = makeHost(disk)
+    expect(t.host.portability()).toBeNull()
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    expect(t.host.portability()).toMatchObject({ portable: true, media: { outside: [], missing: [] } })
+    t.host.stop()
+  })
+
+  it('the check dialog reads the host\'s report, and its folder cleanup refuses with no project open', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    disk.fs.rm('/projects/Demo/Media/sub/clip.mp4')
+    const t = makeHost(disk)
+    await expect(t.host.handleInvoke('project_trash_motif_folder', { name: 'spare' })).rejects.toThrow(/No project is open/)
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    expect(await t.host.handleInvoke('project_portability', {})).toEqual(t.host.portability())
+    t.host.stop()
+  })
+
+  it('the portability check lists a pooled file the folder no longer holds', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    disk.fs.rm('/projects/Demo/Media/sub/clip.mp4')
+    const t = makeHost(disk)
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    expect(t.host.portability()).toMatchObject({ portable: false, media: { missing: [{ media_id: MEDIA_ID }], outside: [] } })
     t.host.stop()
   })
 
@@ -228,6 +263,8 @@ describe('the open project in its folder (host)', () => {
     const { disk, t } = await savedAs()
     expect(disk.read('/projects/Copy/TASTE.md')).toBe('taste')
     expect(disk.fs.exists('/projects/Copy/Cache/proxies/old.mp4')).toBe(false)
+    // The source had no .gitignore, so the copy gets the default.
+    expect(disk.read('/projects/Copy/.gitignore')).toBe(DEFAULT_GITIGNORE)
     t.host.stop()
     const reopened = makeHost(disk)
     await reopened.host.handleInvoke('project_open', { path: '/projects/Copy' })
@@ -235,5 +272,61 @@ describe('the open project in its folder (host)', () => {
     await vi.waitFor(() => expect(reopened.enqueueJobsForMedia).toHaveBeenCalled())
     expect(reopened.hashMediaSource).not.toHaveBeenCalled()
     reopened.host.stop()
+  })
+
+  /** The native pack commands over the memory disk: a pack is the listed
+   *  files' bytes and times, held by archive path. */
+  function memPacks(disk: MemDisk) {
+    const packs = new Map<string, { schema: number; files: { path: string; data: string; mtimeMs: number }[] }>()
+    const calls: { cmd: string; args: Record<string, any>; projectJson?: string }[] = []
+    const native: PackNative = {
+      invoke: async (cmd, json) => {
+        const args = JSON.parse(json) as Record<string, any>
+        if (cmd === 'project_pack') {
+          calls.push({ cmd, args, projectJson: disk.read(`${args.folder}/project.json`) })
+          packs.set(args.archive, { schema: args.schemaVersion, files: (args.files as string[]).map((f) => ({ path: f, data: disk.read(`${args.folder}/${f}`)!, mtimeMs: disk.mtimeMs(`${args.folder}/${f}`)! })) })
+          return JSON.stringify({ files: args.files.length })
+        }
+        calls.push({ cmd, args })
+        const pack = packs.get(args.archive)
+        if (!pack) throw new Error('No such file or directory (os error 2)')
+        if (cmd === 'project_pack_inspect') {
+          return JSON.stringify({ manifest: { files: pack.files }, project_json: pack.files.find((f) => f.path === 'project.json')!.data, total_bytes: pack.files.reduce((n, f) => n + f.data.length, 0) })
+        }
+        for (const f of pack.files) disk.put(`${args.folder}/${f.path}`, f.data, f.mtimeMs / 1000)
+        return JSON.stringify({ files: pack.files.length })
+      },
+      cancelComputeJob: () => false,
+    }
+    return { native, calls }
+  }
+
+  it('packs the open project with its unsaved edits, and the unpacked folder opens with the same media and layers', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    disk.put('/projects/Demo/Cache/proxies/old.mp4', 'machine-local')
+    const packs = memPacks(disk)
+    const t = makeHost(disk, () => ({}), { packNative: packs.native, appVersion: '1.2.3' })
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    await t.host.handleInvoke('add_track', {})
+    const tracks = (h: typeof t) => Object.values(h.host.actor.snapshot().compositions).reduce((n, c) => n + c.tracks.length, 0)
+    const packed = tracks(t)
+    await expect(t.host.handleInvoke('project_pack', { archive: '/out/Demo.weftcut' })).resolves.toMatchObject({ outcome: 'done' })
+    const pack = packs.calls.find((c) => c.cmd === 'project_pack')!
+    const packedTracks = Object.values(JSON.parse(pack.projectJson!).compositions as Record<string, { tracks: unknown[] }>).reduce((n, c) => n + c.tracks.length, 0)
+    expect(packedTracks, 'the pack holds the track not yet autosaved').toBe(packed)
+    expect(pack.args.files).toEqual(['project.json', 'Media/sub/clip.mp4'])
+    t.host.stop()
+
+    const elsewhere = makeHost(disk, () => ({}), { packNative: packs.native })
+    await expect(elsewhere.host.handleInvoke('project_unpack', { archive: '/out/Demo.weftcut', parent: '/elsewhere' }))
+      .resolves.toEqual({ outcome: 'done', dir: '/elsewhere/Demo' })
+    expect(elsewhere.host.openedProject()).toEqual({ dir: '/elsewhere/Demo' })
+    expect(elsewhere.sent.map((e) => e.event)).toContain(PROJECT_OPENED_EVENT)
+    expect(tracks(elsewhere)).toBe(packed)
+    expect(media(elsewhere).map((m) => [m.path, m.available])).toEqual([['/elsewhere/Demo/Media/sub/clip.mp4', true]])
+    expect(disk.read('/elsewhere/Demo/.gitignore')).toBe(DEFAULT_GITIGNORE)
+    expect(disk.fs.exists('/elsewhere/Demo/Cache/proxies/old.mp4')).toBe(false)
+    elsewhere.host.stop()
   })
 })

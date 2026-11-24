@@ -51,6 +51,9 @@ const menu = {
   toggleMarkersVisible: noop,
   applyDefaultTransition: noop,
   openVoiceoverDialog: noop,
+  checkPortability: noop,
+  packProject: noop,
+  openPackedProject: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, exportLocked: true };

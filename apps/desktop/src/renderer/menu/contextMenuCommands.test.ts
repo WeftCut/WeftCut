@@ -45,6 +45,9 @@ function catalogue() {
       toggleMarkersVisible: noop,
       applyDefaultTransition: noop,
       openVoiceoverDialog: noop,
+      checkPortability: noop,
+      packProject: noop,
+      openPackedProject: noop,
     },
     {
       busy: false,

@@ -1,8 +1,9 @@
 // apps/desktop/src/main/state/projectContent.ts
 //
 // The files a project folder holds beside project.json, and how they travel
-// inside or between folders: Save As copies them to the new folder, and the
-// open carries out the file moves and copies a schema upgrade planned.
+// inside or between folders: Save As copies them to the new folder, a pack
+// lists the same files (ADR 0178), and the open carries out the file moves and
+// copies a schema upgrade planned.
 //
 // A copy is a clone where the volume can make one, else a hard link, else a
 // byte copy. A hard link shares its bytes with the source folder: an edit
@@ -14,25 +15,53 @@
 import { constants } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { MEDIA, parseProjectPath, type ProjectPath } from '../../shared/projectPath'
+import { MEDIA, isPortableSegment, parseProjectPath, projectPathOf, type ProjectPath } from '../../shared/projectPath'
 import { STYLES_DIR, TASTE_FILE } from '../taste/packages'
 import { FONTS_DIR } from '../fonts/projectFonts'
+import { PROJECT_MOTIFS_DIR } from '../motif/projectStore'
+import { PROJECT_FILE } from './persistence'
 import type { FilePlan } from './migrate'
 import { toNative, type PathPlatform } from './projectPathNative'
 
+/** The project's ignore file. People edit it, so it is content that is
+ *  copied, never linked. */
+export const GITIGNORE = parseProjectPath('.gitignore')
+
 /** What Save As copies, beside `Motifs/` (motif/projectCopy.ts): each a
  *  folder copied whole or a file, when present. Everything else in the folder
- *  is this machine's (`Cache/`, `Backups/`, `Logs/`, the pre-upgrade
- *  `project.pre-v*.json` files, exports under `output/`) and stays behind. */
+ *  (`PROJECT_MACHINE_LOCAL` and anything the app did not put there) stays
+ *  behind. */
 export const PROJECT_CONTENT: readonly ProjectPath[] = [
   MEDIA, parseProjectPath(FONTS_DIR), parseProjectPath(STYLES_DIR), parseProjectPath(TASTE_FILE),
-  parseProjectPath('export.json'), parseProjectPath('view.json'),
+  parseProjectPath('export.json'), parseProjectPath('view.json'), GITIGNORE,
 ]
+
+/** The top-level names a pack may hold: project.json, the project content
+ *  and `Motifs/`. An unpack refuses an archive entry under any other name. */
+export const PACK_TOP_LEVEL: readonly string[] = [PROJECT_FILE, ...PROJECT_CONTENT, PROJECT_MOTIFS_DIR]
+
+/** What the app keeps in a project folder for this machine alone, as
+ *  `.gitignore` patterns: caches it rebuilds, autosave and Motif history
+ *  backups, logs, exports, and the pre-upgrade `project.pre-v*.json` files. */
+export const PROJECT_MACHINE_LOCAL: readonly string[] = [
+  '/Cache/', '/Backups/', '/Logs/', '/output/', '/project.pre-v*.json', '*.tmp',
+]
+
+/** The `.gitignore` a project gets when it has none. */
+export const DEFAULT_GITIGNORE =
+  `# This machine's files: WeftCut rebuilds or keeps them for this machine alone.\n${PROJECT_MACHINE_LOCAL.join('\n')}\n`
+
+/** Writes `DEFAULT_GITIGNORE` into the project folder `dir` when it holds no
+ *  `.gitignore`; one already there is the user's and stays. */
+export function ensureGitignore(dir: string, fs: { exists(path: string): boolean; writeFile(path: string, text: string): void }, join: (...parts: string[]) => string): void {
+  const file = join(dir, GITIGNORE)
+  if (!fs.exists(file)) fs.writeFile(file, DEFAULT_GITIGNORE)
+}
 
 /** The node:fs/promises calls a copy makes; node:fs/promises itself in
  *  production. `lstat` and `realpath` reject with ENOENT for a missing path. */
 export interface ProjectContentFs {
-  lstat(p: string): Promise<{ isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean; atimeMs: number; mtimeMs: number }>
+  lstat(p: string): Promise<{ isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean; atimeMs: number; mtimeMs: number; size: number }>
   readdir(dir: string): Promise<string[]>
   mkdir(dir: string, opts: { recursive: true }): Promise<unknown>
   copyFile(src: string, dst: string, mode?: number): Promise<void>
@@ -70,7 +99,7 @@ function isInside(child: string, parent: string, l: PathLib): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${l.sep}`) && !l.isAbsolute(rel))
 }
 
-async function lstatOrNull(fs: ProjectContentFs, p: string) {
+async function lstatOrNull(fs: Pick<ProjectContentFs, 'lstat'>, p: string) {
   try { return await fs.lstat(p) } catch (error) {
     if (errorCode(error) === 'ENOENT') return null
     throw error
@@ -145,6 +174,46 @@ export async function copyProjectContent(from: string, to: string, fs: ProjectCo
     throw new Error("A project cannot be saved inside the Media folder of the project it is saved from")
   }
   for (const entry of PROJECT_CONTENT) await copyEntry(fs, toNative(from, entry, platform), toNative(to, entry, platform), entry === MEDIA, l)
+}
+
+/** One file of a pack and its size in bytes. */
+export interface PackEntry { path: ProjectPath; size: number }
+
+/** Lists `src` (project path `rel`) into `out` as Save As copies it: a folder
+ *  whole, a file, nothing for a symbolic link or a missing path. `scratch`
+ *  leaves hidden and temporary names inside a folder out, as `copyEntry`
+ *  does; a Motif folder is copied whole, so it is listed whole. A name no project path can
+ *  take is left out: no project record can name it, and an archive entry
+ *  must be a project path. */
+async function listEntry(fs: Pick<ProjectContentFs, 'lstat' | 'readdir'>, src: string, rel: string[], scratch: boolean, l: PathLib, out: PackEntry[]): Promise<void> {
+  const st = await lstatOrNull(fs, src)
+  if (!st || st.isSymbolicLink()) return
+  if (st.isDirectory()) {
+    for (const name of (await fs.readdir(src)).sort()) {
+      if ((scratch && isScratchName(name)) || !isPortableSegment(name)) continue
+      await listEntry(fs, l.join(src, name), [...rel, name], scratch, l, out)
+    }
+  } else if (st.isFile()) {
+    out.push({ path: projectPathOf(...rel), size: st.size })
+  }
+}
+
+/** What a pack of the project folder `dir` holds: project.json first, then
+ *  every file Save As copies into a new folder — the project content
+ *  (`PROJECT_CONTENT`) and `Motifs/<id>/` for each id of the project's Motif
+ *  table (motif/projectCopy.ts). Never `Backups/` or another machine-local
+ *  entry. project.json leads because autosave may rewrite it while the pack
+ *  runs, and the pack fails on a file whose size changed before it was read. */
+export async function packFiles(dir: string, motifIds: Iterable<string>, fs: Pick<ProjectContentFs, 'lstat' | 'readdir'>, platform: PathPlatform = process.platform): Promise<PackEntry[]> {
+  const l = pathLib(platform)
+  const out: PackEntry[] = []
+  await listEntry(fs, l.join(dir, PROJECT_FILE), [PROJECT_FILE], true, l, out)
+  for (const entry of PROJECT_CONTENT) await listEntry(fs, toNative(dir, entry, platform), [entry], true, l, out)
+  for (const id of [...motifIds].sort()) {
+    if (!isPortableSegment(id) || id.startsWith('.')) continue
+    await listEntry(fs, l.join(dir, PROJECT_MOTIFS_DIR, id), [PROJECT_MOTIFS_DIR, id], false, l, out)
+  }
+  return out
 }
 
 /** After Save As switched folders: copies each of `paths` that is in `from`

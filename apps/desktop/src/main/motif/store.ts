@@ -1,6 +1,6 @@
 import {
   readFileSync, writeFileSync, mkdirSync, readdirSync, statSync,
-  existsSync, rmSync, renameSync,
+  existsSync, rmSync, renameSync, utimesSync,
 } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -10,6 +10,7 @@ import { packageContentHash } from './contentHash';
 import { PackageRevisions } from './packageRevisions';
 import { PackageSource, type PackageListing, type PackageSnapshot } from './packageSource';
 import { LINEAGE_FILE, MotifLineage } from './lineage';
+import { normalize } from './motifPackage';
 
 /** An older release's app-wide drafts, left in the library folder untouched
  *  and unlisted; only the v5 upgrade reads them (`legacyResolve.ts`). */
@@ -339,6 +340,47 @@ export class UserMotifStore {
     }
     for (const v of versions) this.revisions.forget(v);
     this.lineage.forget(id);
+  }
+
+  /** Renames installed `id`'s folder to `to`: every version's manifest takes
+   *  the new id, its page keeping the time it was saved, and the lineage
+   *  follows. Refuses, changing nothing, when another folder in the library
+   *  has the name `to` in any case: on macOS and Windows it is the same
+   *  folder. */
+  renameMotif(id: string, to: string): void {
+    if (!this.libraryId(id) || !existsSync(path.join(this._root, id))) throw new Error(`Unknown Motif: ${id}`);
+    if (!this.libraryId(to)) throw new Error(`Invalid Motif id: ${JSON.stringify(to)}`);
+    const folded = to.toLowerCase();
+    const taken = readdirSync(this._root).find(name => name !== id && name.toLowerCase() === folded);
+    if (taken !== undefined) throw new Error(`The library already has a folder named “${taken}”`);
+    // Every page is rewritten in memory first, so a package that cannot take
+    // the new id refuses the rename before anything moves.
+    const rewrites = this.versionNumbers(id).flatMap(n => {
+      const files = this.versionFiles(id, n);
+      return files ? [{ n, files: normalize(files, to, n).files }] : [];
+    });
+    const from = path.join(this._root, id);
+    const dest = path.join(this._root, to);
+    // Through a staging name, so a rename that changes only the case lands
+    // on a case-insensitive file system too.
+    const staging = path.join(this._root, STAGE_PREFIX + randomUUID());
+    renameSync(from, staging);
+    renameSync(staging, dest);
+    for (const { n, files } of rewrites) {
+      const dir = path.join(dest, versionDirName(n));
+      const saved = statSync(path.join(dir, "index.html"), { bigint: true });
+      for (const file of files) {
+        if (file.path === "index.html" || file.path === "manifest.json") writeFileSync(path.join(dir, file.path), file.bytes);
+      }
+      // In seconds, not a Date, which rounds the millisecond `saved_at`
+      // floors. LANDMINE: libuv truncates the seconds to the microsecond;
+      // without the half microsecond, a float just below its microsecond
+      // loses it, and on a millisecond boundary the millisecond with it.
+      const seconds = (ns: bigint) => (Number(ns / 1000n) + 0.5) / 1e6;
+      utimesSync(path.join(dir, "index.html"), seconds(saved.atimeNs), seconds(saved.mtimeNs));
+      this.revisions.forget(path.join(from, versionDirName(n)));
+    }
+    this.lineage.move(id, to);
   }
 
   publishedIds(): string[] {

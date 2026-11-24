@@ -78,10 +78,13 @@ export function memDisk(): MemDisk {
       const e = entries.get(norm(p))
       if (!e) throw errno('ENOENT')
       const times = e.kind === 'file' ? e.inode : { atimeMs: 0, mtimeMs: 0 }
-      return { isFile: () => e.kind === 'file', isDirectory: () => e.kind === 'dir', isSymbolicLink: () => e.kind === 'symlink', ...times }
+      const size = e.kind === 'file' ? e.inode.data.length : 0
+      return { isFile: () => e.kind === 'file', isDirectory: () => e.kind === 'dir', isSymbolicLink: () => e.kind === 'symlink', atimeMs: times.atimeMs, mtimeMs: times.mtimeMs, size }
     },
     readdir: async (d) => {
-      if (entries.get(norm(d))?.kind !== 'dir') throw errno('ENOTDIR')
+      const e = entries.get(norm(d))
+      if (!e) throw errno('ENOENT')
+      if (e.kind !== 'dir') throw errno('ENOTDIR')
       return children(d)
     },
     mkdir: async (d) => { mkdirp(d) },

@@ -136,6 +136,9 @@ import {
   transcribeSelected,
 } from "./commands/speechCommands";
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
+import { PortabilityDialog } from "./portability/PortabilityDialog";
+import { PackDialog } from "./pack/PackDialog";
+import { openPackedProjectFromEditor } from "./pack/packJobs";
 import { TranscriptionInputDialog } from "./speech/TranscriptionInputDialog";
 import { setTool } from "./state/toolStore";
 import { resetPreviewView } from "./state/previewViewStore";
@@ -221,6 +224,8 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   // ratchet + prod CPU). It lives in playheadStore; consumers pick their tier
   // (transient / throttled / imperative) — see playheadStore.ts.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [portabilityOpen, setPortabilityOpen] = useState(false);
+  const [packOpen, setPackOpen] = useState(false);
   useEffect(() => {
     let disposed = false;
     let stop: (() => void) | undefined;
@@ -1135,6 +1140,9 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         applyDefaultTransition: () =>
           applyTransitionAtPlayhead("Crossfade", undefined, settle),
         openVoiceoverDialog: openVoiceoverPrompt,
+        checkPortability: () => setPortabilityOpen(true),
+        packProject: () => setPackOpen(true),
+        openPackedProject: () => void openPackedProjectFromEditor(t),
       },
       {
         busy,
@@ -1268,6 +1276,8 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           above. */}
       <VoiceoverDialog />
       <TranscriptionInputDialog />
+      {portabilityOpen && <PortabilityDialog onClose={() => setPortabilityOpen(false)} />}
+      {packOpen && <PackDialog onClose={() => setPackOpen(false)} />}
 
       {/* Save Workspace As / Rename Workspace name prompt. */}
       {workspaceNameDialog && workspaceProfiles && (
