@@ -13,7 +13,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { BUILTIN_GRAPHIC_ROLES } from '../../shared/graphicRole'
-import { listStyleDirs, readStylePackage, readTasteFile, TASTE_FILE, type StylePackage } from './packages'
+import { listStyleDirs, readStylePackage, readTasteFile, STYLES_DIR, TASTE_FILE, type StylePackage } from './packages'
 import { validateMotifs, validateRoles, validateTokens, type MotifsByRole, type RoleDeclaration, type TasteDiagnostic, type TasteSource, type Tokens } from './schema'
 import type { Manifest } from '../../shared/motifs/catalog'
 
@@ -36,16 +36,20 @@ export interface TasteRoleMotifs { ids: string[]; source: TasteSource; motifs?: 
 /** Looks a Motif up in the app's catalog; null when there is none by that id. */
 export type MotifLookup = (id: string) => Manifest | null
 
+/** Where a style package was found. */
+export type StyleOrigin = 'builtin' | 'project' | 'user'
+
 export interface TasteView {
-  style: { name: string; hash: string; origin: 'builtin' | 'user'; pinned: string | null; pin_matches: boolean | null }
+  style: { name: string; hash: string; origin: StyleOrigin; pinned: string | null; pin_matches: boolean | null }
   taste: { path: string | null; present: boolean }
   roles: TasteRole[]
   tokens: Tokens
   /** Graphic role → the style's example Motifs for it (or TASTE.md's):
    *  a starting point an agent uses, forks or departs from, not a template. */
   motifs: Record<string, TasteRoleMotifs>
-  /** Font slot → which of its families this machine has (with the host's
-   *  installed list; absent without one). */
+  /** Font slot → which of its families the font catalog holds, in the
+   *  project's `Fonts/` or on this machine (with the host's family list;
+   *  absent without one). */
   fonts?: Record<string, { wanted: string[]; resolved: string | null; missing: string[] }>
   /** Dotted token path → the layer that set it. */
   provenance: Record<string, TasteSource>
@@ -55,27 +59,39 @@ export interface TasteView {
   revision: string
 }
 
-export interface StyleDirs { builtin: string; user: string | null }
+/** Where style packages are looked up. `project` is the open project's
+ *  `Styles/`; `tasteView` sets it from the project folder it is given. */
+export interface StyleDirs { builtin: string; user: string | null; project?: string | null }
 
 const STYLE_KEYS = ['name', 'version', 'description', 'roles', 'tokens', 'motifs']
 const TASTE_KEYS = ['extends', 'roles', 'tokens', 'motifs']
 
-type Located = { pkg: StylePackage; origin: 'builtin' | 'user' }
+type Located = { pkg: StylePackage; origin: StyleOrigin }
 
-/** Built-ins shadow user packages of the same name: `weftcut-default` always
- *  means the shipped one. */
+/** Lookup order: built-in, then the project's `Styles/`, then the user's
+ *  packages. A project or user package named like a built-in is never read:
+ *  `weftcut-default` always means the shipped one. The project's copy comes
+ *  before the user's so the folder renders the same style on any machine
+ *  (ADR 0176). */
+function styleRoots(dirs: StyleDirs): Array<[StyleOrigin, Map<string, string>]> {
+  return [['builtin', listStyleDirs(dirs.builtin)], ['project', listStyleDirs(dirs.project ?? null)], ['user', listStyleDirs(dirs.user)]]
+}
+
 export function findStyle(dirs: StyleDirs, name: string): Located | null {
-  const builtin = listStyleDirs(dirs.builtin).get(name)
-  if (builtin) { const pkg = readStylePackage(builtin); return pkg ? { pkg, origin: 'builtin' } : null }
-  const user = listStyleDirs(dirs.user).get(name)
-  if (user) { const pkg = readStylePackage(user); return pkg ? { pkg, origin: 'user' } : null }
+  for (const [origin, found] of styleRoots(dirs)) {
+    const dir = found.get(name)
+    if (dir) { const pkg = readStylePackage(dir); return pkg ? { pkg, origin } : null }
+  }
   return null
 }
 
-export function listStyles(dirs: StyleDirs): Array<{ name: string; origin: 'builtin' | 'user' }> {
-  const builtin = listStyleDirs(dirs.builtin)
-  return [...[...builtin.keys()].map((name) => ({ name, origin: 'builtin' as const })),
-    ...[...listStyleDirs(dirs.user).keys()].filter((n) => !builtin.has(n)).map((name) => ({ name, origin: 'user' as const }))]
+export function listStyles(dirs: StyleDirs): Array<{ name: string; origin: StyleOrigin }> {
+  const seen = new Set<string>()
+  const out: Array<{ name: string; origin: StyleOrigin }> = []
+  for (const [origin, found] of styleRoots(dirs)) {
+    for (const name of found.keys()) if (!seen.has(name)) { seen.add(name); out.push({ name, origin }) }
+  }
+  return out
 }
 
 function unknownKeys(data: Record<string, unknown>, known: string[], source: TasteSource, diagnostics: TasteDiagnostic[]) {
@@ -99,7 +115,7 @@ function styleLayer(pkg: StylePackage, diagnostics: TasteDiagnostic[]) {
 }
 
 /** `name` or `name@<hex>`; the hex is a prefix of the package hash. */
-function parseExtends(raw: unknown, diagnostics: TasteDiagnostic[]): { name: string; pin: string | null } {
+export function parseExtends(raw: unknown, diagnostics: TasteDiagnostic[]): { name: string; pin: string | null } {
   if (raw === undefined) return { name: DEFAULT_STYLE, pin: null }
   const m = typeof raw === 'string' ? /^([a-z0-9][a-z0-9_-]{0,63})(?:@([0-9a-f]{8,64}))?$/.exec(raw) : null
   if (!m) {
@@ -176,7 +192,8 @@ function mergeMotifs(style: MotifsByRole, taste: MotifsByRole, lookup: MotifLook
  *  default style alone). Throws only when the default style itself is
  *  missing — a broken install, not an authoring mistake. `motif` looks ids
  *  up in the Motif catalog; without it, role Motifs are listed unchecked. */
-export function tasteView(dirs: StyleDirs, projectDir: string | null, opts: { motif?: MotifLookup; fonts?: ReadonlySet<string> | null } = {}): TasteView {
+export function tasteView(styleDirs: StyleDirs, projectDir: string | null, opts: { motif?: MotifLookup; fonts?: ReadonlySet<string> | null } = {}): TasteView {
+  const dirs: StyleDirs = { ...styleDirs, project: projectDir === null ? null : path.join(projectDir, STYLES_DIR) }
   const diagnostics: TasteDiagnostic[] = []
   const file = readTasteFile(projectDir)
   const tasteData = file && 'frontmatter' in file ? file.frontmatter : null

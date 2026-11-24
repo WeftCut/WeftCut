@@ -149,3 +149,14 @@ describe('the session view names the Motifs that cannot render', () => {
     expect(sessionView(ts).motifs).toEqual({ missing: [], invalid: [], untrusted: [] })
   })
 })
+
+describe('the session view names the fonts that resolve nowhere', () => {
+  it('lists each missing face with the layers that ask for it', async () => {
+    const { ts, backend } = host()
+    ts.missingFonts = () => [{ family: 'Gone Sans', weight: 700, italic: false, layer_ids: ['L1', 'L2'] }]
+    const res = await handleReadResource(backend, () => ts, 'project://session') as { contents: Array<{ text: string }> }
+    expect(JSON.parse(res.contents[0]!.text).fonts).toEqual({
+      missing: [{ family: 'Gone Sans', weight: 700, italic: false, layer_ids: ['L1', 'L2'] }],
+    })
+  })
+})

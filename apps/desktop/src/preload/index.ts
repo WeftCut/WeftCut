@@ -237,9 +237,30 @@ const api: WeftcutApi = {
     get: (): Promise<SystemStats> => ipcRenderer.invoke('app:metrics') as Promise<SystemStats>,
   },
   font: {
+    index: () => ipcRenderer.invoke('font:index'),
+    onIndex: cb => {
+      const listener = (_e: Electron.IpcRendererEvent, index: import('../shared/fonts/types').FontIndex): void => cb(index)
+      ipcRenderer.on('evt:fonts:index', listener)
+      return () => { ipcRenderer.removeListener('evt:fonts:index', listener) }
+    },
+    bytes: (sha256: string): Promise<Uint8Array | null> =>
+      ipcRenderer.invoke('font:bytes', { sha256 }) as Promise<Uint8Array | null>,
     listFamilies: (): Promise<string[]> => ipcRenderer.invoke('font:listFamilies') as Promise<string[]>,
-    resolve: (family: string): Promise<Uint8Array | null> =>
-      ipcRenderer.invoke('font:resolve', { family }) as Promise<Uint8Array | null>,
+  },
+  projectFonts: {
+    view: () => ipcRenderer.invoke('project-fonts:view'),
+    exclude: (family: string) => ipcRenderer.invoke('project-fonts:exclude', { family }),
+    allow: (family: string) => ipcRenderer.invoke('project-fonts:allow', { family }),
+    onChanged: cb => {
+      const listener = (): void => cb()
+      ipcRenderer.on('evt:project-fonts:changed', listener)
+      return () => { ipcRenderer.removeListener('evt:project-fonts:changed', listener) }
+    },
+    onProgress: cb => {
+      const listener = (_e: Electron.IpcRendererEvent, progress: import('../shared/fonts/types').FontCopyProgress | null): void => cb(progress)
+      ipcRenderer.on('evt:project-fonts:progress', listener)
+      return () => { ipcRenderer.removeListener('evt:project-fonts:progress', listener) }
+    },
   },
 
   // Event subscription: main relays core events via webContents.send →

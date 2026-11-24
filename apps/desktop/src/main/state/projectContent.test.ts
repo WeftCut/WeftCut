@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { copyLateFiles, copyProjectContent, placeFilePlans, type ProjectContentFs } from './projectContent'
+import { DEFAULT_GITIGNORE, copyLateFiles, copyProjectContent, ensureGitignore, placeFilePlans, type ProjectContentFs } from './projectContent'
 import { parseProjectPath } from '../../shared/projectPath'
 import { errno } from './__tests__/fixtures/memAtomicIo'
 import { memDisk } from './__tests__/fixtures/memDisk'
@@ -10,6 +10,8 @@ function projectAt(dir: string) {
   const content = {
     [`${dir}/Media/clip.mp4`]: 'clip', [`${dir}/Media/sub/x.wav`]: 'x', [`${dir}/Media/sub/deeper/y.png`]: 'y',
     [`${dir}/TASTE.md`]: 'taste', [`${dir}/export.json`]: '{}', [`${dir}/view.json`]: '{}',
+    [`${dir}/Fonts/Example-Bold.ttf`]: 'font', [`${dir}/Styles/mine/STYLE.md`]: 'style',
+    [`${dir}/.gitignore`]: '/my-notes/\n',
   }
   const local = {
     [`${dir}/project.json`]: '{}', [`${dir}/project.pre-v6.json`]: '{}',
@@ -126,7 +128,7 @@ describe('copyProjectContent on volumes that refuse', () => {
     const { disk } = projectAt('/from')
     disk.refuse.clone = 'ENOSYS'
     await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
-    for (const name of ['TASTE.md', 'export.json', 'view.json']) {
+    for (const name of ['TASTE.md', 'export.json', 'view.json', 'Fonts/Example-Bold.ttf', 'Styles/mine/STYLE.md']) {
       expect(disk.linked(`/from/${name}`, `/to/${name}`), name).toBe(false)
       expect(disk.read(`/to/${name}`), name).toBe(disk.read(`/from/${name}`))
     }
@@ -145,9 +147,31 @@ describe('copyProjectContent on volumes that refuse', () => {
     const { disk } = projectAt('/from')
     disk.put('/from/Media/.DS_Store', 'finder')
     disk.put('/from/Media/new.mp4.tmp', 'half an import')
+    disk.put('/from/Fonts/.Example-Bold.ttf.0f1e.part', 'half a font copy')
     await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
     expect(disk.read('/to/Media/.DS_Store')).toBeUndefined()
     expect(disk.read('/to/Media/new.mp4.tmp')).toBeUndefined()
+    expect(disk.read('/to/Fonts/.Example-Bold.ttf.0f1e.part')).toBeUndefined()
+  })
+})
+
+describe('ensureGitignore', () => {
+  const join = (...parts: string[]) => parts.join('/')
+
+  it('gives a folder without one the default, which ignores every machine-local directory', () => {
+    const disk = memDisk()
+    disk.fs.mkdirp('/p')
+    ensureGitignore('/p', disk.fs, join)
+    expect(disk.read('/p/.gitignore')).toBe(DEFAULT_GITIGNORE)
+    const patterns = DEFAULT_GITIGNORE.split('\n')
+    for (const local of ['/Cache/', '/Backups/', '/Logs/', '/output/', '/project.pre-v*.json']) expect(patterns).toContain(local)
+  })
+
+  it('keeps the one the user has', () => {
+    const disk = memDisk()
+    disk.put('/p/.gitignore', '/my-notes/\n')
+    ensureGitignore('/p', disk.fs, join)
+    expect(disk.read('/p/.gitignore')).toBe('/my-notes/\n')
   })
 })
 

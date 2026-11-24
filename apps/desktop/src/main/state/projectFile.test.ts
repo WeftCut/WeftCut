@@ -78,8 +78,8 @@ describe('the project file across machines', () => {
     expect(serializeProjectToJson(loadProjectFromJson(second, { dir: 'C:\\Users\\u\\Film', platform: 'win32' }).project)).toBe(first)
   })
 
-  it('refuses a current file whose path_rel is not a project path, naming the item', () => {
-    const wire = JSON.parse(readFileSync('fixtures/projects/v8.json', 'utf8'))
+  it('refuses a current-schema file whose path_rel is not a project path, naming the item', () => {
+    const wire = JSON.parse(readFileSync(`fixtures/projects/v${SCHEMA_VERSION}.json`, 'utf8'))
     expect(wire.schema_version).toBe(SCHEMA_VERSION)
     wire.media_pool[ID].path_rel = 'Media\\x.mp4'
     expect(() => loadProjectFromJson(JSON.stringify(wire), { dir: '/home/u/Film', platform: 'linux' }))
@@ -87,7 +87,7 @@ describe('the project file across machines', () => {
   })
 
   it('refuses an external item without its path', () => {
-    const wire = JSON.parse(readFileSync('fixtures/projects/v7.json', 'utf8'))
+    const wire = JSON.parse(readFileSync(`fixtures/projects/v${SCHEMA_VERSION}.json`, 'utf8'))
     wire.media_pool[ID].path_rel = null
     expect(() => loadProjectFromJson(JSON.stringify(wire), { dir: '/home/u/Film', platform: 'linux' }))
       .toThrow(new RegExp(`media ${ID} has neither path_rel nor path_abs`))

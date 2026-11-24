@@ -24,6 +24,9 @@ interface AppSelectProps {
   popupClassName?: string;
   disabled?: boolean;
   ariaLabel?: string;
+  /// Trigger text while `value` matches no option, e.g. `""` on a picker that
+  /// acts on choice and never holds a selection.
+  placeholder?: ReactNode;
 }
 
 /// The one dropdown control for every WeftCut form. Replaces native
@@ -39,6 +42,7 @@ export function AppSelect({
   popupClassName,
   disabled,
   ariaLabel,
+  placeholder,
 }: AppSelectProps) {
   return (
     <Select.Root
@@ -53,7 +57,7 @@ export function AppSelect({
         className={cn("app-select", className)}
         aria-label={ariaLabel}
       >
-        <Select.Value />
+        <Select.Value placeholder={placeholder} />
         <span className="menu-chevron" aria-hidden="true">
           <AppIcon icon={ChevronDownIcon} size="caption" />
         </span>

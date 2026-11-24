@@ -99,6 +99,9 @@ export type ValidationError =
   // and a `motif://` host (`isProjectMotifKey`).
   | { rule: 'MotifNotInProject'; layer: Uuid; motif_id: string }
   | { rule: 'InvalidMotifKey'; motif_id: string }
+  // `settings.excluded_fonts` breaks an entry rule (main/state/excludedFonts.ts);
+  // `index` names the entry, null when the value is not a list.
+  | { rule: 'InvalidExcludedFonts'; index: number | null; reason: 'NotList' | 'NotString' | 'Empty' | 'Untrimmed' | 'TooLong' | 'Duplicate' }
 
 // ── CommandError — the full mutation-error vocabulary. Individual dispatch
 // arms construct only the variants they need. ──

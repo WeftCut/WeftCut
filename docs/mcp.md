@@ -519,8 +519,9 @@ path nodes keep their stored `id` (`get_param_track` answers them as
 | `project://links` | a composition's links as link records `{ link_id, composition_id, members }` |
 | `project://transitions` | a composition's transitions as transition records (`transition_id`, `from_layer_id`, `to_layer_id`) |
 | `project://settings` | editing preferences, `audio_roles` (role gain / mute / solo) and `metadata`; `modified_at` moves on every recorded edit and is restored by undo/redo/restore — compare for change, not order |
-| `project://taste` | the merged style (`extends` in `TASTE.md`, else `weftcut-default`) + overrides: roles, tokens, example `motifs` per role, `fonts` resolved against installed families, provenance, diagnostics, revision. Pixel tokens are for a 1080-px frame. Read fresh every call; the app never writes `TASTE.md` |
-| `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder`, `motifs: {missing, invalid, untrusted}` (the open project's Motifs that cannot render, each with `motif_id` and `diagnostic`; an untrusted one also with the `revision` the user would trust, ADR 0174) |
+| `project://taste` | the merged style (`extends` in `TASTE.md`, else `weftcut-default`) + overrides: roles, tokens, example `motifs` per role, `fonts` resolved against the project's `Fonts/` and installed families, provenance, diagnostics, revision. Pixel tokens are for a 1080-px frame. Read fresh every call; the app never writes `TASTE.md` |
+| `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder`, `motifs: {missing, invalid, untrusted}` (the open project's Motifs that cannot render, each with `motif_id` and `diagnostic`; an untrusted one also with the `revision` the user would trust, ADR 0174), `fonts: {missing: [{family, weight, italic, layer_ids}]}` (faces a layer asks for that resolve nowhere here, ADR 0176) |
+| `project://portability` | what the open project needs from outside its folder for a copy (Save As, a pack, a sync) to play the same elsewhere: `portable`, `media: {outside, missing}`, `motifs: {missing, invalid, untracked}` (untracked = folders under `Motifs/` no layer places, left out of a copy, not counted by `portable`), `fonts: {excluded, missing}` (excluded = families the user keeps out of `Fonts/` in Settings > Project > Fonts), `style: {outside}` (the style `TASTE.md` extends when the folder lacks it). An untrusted Motif is not listed: its files are in the folder |
 | `project://tacks` | the opening's tacks, oldest first (see *Tacks*) |
 | `project://playhead` | where the user is in the editor, asked of the editor window at read time (see below) |
 | `project://history` | recent ops and checkpoints (no snapshots); see below |
@@ -1118,11 +1119,12 @@ version?}` reports the outcome, and every transition sends
 `notifications/resources/list_changed`; there is no blocking wait, so an agent
 tells the user to review and does not poll. A newer proposal from the same
 Motif supersedes the older (`superseded_proposal_id`). Approval, rejection,
-the user's own Save to library, restoring or deleting a library Motif and
-updating a project copy from the library are renderer-only channels
+the user's own Save to library, restoring, deleting or renaming a library
+Motif and updating a project copy from the library are renderer-only channels
 (`approve_motif_proposal`, `reject_motif_proposal`, `publish_motif`,
-`restore_motif_version`, `delete_library_motif`, `update_project_motif`):
-none is an MCP tool, so no client approves its own proposal.
+`restore_motif_version`, `delete_library_motif`, `rename_library_motif`,
+`update_project_motif`): none is an MCP tool, so no client approves its own
+proposal.
 
 ### Workflow / safety
 
@@ -1305,9 +1307,13 @@ in its description (convention 5).
   Checkpoint restore is gated by availability, lock and pending restore. Object
   navigation is editor-only; the agent view can jump its preview to a review
   item's time without selecting, entering compositions or starting playback.
-- The connection header shows the listening service, registered clients
-  (name/version, last request) and running calls. Registration is not a
-  heartbeat.
+- The connection status shows the listening service, registered clients
+  (name/version, last request) and running calls, or the session's reason.
+  Registration is not a heartbeat. The agent view gives it a row above the
+  tabs. The editor folds it into the tab bar: a service dot whose popover
+  holds it, End while a session runs, and the Activity tab's failures-only
+  toggle. The editor's status bar already shows what runs (work pill) and
+  what awaits review (bell).
 
 ## Review
 
@@ -1320,8 +1326,9 @@ as a whole — *Approve all* (moves the baseline, records nothing) or *Revert
 all* (a recorded restore to the baseline, under the history lock) — and both
 refuse when the view has moved on. Removed entities are drawn at their
 baseline place, labelled as such. Tacks paint in their own Review lane under
-the marker lane while the Review overlay is on and the opening has had a
-session or a tack; overlapping chips collapse into a group chip.
+the marker lane while the Review overlay (*Tacks & changes*) is on and the
+opening has had a session or a tack; overlapping chips collapse into a group
+chip.
 
 ## Tool description quality
 

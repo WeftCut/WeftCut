@@ -6,6 +6,7 @@ import { produce, setAutoFreeze } from 'immer'
 import { assertLockedLayersUnchanged } from './layerLocks'
 import type { Animated, AudioRole, Composition, Continuity, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid , TextParams} from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
+import { normalizeExcludedFonts } from './excludedFonts'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState, type OpDiff } from './history'
 import { mcpActor } from './mcp-actor'
@@ -180,10 +181,6 @@ export interface ActorOptions {
   /** The project's merged style tokens (`project://taste`), which new layers
    *  are born in. Absent (tests, a bare actor): today's defaults. */
   tasteTokens?: () => Tokens | null
-  /** Font families installed on this machine, lowercased, for a style's font
-   *  slots (`font_<slot>` Motif props). Absent or null: not known yet, so a
-   *  slot gets its whole preference list. */
-  installedFonts?: () => ReadonlySet<string> | null
   /** Status-log seam (reconcile-dropped-transition rows). Optional → no-op when
    *  omitted (tests that do not care about logging). Called AFTER a successful
    *  commit is recorded; a throwing emit is caught and must never abort. */
@@ -198,6 +195,9 @@ export interface ActorHandle {
   dispatch(channel: string, args: Record<string, unknown>, by?: Actor): DispatchResult
   command(channel: string, wireArgs: Record<string, unknown>): DispatchResult
   replaceState(next: Project): void
+  /** Replace `settings.excluded_fonts` (Settings > Project > Fonts). Unrecorded,
+   *  like Canvas: project setup, not an edit. Never reachable over MCP. */
+  setExcludedFonts(list: readonly string[]): void
   subscribe(cb: (e: ChangeEvent) => void): () => void
   historyView(limit: number): ReturnType<History['view']>
   historyStatus(): ReturnType<History['status']>
@@ -985,6 +985,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (patch.pause_review !== undefined) next.pause_review = reviewedPauseParams(patch.pause_review)
     history.replaceSettingsEverywhere(next)
     broadcastUnrecorded('Updated project settings', current())
+  }
+
+  function setExcludedFonts(list: readonly string[]): void {
+    opts.assertWritable?.()
+    history.replaceSettingsEverywhere({ ...current().settings, excluded_fonts: normalizeExcludedFonts(list) })
+    broadcastUnrecorded('Updated excluded fonts', current())
   }
 
   // ── replace_state — wholesale project swap. validate
@@ -1947,7 +1953,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   /** A Motif's props as placed: the style's tokens for the props the caller
    *  left out (spec H2-D2), the caller's own on top. */
   function styledMotifProps(manifest: Manifest, given: unknown): unknown {
-    const styled = motifTokenProps(manifest, opts.tasteTokens?.() ?? null, opts.installedFonts?.() ?? null)
+    const styled = motifTokenProps(manifest, opts.tasteTokens?.() ?? null)
     if (Object.keys(styled).length === 0) return given ?? null
     return given && typeof given === 'object' && !Array.isArray(given) ? { ...styled, ...(given as Record<string, unknown>) } : given ?? styled
   }
@@ -2306,7 +2312,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const groups = new Set(p.groups as RestyleGroup[])
           const restyled = commit(HISTORY_SUMMARY.styleRestyle, layerRefs(ids), { kind: 'Coarse' }, (d) => applyRestyleToTaste(d, ids!, tokens, groups, opts.defaultTextFont?.()?.trim() || undefined, (id) => {
             const m = motifCatalog.get(id)
-            return m ? { manifest: m, props: motifTokenProps(m, tokens, opts.installedFonts?.() ?? null) } : null
+            return m ? { manifest: m, props: motifTokenProps(m, tokens) } : null
           }))
           return { ok: true, result: toolRecord({ restyled, unchanged: ids.length - restyled.length }) }
         }
@@ -2468,7 +2474,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // no snapshot. The work session and the two picture views live in the
           // MCP host, which answers them before a call reaches the actor.
           if (view === 'effects') return { ok: true, result: toolRecord(effectsCatalogView()) }
-          if (view === 'session' || view === 'tacks' || view === 'taste' || view === 'playhead' || view === 'media_thumbnail' || view === 'media_frame')
+          if (view === 'session' || view === 'tacks' || view === 'taste' || view === 'playhead' || view === 'portability' || view === 'media_thumbnail' || view === 'media_frame')
             return { ok: false, error: { code: 'invalid_params', message: `view '${view}' is served by the MCP host, not by the state actor — call it over MCP, or read the matching resource` } }
           const compositionId = p.composition_id as string | null
           const scoped = compositionId !== null && SCOPED_PROJECT_VIEWS.has(view) ? `?composition=${compositionId}` : ''
@@ -2515,6 +2521,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     command,
     mcpCall,
     replaceState,
+    setExcludedFonts,
     subscribe(cb) { subs.add(cb); return () => subs.delete(cb) },
     historyView: (n) => history.view(n),
     historyStatus: () => history.status(),

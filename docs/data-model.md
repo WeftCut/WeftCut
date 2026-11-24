@@ -142,6 +142,13 @@ autosave lets edits stay unsaved while they keep coming (default 60 s; a
 missing or invalid value means the default, others are clamped to 5–300 s); it
 is internal, set by no UI or MCP tool. `preview_width/height` and
 `history_capacity` are wire-only: nothing reads them.
+`excluded_fonts` lists the font families the user keeps out of the
+project's `Fonts/` folder, compared case-insensitively; entries are trimmed,
+non-empty, at most 200 characters and distinct (`state/excludedFonts.ts`).
+An optional field with no schema bump: `parseProject` fills `[]` where it is
+absent and repairs a hand-edited list, and validate refuses a list that breaks
+a rule. `set_project_settings` refuses the field: only its own host op writes
+it.
 
 ## Composition
 
@@ -194,8 +201,9 @@ refuses the open, naming the item.
 
 Import names are portable: Rust picks each name with `portable_file_name`
 (reserved characters to `_`, device names suffixed, at most 255 bytes) and adds
-`-2`, `-3` when a name is taken in any letter case. Relink walks all of `Media/`
-and heals a renamed file back to its recorded path.
+`-2`, `-3` when a name is taken in any letter case; `portableFileName`
+(`shared/projectPath.ts`) is its TS twin, held to the same vectors. Relink
+walks all of `Media/` and heals a renamed file back to its recorded path.
 
 What the disk holds for each item is read by `state/poolFiles.ts`: the source's
 state (present, missing or changed; ADR 0153) and whether each derivative slot
@@ -689,20 +697,41 @@ The workspace folder **is** the project; originals are copied in on import.
 ├── project.json        canonical state; autosaved, replaced atomically (see Saving)
 ├── project.pre-v{n}.json  pre-upgrade bytes (see Versioning)
 ├── view.json           UI view state for this project
+├── .gitignore          written where a new project or a Save As target has
+│                       none: ignores the machine-local entries below; the
+│                       user's own is kept and copied as content
 ├── Media/              imported originals (workspace owns the bytes), any
 │                       subfolders; Voiceover/ holds synthesized speech
 ├── Motifs/<id>/        the Motifs the project renders, named in project.json's
 │                       motifs table; edited in place (see motifs.md)
+├── Fonts/              every face of the families the project draws, one
+│                       face per file, copied automatically (ADR 0176);
+│                       a font put here by hand serves the project too;
+│                       `.part` files are copies in flight
+├── Styles/<name>/      the user style TASTE.md extends, looked up before the
+│                       user's packages (ADR 0126)
 ├── Cache/              derivatives, regenerable: proxies, thumbnails, filmstrip,
 │                       waveforms, audio (48 kHz conform), frames, raster (Motif
 │                       frames <hash>/<frame>.wfrm, see motifs.md#frame-cache),
 │                       transcribe-audio, descriptions, shots,
 │                       shot-stats, voiceover (TTS request cache; the pooled
-│                       copy is in Media/Voiceover/), inline-subs (reserved)
+│                       copy is in Media/Voiceover/), inline-subs (reserved),
+│                       fonts.json (faces once seen in Fonts/, so a re-copy
+│                       is told apart from a first copy)
 ├── Backups/            project.json copy every 50 commits or 5 min; newest 20 kept;
 │                       motifs/: every Motif revision the table records, for undo
-└── Renders/            default export destination
+├── Logs/               this project's status log (status-log.md)
+└── output/             default export destination
 ```
+
+`Cache/`, `Backups/`, `Logs/`, `output/` and the `project.pre-v*.json` files
+are **machine-local**: kept for this machine alone, never copied by Save As
+(`PROJECT_MACHINE_LOCAL` in `state/projectContent.ts`). The **portability
+check** (File > Check portability, `project://portability`) lists what the
+project still needs from outside its folder: media outside it or missing,
+Motifs whose folder is gone or holds no package, fonts excluded from `Fonts/`
+or resolving nowhere, and a `TASTE.md` style the folder lacks; it also names
+folders under `Motifs/` no layer places, which a copy leaves behind.
 
 ### Saving
 
@@ -726,7 +755,9 @@ unsaved a failed flush loses nothing and the project leaves anyway. Edits made
 before the flush are in it; from the flush to the end of the switch every edit
 is refused (`ProjectBusy`), since one landing then would be dropped by the swap,
 and autosave writes nothing, since the workspace may already name the next
-folder while the outgoing project is still in memory.
+folder while the outgoing project is still in memory. Before the swap, pending
+copies into `Fonts/` finish (the work pill shows them); a copy is written as a
+`.part` file and renamed, so one cut short leaves no partial font.
 
 Every write of `project.json` (autosave, Save As, New, the pre-upgrade copy)
 writes `project.json.tmp` beside it, flushes it to disk, renames it over the
@@ -750,8 +781,9 @@ error code), the last successful save and the project folder, with Retry now,
 Save As… and Open folder ([status-log.md § Bar](status-log.md#bar)).
 Save As works out of a failing folder: it writes the whole project to the new
 one, so the old folder's failed flush does not stop it. It copies the project's
-content first (`state/projectContent.ts`: `Media/`, `TASTE.md`, `export.json`,
-`view.json`; Motifs through their own copy), cloning each file where the
+content first (`state/projectContent.ts`: `Media/`, `Fonts/`, `Styles/`,
+`TASTE.md`, `export.json`, `view.json`, `.gitignore`; Motifs through their own copy), after
+pending font copies have finished, cloning each file where the
 filesystem can, else hard-linking a media file on one volume, else copying, and keeping
 modification times; `Cache/`, `Backups/` and logs stay behind, so the copy
 rebuilds its proxies. `project.json` is written last. The log gets one `Warn`
@@ -769,7 +801,8 @@ language, like main's other native dialogs.
 A Windows shutdown, restart or sign-out is not a quit: the process is terminated
 as the session ends, with no time for a question. Unsaved edits are written
 synchronously at that moment (`main/sessionEnd.ts`); a write that fails there is
-recorded, and the next start offers to report it.
+recorded, and the next start offers to report it. A font copy still running is
+not waited for; its `.part` file is deleted and the copy redone at the next open.
 
 ### `view.json`: how this project was last looked at
 
@@ -842,7 +875,7 @@ after relaunch — copy mode only, explicit confirm, never `userData` itself.
 ## Versioning
 
 `project.json` carries `schema_version`. `SCHEMA_VERSION` (`state/model.ts`,
-currently **6**) is the only home of the number; Rust round-trips the field and
+currently **7**) is the only home of the number; Rust round-trips the field and
 never gates on it.
 
 The load path is a **version-keyed upgrade chain** ([ADR 0047](adr/0047-project-schema-upgrades-are-a-version-keyed-chain.md)):

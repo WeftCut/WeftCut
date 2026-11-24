@@ -26,6 +26,7 @@ import type { Sprite } from 'pixi.js';
 import { Container, Texture } from "pixi.js";
 import type { InjectedMotifFrames } from "./worker/motifStream";
 import type { MotifReaderDiv } from "../../shared/motifs/readerProtocol";
+import type { FontIndex } from "../../shared/fonts/types";
 import type { Renderer } from "pixi.js";
 
 import { snapFrameFloor } from "../frames";
@@ -279,6 +280,9 @@ export interface CompositionNodeHost {
   sourceColor(mediaId: string): SourceColor | undefined;
   mediaById(mediaId: string): MediaSummary | undefined;
   motifFrames(key: string): InjectedMotifFrames | undefined;
+  /// The face index Text layers resolve against; null while preview is still
+  /// registering the faces it names (`TextSpriteInit.fontIndex`).
+  fontIndex(): FontIndex | null;
   /// The divisor preview reads stored Motif frames at (Playback Resolution).
   motifScaleDiv(): MotifReaderDiv;
   ensureTenBitIngest(): TenBitIngest;
@@ -1705,6 +1709,7 @@ export class CompositionNode {
     const sprite = new TextSprite({
       layerId: layer.id,
       snapToPixels: this.host.mode === "preview",
+      fontIndex: () => this.host.fontIndex(),
     });
     const text: ActiveText = { layerId: layer.id, sprite, effects: new EffectChain() };
     this.texts.set(layer.id, text);

@@ -248,6 +248,11 @@ refresh, rather than rendering new bytes under an old hash.
 Earlier versions kept app-wide drafts, some linked to a working folder. They
 are no longer listed, and their folders stay in the library's drafts folder
 untouched; one notice says how many are left. A project that used one gets
-its own copy when it is upgraded. To use any other draft, run create_motif
-with a directory source on its folder, or on the working folder it was linked
-to.
+its own copy when it is upgraded, unless the draft's linked working folder
+could not be read: it rendered nothing then, so the Motif stays missing. The
+upgrade's log row names each missing Motif with the draft of its id, when one
+is left. Copying that draft's folder to the project's `Motifs/<id>/` while
+the project is open restores the Motif, trusted as made here; create_motif
+would add a new Motif beside the missing one instead. To use any other draft,
+run create_motif with a directory source on its folder, or on the working
+folder it was linked to.

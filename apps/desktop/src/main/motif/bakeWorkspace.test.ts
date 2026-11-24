@@ -148,6 +148,15 @@ describe('Motif workspace ownership', () => {
     expect(h.persist).not.toHaveBeenCalled();
   });
 
+  it('captures with the faces the plan was keyed with', async () => {
+    const h = await fixture(); const c = content('lettered');
+    c.capture.fonts = [{ family: 'Anton', sha256: 'a'.repeat(64), weight: [100, 900], italic: false }];
+    expect(() => validateBakePlan(plan([c]))).not.toThrow();
+    await h.workspace.reconcile(plan([c]));
+    await until(() => h.workspace.snapshot().statuses.lettered?.phase === 'ready');
+    expect(h.persist.mock.calls[0]![1]).toMatchObject({ fonts: c.capture.fonts });
+  });
+
   it('rejects malformed ranges, addresses and capture inputs before scheduling', () => {
     const good = plan([content('example')]);
     expect(() => validateBakePlan(good)).not.toThrow();
@@ -163,6 +172,7 @@ describe('Motif workspace ownership', () => {
       (p: MotifBakePlan) => { p.contents[0]!.ranges[0]!.end = 2; },
       (p: MotifBakePlan) => { p.sequence = [{ cacheKey: p.contents[0]!.cacheKey, ranges: [{ start: 0, end: 2 }] }]; },
       (p: MotifBakePlan) => { p.live.push(null as never); },
+      (p: MotifBakePlan) => { p.contents[0]!.capture.fonts = [{ family: 'Anton', sha256: 'x', weight: 400, italic: false }]; },
     ]) {
       const malformed = structuredClone(good); mutate(malformed);
       expect(() => validateBakePlan(malformed)).toThrow('Invalid Motif bake plan');

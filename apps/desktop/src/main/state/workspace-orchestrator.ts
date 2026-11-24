@@ -21,7 +21,7 @@ import { serializeProject, type GridRepair } from './serialize'
 import type { MigrationContext, MotifCopy, PositionBakeReport } from './migrate'
 import { foldDerivatives, type MediaDerivativesPatch } from './mutations/media'
 import { mediaAtFolder } from './projectFile'
-import { copyLateFiles, copyProjectContent, placeFilePlans, sameFolder, type MissingFile, type ProjectContentFs } from './projectContent'
+import { copyLateFiles, copyProjectContent, ensureGitignore, placeFilePlans, sameFolder, type MissingFile, type ProjectContentFs } from './projectContent'
 import type { PathPlatform } from './projectPathNative'
 
 /** The Rust-native workspace bookkeeping, exposed over napi (Backend methods
@@ -66,6 +66,15 @@ export interface OrchestratorFs {
  *  earlier copy). */
 export interface MotifCopyOutcome { id: string; revision: string | null; diagnostic?: string; uid?: string; from?: ProjectMotifEntry['from'] }
 
+/** A draft an older release left in the library folder: its folder, and,
+ *  when it rendered nothing there, why. */
+export interface LegacyDraft { folder: string; diagnostic?: string }
+
+/** A Motif an upgrade left without a folder. `draft` is the folder of an
+ *  older release's draft with its id, which restores it when copied to
+ *  `Motifs/<id>/` while the project is open. */
+export interface MissingMotif { id: string; diagnostic?: string; draft?: string }
+
 export interface OrchestratorDeps {
   /** The facts an upgrade of the project in `dir` may need. */
   migration?: (dir: string) => MigrationContext
@@ -73,6 +82,9 @@ export interface OrchestratorDeps {
    *  (`main/motif/legacyResolve.ts`). Never throws: a copy that fails answers
    *  a null revision. Without it every planned copy stays missing. */
   placeMigratedMotifs?: (dir: string, copies: readonly MotifCopy[]) => MotifCopyOutcome[]
+  /** The draft an older release left for Motif `id` on this machine, named
+   *  beside each Motif an upgrade leaves missing; null when there is none. */
+  legacyDraft?: (id: string) => LegacyDraft | null
   /** Copies the open project's Motif folders that `ids` names from `from` to
    *  `to` for Save As (`main/motif/projectCopy.ts`); throws when one fails.
    *  Without it the saved copy holds no Motif folder. */
@@ -122,7 +134,7 @@ export interface SchemaUpgradeReport {
   backupFile: string
   /** Table entries left without a folder: nothing resolved them, or their
    *  copy failed (`diagnostic`). Absent when every Motif was copied. */
-  missingMotifs?: { id: string; diagnostic?: string }[]
+  missingMotifs?: MissingMotif[]
   /** Media files the upgrade moved into the project folder that are not
    *  there: their copy failed. Absent when every copy was made. */
   missingMedia?: MissingFile[]
@@ -166,6 +178,17 @@ function settleMotifCopies(project: Project, copies: readonly MotifCopy[], outco
   const missing = Object.entries(motifs).filter(([, entry]) => entry.revision === null)
     .map(([id]) => diagnostics.has(id) ? { id, diagnostic: diagnostics.get(id)! } : { id })
   return { project: { ...project, motifs }, missing }
+}
+
+/** `missing` with the draft an older release left for its id, and why that
+ *  draft rendered nothing when it did not; a failed copy keeps its own
+ *  diagnostic. A lookup that throws names no draft. */
+function withDraft(missing: MissingMotif, legacyDraft: OrchestratorDeps['legacyDraft']): MissingMotif {
+  let draft: LegacyDraft | null = null
+  try { draft = legacyDraft?.(missing.id) ?? null } catch { /* no draft named */ }
+  if (!draft) return missing
+  const diagnostic = missing.diagnostic ?? draft.diagnostic
+  return { ...missing, ...(diagnostic === undefined ? {} : { diagnostic }), draft: draft.folder }
 }
 
 /** project_open. Pre-checks → load (schema gate + migration chain) →
@@ -248,7 +271,7 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
     const outcomes = loaded.motifCopies.length ? deps.placeMigratedMotifs?.(dir, loaded.motifCopies) ?? [] : []
     const settled = settleMotifCopies(project, loaded.motifCopies, outcomes)
     project = settled.project
-    if (settled.missing.length) schemaUpgrade.missingMotifs = settled.missing
+    if (settled.missing.length) schemaUpgrade.missingMotifs = settled.missing.map(missing => withDraft(missing, deps.legacyDraft))
     // Before the re-fan-out: import recovery hashes a voiceover copied here.
     const missingMedia = deps.contentFs
       ? await placeFilePlans(dir, loaded.filePlans, deps.contentFs, platform)
@@ -305,7 +328,8 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
 }
 
 /** project_save_as. snapshot → copy the project content and the Motif
- *  folders from `from` → write project.json → commit_workspace → place the
+ *  folders from `from` → default `.gitignore` where none came →
+ *  write project.json → commit_workspace → place the
  *  pool in `dir` with the new cache's derivatives (`rebase_media`) →
  *  push_recent → derivative re-fan-out. Never swaps state (the actor already
  *  holds it). A failed copy fails the save before project.json names it. */
@@ -318,6 +342,7 @@ export async function saveProjectAs(deps: OrchestratorDeps, dir: string, from?: 
     if (deps.contentFs) await copyProjectContent(from, dir, deps.contentFs, deps.platform ?? process.platform)
     deps.copyMotifs?.(from, dir, Object.keys(snap.motifs))
   }
+  ensureGitignore(dir, fs, join)
   fs.writeFile(join(dir, PROJECT_FILE), serializeProjectToJson(snap))
   await napi.commitWorkspace(dir)
   if (moves) {
@@ -372,7 +397,7 @@ export function makeEnqueueDerivatives(
 }
 
 /** project_new_workspace. Validate → blank project with
- *  the canvas preset → write → commit_workspace → replace_state → push_recent +
+ *  the canvas preset → default `.gitignore` → write → commit_workspace → replace_state → push_recent +
  *  set_last_new_project_parent. Returns the created workspace path. */
 export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArgs): Promise<string> {
   const { actor, napi, fs, join, idGen } = deps
@@ -394,6 +419,7 @@ export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArg
   root.fps = { num: args.fpsNum, den: args.fpsDen }
 
   fs.mkdirp(target)
+  ensureGitignore(target, fs, join)
   fs.writeFile(join(target, PROJECT_FILE), serializeProjectToJson(project))
   await napi.commitWorkspace(target)
   actor.replaceState(project)

@@ -366,12 +366,35 @@ export interface WeftcutApi {
   notification: { send(opts: NotificationOpts): Promise<void> }
   /// Process-tree resource snapshot (app.getAppMetrics(), main-side).
   metrics: { get(): Promise<SystemStats> }
-  /// Best-effort OS font-file lookup by family name (main-side scan); null when
-  /// not found, so the renderer falls back to the bundled font chain.
+  /// The font face catalog (main/fonts/catalog.ts): the project's `Fonts/`
+  /// and the system fonts, by face (ADR 0176). Never carries a path.
   font: {
-    resolve(family: string): Promise<Uint8Array | null>
-    /** Session snapshot; family names only, never filesystem paths. */
+    /** Channel `font:index`. */
+    index(): Promise<import('./fonts/types').FontIndex>
+    /** Event `evt:fonts:index`: a new index whenever the face set changes. */
+    onIndex(cb: (index: import('./fonts/types').FontIndex) => void): () => void
+    /** Channel `font:bytes`: one face as a standalone font file (a collection
+     *  face extracted); null when the face is gone or its file changed. */
+    bytes(sha256: string): Promise<Uint8Array | null>
+    /** Channel `font:listFamilies`: project ∪ system families, display casing. */
     listFamilies(): Promise<string[]>
+  }
+  /// The open project's collected fonts and exclusion list (Settings >
+  /// Project > Fonts, ADR 0176). None of these is an undoable edit.
+  projectFonts: {
+    /** Channel `project-fonts:view`; null when no project is open. */
+    view(): Promise<import('./fonts/types').ProjectFontsView | null>
+    /** Channel `project-fonts:exclude`: record the family, then move its files
+     *  in `Fonts/` to the OS trash. */
+    exclude(family: string): Promise<import('./fonts/types').ProjectFontsView | null>
+    /** Channel `project-fonts:allow`: drop the family from the list and copy it
+     *  at once (no log line). */
+    allow(family: string): Promise<import('./fonts/types').ProjectFontsView | null>
+    /** Event `evt:project-fonts:changed`: the view changed (copies, exclusions,
+     *  `Fonts/` edited outside the app). */
+    onChanged(cb: () => void): () => void
+    /** Event `evt:project-fonts:progress`: copies in flight; null when none. */
+    onProgress(cb: (progress: import('./fonts/types').FontCopyProgress | null) => void): () => void
   }
   /// Native GPU-decode preview (Windows d3d11va): a decode session whose
   /// frames stay in shared-texture slots. `open` starts a session and resolves

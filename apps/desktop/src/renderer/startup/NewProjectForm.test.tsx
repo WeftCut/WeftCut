@@ -244,3 +244,11 @@ describe("NewProjectForm custom size validation", () => {
     expect(createButton().hasAttribute("disabled")).toBe(false);
   });
 });
+
+describe("NewProjectForm folder", () => {
+  it("says the project folder collects the media, Motifs and fonts it uses", async () => {
+    const user = userEvent.setup();
+    await renderForm(user);
+    expect(screen.getByText(i18n.t("new_project.collects_hint"))).toBeTruthy();
+  });
+});

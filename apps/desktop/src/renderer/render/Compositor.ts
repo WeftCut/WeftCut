@@ -43,8 +43,11 @@ import { isMotifReaderDiv, type MotifReaderDiv } from "../../shared/motifs/reade
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Nv12Ingest } from "./nv12/Nv12Ingest";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
-import { loadBundledFontBytes } from "./fonts/registry";
-import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
+import { ensureFaces, loadBundledFontBytes } from "./fonts/registry";
+import { hasFaces, loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
+import { getFontIndex, subscribeFontIndex, whenFontIndex } from "./fonts/fontIndexStore";
+import { textFaceRefs } from "./fonts/textFaces";
+import type { FontIndex } from "../../shared/fonts/types";
 import { installCjkLineBreaking } from "./fonts/lineBreak";
 import type { TextFit } from "./textBox";
 import { STAGE, stageAdd, stageRecord } from "./perf/stageTimers";
@@ -186,7 +189,14 @@ export interface CompositorInit {
   /// export Worker injects an `ExportDecoderPool` that drives decoding
   /// in batched chunks instead.
   pool?: DecoderPool;
+  /// Export: the face index the Worker registered its faces from
+  /// (`textFaceRefs` over the same summary). Preview reads the renderer's
+  /// index store instead; absent elsewhere, Text draws the bundled fonts.
+  fontIndex?: FontIndex;
 }
+
+/// No catalog faces: Text draws its bundled leaves and the bundled chain.
+const NO_FONTS: FontIndex = { revision: 0, complete: false, faces: [] };
 
 export class Compositor {
   private readonly sync = new PreviewSyncTracker();
@@ -230,6 +240,17 @@ export class Compositor {
   private originalAssetUrl: (mediaId: string) => string | null;
   private sourceColor: (mediaId: string) => SourceColor | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
+  /// The index Text layers resolve against (`CompositionNodeHost.fontIndex`):
+  /// null while preview registers the faces the summary needs, so no text
+  /// rasterizes in a font it is about to replace (`syncFonts`).
+  private renderFontIndex: FontIndex | null;
+  /// Preview's font registration state (`syncFonts`).
+  private bundledFonts: Promise<void> = Promise.resolve();
+  private bundledFontsReady = false;
+  private fontIndexKnown = false;
+  private fontSyncKey: string | null = null;
+  private fontSyncSeq = 0;
+  private stopFontIndex: (() => void) | null = null;
   private compositionWidth = 1920;
   private compositionHeight = 1080;
   private disposed = false;
@@ -340,6 +361,7 @@ export class Compositor {
       sourceColor: (id) => this.sourceColor(id),
       mediaById: (id) => this.mediaById(id),
       motifFrames: (key) => this.motifFrames.get(key),
+      fontIndex: () => this.renderFontIndex,
       motifScaleDiv: () => this.motifService.scaleDiv,
       ensureTenBitIngest: () => this.ensureTenBitIngest(),
       ensureNv12Ingest: () => this.ensureNv12Ingest(),
@@ -394,14 +416,32 @@ export class Compositor {
     // `e2e/electron/text-box-cjk-export.spec.ts` is what goes red for it.
     installCjkLineBreaking();
     // Preview + real DOM only — the export Worker has neither `document`
-    // nor preview audio.
+    // nor preview audio, and registers its fonts before building this.
     if (this.mode === "preview" && typeof document !== "undefined") {
-      // Bundled fonts: same set as the export Worker, so preview matches the
-      // burned-in output. Awaited off the constructor; the first post-load
-      // redraw picks them up.
-      void loadBundledFontBytes().then((b) =>
-        loadFontsIntoFaceSet(document.fonts, b),
-      );
+      // Bundled fonts and the summary's catalog faces: the same set the export
+      // Worker registers, so preview matches the burned-in output. Text holds
+      // until they are in (`syncFonts`).
+      this.renderFontIndex = null;
+      this.bundledFonts = loadBundledFontBytes()
+        .then((b) => loadFontsIntoFaceSet(document.fonts, b))
+        .then(() => { this.bundledFontsReady = true; });
+      this.stopFontIndex = subscribeFontIndex(() => {
+        this.fontIndexKnown = true;
+        this.syncFonts();
+      });
+      // A failed fetch still releases the hold: Text then draws the bundled
+      // fonts rather than nothing.
+      void whenFontIndex()
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.warn("[weftcut/pixi] font index fetch failed", err);
+        })
+        .finally(() => {
+          this.fontIndexKnown = true;
+          this.syncFonts();
+        });
+    } else {
+      this.renderFontIndex = init.fontIndex ?? NO_FONTS;
     }
   }
 
@@ -582,6 +622,7 @@ export class Compositor {
     this.decodePriorityPlanCache = null;
     const prevProjectId = this.projectSummary?.project_id ?? null;
     this.projectSummary = summary;
+    this.syncFonts();
     const composition = compositionOrRoot(summary, openId) ?? EMPTY_COMPOSITION;
     const sameNode =
       composition.id === this.root.composition.id &&
@@ -618,6 +659,46 @@ export class Compositor {
     // project change. Called AFTER the fps update above so its planning reads
     // the new frame grid.
     this.motifService.handleProjectChanged();
+  }
+
+  /// Preview: register the bundled fonts and exactly the catalog faces the
+  /// summary's Text layers resolve to (`textFaceRefs`, the list export sends
+  /// its Worker), deleting faces no longer referenced. While any is still
+  /// loading, Text keeps its last raster (`renderFontIndex` null): a Pixi Text
+  /// drawn in a fallback font is not redrawn when the face arrives. Re-runs
+  /// only when the index revision or the face list changes.
+  private syncFonts(): void {
+    if (this.disposed || this.mode !== "preview" || typeof document === "undefined" || !this.fontIndexKnown) return;
+    const index = getFontIndex();
+    const refs = this.projectSummary ? textFaceRefs(this.projectSummary, index) : [];
+    const key = `${index.revision}|${refs.map((r) => r.sha256).join(",")}`;
+    if (key === this.fontSyncKey) return;
+    this.fontSyncKey = key;
+    const seq = ++this.fontSyncSeq;
+    const settle = () => {
+      if (seq !== this.fontSyncSeq || this.disposed) return;
+      this.renderFontIndex = index;
+      this.scheduleRepaint();
+    };
+    const ready = this.bundledFontsReady && hasFaces(document.fonts, refs);
+    const faces = ensureFaces(document.fonts, refs);
+    if (ready) {
+      settle();
+      return;
+    }
+    this.renderFontIndex = null;
+    void Promise.all([this.bundledFonts, faces])
+      .then(([, failed]) => {
+        if (failed.length > 0) {
+          // eslint-disable-next-line no-console
+          console.warn("[weftcut/pixi] font faces could not be registered", failed);
+        }
+      })
+      .catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn("[weftcut/pixi] font registration failed", err);
+      })
+      .finally(settle);
   }
 
   /// Composite one frame at composition-time `tUs`.
@@ -882,6 +963,8 @@ export class Compositor {
     this.readOutputClock = null;
     if (this.disposed) return;
     this.disposed = true;
+    this.stopFontIndex?.();
+    this.stopFontIndex = null;
     // No final `onUnsupported` fire: the host's listener dies with this
     // Compositor and `compositeFrame` is now a no-op.
     this.unsupportedMedia.clear();

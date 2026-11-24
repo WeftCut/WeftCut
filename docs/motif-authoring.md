@@ -194,7 +194,9 @@ animation — deleting it breaks seeking back to earlier times.
   call names its own; absent means untagged.
 - **`fonts`** — declares bundled font files; meaningful only for Motifs
   packaged as a directory with an `assets/` folder. A single-file
-  Motif embeds fonts as `data:` URIs instead.
+  Motif embeds fonts as `data:` URIs instead. A family declared here draws
+  from the package; the app never serves it to the page or copies it into a
+  project.
 
 ### Duration: three shapes
 
@@ -255,15 +257,21 @@ one with the same keys.
   prop's type. A colour token may name a palette entry. The manifest default
   should be the style's own value, so a preview without a project looks
   right.
-- **Font slots.** A `string` prop named `font_<slot>` gets the families of
-  `tokens.fonts.<slot>` installed on the machine, in order (the whole list
-  when none is installed), as a CSS stack (`'Anton', 'Impact'`). Give it a
-  `max_length` of about 200. Use it as a `font-family` value with a generic
-  family appended, and `document.fonts.load` it per weight and size in
-  `setup`. Installed families need no `@font-face`. Frames follow the
-  machine's fonts, which is the price of not bundling them. The props form
-  edits a font slot with a picker of installed families; a pick is a
-  one-family stack (`'Anton'`).
+- **Font slots.** A `string` prop named `font_<slot>` gets the whole family
+  list of `tokens.fonts.<slot>`, in order, as a CSS stack
+  (`'Anton', 'Impact'`). Give it a `max_length` of about 200. Use it as a
+  `font-family` value with a generic family appended, and
+  `document.fonts.load` it per weight and size in `setup`. The families are
+  resolved when the frame renders: before `setup` runs, the app registers
+  their faces in the page under their own names, from the project's `Fonts/`
+  first, then the system, so the page needs no `@font-face` for them. The
+  families the characters of the Motif's `string` props draw with, walked
+  through each slot's list, are copied into the project with every weight
+  and style, so its frames look the same on a machine without those fonts.
+  Text a Motif draws should come from props for its fonts to travel with the
+  project: text written into the HTML is not seen (*Fonts* below). The
+  props form edits a font slot with a font picker; a pick is a one-family
+  stack (`'Anton'`), and Motif default restores the manifest's list.
 - **Leaving.** A Motif that leaves, not just holds, declares a `number` prop
   `duration_s` as its `max_duration_prop`. `ctx.duration` is then the
   layer's length, and the layer is capped to it. Play the exit in the last
@@ -349,6 +357,25 @@ be bit-identical across hardware.
 
 ### Fonts
 
+A Motif names a font in one of two ways, and only these travel with the
+project:
+
+- **Ship it.** Put the font file in the package's `assets/`, load it with
+  an `@font-face` rule from its relative path and declare it in the
+  manifest's `fonts`; a single-file Motif embeds it as a `data:` URI. It
+  draws the same on every machine.
+- **Take it from a `font_<slot>` prop.** A `string` prop named
+  `font_<slot>` holds a CSS family list, the manifest's default unless the
+  layer sets one. The app serves those families' faces to the page and
+  copies them into the project's `Fonts/` (*Font slots* under *Style
+  Motifs*). Any Motif may declare one, styled or not.
+
+A family written straight into the CSS or the script (`font-family: Inter`)
+is neither served nor copied: the page draws whatever the machine has, and a
+fallback where it lacks the family. The text a Motif draws should come from
+its `string` props as well: the app reads those, never the HTML, to know
+which families a slot needs.
+
 `await document.fonts.ready` is NOT sufficient — it can resolve before a lazy
 `@font-face` fetch even starts, letting the first capture paint a fallback
 font. A font-using Motif MUST force each face it renders, per weight and size,
@@ -358,9 +385,9 @@ before `setup` resolves:
 await document.fonts.load('700 56px "Inter"');
 ```
 
-Embedded `data:` fonts are the deterministic choice; `system-ui` stacks render
-differently across machines. A Style Motif's `font_<slot>` props name installed
-families on purpose (*Style Motifs* above).
+Bundled or embedded `data:` fonts are the deterministic choice; `system-ui`
+stacks render differently across machines. A Style Motif's `font_<slot>` props
+name families the app serves from the project (*Style Motifs* above).
 
 ## Parameter UI
 

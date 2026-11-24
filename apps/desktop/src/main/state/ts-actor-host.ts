@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/ts-actor-host.ts
-import { resolve as resolvePath } from 'node:path'
+import { dirname, resolve as resolvePath } from 'node:path'
 import { createActor, type ActorHandle, type ChangeEvent } from './actor'
 import type { Actor, EntityRef } from './history'
 import { uuidV7Gen } from './ids'
@@ -8,7 +8,7 @@ import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
 import { CommandFailure } from './errors'
 import { createAutosave, type AutosaveController, type AutosaveFs, type AutosaveSaveState } from './autosave'
-import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type SchemaUpgradeReport } from './workspace-orchestrator'
+import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type MissingMotif, type SchemaUpgradeReport } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
 import type { ProjectContentFs } from './projectContent'
 import { serializeProjectToJson } from './persistence'
@@ -30,7 +30,7 @@ import { captureImportSession, createMediaImporter, type MediaImporter } from '.
 import { createPoolFiles, type PoolFiles, type PoolFilesFs } from './poolFiles'
 import { BUILTIN_MANIFESTS, type Manifest } from '../../shared/motifs/catalog'
 import { libraryHost, type ProjectMotifs, type UnavailableMotif } from '../../shared/motifs/projectMotifs'
-import type { UserMotifStore } from '../motif/store'
+import type { Trash, UserMotifStore } from '../motif/store'
 import { runMotifTool } from '../motif/motifTools'
 import { legacyMigration } from '../motif/legacyResolve'
 import { copyProjectMotifs } from '../motif/projectCopy'
@@ -50,11 +50,20 @@ import type { ExportSettingsStore } from '../export-settings'
 import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
 import { tasteView } from '../taste/view'
+import { collectExtendedStyle, styleOutsideProject } from '../taste/projectStyles'
+import { portabilityReport } from './portability'
+import type { PortabilityReport } from '../../shared/portability'
+import { trashUntrackedMotifFolder } from './untrackedMotifFolder'
 import { AuditStore } from '../lint/audits'
 import { playheadView } from '../mcp/playheadView'
 import type { WorkspaceStore } from '../workspace'
 import { ExportJobError } from '../exportJobs'
 import type { PathPlatform } from './projectPathNative'
+import type { ProjectFontStore } from '../fonts/projectFonts'
+import type { MissingFontUse } from '../fonts/uses'
+
+/** What the host asks of the project font store. */
+export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'projectChanged' | 'published' | 'missing' | 'view' | 'motifFolderChanged'>
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -63,9 +72,13 @@ export interface TsActorHostDeps {
   /** Ask the editor window where the user is (`mcp/playheadView.ts`). Absent
    *  (tests, no window) → `project://playhead` refuses as not ready. */
   readEditorPlayhead?: () => Promise<import("../../shared/editorPlayhead").EditorPlayheadReport>
-  /** Installed font families, lowercased; null until the system scan lands.
-   *  A style's font slots resolve against it (spec H2-D4). */
-  installedFonts?: () => ReadonlySet<string> | null
+  /** The font catalog's families (project `Fonts/` and system), lowercased;
+   *  null until the system scan lands. The taste view tells which of a style
+   *  slot's families resolve against it. */
+  fontFamilies?: () => ReadonlySet<string> | null
+  /** The open project's font collector (fonts/projectFonts.ts). Absent
+   *  (tests) → nothing is collected and no font is reported missing. */
+  fonts?: ProjectFontsHost
   /** The clip-compute job registry (ADR 0121). Absent → plain calls. */
   computeJobs?: import("../compute/jobs").ComputeJobs
   beginImport?: HybridDeps['beginImport']
@@ -140,6 +153,9 @@ export interface TsActorHostDeps {
    *  Optional → guard in runMotif throws if absent. Tests that don't exercise
    *  motif tools omit this so they don't need a real temp-dir store. */
   motifStore?: UserMotifStore
+  /** Moves a folder to the system trash (`shell.trashItem`). Absent → the
+   *  portability check's folder cleanup refuses: nothing is removed for good. */
+  trash?: Trash
   /** Built-in Motifs ({id, manifest, html}), loaded once at boot from the
    *  relocated served assets. Empty in tests that don't exercise built-ins.
    *  Optional — defaults to [] when absent. */
@@ -256,6 +272,13 @@ export interface TsActorHost {
    *  gone, whose files make no package, or whose revision is not trusted on
    *  this machine. Empty with no project open. */
   unavailableMotifs: () => UnavailableMotif[]
+  /** Families the open project asks for that resolve nowhere
+   *  (`project://session` `fonts.missing`). Empty with no project open. */
+  missingFonts?: () => MissingFontUse[]
+  /** What the open project still needs from outside its folder
+   *  (`project://portability`, `state/portability.ts`); null with no project
+   *  open. */
+  portability: () => PortabilityReport | null
   /** The open project's `Motifs/<id>/` changed on disk (`watchProjectMotifs`):
    *  a new revision of a Motif the project records becomes a recorded edit
    *  (`ProjectMotifRecords.folderChanged`). */
@@ -287,6 +310,17 @@ export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'us
   const actor_kind = e.actor.kind === 'Agent' ? 'agent' : 'user'
   const client = e.actor.kind === 'Agent' ? e.actor.client : null
   return { op_id: e.op_id, actor_kind, client, summary: e.summary, timestamp: e.timestamp, affected: e.affected }
+}
+
+/** The upgrade row's clause for missing Motifs an older release's draft can
+ *  restore: which (the row already lists every missing one), where the
+ *  drafts are, and how. Empty when none can. */
+function restorableDrafts(missing: readonly MissingMotif[]): string {
+  const drafts = missing.filter((m) => m.draft !== undefined)
+  if (drafts.length === 0) return ''
+  const which = drafts.length < missing.length ? drafts.map((m) => m.id).join(', ') : missing.length === 1 ? 'it' : 'them'
+  return `; an earlier version's drafts of ${which} are in ${dirname(drafts[0]!.draft!)}:` +
+    " copying a draft's folder into the project's Motifs folder while the project is open restores that Motif"
 }
 
 /** Whether two Motif tables hold the same entries. */
@@ -325,8 +359,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     defaultTextFont: () => deps.appSettings?.get().default_text_font,
     // Read at each creation, so an edit to TASTE.md reaches the next layer
     // without a reload. `opened` is assigned below; this runs only later.
-    tasteTokens: () => (deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: libraryManifest }).tokens : null),
-    installedFonts: () => deps.installedFonts?.() ?? null,
+    tasteTokens: () => { void collectStyle(); return deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: libraryManifest }).tokens : null },
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
     // relink/checkpoint pin-rows.
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
@@ -468,6 +501,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         message: `Project upgraded from schema v${report.from} to v${report.to}; the original is kept as ${report.backupFile}` +
           (report.bakedPositions?.length ? `; ${report.bakedPositions.length} clip(s) converted to frame-sampled position keys. Existing frame appearance is preserved; interpolation between samples and future retiming may differ.` : '') +
           (report.missingMotifs?.length ? `; ${report.missingMotifs.length} Motif(s) could not be copied into the project's Motifs folder: ${report.missingMotifs.map(m => m.id).join(', ')}` : '') +
+          restorableDrafts(report.missingMotifs ?? []) +
           (report.missingMedia?.length ? `; ${report.missingMedia.length} media file(s) could not be copied into the project folder: ${report.missingMedia.map(m => m.path).join(', ')}` : ''),
         details: { kind: 'SchemaUpgrade', from: report.from, to: report.to, backup: report.backupFile,
           ...(report.bakedPositions?.length ? { bakedPositions: report.bakedPositions } : {}),
@@ -481,12 +515,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     : undefined
   // Without a store the upgrade sizes Motifs from the built-ins and copies none.
   // Its copies are heard where the open project's revisions are (Motif trust).
-  const { migration, placeMigratedMotifs } = store && deps.motifBuiltins
+  const { migration, placeMigratedMotifs, legacyDraft } = store && deps.motifBuiltins
     ? legacyMigration(store, deps.motifBuiltins, (project) => resolver?.hear(project))
     : { migration: () => ({ motifSize: (id: string, version: number) => {
       const manifest = BUILTIN_MANIFESTS.get(id)
       return manifest?.version === version ? manifest.size : null
-    } }), placeMigratedMotifs: undefined }
+    } }), placeMigratedMotifs: undefined, legacyDraft: undefined }
   const swapActor: Pick<ActorHandle, 'replaceState' | 'snapshot' | 'dispatch'> = {
     snapshot: () => actor.snapshot(),
     dispatch: (channel, args, by) => actor.dispatch(channel, args, by),
@@ -495,7 +529,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       try { actor.replaceState(next) } finally { swapping = false }
     },
   }
-  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, copyMotifs: copyProjectMotifs, contentFs: deps.contentFs, platform: deps.platform }
+  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, legacyDraft, copyMotifs: copyProjectMotifs, contentFs: deps.contentFs, platform: deps.platform }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and
@@ -564,6 +598,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     const openAtRequest = opened
     if (closing) opened = null
     const next = persistenceTail.then(async () => {
+      // Copies into `Styles/` and `Fonts/` finish before the folder is let go
+      // (ADR 0176): Save As copies both, and TASTE.md has no watch, so an edit
+      // to it nothing has read yet is collected here. Awaited before
+      // `replacing`, so an edit made meanwhile is in the flush.
+      await collectStyle(openAtRequest?.dir)
+      await deps.fonts?.drain()
       // LANDMINE: from `replacing = true` to onWorkspaceChanging nothing may
       // await. The flush then holds every edit made before it, none can land
       // between it and the swap, and a failed one is undone by clearing one
@@ -616,6 +656,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       }
     })
     const settled = next.finally(() => {
+      // However it ended: the folder now open (or none) takes copies again.
+      deps.fonts?.projectChanged(opened?.dir ?? null)
       workspaceTransitions--
       if (workspaceTransitions === 0) {
         deps.exportJobs?.workspaceSettled()
@@ -627,6 +669,17 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   let opened: OpenedProject | null = null
+  /** Copies the user style the TASTE.md of `dir` (the open project's by
+   *  default) extends into its `Styles/` (ADR 0176). There is no TASTE.md
+   *  watch, so it runs at open, at each read of the tokens and before the
+   *  folder is let go; it does nothing once the copy is there. Never rejects. */
+  const collectStyle = (dir = opened?.dir): Promise<void> => {
+    if (!deps.styleDirs || !dir) return Promise.resolve()
+    return collectExtendedStyle(deps.styleDirs, dir).then(() => {}, (error: unknown) => {
+      try { deps.emitLog?.({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message: `The style TASTE.md extends was not copied into Styles/: ${String(error)}`, details: { kind: 'ProjectStyles' } }) }
+      catch (err) { console.warn('[ts-actor-host] emitLog failed (project style)', err) }
+    })
+  }
   /** Set while the app quits: nothing opens after it. A quit that fails to
    *  close the project (Cancel, a failed update restart) clears it again. */
   let quitting = false
@@ -642,6 +695,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     open: async (dir) => {
       await replaceWorkspace(async () => { await openProject(orchestratorDeps, dir); opens(dir) })
       motifRecords.opened()
+      void collectStyle()
     },
     saveAs: (dir) => replaceWorkspace(async () => {
       try { await saveProjectAs(orchestratorDeps, dir, deps.workspaceDir()) }
@@ -775,6 +829,21 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return out
   }
 
+  function portability(): PortabilityReport | null {
+    const summary = publication().summary
+    if (!opened || !summary || publishedProject === null) return null
+    const pool = publishedProject.media_pool
+    return portabilityReport({
+      media: summary.media.map(m => ({ id: m.id, label: m.label, path: m.path, path_rel: pool[m.id]?.path_rel ?? null, available: m.available })),
+      unavailableMotifs: unavailableMotifs(),
+      motifTable: Object.keys(publishedProject.motifs),
+      motifFolders: projectMotifs()?.ids() ?? [],
+      excludedFonts: deps.fonts?.view()?.excluded ?? [],
+      missingFonts: deps.fonts?.missing() ?? [],
+      outsideStyle: deps.styleDirs ? styleOutsideProject(deps.styleDirs, opened.dir) : null,
+    })
+  }
+
   function publishChange(e?: ChangeEvent, traceId?: string, newSession = false, settledWorkspace = false): void {
     publicationVersion = {
       session: publicationVersion.session + (newSession ? 1 : 0),
@@ -785,6 +854,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (settledWorkspace) publishedDir = opened?.dir ?? null
     publishedProject = publishedDir === null ? null : actor.snapshot()
     publishedHistory = actor.historyStatus()
+    if (publishedProject !== null) deps.fonts?.published(publishedProject, projectManifest)
     if (emitting) {
       try {
         deps.send('project:changed', {
@@ -1029,6 +1099,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return actor.snapshot().settings
       case 'saveStatus':
         return saveStatus
+      case 'portability':
+        if (channel === 'project_portability') return portability()
+        return trashUntrackedMotifFolder({
+          report: portability,
+          folder: (name) => projectMotifs()!.folder(name),
+          trash: deps.trash ?? (async () => { throw new Error('No system trash is available') }),
+        }, args.name)
       case 'review': {
         if (channel === 'review_activity_view') return reviewActivityView((args as Partial<ReviewActivityArgs>).history_ids)
         const includeUser = (args as ReviewViewArgs).include_user === true
@@ -1189,7 +1266,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       if (opened === null || replacing || !autosave.unsaved()) return
       autosave.forceFlush()
     },
-    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: libraryManifest, fonts: deps.installedFonts?.() ?? null }) } : {}),
+    ...(deps.styleDirs ? { taste: () => { void collectStyle(); return tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: libraryManifest, fonts: deps.fontFamilies?.() ?? null }) } } : {}),
     // The project is read once the editor has answered: an edit made while the
     // question was out is in both halves of the answer, not only the editor's.
     ...(deps.readEditorPlayhead ? { playhead: async () => { const report = await deps.readEditorPlayhead!(); return playheadView(actor.snapshot(), report) } } : {}),
@@ -1209,7 +1286,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     poolFiles,
     motifTool: runMotif,
     unavailableMotifs,
-    motifFolderChanged: (id, state) => motifRecords.folderChanged(id, state),
+    missingFonts: () => (opened ? deps.fonts?.missing() ?? [] : []),
+    portability,
+    motifFolderChanged: (id, state) => {
+      motifRecords.folderChanged(id, state)
+      deps.fonts?.motifFolderChanged()
+    },
     start() {
       agent.start()
       emitting = true

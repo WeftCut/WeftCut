@@ -8,6 +8,18 @@ import { packageContentHash } from "./contentHash";
 import { readMotifDirectory, type MotifFile } from "./packageFiles";
 
 let root: string;
+/** Whether the temp volume keeps two names that differ only in case apart
+ *  (Linux, usually); on macOS and Windows they are one folder. */
+function caseSensitiveTemp(): boolean {
+  const dir = mkdtempSync(path.join(tmpdir(), "case-probe-"));
+  try {
+    writeFileSync(path.join(dir, "a"), "");
+    return !existsSync(path.join(dir, "A"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 beforeEach(() => { root = mkdtempSync(path.join(tmpdir(), "motif-store-")); });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
@@ -133,6 +145,34 @@ describe("UserMotifStore delete", () => {
     install(s, "foo", "Foo");
     await expect(s.trashMotif("foo")).rejects.toThrow(/trash/);
     expect(s.publishedIds()).toEqual(["foo"]);
+  });
+});
+
+describe("UserMotifStore rename", () => {
+  it("moves every version under the new id, each page keeping its saved time, with the lineage", () => {
+    const s = new UserMotifStore(root);
+    install(s, "MyMotif", "Mine v1", [{ path: "scene.js", bytes: Buffer.from("x") }]);
+    install(s, "MyMotif", "Mine v2");
+    const lineage = s.lineage.of("MyMotif");
+    const saved = s.versions("MyMotif").map((v) => v.saved_at);
+    s.renameMotif("MyMotif", "mymotif");
+    expect(readdirSync(root).filter((n) => !n.startsWith("."))).toEqual(["mymotif"]);
+    expect(s.listManifests().map((m) => [m.id, m.name])).toEqual([["mymotif", "Mine v2"]]);
+    expect(s.versions("mymotif").map((v) => v.saved_at)).toEqual(saved);
+    expect(s.versionFiles("mymotif", 1)!.find((f) => f.path === "scene.js")!.bytes.toString()).toBe("x");
+    expect(s.lineage.peek("mymotif")).toBe(lineage);
+    expect(s.lineage.peek("MyMotif")).toBeNull();
+  });
+
+  // A name taken in another case is a second folder only where the volume
+  // keeps the two apart; elsewhere they are one folder, renamed in place.
+  it.runIf(caseSensitiveTemp())("refuses a name another folder has in any case, changing nothing", () => {
+    const s = new UserMotifStore(root);
+    install(s, "MyMotif", "Mine");
+    install(s, "MYMOTIF", "Other");
+    const before = tree(root);
+    expect(() => s.renameMotif("MyMotif", "mymotif")).toThrow(/already has a folder named “MYMOTIF”/);
+    expect(tree(root)).toEqual(before);
   });
 });
 

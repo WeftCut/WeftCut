@@ -20,6 +20,7 @@
 // derived from it, never to an object built inside the selector.
 import { useCallback } from "react";
 import { create } from "zustand";
+import { primaryLayerIdOf, useSelectionStore } from "../state/selectionStore";
 
 export interface SelectedKeyframe {
   layerId: string;
@@ -38,13 +39,24 @@ interface State {
 }
 
 // Shared so clearing an already-empty selection writes an identical reference
-// and notifies nobody — `LayerBlock` clears from an effect that runs once per
-// non-primary clip, and a fresh Map each time would re-render every diamond.
+// and notifies nobody: a fresh Map each time would re-render every diamond.
 const EMPTY: ReadonlyMap<string, SelectedKeyframe> = new Map();
 
 export const useKeyframeSelectionStore = create<State>(() => ({ selected: EMPTY }));
 
-/// Replace the whole selection with one key — clicking a diamond.
+// A change of primary clip drops the keyframe selection, so keys cannot stay
+// armed after the user moves on: `deleteSelected` takes keyframes whenever any
+// are selected, and Delete has to revert to the clip. Ordering is load-bearing
+// for a diamond click (`useSelectKeyframe`): the clip is selected FIRST, so this
+// clear runs before the key is selected, not after.
+useSelectionStore.subscribe((next, prev) => {
+  if (primaryLayerIdOf(next.selection) !== primaryLayerIdOf(prev.selection)) {
+    clearKeyframeSelection();
+  }
+});
+
+/// Replace the whole selection with one key. The primitive: a gesture on a
+/// diamond goes through `useSelectKeyframe`, which also selects the key's clip.
 export function selectKeyframe(key: SelectedKeyframe): void {
   useKeyframeSelectionStore.setState({
     selected: new Map([[keyframeKey(key), key]]),

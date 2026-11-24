@@ -137,6 +137,9 @@ export const MENU_ONLY_COMMAND_IDS = [
   // rebindable row for a key that acts on no object (`shortcuts/defs.ts` states
   // the same rule for the self-contained block below).
   "openVoiceoverDialog",
+  // A read of the whole project, with no object to act on and no reflex
+  // behind it: the File menu and the palette are its homes.
+  "checkPortability",
 ] as const;
 
 export type MenuOnlyCommandId = (typeof MENU_ONLY_COMMAND_IDS)[number];
@@ -157,6 +160,7 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   toggleMarkersVisible: "actions.toggle_markers_visible",
   applyDefaultTransition: "actions.apply_default_transition",
   openVoiceoverDialog: "actions.open_voiceover",
+  checkPortability: "actions.check_portability",
 };
 
 /// Commands implemented HERE, in full. They differ from `MENU_ONLY_COMMAND_IDS`

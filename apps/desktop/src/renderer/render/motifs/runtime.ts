@@ -231,15 +231,48 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
     };
   }
 
+  // The faces main serves for the Motif's font props (meta.fonts, main/motif/
+  // fontProps.ts), by descriptor. Each is a FontFace under the family name
+  // the prop uses, with a URL source: Chromium fetches a face only when text
+  // draws with it. Never load them here; a Motif loads what it needs with
+  // document.fonts.load.
+  var servedFaces = new Map();
+  function registerFaces(fonts) {
+    if (!document.fonts || typeof window.FontFace !== 'function') return;
+    var wanted = new Map();
+    for (var i = 0; fonts && i < fonts.length; i++) {
+      var f = fonts[i];
+      var descriptor = JSON.stringify([f.family, f.weight, f.style]);
+      // Of two faces with one descriptor the first wins, as in resolveFace
+      // (shared/fonts/resolve.ts): meta.fonts lists project faces first.
+      if (!wanted.has(descriptor)) wanted.set(descriptor, f);
+    }
+    for (var [key, held] of servedFaces) {
+      var want = wanted.get(key);
+      if (want && want.url === held.url) continue;
+      document.fonts.delete(held.face);
+      servedFaces.delete(key);
+    }
+    for (var [descriptor, face] of wanted) {
+      if (servedFaces.has(descriptor)) continue;
+      var fontFace = new window.FontFace(face.family, 'url(' + JSON.stringify(face.url) + ')', { weight: face.weight, style: face.style });
+      document.fonts.add(fontFace);
+      servedFaces.set(descriptor, { url: face.url, face: fontFace });
+    }
+  }
+
   // Main gives initialization its own wall-clock budget, separate from frame.
   // __motifRender also calls this for standalone authoring/test compatibility.
   window.__motifSetup = async function (props, meta) {
     if (!def) throw new Error("motif: no motif.define() called");
-    var propsKey = JSON.stringify(props);
+    var fonts = (meta && meta.fonts) || [];
+    // Other faces behind the same props draw another picture: set up again.
+    var propsKey = JSON.stringify(props) + JSON.stringify(fonts);
     if (didSetup && propsKey === lastPropsKey) return true;
     // A frame whose color-scheme differs from its document's gets an opaque
     // backdrop, which would cover a transparent Motif.
     if (window.frameElement) window.frameElement.style.colorScheme = getComputedStyle(document.documentElement).colorScheme;
+    registerFaces(fonts);
     didSetup = false;
     setupActive = true;
     var workerFailure = new Promise(function (_, reject) { rejectWorker = reject; });

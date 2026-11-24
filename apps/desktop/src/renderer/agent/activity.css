@@ -32,7 +32,9 @@
 .agent-history-lock > button { flex: none; font-size: var(--font-size-caption); padding-block: calc(2 * var(--ui-px)) !important; white-space: nowrap; }
 .agent-activity-toolbar { display: flex; align-items: center; gap: calc(3 * var(--ui-px)); padding: calc(6 * var(--ui-px)) calc(10 * var(--ui-px)); }
 .agent-activity-toolbar button[aria-pressed="true"] { background: var(--accent); color: var(--accent-foreground); }
-.agent-activity-toolbar button:last-child:not([aria-pressed]) { margin-left: auto; }
+.agent-activity-body { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.agent-latest { position: absolute; z-index: 1; bottom: calc(10 * var(--ui-px)); left: 50%; transform: translateX(-50%); gap: calc(4 * var(--ui-px)) !important; border: 1px solid var(--border); border-radius: 999px !important; background: var(--popover); box-shadow: var(--shadow-popover); font-size: var(--font-size-caption); white-space: nowrap; }
+.agent-activity-panel .agent-latest:hover { background: var(--accent); }
 .agent-activity-list { flex: 1; min-height: calc(60 * var(--ui-px)); overflow: auto; padding: 0 calc(10 * var(--ui-px)) calc(10 * var(--ui-px)); overflow-anchor: none; }
 .agent-work-group { border-top: 1px solid var(--border); margin-top: calc(6 * var(--ui-px)); }
 .agent-work-heading { width: 100%; padding-block: calc(10 * var(--ui-px)) !important; align-items: flex-start !important; }
@@ -87,7 +89,27 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 @keyframes agent-activity-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .agent-spin { animation: none; } }
 /* Tabs: Activity · Tacks · Changes (one entry per review surface, AGENT_PANEL_TABS). */
-.agent-panel-tabs { display: flex; gap: calc(2 * var(--ui-px)); padding: 0 calc(10 * var(--ui-px)); border-bottom: 1px solid var(--border); }
+/* The tab bar's row. In the editor it also carries the panel's actions at its
+   end (failures only, End, the service dot); the tabs give way to them. */
+.agent-panel-head { position: relative; display: flex; align-items: center; min-width: 0; border-bottom: 1px solid var(--border); }
+.agent-panel-tabs { flex: 1 1 auto; min-width: 0; overflow: hidden; display: flex; gap: calc(2 * var(--ui-px)); padding: 0 calc(10 * var(--ui-px)); }
+.agent-panel-tabs > button { flex: none; white-space: nowrap; }
+.agent-panel-head-actions { flex: none; display: flex; align-items: center; gap: calc(2 * var(--ui-px)); padding-right: calc(6 * var(--ui-px)); }
+.agent-errors-only[aria-pressed="true"] { background: var(--accent); color: var(--accent-foreground); }
+.agent-service-anchor { display: flex; }
+.agent-service-trigger { padding: calc(6 * var(--ui-px)) !important; }
+/* Placed against the head (the anchor is static) and kept inside the panel.
+   Qualified by .status-popover: status.css loads after this file, and at equal
+   weight its bar placement (bottom, right: 0, 380 px) would win. */
+.status-popover.agent-service-popover { top: 100%; bottom: auto; right: calc(6 * var(--ui-px)); width: min(calc(320 * var(--ui-px)), calc(100% - calc(12 * var(--ui-px)))); max-height: none; gap: calc(6 * var(--ui-px)); padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px)); overflow-wrap: anywhere; }
+.agent-service-popover-title { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); margin: 0; font-weight: 500; }
+/* The status row's live state grows along a row; in this column it keeps its line. */
+.agent-service-popover > .agent-live-state { flex: none; min-width: 0; white-space: normal; }
+.agent-service-popover-facts { display: flex; flex-direction: column; gap: calc(6 * var(--ui-px)); padding-top: calc(6 * var(--ui-px)); border-top: 1px solid var(--border); max-height: calc(180 * var(--ui-px)); overflow: auto; }
+.agent-service-popover-facts > div { display: flex; flex-direction: column; gap: calc(3 * var(--ui-px)); }
+.agent-service-popover-facts > p { margin: 0; }
+.agent-service-popover-facts code { font-size: var(--font-size-micro); }
+.agent-service-popover-settings { align-self: flex-start; border: 1px solid var(--border); font-size: var(--font-size-caption); }
 .agent-panel-tabs > button { border-radius: 0 !important; border-bottom: 2px solid transparent; color: var(--muted-foreground); padding-block: calc(7 * var(--ui-px)) !important; }
 .agent-panel-tabs > button[aria-selected="true"] { color: var(--foreground); border-bottom-color: var(--selection); }
 .agent-panel-tab-count { min-width: calc(16 * var(--ui-px)); padding: 0 calc(4 * var(--ui-px)); border-radius: 999px; background: color-mix(in srgb, var(--tack) 22%, transparent); color: var(--foreground); font-size: var(--font-size-micro); text-align: center; }
@@ -130,7 +152,6 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-changes-approve-all, .agent-changes-revert-all { border: 1px solid var(--border); font-size: var(--font-size-caption); flex: none; }
 /* Revert all and Approve all sit together at the toolbar's end, and wrap as one. */
 .agent-changes-actions { display: flex; flex: none; gap: calc(3 * var(--ui-px)); margin-left: auto; }
-.agent-changes-actions button.agent-changes-approve-all:last-child { margin-left: 0; }
 /* The diff stat (ChangeStatsBar) at the toolbar's start: signed figures in their
    class hue, a zero one stepped back so the stat keeps its shape. A step under
    the tab labels above it: the panel's summary, not its heading. */

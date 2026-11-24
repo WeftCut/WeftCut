@@ -239,10 +239,17 @@ its host the measured build plus first-step time before it enters
 Frames are identified by content, not placement. The key
 (`motifFrameCacheKey`, `renderer/render/motifs/motifFrames.ts`) is
 `surface-v7 | motifId | version | contentHash | renderW | renderH | fpsNum |
-fpsDen | contentDurationFrames | canonicalProps [| mediaKeys]`.
+fpsDen | contentDurationFrames | canonicalProps [| mediaKeys] [| fontKeys]`.
 
 - `contentHash` covers the manifest, HTML and every companion path and bytes,
   so any source edit re-captures; a built-in with no hash keys stably.
+- `fontKeys` are the hashes of the faces each `font_*` prop resolves to
+  (project `Fonts/`, then system; ADR 0176), present only for a Motif with font
+  props, so other keys are unchanged. A different face behind the same family
+  list re-captures. A capture keyed with a face main cannot serve (not in its
+  catalog, or its file gone) is refused as `transient` rather than drawn with
+  a fallback under that key; the renderer retries once its face index
+  catches up.
 - Not in the key: layer transform and opacity (applied by the sprite) and the
   window position `src_in_us` (frames are absolute content-frame indices, so
   trimming reuses them). The held tail of `content_duration_s` collapses to the
@@ -701,9 +708,11 @@ project loses a Motif by either. Agent and file workflows:
 
 Drafts and linked working directories from earlier versions stay on disk in
 `<dataRoot>/motifs/drafts/` and `.workspaces/`, unlisted; a startup notice
-counts the drafts. Only the v5 → v6 upgrade reads them
-(`main/motif/legacyResolve.ts`), to copy what a v5 project rendered into its
-`Motifs/`.
+counts the drafts. Only a project upgrade reads them
+(`main/motif/legacyResolve.ts`): the v5 → v6 step copies what a v5 project
+rendered into its `Motifs/`, and every upgrade's report names, beside each
+Motif it leaves missing, the draft of the same id when one is left: copied to
+`Motifs/<id>/` while the project is open, it restores that Motif.
 
 Library **covers** are default-props PNGs captured at the poster time at 30 fps,
 scaled to fit 480×270, cached under `<dataRoot>/cache/motif-covers/` and

@@ -473,6 +473,7 @@ const enUS = {
       "A folder with that name is already there. Pick a different name, or a different location.",
     invalid_preset: "That canvas size or frame rate isn't valid — pick another.",
     create_failed: "Couldn't create the project: {{detail}}",
+    collects_hint: "Media, Motifs and fonts you use are copied into this folder, so the project opens anywhere you take it.",
   },
   project: {
     canvas: "{{width}}×{{height}} · {{fps}}",
@@ -558,7 +559,7 @@ const enUS = {
     timeline_markers: "Timeline markers",
     safe_area_guides: "Safe-area guides",
     grid: "Grid",
-    review_overlay: "Review overlay",
+    review_overlay: "Tacks & changes",
     close_active_panel: "Close Active Panel",
     reset_workspace: "Reset Workspace",
     workspaces_heading: "Workspaces",
@@ -607,8 +608,8 @@ const enUS = {
     canvas_snap_off_hint: "Canvas snapping off. Click to enable.",
     grid_on_hint: "Grid on. Click to turn off.",
     grid_off_hint: "Grid off. Click to turn on.",
-    review_overlay_on_hint: "Review overlay on: tacks and unreviewed agent changes show on the timeline. Click to hide.",
-    review_overlay_off_hint: "Review overlay off. Click to show tacks and unreviewed agent changes on the timeline.",
+    review_overlay_on_hint: "Showing agent tacks and unreviewed changes on the timeline. Click to hide.",
+    review_overlay_off_hint: "Agent tacks and unreviewed changes hidden. Click to show.",
     follow_on_hint: "Timeline auto-scroll on. Click to disable.",
     follow_off_hint: "Timeline auto-scroll off. Click to enable.",
     safe_area_on_hint: "Showing safe-area guides. Click to hide.",
@@ -1009,7 +1010,7 @@ const enUS = {
     toggle_preview_grid: "Toggle grid",
     toggle_preview_snap: "Toggle canvas snapping",
     toggle_tail_snap: "Toggle clip snapping",
-    toggle_review_overlay: "Toggle review overlay",
+    toggle_review_overlay: "Toggle tacks & changes",
     // Prefixed, unlike the bare "Full" / "1/2" the Settings radio uses: these
     // labels also appear in the search palette, where a row reading just
     // "1/2" says nothing about what it would change.
@@ -1074,6 +1075,8 @@ const enUS = {
     // Settings → Video understanding now, so the press runs rather than asks.
     describe_selected: "Describe selected clip content",
     open_voiceover: "Voiceover…",
+    check_portability: "Check portability…",
+    check_portability_hint: "List what the project folder does not carry.",
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
     review_shots: "Review shots…",
@@ -1499,6 +1502,7 @@ const enUS = {
   "filter": "Activity filter",
   "filter_all": "All activity",
   "filter_errors": "Failures",
+  "errors_only": "Show failures only",
   "latest": "Back to latest",
   "truncated": "{{count}} older activities are no longer shown.",
   "loading": "Loading activity…",
@@ -2401,6 +2405,21 @@ const enUS = {
     prefer_proxies: "Prefer proxies for preview",
     prefer_proxies_hint:
       "Play the lightweight 720p proxy in the preview for clips that have one, for smoother scrubbing. Export still uses the original.",
+    // Settings > Project > Fonts (settings/ProjectFontsSection.tsx).
+    fonts_heading: "Fonts",
+    fonts_blurb: "Fonts you use are copied into the project's Fonts/ folder, so the project looks the same on other computers.",
+    fonts_licence: "Check font licenses before you share the project folder.",
+    fonts_copied_one: "{{count}} font family copied · {{size}}",
+    fonts_copied_other: "{{count}} font families copied · {{size}}",
+    fonts_none: "No fonts copied yet",
+    fonts_show: "Show in folder",
+    fonts_excluded: "Excluded fonts",
+    fonts_allow: "Allow copying",
+    fonts_add_exclusion: "Add exclusion",
+    fonts_add_placeholder: "Choose a font family",
+    // `count` is `files`, passed again for the plural.
+    fonts_option_one: "{{family}} · {{files}} file · {{size}}",
+    fonts_option_other: "{{family}} · {{files}} files · {{size}}",
     decode_unsupported_generate_proxy: "Generate proxy",
     keybindings_blurb:
       "Manage your keyboard shortcut configuration table.",
@@ -2701,6 +2720,9 @@ const enUS = {
     text: "Text",
     content: "Content",
     font_family: "Font family",
+    font_missing: "{{family}} {{style}} is missing; {{fallback}} draws instead.",
+    font_missing_motif: "{{family}} is missing; {{fallback}} draws instead.",
+    font_missing_motif_default: "{{family}} is missing; the default font draws instead.",
     font_size_px: "Font size (px)",
     text_reduced: "auto-reduced to {{px}} px",
     text_overflowing: "overflowing — floored at {{px}} px",
@@ -2968,6 +2990,10 @@ const enUS = {
     save_as_new: "Save as a new Motif",
     saving: "Saving…",
     remove_button: "Remove from project",
+    // A library folder whose name no Motif can take (MotifPicker).
+    misnamed_hint: "Folder names are lowercase letters, digits and dashes. Renaming makes it “{{to}}”.",
+    rename_folder: "Rename folder",
+    rename_folder_to: "Rename folder “{{id}}” to “{{to}}”",
     unavailable_title: "“{{name}}” can't render",
     unavailable_hint: "Restore its folder under Motifs/{{id}}/, fix its files, or restore it from the library.",
     // A project Motif that cannot render (motifs/MotifProblem.tsx); an
@@ -2977,6 +3003,29 @@ const enUS = {
       invalid: "Motifs/{{id}}/ is not a valid Motif",
       untrusted: "Not trusted on this machine",
     },
+  },
+  // File > Check portability (portability/): what the project folder does
+  // not carry.
+  portability: {
+    title: "Portability check",
+    loading: "Checking…",
+    portable: "This folder carries everything the project needs.",
+    lead: "The project folder does not carry these.",
+    media_outside: "Media outside the folder",
+    media_missing: "Missing media",
+    motifs_missing: "Missing Motifs",
+    motifs_invalid: "Invalid Motifs",
+    fonts_excluded: "Fonts excluded from the project",
+    excluded: "Excluded",
+    excluded_not_installed: "Excluded · not installed here",
+    fonts_manage: "Open Settings > Project > Fonts",
+    fonts_missing: "Missing fonts",
+    italic: "Italic",
+    style_outside: "Style not in the folder",
+    untracked: "Not carried by a copy",
+    untracked_hint: "No layer uses these Motif folders.",
+    trash: "Move to trash",
+    trash_folder: "Move Motifs/{{name}}/ to the trash",
   },
   // A project Motif whose revision is not trusted on this machine, in its
   // row's pane (motifs/TrustCard.tsx). The summary is a static read of its files.
@@ -3056,6 +3105,9 @@ const enUS = {
       kind_conform: "Audio conform",
       kind_audio_fx: "Audio effects",
       group_export: "Export",
+      group_fonts: "Fonts",
+      fonts_copying: "Copying fonts {{done}}/{{total}}",
+      fonts_closing: "Copying fonts into the project…",
       // The export leads the pill; the rest of the work is counted after it.
       with_more: "{{label}} · {{count}} more",
     },
@@ -3108,6 +3160,13 @@ const enUS = {
     changed_range_at: "Changed range {{index}} of {{count}} · {{line}}",
     changed_range_last: "No later changed range",
     changed_range_first: "No earlier changed range",
+    // Project fonts (main/fonts/projectFonts.ts). `names` is an array, joined
+    // by the locale's list format; `fonts_copied_more` names the first
+    // families and counts the rest in `more`. `layers` is a count.
+    fonts_copied: "Copied {{names, list(style: narrow)}} into Fonts/. Check their licenses before you share the project folder.",
+    fonts_copied_more: "Copied {{names, list(style: narrow)}} and {{more}} more into Fonts/. Check their licenses before you share the project folder.",
+    font_recopied: "{{name}} was missing from Fonts/ and was copied again. To keep a font out of the project, exclude it in Settings > Project > Fonts.",
+    fonts_missing: "{{name}} is not installed here. Clips drawn with another font: {{layers}}.",
     save_failing: "Save failed: project.json cannot be written",
     save_recovered: "Project saved again",
     level_filter: "Severity filter",

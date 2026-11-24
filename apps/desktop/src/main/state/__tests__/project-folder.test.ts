@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { createTsActorHost } from '../ts-actor-host'
 import { openProject, saveProjectAs, type OrchestratorDeps, type SchemaUpgradeReport, type WorkspaceNapi } from '../workspace-orchestrator'
+import { DEFAULT_GITIGNORE } from '../projectContent'
 import type { MediaDerivativesPatch } from '../mutations/media'
 import type { MediaItem, Project } from '../model'
 import { blankProject } from '../model'
@@ -190,6 +191,37 @@ describe('the open project in its folder (host)', () => {
     t.host.stop()
   })
 
+  it('the portability check finds a complete folder portable, and nothing to check on the start screen', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    const t = makeHost(disk)
+    expect(t.host.portability()).toBeNull()
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    expect(t.host.portability()).toMatchObject({ portable: true, media: { outside: [], missing: [] } })
+    t.host.stop()
+  })
+
+  it('the check dialog reads the host\'s report, and its folder cleanup refuses with no project open', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    disk.fs.rm('/projects/Demo/Media/sub/clip.mp4')
+    const t = makeHost(disk)
+    await expect(t.host.handleInvoke('project_trash_motif_folder', { name: 'spare' })).rejects.toThrow(/No project is open/)
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    expect(await t.host.handleInvoke('project_portability', {})).toEqual(t.host.portability())
+    t.host.stop()
+  })
+
+  it('the portability check lists a pooled file the folder no longer holds', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    disk.fs.rm('/projects/Demo/Media/sub/clip.mp4')
+    const t = makeHost(disk)
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    expect(t.host.portability()).toMatchObject({ portable: false, media: { missing: [{ media_id: MEDIA_ID }], outside: [] } })
+    t.host.stop()
+  })
+
   async function savedAs() {
     const disk = memDisk()
     folder(disk, '/projects/Demo', windowsV6())
@@ -228,6 +260,8 @@ describe('the open project in its folder (host)', () => {
     const { disk, t } = await savedAs()
     expect(disk.read('/projects/Copy/TASTE.md')).toBe('taste')
     expect(disk.fs.exists('/projects/Copy/Cache/proxies/old.mp4')).toBe(false)
+    // The source had no .gitignore, so the copy gets the default.
+    expect(disk.read('/projects/Copy/.gitignore')).toBe(DEFAULT_GITIGNORE)
     t.host.stop()
     const reopened = makeHost(disk)
     await reopened.host.handleInvoke('project_open', { path: '/projects/Copy' })

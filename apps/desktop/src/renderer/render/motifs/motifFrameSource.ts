@@ -244,6 +244,7 @@ function createJob(key: string, lane: Lane, d: MotifFrameDescriptor, scaleDiv: M
       capture: (afterMiss, priority) => captureMotif({
         motifId: d.motifId, tSec: d.tSec, propsJson: JSON.stringify(d.canonicalProps),
         width: d.renderW, height: d.renderH, contentHash: d.contentHash, fpsNum: d.fpsNum, fpsDen: d.fpsDen,
+        ...(d.fonts ? { fonts: d.fonts } : {}),
         priority,
         ...(address ? { address } : {}),
         ...(lane === 'export' ? { store: 'keep' as const } : {}),

@@ -605,6 +605,13 @@ async function dispatchTool(
         throw e
       }
     }
+    // Gathered from the host's stores (media files, Motif folders, fonts,
+    // styles), not the actor: the same record `project://portability` serves.
+    if (name === 'read_project' && args.view === 'portability') {
+      mcpDef('read_project').parseDedicated!(args)
+      const report = tsHost.portability()
+      return report ? toolRecord(report as unknown as Record<string, unknown>) as unknown as ServerResult : noProjectOpenResult()
+    }
     // The effects vocabulary is a catalog, not project state, so it is answered
     // here — the same record `effects://catalog` serves.
     if (name === 'read_project' && args.view === 'effects') {
@@ -828,9 +835,10 @@ function historyLockedRefusal(err: McpToolErrorJson, tsHost: TsActorHost): McpTo
  *  is the project the user has open (null on the start screen), with the Recents
  *  list and default parent folder `open_project` / `create_project` draw on.
  *  `motifs` names the open project's Motifs that cannot render, an untrusted
- *  one with the revision the user would trust. The resource defs themselves
- *  live in `hostResources.ts`. */
-export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsActorHost, 'projectStatus' | 'unavailableMotifs'>>): Record<string, unknown> {
+ *  one with the revision the user would trust; `fonts.missing` the families
+ *  its layers ask for that resolve nowhere (ADR 0176). The resource defs
+ *  themselves live in `hostResources.ts`. */
+export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsActorHost, 'projectStatus' | 'unavailableMotifs' | 'missingFonts'>>): Record<string, unknown> {
   const snap = host.agent.snapshot()
   const unavailable = host.unavailableMotifs?.() ?? []
   const motifs = (status: 'missing' | 'invalid') => unavailable.filter(m => m.status === status).map(({ motif_id, diagnostic }) => ({ motif_id, diagnostic }))
@@ -839,6 +847,7 @@ export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsAc
     active: snap.session, sessions: snap.sessions.slice(-10), lock_reason: snap.lock_reason,
     ...(host.projectStatus ? host.projectStatus() : {}),
     motifs: { missing: motifs('missing'), invalid: motifs('invalid'), untrusted },
+    fonts: { missing: host.missingFonts?.() ?? [] },
   }
 }
 
@@ -892,6 +901,12 @@ export async function handleReadResource(
     // protocol error, with the same text the tools answer.
     if (noProjectOpen(tsHost) && !APP_SCOPE_RESOURCES.has(uri)) throw new McpError(ErrorCode.InvalidRequest, NO_PROJECT_OPEN_MESSAGE)
     if (tsHost.agent && isTacksUri(uri)) return readTacksResource(tsHost.agent.tacks, uri)
+    if (uri === 'project://portability') {
+      // A close racing the read: the same refusal as the gate above.
+      const report = tsHost.portability()
+      if (!report) throw new McpError(ErrorCode.InvalidRequest, NO_PROJECT_OPEN_MESSAGE)
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(report, null, 2) }] } as unknown as ServerResult
+    }
     if (uri === 'project://playhead') {
       try { return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(await readPlayhead(tsHost), null, 2) }] } as unknown as ServerResult }
       catch (e) {

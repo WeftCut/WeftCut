@@ -14,6 +14,11 @@ vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 // No backend under jsdom: IPC answers nothing (the review fetch keeps its last
 // view; a command's log row goes nowhere).
 vi.mock("@/bridge/ipc", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
+// No preload either: font copy progress never arrives.
+vi.mock("../ipc", async (importActual) => ({
+  ...(await importActual<typeof import("../ipc")>()),
+  onFontCopyProgress: () => () => {},
+}));
 
 afterEach(async () => {
   cleanup();

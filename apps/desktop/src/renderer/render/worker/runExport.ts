@@ -12,13 +12,14 @@
 import { convertFileSrc } from "@/bridge/ipc";
 import { openVideoSinkPort } from "../../ipc";
 import { openDecodeSession } from "../../ipc/decodeSession";
-import { loadBundledFontBytes, resolveFontsForFamilies } from "../fonts/registry";
+import { faceBytes, loadBundledFontBytes } from "../fonts/registry";
+import { whenFontIndexComplete } from "../fonts/fontIndexStore";
+import { textFaceRefs } from "../fonts/textFaces";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { rendererOS } from "../../platform";
 import { resolveDecode } from "../decodeRoute";
 import { referencedVideoMediaIds } from "../activeVideoLayers";
-import { forEachLayer } from "../compositionWalk";
 import { rootCompositionOf } from "../../ipc/compositions";
 import { exportMotifPlanner } from "../exportMotifSource";
 import { motifLayersToBake } from "../exportBake";
@@ -204,9 +205,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // Resolve asynchronous setup before owning a worker. A failed font read or
   // cancellation here must not leave an idle worker behind.
   const hasMotifs = motifLayersToBake(summary, startUs, endUs, fpsNum, fpsDen).length > 0;
-  const userFamilies = collectTextFontFamilies(summary);
-  const userBytes = await resolveFontsForFamilies(userFamilies);
-  const fontBytes = { ...(await loadBundledFontBytes()), ...userBytes };
+  const fonts = await exportFonts(summary);
   init.signal?.throwIfAborted();
 
   // 4. Spawn the Worker. Vite resolves the URL at bundle time via
@@ -304,7 +303,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
           },
         }
       : {}),
-    fonts: fontBytes,
+    fonts,
   };
 
   let framesEncoded = 0;
@@ -360,7 +359,12 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       () => {
         if (disposed) return;
         try {
-          worker.postMessage(startReq, [offscreen, ...Object.values(fontBytes), ...(frames ? [frames] : [])]);
+          worker.postMessage(startReq, [
+            offscreen,
+            ...Object.values(fonts.bundled),
+            ...fonts.faces.map((f) => f.bytes),
+            ...(frames ? [frames] : []),
+          ]);
           motifProducer?.start();
         } catch (error) { cleanup(); reject(error); }
       },
@@ -455,17 +459,22 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   } finally { worker.terminate(); sender?.terminate(); releaseResources(); }
 }
 
-/// Collect distinct font_family strings from every Text layer the export can
-/// reach — the root's and every Group's. Feeds `resolveFontsForFamilies` so the
-/// export Worker receives any user-chosen OS fonts pre-resolved as bytes
-/// (main-thread IPC only). A layer the walk gates out (disabled, or on a
-/// disabled track) draws no glyphs, so its family is not needed.
-function collectTextFontFamilies(summary: ProjectSummary): string[] {
-  const families: string[] = [];
-  forEachLayer(summary, summary.root_id, ({ layer }) => {
-    if (layer.params.kind === "Text" && layer.params.font_family) {
-      families.push(layer.params.font_family);
-    }
+type ExportFonts = Extract<ExportRequest, { type: "start" }>["fonts"];
+
+/// The fonts the Worker registers: the bundled ones, and the catalog faces of
+/// `textFaceRefs` over the same summary and index preview registers from, so
+/// export draws the faces preview shows. MAIN-THREAD ONLY (IPC).
+async function exportFonts(summary: ProjectSummary): Promise<ExportFonts> {
+  const index = await whenFontIndexComplete();
+  const refs = textFaceRefs(summary, index);
+  const [bundled, bytes] = await Promise.all([
+    loadBundledFontBytes(),
+    Promise.all(refs.map((ref) => faceBytes(ref.sha256))),
+  ]);
+  const faces: ExportFonts["faces"] = [];
+  refs.forEach((ref, i) => {
+    const b = bytes[i];
+    if (b) faces.push({ ref, bytes: b });
   });
-  return [...new Set(families)];
+  return { bundled, faces, index };
 }

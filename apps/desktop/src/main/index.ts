@@ -80,7 +80,10 @@ import type { McpLogEntryInput } from './mcp/withLog.js'
 import { ImportDiagnostics } from './importDiagnostics'
 import { recordDerivativeJob, resetDerivativeJobs } from './state/derivative-jobs'
 import { IMPORT_DIAGNOSTIC_MILESTONE } from '../shared/import-diagnostics'
-import { listSystemFontFamilies, resolveSystemFont } from './fonts/resolveSystemFont.js'
+import { FontCatalog } from './fonts/catalog.js'
+import { ProjectFontStore } from './fonts/projectFonts.js'
+import { watchProjectFonts } from './fonts/watcher.js'
+import { setMotifFontSource } from './motif/fontProps.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
@@ -884,6 +887,10 @@ app.whenReady().then(async () => {
   }
   // `media` props resolve against the open project's pool; video frames are kept here.
   setMotifMediaSource(() => (tsHost?.actor.snapshot().media_pool ?? null) as never, path.join(dataRoot.cacheDir, 'motif-media'))
+  // One face catalog for the app: the open project's `Fonts/` and the system
+  // fonts (ADR 0176). Motif hosts are served its faces.
+  const fontCatalog = new FontCatalog({ recordFile: path.join(dataRoot.cacheDir, 'font-records.json'), generation: app.getVersion() })
+  setMotifFontSource({ catalog: fontCatalog })
 
   // TS actor host: constructed unconditionally; must start BEFORE startMcpHost so
   // the actor (the sole owner of project state — it serves every MCP state view and
@@ -1151,11 +1158,33 @@ app.whenReady().then(async () => {
     cancel: (jobId) => backend!.cancelComputeJob(jobId),
     send: emitToRenderer,
   })
-  // The installed families, scanned once in the background; a style's font
-  // slots resolve against them, and read the whole preference list until the
-  // scan lands.
-  let installedFonts: ReadonlySet<string> | null = null
-  void listSystemFontFamilies().then((families) => { installedFonts = new Set(families.map((f) => f.toLowerCase())) }).catch((err) => console.warn('[fonts] system font scan failed', err))
+  // The open project's `Fonts/`: what it draws with is copied in. Edits reach
+  // it through the host (`fonts`); the exclusion list is written back through
+  // the actor's unrecorded settings op.
+  const fontStore = new ProjectFontStore({
+    catalog: fontCatalog,
+    fs: fs.promises,
+    join: path.join,
+    basename: path.basename,
+    trash: (file) => shell.trashItem(file),
+    recordExcluded: (list) => tsHost!.actor.setExcludedFonts(list),
+    emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })).catch(() => {}) },
+    changed: () => broadcastEvent(BrowserWindow.getAllWindows(), 'project-fonts:changed', {}),
+    indexChanged: () => broadcastEvent(BrowserWindow.getAllWindows(), 'fonts:index', fontCatalog.index()),
+    progress: (progress) => emitToRenderer('project-fonts:progress', progress),
+    watch: watchProjectFonts,
+    systemScan: () => fontCatalog.scanSystem(),
+  })
+  // The system scan runs once, in the background. Until it lands no font is
+  // reported missing and the taste view resolves no style font slot.
+  void fontCatalog.scanSystem().then(() => fontStore.systemScanned()).catch((err) => console.warn('[fonts] system font scan failed', err))
+  let fontFamilies: { revision: number; families: ReadonlySet<string> } | null = null
+  const catalogFamilies = (): ReadonlySet<string> | null => {
+    const { revision, complete } = fontCatalog.index()
+    if (!complete) return null
+    if (fontFamilies?.revision !== revision) fontFamilies = { revision, families: new Set(fontCatalog.listFamilies().map((f) => f.toLowerCase())) }
+    return fontFamilies.families
+  }
   // `project://playhead`: asked of the editor window per read, never pushed.
   const { PlayheadReader } = await import('./mcp/playheadView.js')
   const playheadReader = new PlayheadReader({
@@ -1168,8 +1197,10 @@ app.whenReady().then(async () => {
   })
   tsHost = createTsActorHost({
     exportJobs,
+    trash: (target) => shell.trashItem(target),
     readEditorPlayhead: () => playheadReader.read(),
-    installedFonts: () => installedFonts,
+    fontFamilies: catalogFamilies,
+    fonts: fontStore,
     // Built-in style packages ride beside the built-in Motifs (electron-builder
     // extraResources); user packages live in the data root.
     styleDirs: {
@@ -2789,16 +2820,38 @@ app.whenReady().then(async () => {
     if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame)
       throw new Error('Untrusted font request')
   }
-  ipcMain.handle('font:listFamilies', (event) => {
-    assertFontSender(event)
-    return listSystemFontFamilies()
-  })
-  ipcMain.handle('font:resolve', async (event, args: unknown) => {
-    assertFontSender(event)
+  const fontFamilyArg = (args: unknown): string => {
     const family = (args as { family?: unknown } | null)?.family
-    if (typeof family !== 'string' || !family.trim() || family.length > 512)
-      throw new Error('Invalid font family')
-    return resolveSystemFont(family.trim())
+    if (typeof family !== 'string' || !family.trim() || family.length > 512) throw new Error('Invalid font family')
+    return family.trim()
+  }
+  ipcMain.handle('font:index', (event) => {
+    assertFontSender(event)
+    return fontCatalog.index()
+  })
+  ipcMain.handle('font:bytes', async (event, args: unknown) => {
+    assertFontSender(event)
+    const sha256 = (args as { sha256?: unknown } | null)?.sha256
+    if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error('Invalid font face')
+    return fontCatalog.faceBytes(sha256)
+  })
+  // The whole list, so it waits for the system scan.
+  ipcMain.handle('font:listFamilies', async (event) => {
+    assertFontSender(event)
+    await fontCatalog.scanSystem().catch(() => {})
+    return fontCatalog.listFamilies()
+  })
+  ipcMain.handle('project-fonts:view', (event) => {
+    assertFontSender(event)
+    return fontStore.view()
+  })
+  ipcMain.handle('project-fonts:exclude', (event, args: unknown) => {
+    assertFontSender(event)
+    return fontStore.exclude(fontFamilyArg(args))
+  })
+  ipcMain.handle('project-fonts:allow', (event, args: unknown) => {
+    assertFontSender(event)
+    return fontStore.allow(fontFamilyArg(args))
   })
 
   // One frame port per native-sink export: the page passes it on to the

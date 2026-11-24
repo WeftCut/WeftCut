@@ -3,6 +3,7 @@
 // fills it from a taste's font tokens (main/taste/motifProps.ts); the Motif
 // forms edit it with a font picker (renderer/properties/MotifPropFields.tsx).
 
+import { parseFamilyList } from "../fonts/resolve";
 import type { PropSpec } from "./catalog";
 
 export function isFontSlot(key: string, spec: PropSpec): boolean {
@@ -14,10 +15,9 @@ export function formatFontStack(families: readonly string[]): string {
   return families.map((f) => `'${f.replace(/[\\']/g, "\\$&")}'`).join(", ");
 }
 
-/** The family a stack names when it names exactly one, quoted or bare; else null. */
+/** The family a stack names when it names exactly one, quoted or bare; else
+ *  null. Read as the font walk and the renderer read it (`parseFamilyList`). */
 export function singleFontFamily(stack: string): string | null {
-  const m = /^\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|([^,'"]+?))\s*$/.exec(stack);
-  if (!m) return null;
-  const family = (m[1] ?? m[2] ?? m[3] ?? "").replace(/\\(.)/g, "$1");
-  return family === "" ? null : family;
+  const leaves = parseFamilyList(stack);
+  return leaves.length === 1 ? (leaves[0] as string) : null;
 }

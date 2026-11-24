@@ -13,7 +13,8 @@ import {
 } from "../../timeline/motifBakeStatusStore";
 import { forEachLayer } from "../compositionWalk";
 import { getMotif, motifCatalogRevision, subscribeMotifCatalog } from "./catalog";
-import { motifPlanningInputs } from './planningInputs';
+import { motifFontPlanningInputs, motifPlanningInputs } from './planningInputs';
+import { getFontIndex, subscribeFontIndex } from '../fonts/fontIndexStore';
 import { motifLayerStatuses, planMotifDemand, planMotifPresence, planMotifPreparation } from './motifDemand';
 import { declareMotifPresence } from './frameTransport';
 import type { MotifPresence } from '../../../shared/motifs/frameTransport';
@@ -92,6 +93,7 @@ export class MotifDemandSession {
   private disposed = false;
   private generation: number | null = null;
   private catalogUnsub: (() => void) | null = null;
+  private fontsUnsub: (() => void) | null = null;
   private diskDiscoveryPending = false;
   private preparationError: string | null = null;
   private planningSignature: string | null = null;
@@ -122,6 +124,9 @@ export class MotifDemandSession {
     // Startup hydrates the catalog; motifs:changed refreshes it. Timeline
     // edits must not synchronously scan/hash every Motif package in main.
     if (this.client) this.catalogUnsub = subscribeMotifCatalog(() => this.handleProjectChanged());
+    // Font props key their frames by the faces they resolve to: a font index
+    // that resolves them to other faces is new content to prepare.
+    if (this.client) this.fontsUnsub = subscribeFontIndex(() => this.handleProjectChanged());
     if (this.client) this.settingsUnsub = useAppSettingsStore.subscribe((next, previous) => {
       if (next.settings.prebake_motifs !== previous.settings.prebake_motifs) this.handleProjectChanged();
     });
@@ -150,7 +155,9 @@ export class MotifDemandSession {
   handleProjectChanged(): void {
     if (this.disposed || !this.client) return;
     const resolved = this.resolvePrebakes();
-    const signature = JSON.stringify([motifPlanningInputs(this.deps.projectSummary()),
+    const summary = this.deps.projectSummary();
+    const signature = JSON.stringify([motifPlanningInputs(summary),
+      motifFontPlanningInputs(summary, getMotif, getFontIndex().faces),
       this.deps.openCompositionId(), this.deps.fpsNum(), this.deps.fpsDen(),
       motifCatalogRevision(), useAppSettingsStore.getState().settings.prebake_motifs]);
     // Do not invalidate an in-flight acknowledgement, disk inventory or warm
@@ -218,6 +225,7 @@ export class MotifDemandSession {
     this.intentsUnsub?.();
     this.settingsUnsub?.();
     this.catalogUnsub?.();
+    this.fontsUnsub?.();
     sharedBakedKeyIndex.finishHydration();
     // Background jobs and durable coverage survive preview remounts.
   }

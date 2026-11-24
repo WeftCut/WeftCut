@@ -39,6 +39,8 @@ export interface ViewMenuWorkspaces {
   onDelete: (id: string) => void;
 }
 
+const DISPLAY_MODE_KEY = { actionId: "toggleDisplayMode" } as const;
+
 /// The View menu — Panels (open/focus/close) flat at the top, Workspace
 /// profiles + management under the Workspaces submenu (low-frequency ops stay
 /// one level down), then the A/B Roll vs All Tracks track-display radio, the
@@ -161,9 +163,13 @@ export function ViewMenu({
           defaultValue: "Track display",
         })}
       />
+      {/* The binding is a toggle, so with two modes it does exactly what the
+          unchecked row does: its accelerator sits on that row, the mode the key
+          switches to, and moves when the mode changes. On the checked row it
+          would name a key that leaves the mode. */}
       <CommandItem
         commandId="toggleDisplayMode"
-        actionId="toggleDisplayMode"
+        {...(mode !== "AbRoll" && DISPLAY_MODE_KEY)}
         label={t("view.display_ab_roll", {
           defaultValue: "A/B Roll",
         })}
@@ -172,6 +178,7 @@ export function ViewMenu({
       />
       <CommandItem
         commandId="toggleDisplayMode"
+        {...(mode !== "AllTracks" && DISPLAY_MODE_KEY)}
         label={t("view.display_all_tracks", {
           defaultValue: "All Tracks",
         })}

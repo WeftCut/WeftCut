@@ -161,6 +161,53 @@ describe('AgentPanel', () => {
     expect(list.lastElementChild?.textContent).toBe('Recent activity from this project opening. Not restored after reopening.')
     expect(document.querySelector('.agent-activity-panel > footer')).toBeNull()
   })
+
+  it('in the editor the status folds into the tab bar: End beside the tabs, the rest in the service popover', async () => {
+    const session = { id: 'work', connection_id: 'c', client: 'Client', reason: 'Cut interview', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
+    seed([activity({ session_id: 'work' })], { session, sessions: [session] })
+    render(<AgentPanel editor />)
+    expect(document.querySelector('.agent-status-row')).toBeNull()
+    const head = document.querySelector<HTMLElement>('.agent-panel-head')!
+    expect(within(head).getByRole('button', { name: 'End work session' })).toBeTruthy()
+    const dot = await within(head).findByRole('button', { name: 'MCP service ready' })
+    expect(dot.title).toContain('Cut interview')
+    expect(screen.queryByText('http://127.0.0.1:1234/mcp')).toBeNull()
+    fireEvent.click(dot)
+    const popover = document.querySelector<HTMLElement>('.agent-service-popover')!
+    expect(within(popover).getByRole('status').textContent).toBe('Cut interview')
+    expect(within(popover).getByText('http://127.0.0.1:1234/mcp')).toBeTruthy()
+    fireEvent.click(within(popover).getByRole('button', { name: 'Agent connection settings' }))
+    expect(document.querySelector('.agent-service-popover')).toBeNull()
+    expect(screen.getByText('Connection configuration')).toBeTruthy()
+  })
+
+  it('the editor filters failures from the tab bar, on Activity only, with no filter row', () => {
+    seed([activity({ id: 'ok', message: 'Fine call', tool: 'list_media' }), activity({ id: 'bad', state: 'error', error: 'The media file is unavailable' })])
+    render(<AgentPanel editor />)
+    expect(document.querySelector('.agent-activity-toolbar')).toBeNull()
+    const toggle = within(document.querySelector<HTMLElement>('.agent-panel-head')!).getByRole('button', { name: 'Show failures only' })
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    expect(useAgentActivity.getState().filter).toBe('errors')
+    fireEvent.click(screen.getByRole('tab', { name: /Tacks/ }))
+    expect(screen.queryByRole('button', { name: 'Show failures only' })).toBeNull()
+  })
+
+  it('Back to latest floats over the list in both layouts, never in a toolbar row', () => {
+    seed([activity()])
+    useAgentActivity.setState({ following: false })
+    for (const editor of [false, true]) {
+      const view = render(<AgentPanel editor={editor} />)
+      const latest = screen.getByRole('button', { name: /Back to latest/ })
+      expect(latest.closest('.agent-activity-toolbar')).toBeNull()
+      expect(latest.parentElement!.classList.contains('agent-activity-body')).toBe(true)
+      view.unmount()
+    }
+    render(<AgentPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /Back to latest/ }))
+    expect(useAgentActivity.getState().following).toBe(true)
+    expect(screen.queryByRole('button', { name: /Back to latest/ })).toBeNull()
+  })
 })
 
 describe('AgentPanel — per-activity highlight', () => {

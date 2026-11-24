@@ -128,7 +128,7 @@ test('tacks: listed in the panel, chipped in the review lane, converted into one
     await expect(lane).toHaveCount(0)
     await expect(page.getByTestId('timeline-tack')).toHaveCount(0)
     await page.locator('.menu-trigger').nth(2).click()
-    await page.locator('.app-menu-item').filter({ hasText: /^Review overlay$/ }).click()
+    await page.locator('.app-menu-item').filter({ hasText: /^Tacks & changes$/ }).click()
     await expect(lane.getByTestId('timeline-tack')).toHaveCount(1)
 
     // A chip click opens the Agent panel on its Tacks tab with the row selected

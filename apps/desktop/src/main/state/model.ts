@@ -286,6 +286,12 @@ export interface ProjectSettings {
    *  recording session is one project, and two projects rarely share a noise
    *  floor. */
   pause_review: PauseReviewSettings | null
+  /** Font families the user keeps out of the project's `Fonts/` folder, as the
+   *  user saw them named; matched case-insensitively. The only stored intent
+   *  about collection: a family missing from `Fonts/` is never read as one.
+   *  Written only by its own host op, never by the settings patch;
+   *  `excludedFonts.ts` holds the entry rules. */
+  excluded_fonts: string[]
 }
 export interface Project {
   schema_version: number; project_id: Uuid; metadata: ProjectMetadata
@@ -351,7 +357,8 @@ export function* eachLayer(p: Pick<Project, 'compositions'>): Iterable<{ composi
 export function defaultSettings(): ProjectSettings {
   return { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
     history_capacity: 200, auto_pair_audio_on_import: true,
-    prefer_proxies: false, proxy_overrides: {}, shot_review: null, pause_review: null }
+    prefer_proxies: false, proxy_overrides: {}, shot_review: null, pause_review: null,
+    excluded_fonts: [] }
 }
 
 /** Mirror of Rust `Project::new_blank`. Id order: A-roll, B-roll, project_id,
