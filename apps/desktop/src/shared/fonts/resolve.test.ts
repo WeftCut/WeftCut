@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BUNDLED_FONT_FAMILIES } from '../fonts'
-import { faceAlias, familyFaces, parseFamilyList, resolveFace } from './resolve'
+import { faceAlias, familyFaces, parseFamilyList, resolveFace, styleName } from './resolve'
 import type { FaceIndexEntry, FaceSource, FaceWeight } from './types'
 
 let next = 0
@@ -137,5 +137,17 @@ describe('sources and families', () => {
   it('each face has its own alias family', () => {
     const [a, b] = [face(400), face(700)]
     expect(faceAlias(a.sha256)).not.toBe(faceAlias(b.sha256))
+  })
+})
+
+describe('styleName', () => {
+  it('names a request as a font menu does', () => {
+    expect(styleName(400, false)).toBe('Regular')
+    expect(styleName(700, false)).toBe('Bold')
+    expect(styleName(700, true)).toBe('Bold Italic')
+    expect(styleName(400, true)).toBe('Italic')
+    expect(styleName(650, false)).toBe('650')
+    // An unset request is the 400 upright a renderer draws.
+    expect(styleName(null, null)).toBe('Regular')
   })
 })
