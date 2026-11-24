@@ -809,8 +809,12 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       if (!layerR.ok) { undoPool(); throw new Error(JSON.stringify(layerR.error)) }
       // A pooled item's jobs were queued when it entered the pool.
       if (!pooled) await deps.enqueueDerivatives([media_item])
+      // The edges as committed: add_layer puts them on frames, and a caller
+      // aligns captions and cuts to what it is told here.
+      const placed = scopeComposition(deps.actor.snapshot(), composition.id).tracks
+        .flatMap((t) => t.layers).find((l) => l.id === layerR.value)!
       // Return a JSON STRING, never the object — runHybrid's result contract.
-      return JSON.stringify({ layer_id: layerR.value as string, media_id: mediaId, track_id: lane, t_start_us: tStart, t_end_us: tEnd, cached })
+      return JSON.stringify({ layer_id: layerR.value as string, media_id: mediaId, track_id: lane, t_start_us: placed.t_start_us, t_end_us: placed.t_end_us, cached })
     }
     case 'auto_split_by_shot': {
       // Convenience composite (reproducible with analyze_clip + split_layer):

@@ -300,6 +300,18 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     expect(parsed.t_end_us).toBe(5_000_000 + DURATION_US)
   })
 
+  it('returns the edges the layer was committed with when its start and length fall between frames', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () =>
+      JSON.stringify({ media_item: audioMediaItem(), duration_us: 1_008_000, cached: false }))
+    const parsed = JSON.parse(await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, t_start_us: 1_010_000 }, deps) as string) as
+      { layer_id: string; t_start_us: number; t_end_us: number }
+    const layer = root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === parsed.layer_id)!
+    expect(layer.t_start_us).not.toBe(1_010_000)
+    expect([parsed.t_start_us, parsed.t_end_us]).toEqual([layer.t_start_us, layer.t_end_us])
+  })
+
   it('kicks enqueueDerivatives with the audio media item', async () => {
     const actor = freshActor()
     const addTrackR = actor.dispatch('add_track', { label: 'Voiceover' })
