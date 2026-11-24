@@ -151,6 +151,12 @@ outgoing layer's cut end is always `t_end_us − extended_us`, and removal
 inverts by it. See ADR 0048.
 _Avoid_: placement enum, extend flag
 
+**Audio transition**:
+A transition between two Audio layers on one track: an equal-power crossfade
+over their overlap. Added with a visual transition when linked audio meets at
+the same cut, or on its own; it never moves picture. See ADR 0177.
+_Avoid_: linked crossfade, audio follow; audio fade (that is per layer)
+
 ## Transform
 
 **Position**:

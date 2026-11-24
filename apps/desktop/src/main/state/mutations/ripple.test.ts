@@ -302,6 +302,26 @@ describe('dispatch: ripple_delete_layers and its transitions', () => {
     expect(tr.extended_us).toBe(0)
   })
 
+  it('re-measures an audio transition\'s borrowed tail as the same frame count', () => {
+    // Audio edges sit on frames like every edge (ADR 0038), so an audio
+    // crossfade's borrow is a frame count too, and a one-frame shift that
+    // changes its microseconds must leave it the whole overlap.
+    const x = fx()
+    const head = sound(x, x.aRoll, f(0), f(1))
+    const a = sound(x, x.aRoll, f(1), f(3))
+    const b = sound(x, x.aRoll, f(3), f(5))
+    const tid = applyAddTransition(x.p, x.gen, a, b, f(1), CROSSFADE, 'extend').id
+    const actor = x.open()
+
+    expect(ripple(actor, [head]).ok).toBe(true)
+    const rc = root(actor.snapshot())
+    expect(spanOf(rc, a)).toEqual([f(0), f(3)])
+    expect(spanOf(rc, b)).toEqual([f(2), f(4)])
+    const tr = rc.transitions.find((t) => t.id === tid)!
+    expect(tr.duration_us).toBe(f(3) - f(2))
+    expect(tr.extended_us).toBe(tr.duration_us)
+  })
+
   it('re-measures a borrowed tail as the same frame count, so removing the transition afterwards restores an on-grid cut', () => {
     // Full borrow on frames 1–3 → 3–5: the outgoing layer extends one frame past
     // the hard cut, `extended_us === duration_us`. After a one-frame shift the

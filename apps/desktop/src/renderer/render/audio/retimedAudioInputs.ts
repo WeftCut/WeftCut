@@ -21,7 +21,9 @@ export function retimedAudioInputs(
     const comp = summary.compositions[id];
     if (!comp) return;
     const layers: unknown[] = [];
-    compositions.push([id, comp.duration_us, layers]);
+    const audioIds = new Set(comp.tracks.flatMap(track => track.layers.filter(layer => layer.kind === 'Audio').map(layer => layer.id)));
+    const transitions = comp.transitions.filter(tr => audioIds.has(tr.from_layer) && audioIds.has(tr.to_layer));
+    compositions.push([id, comp.duration_us, layers, transitions]);
     for (const track of comp.tracks) {
       if (!track.enabled) continue;
       for (const layer of track.layers) {

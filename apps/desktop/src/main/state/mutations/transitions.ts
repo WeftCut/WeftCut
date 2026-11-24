@@ -6,7 +6,7 @@ import { CommandFailure } from '../errors'
 import { frameIndexRound, timeUsAtFrame, travelBy, travelOnGrid, type Travel } from '../snap'
 import { applyDurationAutofit, hasSourceWindow, locateLayerIn, pickFreeOverlayTrack, requireLayer, sourceDurationUs } from './helpers'
 import { applyAddTrack } from './add'
-import { checkLinkLock, linkSiblingsExcluding, indexLinks } from './links'
+import { checkLinkLock, linkedAudioPartner, linkSiblingsExcluding, indexLinks } from './links'
 
 // ── Geometry vocabulary (ADR 0048 — extended_us provenance and inverse-op routing) ──
 // A = from_layer (outgoing), B = to_layer (incoming); the window is
@@ -101,11 +101,34 @@ function checkTransitionTrackLock(c: Composition, trackIdx: number): void {
     throw new CommandFailure({ error: 'TrackLocked', track: c.tracks[trackIdx].id })
 }
 
-/** Audio participants are rejected here (precise, pre-id-mint error); validate's
- *  TransitionUnsupportedLayerKind rule is the backstop no path can bypass. */
-function rejectAudioParticipant(layer: Layer): void {
-  if (layer.params.kind === 'Audio')
-    throw new CommandFailure({ error: 'TransitionUnsupportedLayerKind', layer: layer.id, kind: layer.params.kind })
+/** The pair's class gate (ADR 0177): two visual layers take any kind, two
+ *  Audio layers take Crossfade only, a mixed pair nothing. True for an audio
+ *  pair. Precise and pre-id-mint; validate's TransitionUnsupportedLayerKind
+ *  rule is the backstop no path can bypass. */
+function checkPairClass(from: Layer, to: Layer, kind: Transition['kind']): boolean {
+  const fromAudio = from.params.kind === 'Audio'
+  const toAudio = to.params.kind === 'Audio'
+  if (fromAudio !== toAudio) {
+    const audio = fromAudio ? from : to
+    throw new CommandFailure({ error: 'TransitionUnsupportedLayerKind', layer: audio.id, kind: 'Audio' })
+  }
+  if (fromAudio) checkAudioKind(from, kind)
+  return fromAudio
+}
+
+function checkAudioKind(from: Layer, kind: Transition['kind']): void {
+  if (kind.kind !== 'Crossfade')
+    throw new CommandFailure({ error: 'TransitionUnsupportedLayerKind', layer: from.id, kind: 'Audio' })
+}
+
+/** An audio transition never moves picture (ADR 0177): refuses when the
+ *  incoming layer's move set carries a visual link sibling. */
+function refuseMovingPicture(c: Composition, moveSet: readonly Uuid[]): void {
+  for (const id of moveSet) {
+    const layer = locateLayerIn(c, id)?.layer
+    if (layer && layer.params.kind !== 'Audio')
+      throw new CommandFailure({ error: 'AudioTransitionMovesPicture', layer: id })
+  }
 }
 
 /** Where each member of `memberIds` lands under `travel` — the shared
@@ -173,14 +196,16 @@ export interface TransitionBounce { layer: Uuid; from_track: Uuid; to_track: Uui
  *  spawning one when none exists. Members of the moving set never collide with
  *  each other (same delta, same relative order), so only non-movers are
  *  scanned. One sibling at a time against CURRENT state, so an earlier bounce's
- *  landing blocks a later one from claiming the same lane. The incoming layer
- *  itself never bounces — an unauthorized overlap from ITS move is a
- *  whole-commit validate refusal. No pruneEmptiedTrack: the blocking layer that
- *  caused the bounce stays on the vacated lane, so a bounce can never empty it. */
-function bounceCollidingSiblings(p: Project, c: Composition, idGen: IdGen, memberIds: readonly Uuid[], toLayer: Uuid, out: TransitionBounce[]): void {
+ *  landing blocks a later one from claiming the same lane. `staying` never
+ *  bounces: the incoming layer (an unauthorized overlap from ITS move is a
+ *  whole-commit validate refusal) and a crossing audio partner, whose overlap
+ *  its own audio transition authorizes. No pruneEmptiedTrack: the blocking layer
+ *  that caused the bounce stays on the vacated lane, so a bounce can never
+ *  empty it. */
+function bounceCollidingSiblings(p: Project, c: Composition, idGen: IdGen, memberIds: readonly Uuid[], staying: readonly Uuid[], out: TransitionBounce[]): void {
   const moving = new Set(memberIds)
   for (const id of memberIds) {
-    if (id === toLayer) continue
+    if (staying.includes(id)) continue
     const loc = locateLayerIn(c, id)
     if (!loc) continue
     const track = loc.track
@@ -211,6 +236,81 @@ function requireTransition(p: Project, id: Uuid): { comp: Composition; transitio
   throw new CommandFailure({ error: 'TransitionNotFound', transition: id })
 }
 
+/** The outgoing and incoming audio partners of a visual cut (ADR 0177), when
+ *  they cross with it: each visual participant has one (`linkedAudioPartner`),
+ *  both sit on one lane, they abut exactly at the visual cut, and neither
+ *  already plays that side of another transition. Null otherwise — the
+ *  partners then follow the incoming layer as plain link siblings. */
+function crossingAudioPartners(c: Composition, from: Layer, to: Layer): { from: Layer; to: Layer } | null {
+  const a = linkedAudioPartner(c, from)
+  const b = linkedAudioPartner(c, to)
+  if (!a || !b || a.id === b.id) return null
+  if (locateLayerIn(c, a.id)?.track !== locateLayerIn(c, b.id)?.track) return null
+  if (a.t_end_us !== from.t_end_us || b.t_start_us !== a.t_end_us) return null
+  if (c.transitions.some((t) => t.from_layer === a.id || t.to_layer === b.id)) return null
+  return { from: a, to: b }
+}
+
+/** Whether the incoming audio partner, landing at `landed` with the visual move
+ *  set, can cross its outgoing partner: the overlap fits both layers and touches
+ *  no other Audio layer on their lane. A partner that cannot bounces instead. */
+function partnersCanCross(c: Composition, partners: { from: Layer; to: Layer }, moving: ReadonlySet<Uuid>, landed: { tStartUs: number; tEndUs: number } | undefined, durUs: number): boolean {
+  if (!landed) return false
+  if (durUs > partners.from.t_end_us - partners.from.t_start_us || durUs > landed.tEndUs - landed.tStartUs) return false
+  const track = locateLayerIn(c, partners.to.id)!.track
+  return !track.layers.some((o) => o.id !== partners.from.id && !moving.has(o.id) && o.params.kind === 'Audio'
+    && o.t_start_us < landed.tEndUs && landed.tStartUs < o.t_end_us)
+}
+
+/** The audio transition between a visual transition's audio partners, if any.
+ *  Derived from links at edit time; nothing stores the pairing (ADR 0177). */
+function linkedAudioTransition(c: Composition, visual: Transition): Transition | null {
+  const from = locateLayerIn(c, visual.from_layer)?.layer
+  const to = locateLayerIn(c, visual.to_layer)?.layer
+  if (!from || !to) return null
+  const a = linkedAudioPartner(c, from)
+  const b = linkedAudioPartner(c, to)
+  if (!a || !b) return null
+  return c.transitions.find((t) => t.from_layer === a.id && t.to_layer === b.id) ?? null
+}
+
+/** Moves a linked audio transition's outgoing end by `endFrames` whole frames,
+ *  the count the visual outgoing end moves; the incoming audio partner moves on
+ *  its own, as the visual incoming layer's link sibling. Checks link lock and
+ *  tail handle now, before any write, and returns the write. Counted in frames,
+ *  not the visual's µs delta: at fractional rates the same frame count is a
+ *  different µs distance at the partner's end. */
+function planAudioCarry(p: Project, c: Composition, visualFrom: Uuid, audio: Transition, endFrames: number): (() => void) | null {
+  const from = locateLayerIn(c, audio.from_layer)?.layer
+  if (!from || endFrames === 0) return null
+  const { num, den } = c.fps
+  const deltaUs = timeUsAtFrame(frameIndexRound(from.t_end_us, num, den) + endFrames, num, den) - from.t_end_us
+  checkLinkLock(c, visualFrom, [from.id])
+  if (deltaUs > 0) {
+    const available = tailHandleUs(p, from)
+    if (available < deltaUs)
+      throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: from.id, available_us: available })
+  }
+  return () => {
+    if (deltaUs > 0) extendLayerTEnd(from, deltaUs)
+    else shrinkLayerTEnd(from, -deltaUs)
+    audio.extended_us = Math.max(0, audio.extended_us + deltaUs)
+  }
+}
+
+/** Re-derives a carried audio transition from the overlap its layers landed
+ *  with, or removes it when none is left (ADR 0177). */
+function settleAudioTransition(c: Composition, audio: Transition): void {
+  const from = locateLayerIn(c, audio.from_layer)?.layer
+  const to = locateLayerIn(c, audio.to_layer)?.layer
+  if (!from || !to) return // reconcile drops an orphan
+  const overlap = Math.min(from.t_end_us, to.t_end_us) - Math.max(from.t_start_us, to.t_start_us)
+  if (overlap > 0) {
+    audio.duration_us = overlap
+    audio.extended_us = Math.min(audio.extended_us, overlap)
+  } else c.transitions.splice(c.transitions.indexOf(audio), 1)
+}
+
 /** add_transition. Both layers must live on the SAME track. Cases:
  *
  *  - exact-adjacent cut, `placement: 'overlap'` (the default): the incoming
@@ -227,17 +327,24 @@ function requireTransition(p: Project, id: Uuid): { comp: Composition; transitio
  *    placements — nothing moves, `extended_us = 0`.
  *  - anything else: TransitionLayersNotAdjacent.
  *
+ *  Two Audio layers take the same cases with Crossfade only, and an overlap
+ *  placement whose move set carries picture is refused
+ *  (AudioTransitionMovesPicture). At an adjacent visual cut, `audio: 'linked'`
+ *  also adds an audio transition between the participants' crossing audio
+ *  partners (crossingAudioPartners), same duration and borrow, in the same
+ *  commit; the incoming partner then stays on its lane (ADR 0177).
+ *
  *  Every refusal is pre-id-mint (LayerNotFound / TrackLocked /
  *  TransitionUnsupportedLayerKind / TransitionInsufficientHandle /
  *  TransitionLayersNotAdjacent / the overlap branch's
  *  TransitionDurationOutOfRange, TransitionParticipantsShareLink,
- *  NegativeLayerStart and link-lock refusals burn no id); the transition id is
- *  minted after them all but BEFORE commit's validate — a downstream
- *  ValidationFailed burns it (the keystone landmine). A bounce-spawned track id
- *  is minted before the transition id by design. */
+ *  AudioTransitionMovesPicture, NegativeLayerStart and link-lock refusals burn
+ *  no id); the transition ids are minted after them all but BEFORE commit's
+ *  validate — a downstream ValidationFailed burns them (the keystone landmine).
+ *  A bounce-spawned track id is minted before the transition id by design. */
 export function applyAddTransition(
   p: Project, idGen: IdGen, fromLayer: Uuid, toLayer: Uuid, durationUs: number,
-  kind: Transition['kind'], placement: 'overlap' | 'extend' = 'overlap',
+  kind: Transition['kind'], placement: 'overlap' | 'extend' = 'overlap', audio: 'linked' | 'none' = 'linked',
 ): { id: Uuid; bounces: TransitionBounce[] } {
   const from = requireLayer(p, fromLayer)
   const c = from.comp
@@ -252,13 +359,14 @@ export function applyAddTransition(
 
   const fromLayerObj = from.layer
   const toLayerObj = from.track.layers[toIdx]
-  rejectAudioParticipant(fromLayerObj)
-  rejectAudioParticipant(toLayerObj)
+  const audioPair = checkPairClass(fromLayerObj, toLayerObj, kind)
 
   const fromEnd = fromLayerObj.t_end_us
   const toStart = toLayerObj.t_start_us
   const curOverlap = Math.max(fromEnd - toStart, 0)
   const bounces: TransitionBounce[] = []
+  let partners = !audioPair && audio === 'linked' && fromEnd === toStart
+    ? crossingAudioPartners(c, fromLayerObj, toLayerObj) : null
   let durUs: number
   let extendedUs: number
   if (curOverlap === 0 && fromEnd === toStart) {
@@ -267,6 +375,17 @@ export function applyAddTransition(
       const available = tailHandleUs(p, fromLayerObj)
       if (available < durUs)
         throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: fromLayer, available_us: available })
+      if (partners) {
+        // The partner ends on the same canonical cut, so the same µs lands its
+        // end on the same frame.
+        const audioAvailable = tailHandleUs(p, partners.from)
+        if (audioAvailable < durUs)
+          throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: partners.from.id, available_us: audioAvailable })
+        if (durUs > partners.to.t_end_us - partners.to.t_start_us)
+          throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'TransitionDurationOutOfRange', transition: null, duration: durUs } })
+        checkLinkLock(c, fromLayer, [partners.from.id])
+        extendLayerTEnd(partners.from, durUs)
+      }
       extendLayerTEnd(fromLayerObj, durUs)
       extendedUs = durUs // the whole overlap is borrowed tail
     } else {
@@ -294,16 +413,19 @@ export function applyAddTransition(
       if (fromLink !== undefined && fromLink === linkIdx.get(toLayer))
         throw new CommandFailure({ error: 'TransitionParticipantsShareLink', from: fromLayer, to: toLayer })
       const moveSet = incomingMoveSet(c, toLayer) // link-lock refusal inside
+      if (audioPair) refuseMovingPicture(c, moveSet)
       const travel = travelBy(toStart, -durUs)
       // Zero-cross pre-check over the whole moving set, read off the landings
       // shiftLayerSet will write: B cannot cross (see maxDur), but an
       // earlier-starting link sibling can. Pre-mint and pre-mutation, like every
       // refusal here.
-      for (const [id, { tStartUs }] of shiftedSpans(c, moveSet, travel))
+      const landings = shiftedSpans(c, moveSet, travel)
+      for (const [id, { tStartUs }] of landings)
         if (tStartUs < 0)
           throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: id, t_start: tStartUs } })
+      if (partners && !partnersCanCross(c, partners, new Set(moveSet), landings.get(partners.to.id), durUs)) partners = null
       shiftLayerSet(c, moveSet, travel)
-      bounceCollidingSiblings(p, c, idGen, moveSet, toLayer, bounces)
+      bounceCollidingSiblings(p, c, idGen, moveSet, partners ? [toLayer, partners.to.id] : [toLayer], bounces)
       extendedUs = 0
     }
     applyDurationAutofit(c) // both adjacent branches retime an edge (A.end grows / B's set moves)
@@ -315,6 +437,12 @@ export function applyAddTransition(
 
   const id = idGen() // after ALL checks, before commit's validate (keystone)
   c.transitions.push({ id, from_layer: fromLayer, to_layer: toLayer, duration_us: durUs, kind, extended_us: extendedUs })
+  // Both cuts sit on the same canonical frame and both incoming layers moved by
+  // the same travel, so the audio overlap is the visual one to the microsecond.
+  if (partners) c.transitions.push({
+    id: idGen(), from_layer: partners.from.id, to_layer: partners.to.id,
+    duration_us: durUs, kind: { kind: 'Crossfade' }, extended_us: extendedUs,
+  })
   return { id, bounces }
 }
 
@@ -344,7 +472,12 @@ export function applyAddTransition(
  *  B→C that B's move breaks is dropped by commit's reconcile (Policy B), the
  *  designed outcome.
  *
- *  Kind change is a pure field swap, never geometry. */
+ *  Kind change is a pure field swap, never geometry; an audio transition keeps
+ *  Crossfade. An audio transition's own edit that would move its incoming layer
+ *  refuses when that carries picture (AudioTransitionMovesPicture). A visual
+ *  transition's linked audio transition follows: its outgoing end moves by the
+ *  same frames (planAudioCarry), its incoming layer moves as a link sibling, and
+ *  its duration settles on the landed overlap (ADR 0177). */
 export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { duration_us?: number; kind?: Transition['kind']; extended_us?: number }): void {
   const { comp: c, transition: tr } = requireTransition(p, transitionId)
   // Whole-command lock gate, kind-only patches included (see
@@ -352,6 +485,9 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
   // healthy state always has both (reconcile drops orphans on every commit).
   const gateLoc = locateLayerIn(c, tr.from_layer) ?? locateLayerIn(c, tr.to_layer)
   if (gateLoc) checkTransitionTrackLock(c, gateLoc.trackIndex)
+  const audioPair = gateLoc?.layer.params.kind === 'Audio'
+  if (gateLoc && audioPair && patch.kind !== undefined) checkAudioKind(gateLoc.layer, patch.kind)
+  const linkedAudio = audioPair ? null : linkedAudioTransition(c, tr)
   const requestedDur = patch.duration_us
   const requestedExt = patch.extended_us
   if (requestedDur !== undefined || requestedExt !== undefined) {
@@ -401,18 +537,23 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
     if (endDelta !== 0 || startDelta !== 0) {
       // Link-lock refusal before any write (see incomingMoveSet).
       const moveSet = startDelta !== 0 ? incomingMoveSet(c, tr.to_layer) : []
+      if (audioPair) refuseMovingPicture(c, moveSet)
       if (endDelta > 0) {
         // e′ > e is the ONLY handle-consuming direction, so only it pre-checks.
         const available = tailHandleUs(p, fromLayerObj)
         if (available < endDelta)
           throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: tr.from_layer, available_us: available })
-        extendLayerTEnd(fromLayerObj, endDelta)
-      } else if (endDelta < 0) shrinkLayerTEnd(fromLayerObj, -endDelta)
+      }
+      const carryAudio = linkedAudio && planAudioCarry(p, c, tr.from_layer, linkedAudio, sFrame + eTargetFrames - endFrame)
+      if (endDelta > 0) extendLayerTEnd(fromLayerObj, endDelta)
+      else if (endDelta < 0) shrinkLayerTEnd(fromLayerObj, -endDelta)
+      if (carryAudio) carryAudio()
       shiftLayerSet(c, moveSet, { fromUs: toLayerObj.t_start_us, toUs: newStartUs })
       tr.duration_us = newEndUs - newStartUs
       // Negative e′ (tail trim) stores 0, never a negative counter: the trim
       // moved the sacred end itself, so post-commit NOTHING is borrowed.
       tr.extended_us = Math.max(0, newEndUs - timeUsAtFrame(sFrame, num, den))
+      if (linkedAudio) settleAudioTransition(c, linkedAudio)
       applyDurationAutofit(c)
     }
   }
@@ -426,8 +567,11 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
  *  incoming layer landing flush against it — the whole point of the restore —
  *  is not misread as a collision with the not-yet-shrunk tail. Throws the
  *  structured refusal naming the member that cannot land; the system never
- *  makes room (the user may have filled the vacated gap deliberately). */
-function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], travel: Travel, fromLayer: Uuid, shrunkFromEnd: number | null): void {
+ *  makes room (the user may have filled the vacated gap deliberately).
+ *  `crossing` is a linked audio transition: its own record authorizes its
+ *  overlap until it settles, so its incoming layer may land over its outgoing
+ *  one. */
+function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], travel: Travel, fromLayer: Uuid, shrunkFromEnd: number | null, crossing: Transition | null): void {
   // The SAME call `shiftLayerSet` will make, not a re-derivation of it: a
   // pre-check that rounded differently from the write it guards would refuse
   // landings that fit and admit ones that do not.
@@ -442,6 +586,7 @@ function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], tr
     for (const other of loc.track.layers) {
       if (moving.has(other.id)) continue
       if ((other.params.kind === 'Audio' ? 'audio' : 'visual') !== cls) continue
+      if (crossing && id === crossing.to_layer && other.id === crossing.from_layer) continue
       const otherEnd = shrunkFromEnd !== null && other.id === fromLayer ? shrunkFromEnd : other.t_end_us
       if (destStart < otherEnd && other.t_start_us < destEnd)
         throw new CommandFailure({ error: 'TransitionRestoreCollision', layer: id })
@@ -462,8 +607,14 @@ function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], tr
  *  BEFORE anything mutates; an unlocatable from_layer/to_layer skips that half
  *  (tolerance for a participant a prior edit removed). Like update, a
  *  following B→C transition broken by B's move is commit-reconcile's designed
- *  drop. */
-export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
+ *  drop.
+ *
+ *  An audio transition whose restore move would carry picture moves no one
+ *  (ADR 0177): the borrow is returned as above, and the incoming Audio layer,
+ *  still overlapping by `duration_us − extended_us`, changes to a free lane
+ *  (minting one when none is free). A visual transition's linked audio
+ *  transition follows the restore as it follows an update. */
+export function applyRemoveTransition(p: Project, transitionId: Uuid, idGen: IdGen): void {
   const { comp: c, transition: tr, index: idx } = requireTransition(p, transitionId)
   const moveUs = tr.duration_us - tr.extended_us // ≥ 0: validate holds e ≤ d
   const fromLoc = locateLayerIn(c, tr.from_layer)
@@ -471,18 +622,45 @@ export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
   // Whole-command lock gate on whichever participant halves still exist —
   // lock outranks the collision pre-check below (see checkTransitionTrackLock).
   for (const loc of [fromLoc, toLoc]) if (loc) checkTransitionTrackLock(c, loc.trackIndex)
+  const audioPair = (fromLoc ?? toLoc)?.layer.params.kind === 'Audio'
 
+  if (audioPair && toLoc && moveUs > 0
+    && linkSiblingsExcluding(c, tr.to_layer).some((id) => locateLayerIn(c, id)?.layer.params.kind !== 'Audio')) {
+    const layer = toLoc.layer
+    checkLinkLock(c, tr.to_layer, [tr.to_layer])
+    c.transitions.splice(idx, 1)
+    if (fromLoc) shrinkLayerTEnd(fromLoc.layer, tr.extended_us)
+    const free = pickFreeOverlayTrack(c, layer.t_start_us, layer.t_end_us)
+    const destId = free ?? applyAddTrack(p, idGen, null, undefined, c.id)
+    const dest = c.tracks.find((t) => t.id === destId)!
+    toLoc.track.layers.splice(toLoc.track.layers.indexOf(layer), 1)
+    const at = dest.layers.findIndex((x) => x.t_start_us > layer.t_start_us)
+    dest.layers.splice(at < 0 ? dest.layers.length : at, 0, layer)
+    applyDurationAutofit(c)
+    return
+  }
+
+  const linkedAudio = audioPair ? null : linkedAudioTransition(c, tr)
   let moveSet: Uuid[] = []
   // Stated from the incoming layer's start, the instant the restore names.
   const travel = travelBy(toLoc?.layer.t_start_us ?? 0, moveUs)
   if (toLoc && moveUs > 0) {
     moveSet = incomingMoveSet(c, tr.to_layer)
     const shrunkFromEnd = fromLoc ? fromLoc.layer.t_end_us - tr.extended_us : null
-    precheckRestoreCollision(c, moveSet, travel, tr.from_layer, shrunkFromEnd)
+    precheckRestoreCollision(c, moveSet, travel, tr.from_layer, shrunkFromEnd, linkedAudio)
+  }
+  // The visual outgoing end returns its borrow, `extended_us` in whole frames.
+  let carryAudio: (() => void) | null = null
+  if (linkedAudio && fromLoc) {
+    const { num, den } = c.fps
+    const end = fromLoc.layer.t_end_us
+    carryAudio = planAudioCarry(p, c, tr.from_layer, linkedAudio, frameIndexRound(end - tr.extended_us, num, den) - frameIndexRound(end, num, den))
   }
 
   c.transitions.splice(idx, 1)
   if (fromLoc) shrinkLayerTEnd(fromLoc.layer, tr.extended_us)
+  if (carryAudio) carryAudio()
   shiftLayerSet(c, moveSet, travel)
+  if (linkedAudio) settleAudioTransition(c, linkedAudio)
   applyDurationAutofit(c)
 }

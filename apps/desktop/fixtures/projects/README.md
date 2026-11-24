@@ -35,9 +35,10 @@ is not under the v7 recipe's old name, so the step plans no file. Path
 rewriting, external items, voiceovers and the proxy rename are exercised by
 `migrate.projectPaths.test.ts`. The old synthetic media has no video metadata;
 chain tests explicitly supply its 640×360 source extent as migration context.
-`v8.json` is the silence-padding generation (ADR 0038): an un-retimed Audio
-window may reach past its media. The step changes nothing, so v8 is v7 with
-only the version changed.
+`v8.json` is the silence-padding and audio-transition generation (ADR 0038,
+ADR 0177): an un-retimed Audio window may reach past its media, and a
+transition may join two Audio layers. The step changes nothing, so v8 is v7
+with only the version changed.
 Production reads original metadata and refuses unknown source dimensions.
 Existing v1–v3 files remain byte-for-byte unchanged. Animated migration cases,
 including Path and Group retiming, live in `migrate.anchorPosition.test.ts`.

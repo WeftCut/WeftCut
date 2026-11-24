@@ -10,6 +10,7 @@ import { lastFrameAnchorUs } from "../../frames";
 import { forEachLayer, instanceKey } from "../compositionWalk";
 import { SyntheticClock } from "../clock";
 import { AudioMixer } from "./AudioMixer";
+import type { AudioCrossfade } from "./envelope";
 import { audioErrorDetail } from "./audioError";
 import type { AudioGraph } from "./AudioGraph";
 import { LOOKAHEAD_S } from "./chunkSchedule";
@@ -33,6 +34,7 @@ interface Entry {
   key: string;
   layerId: string;
   view: AudioView;
+  crossfades: AudioCrossfade[];
   startUs: number;
   endUs: number;
   gain: number;
@@ -181,7 +183,7 @@ export class PreviewAudioEngine {
         const previous = this.entries.get(key);
         if (previous?.signature === signature) { next.set(key, previous); continue; }
         previous?.mixer?.dispose(); changed = true;
-        next.set(key, { key, layerId: key, view, startUs: 0, endUs: stem.duration_us, gain, signature, url: stem.url, mixer: null });
+        next.set(key, { key, layerId: key, view, crossfades: [], startUs: 0, endUs: stem.duration_us, gain, signature, url: stem.url, mixer: null });
       }
     } else {
       if (this.stemSignature) { this.stemAbort.abort(); this.stemSignature = ''; this.stems = null; this.stemPending = null; this.stemError = null; }
@@ -195,7 +197,18 @@ export class PreviewAudioEngine {
         src_out_us: layer.params.src_out_us - placed.tailUs,
       };
       const gain = auditionedRoleGainLinear(view.role, roles);
-      const signature = JSON.stringify([view, placed.tStartUs, placed.tEndUs, gain]);
+      const composition = this.summary!.compositions[placed.compositionId];
+      const crossfades: AudioCrossfade[] = [];
+      for (const transition of composition?.transitions ?? []) {
+        if (transition.kind.kind !== 'Crossfade' || transition.duration_us <= 0) continue;
+        if (transition.from_layer !== layer.id && transition.to_layer !== layer.id) continue;
+        const incoming = placed.track.layers.find(l => l.id === transition.to_layer);
+        const outgoing = placed.track.layers.find(l => l.id === transition.from_layer);
+        if (!incoming || !outgoing || incoming.kind !== 'Audio' || outgoing.kind !== 'Audio') continue;
+        crossfades.push({ startUs: incoming.t_start_us - layer.t_start_us - placed.headUs,
+          durationUs: transition.duration_us, incoming: transition.to_layer === layer.id });
+      }
+      const signature = JSON.stringify([view, placed.tStartUs, placed.tEndUs, gain, crossfades]);
       const previous = this.entries.get(key);
       const resolved = this.resolveSource(layer.id, view.media_id);
       // A temporary missing resolution retains the current artifact only when
@@ -208,8 +221,8 @@ export class PreviewAudioEngine {
       changed = true;
       let mixer = previous?.mixer ?? null;
       if (previous && previous.url !== url) { mixer?.dispose(); mixer = null; }
-      if (mixer && previous?.signature !== signature) mixer.updateView(view, placed.tStartUs, placed.tEndUs, gain);
-      next.set(key, { key, layerId: layer.id, view, startUs: placed.tStartUs,
+      if (mixer && previous?.signature !== signature) mixer.updateView(view, placed.tStartUs, placed.tEndUs, gain, crossfades);
+      next.set(key, { key, layerId: layer.id, view, crossfades, startUs: placed.tStartUs,
         endUs: placed.tEndUs, gain, signature, url, mixer });
     });
     for (const [key, entry] of this.entries) if (!next.has(key)) {
@@ -366,7 +379,7 @@ export class PreviewAudioEngine {
     if (!entry.mixer && entry.url) {
       entry.mixer = new AudioMixer({ layerId: entry.key, conformUrl: entry.url,
         view: entry.view, layerTStartUs: entry.startUs, layerTEndUs: entry.endUs }, this.graph);
-      entry.mixer.updateView(entry.view, entry.startUs, entry.endUs, entry.gain);
+      entry.mixer.updateView(entry.view, entry.startUs, entry.endUs, entry.gain, entry.crossfades);
     }
     return entry.mixer;
   }

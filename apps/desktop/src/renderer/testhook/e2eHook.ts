@@ -522,6 +522,7 @@ export interface E2EHook {
   /// Start REAL playback through the global transport (`playbackStore`), so the
   /// playback bench never has to click the DOM or press Space.
   audioTransportSnapshot(): (PlaybackSnapshot & AudioTransportStats & { positionUs: number; contextTime: number; rmsDb: number }) | null;
+  audioPreCompressorSamples(): { positionUs: number; sampleRate: number; samples: number[] } | null;
   previewTickerEnabled(enabled: boolean): void;
   transportPlay(): void;
   /// Stop real playback through the global transport. Safe no-op with no preview.
@@ -801,6 +802,14 @@ export function installPlaybackBenchHooks(): void {
       ...engine.stats() };
   };
   hookSlot().previewTickerEnabled = (enabled) => previewBridge?.setTickerEnabled(enabled);
+  hookSlot().audioPreCompressorSamples = () => {
+    const engine = activePreviewAudioEngine();
+    if (!engine) return null;
+    const graph = engine.graph as unknown as { masterTap: { analyser: AnalyserNode } };
+    const samples = new Float32Array(graph.masterTap.analyser.fftSize);
+    graph.masterTap.analyser.getFloatTimeDomainData(samples);
+    return { positionUs: engine.positionUs(), sampleRate: engine.graph.ctx.sampleRate, samples: Array.from(samples) };
+  };
   hookSlot().transportPause = () => transportPause();
   hookSlot().transportSeekUs = (us: number) => transportSeek(us);
   hookSlot().compositorPerfSnapshot = () => previewBridge?.perfSnapshot() ?? null;

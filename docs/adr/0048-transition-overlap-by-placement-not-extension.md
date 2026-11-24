@@ -23,16 +23,19 @@ whenever the overlap was not born from extension.
 - **Placement is the default.** `add_transition` moves the incoming layer (and
   its link siblings, each on its own lattice) left by the frame-rounded
   duration, measured backward from the cut. A shifted sibling that collides on
-  its lane bounces to a free lane, spawning one if needed. The vacated span
-  stays a gap; nothing ripples implicitly. Extension exists only behind an
-  explicit `placement: 'extend'` and the chip's right edge — never a default or
-  a fallback.
+  its lane bounces to a free lane, spawning one if needed, unless the same
+  commit authorizes its overlap with an audio transition (ADR 0177). The
+  vacated span stays a gap; nothing ripples implicitly. Extension exists only
+  behind an explicit `placement: 'extend'` and the chip's right edge — never a
+  default or a fallback.
 - **`extended_us` records the borrow.** The transition stores how many µs of
   the outgoing tail it borrowed (0 for placement and pre-positioned adds, the
   full duration for an extend add), so the outgoing clip's cut end is always
   `end − extended_us`. Removal shrinks the outgoing clip by `extended_us`,
   moves the incoming clip right by the remainder, and refuses
-  (`TransitionRestoreCollision`) when that destination is occupied.
+  (`TransitionRestoreCollision`) when that destination is occupied. An audio
+  transition whose move would carry a visual layer moves its incoming audio
+  to a free lane instead (ADR 0177).
 - **Implicit duration changes prefer the cut.** Presets, the inspector and
   patches omitting `extended_us` never grow the borrow; a shrink returns
   borrowed material before moving the incoming clip. Only the chip's right-edge

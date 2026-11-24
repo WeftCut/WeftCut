@@ -192,7 +192,7 @@ function computePlan({ clips, transitions, layer_ids: ids, target }: RetimePlanI
     const from = final.get(tr.from_layer);
     const to = final.get(tr.to_layer);
     if (!from || !to || from.id === to.id || from.composition_id !== to.composition_id
-      || from.track_id !== to.track_id || from.overlap_class !== 'visual' || to.overlap_class !== 'visual'
+      || from.track_id !== to.track_id || from.overlap_class !== to.overlap_class
       || tr.duration_us <= 0 || tr.extended_us < 0 || tr.extended_us > tr.duration_us
       || tr.duration_us > from.t_end_us - from.t_start_us || tr.duration_us > to.t_end_us - to.t_start_us
       || Math.max(0, Math.min(from.t_end_us, to.t_end_us) - Math.max(from.t_start_us, to.t_start_us)) !== tr.duration_us) return refused({ kind: 'Transition', transition_id: tr.id });

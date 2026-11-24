@@ -15,12 +15,13 @@
 // own `extern "C" fn eval` (the scalar shim), so both paths call
 // `crate::eval::<T>` fully-qualified to dodge the name collision.
 use crate::{
-    db_to_linear as db_to_linear_impl, fade_multiplier as fade_multiplier_impl,
-    frame_count as frame_count_impl, frame_index_ceil as frame_index_ceil_impl,
-    frame_index_floor as frame_index_floor_impl, frame_index_round as frame_index_round_impl,
-    pan_coeffs as pan_coeffs_impl, role_audible as role_audible_impl, snap_frame_ceil,
-    snap_frame_floor, snap_frame_round, time_us_at_frame as time_us_at_frame_impl,
-    us_to_frame as us_to_frame_impl, EaseDir, Extrapolate, Extrapolation, Kf, Rgba8, Segment,
+    db_to_linear as db_to_linear_impl, equal_power_crossfade,
+    fade_multiplier as fade_multiplier_impl, frame_count as frame_count_impl,
+    frame_index_ceil as frame_index_ceil_impl, frame_index_floor as frame_index_floor_impl,
+    frame_index_round as frame_index_round_impl, pan_coeffs as pan_coeffs_impl,
+    role_audible as role_audible_impl, snap_frame_ceil, snap_frame_floor, snap_frame_round,
+    time_us_at_frame as time_us_at_frame_impl, us_to_frame as us_to_frame_impl, EaseDir,
+    Extrapolate, Extrapolation, Kf, Rgba8, Segment,
 };
 
 /// Max keyframes held resident for ONE animated property (an `Animated<T>` /
@@ -460,6 +461,17 @@ pub extern "C" fn pan_coeff(pan: f64, channels: i32, idx: i32) -> f32 {
     let c = pan_coeffs_impl(pan, channels);
     let i = (idx as usize).min(3);
     c[i]
+}
+
+/// Equal-power transition gain, selected by incoming (1) or outgoing (0).
+#[no_mangle]
+pub extern "C" fn crossfade_gain(progress: f64, incoming: i32) -> f64 {
+    let (outgoing, incoming_gain) = equal_power_crossfade(progress);
+    if incoming != 0 {
+        incoming_gain
+    } else {
+        outgoing
+    }
 }
 
 /// `fade_multiplier(t_us, span_us, fade_in_us, fade_out_us)` — fade ramp. Times

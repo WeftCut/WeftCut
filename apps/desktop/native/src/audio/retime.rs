@@ -3,7 +3,7 @@
 use super::fx::{check_cancelled, Cancellation};
 use super::{
     conform_reader::ConformReader,
-    envelope::{sample_gain, sample_pan, Envelope},
+    envelope::{apply_crossfades, crossfades_for_layer, sample_gain, sample_pan, Envelope},
     mix::{mix_block, us_to_frame, MixLayer, MixPlan, MIX_BLOCK_FRAMES},
 };
 use crate::state::audio_role::AudioRole;
@@ -226,6 +226,13 @@ fn composition<'a>(
                             cancel,
                         )
                         .await?;
+                        let mut gain = sample_gain(
+                            &p.gain_db,
+                            p.fade_in_us as i64,
+                            p.fade_out_us as i64,
+                            duration,
+                        );
+                        apply_crossfades(&mut gain, &crossfades_for_layer(comp, layer));
                         roles.entry(p.role).or_default().push(MixLayer {
                             label: layer.id.to_string(),
                             conform_path: path,
@@ -233,12 +240,7 @@ fn composition<'a>(
                             src_in_frame: 0,
                             src_out_frame: us_to_frame(duration),
                             head_frame: 0,
-                            gain: sample_gain(
-                                &p.gain_db,
-                                p.fade_in_us as i64,
-                                p.fade_out_us as i64,
-                                duration,
-                            ),
+                            gain,
                             pan: sample_pan(&p.pan, duration),
                         });
                     }

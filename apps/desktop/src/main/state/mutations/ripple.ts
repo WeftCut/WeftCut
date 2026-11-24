@@ -116,8 +116,9 @@ export function applySweep(c: Composition, plannedMoves: readonly RippleMove[]):
   // the OLD geometry, before the sweep moves anything.
   //
   // No delta check: the planner refuses a pair whose participants moved by
-  // different amounts, so both-moved already means uniformly moved. Both
-  // participants are visual (validate's rule), hence the composition frame grid.
+  // different amounts, so both-moved already means uniformly moved. Every
+  // layer edge sits on frames (ADR 0038), an audio pair's too, hence the
+  // composition frame grid.
   const movedSet = new Set(plannedMoves.map((m) => m.layer))
   const grid = frameGrid(c.fps)
   const borrowedFrames = new Map<Uuid, number>()

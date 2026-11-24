@@ -339,7 +339,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     expect(root(actor.snapshot()).transitions).toEqual([])
   })
 
-  it('audio participant → TransitionUnsupportedLayerKind prose + data', () => {
+  it('a mixed visual + Audio pair → TransitionUnsupportedLayerKind prose + data', () => {
     const { actor, track, a1, a2 } = withCut()
     const MID = '00000000-0000-7000-8000-0000000000ab'
     actor.dispatch('add_media', { id: MID, kind: 'Audio', duration_us: 10_000_000 })
@@ -349,7 +349,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
-    expect(r.error.message).toContain('visual layers only')
+    expect(r.error.message).toContain('two visual layers, or two Audio layers')
     expect(r.error.data).toEqual({ error: 'TransitionUnsupportedLayerKind', layer: au, kind: 'Audio' })
   })
 })

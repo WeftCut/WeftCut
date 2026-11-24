@@ -16,7 +16,9 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use crate::audio::conform_reader::ConformReader;
-use crate::audio::envelope::{pan_coeffs_at, sample_gain, sample_pan, Envelope};
+use crate::audio::envelope::{
+    apply_crossfades, crossfades_for_layer, pan_coeffs_at, sample_gain, sample_pan, Envelope,
+};
 use crate::state::audio_role::RoleMixSettings;
 use crate::state::ids::CompositionId;
 use crate::state::layer::{AudioParams, Layer, LayerParams};
@@ -122,6 +124,7 @@ const MAX_COMPOSITION_DEPTH: usize = 32;
 /// An `Audio` layer the walk reached, placed in root time.
 struct PlacedAudio<'a> {
     layer: &'a Layer,
+    composition: &'a crate::state::Composition,
     params: &'a AudioParams,
     /// Root time the layer starts sounding: its own `t_start` shifted by the
     /// accumulated offset, then clipped to every enclosing window.
@@ -186,6 +189,7 @@ fn for_each_audio_layer<'a>(
             match &layer.params {
                 LayerParams::Audio(p) => f(PlacedAudio {
                     layer,
+                    composition: comp,
                     params: p,
                     start_us,
                     head_us: start_us - placed_start,
@@ -245,6 +249,7 @@ fn audible_audio_layers<'a>(
                         {
                             out.push(PlacedAudio {
                                 layer,
+                                composition: c,
                                 params: a,
                                 start_us: layer.t_start_us,
                                 head_us: 0,
@@ -326,6 +331,10 @@ pub fn plan_for_project(
             p.fade_in_us as i64,
             p.fade_out_us as i64,
             span_us,
+        );
+        apply_crossfades(
+            &mut gain,
+            &crossfades_for_layer(placed.composition, placed.layer),
         );
         gain.scale(role_gain);
         let start_frame = us_to_frame(placed.start_us);
@@ -1444,6 +1453,39 @@ mod tests {
         assert_eq!(conform_waiting_media(&project, None), vec![media]);
         // Out of the export window ⇒ not waited on, exactly as a root layer.
         assert!(conform_waiting_media(&project, Some((0, S))).is_empty());
+    }
+
+    #[test]
+    fn plan_applies_equal_power_to_both_audio_transition_participants() {
+        use crate::state::transition::{Transition, TransitionKind};
+        let tmp = TempDir::new().unwrap();
+        let path = flat_mono_conform(
+            tmp.path(),
+            "tone.conform",
+            0.5,
+            (2 * MIX_SAMPLE_RATE) as usize,
+        );
+        let media = Uuid::new_v4();
+        let root = Uuid::new_v4();
+        let from = audio_layer(media, AudioRole::Music, 0, 2 * S, 0, 2 * S);
+        let to = audio_layer(media, AudioRole::Music, S, 3 * S, 0, 2 * S);
+        let (from_id, to_id) = (from.id, to.id);
+        let mut composition = composition_of(root, vec![track_of(vec![from, to])], 3 * S);
+        composition.transitions.push_back(Transition {
+            id: Uuid::new_v4(),
+            from_layer: from_id,
+            to_layer: to_id,
+            duration_us: S,
+            kind: TransitionKind::Crossfade,
+            extended_us: 0,
+        });
+        let project = project_of(root, vec![composition], vec![audio_media(media, path)]);
+        let plan = plan_for_project(&project, None, None).unwrap();
+        assert_eq!(plan.layers.len(), 2);
+        assert!(
+            (plan.layers[0].gain.eval(3 * S / 2) - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6
+        );
+        assert!((plan.layers[1].gain.eval(S / 2) - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
     }
 
     #[test]

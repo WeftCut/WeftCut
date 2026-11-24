@@ -67,3 +67,9 @@ describe("audio pan golden vectors (cross-language)", () => {
     });
   }
 });
+
+it("multiplies user gain and fades with equal-power transitions", () => {
+  const e = sampleGain({ mode: "Static", value: 0 }, 1_000_000, 0, 2_000_000,
+    [{ startUs: 0, durationUs: 1_000_000, incoming: true }]);
+  expect(evalEnvelope(e, 500_000)).toBeCloseTo(0.5 * Math.SQRT1_2, 6);
+});

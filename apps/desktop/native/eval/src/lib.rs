@@ -901,6 +901,12 @@ pub fn pan_coeffs(pan: f64, channels: i32) -> [f32; 4] {
     }
 }
 
+/// Equal-power transition gains at progress `p`, clamped to the overlap.
+pub fn equal_power_crossfade(p: f64) -> (f64, f64) {
+    let angle = p.clamp(0.0, 1.0) * core::f64::consts::FRAC_PI_2;
+    (libm::cos(angle), libm::sin(angle))
+}
+
 /// Fade multiplier at layer-local `t_us`: linear 0→1 over `fade_in_us` from the
 /// layer start, 1→0 over `fade_out_us` into the layer end, multiplied where they
 /// overlap. Zero-length fades are identity. Shared by the export mixer and the
@@ -1016,6 +1022,26 @@ mod tests {
         assert!(any_role_solo([false, true, false]));
         assert!(!any_role_solo([false, false]));
         assert!(!any_role_solo(core::iter::empty::<bool>()));
+    }
+
+    #[test]
+    fn equal_power_crossfade_matches_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            progress: f64,
+            outgoing: f64,
+            incoming: f64,
+        }
+        let cases: Vec<Case> = serde_json::from_str(include_str!(
+            "../../../fixtures/audio-transitions/equal-power.json"
+        ))
+        .unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            let (outgoing, incoming) = equal_power_crossfade(case.progress);
+            assert!((outgoing - case.outgoing).abs() < 1e-12);
+            assert!((incoming - case.incoming).abs() < 1e-12);
+        }
     }
 
     // ---- audio: fade ramp ----

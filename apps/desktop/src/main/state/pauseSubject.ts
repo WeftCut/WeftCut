@@ -10,6 +10,7 @@
 // See `.scratch/pauses/spec.md` Decision 1.
 import type { Composition, Layer, Project } from './model'
 import { eachLayer } from './model'
+import { linkedAudioPartner } from './mutations/links'
 import { McpArgError } from './mcp-commands'
 
 /** The subject and where its times live, or why there is none.
@@ -25,19 +26,15 @@ export type PauseSubjectResolution =
 /** Resolve the Audio layer a pause is a fact about.
  *
  *  Three steps, in order: an `Audio` layer is its own subject; a `VideoClip`
- *  delegates to the Audio member of its link that shares its media, else to the
- *  link's SOLE Audio member; anything else has no subject.
+ *  delegates to its linked audio partner (`linkedAudioPartner`: the member
+ *  sharing its media, else the link's sole Audio member); anything else has no
+ *  subject.
  *
  *  Only `LayerParams::Audio` reaches either mixer, so a VideoClip's embedded
  *  track is not what plays — reading the source file makes a muted, slipped or
  *  deleted partner invisible to the detector and cuts picture by sound nobody
  *  hears. Resolving on the Audio layer also makes A/V slip correct for free:
- *  its own `src_in_us` / `t_start_us` are the ones that map the ranges.
- *
- *  Same-media BEFORE sole-member, because a paired import is the common case
- *  and a second Audio member (music, a voiceover) must not win over the clip's
- *  own track. Two Audio members and neither shares the media is genuinely
- *  ambiguous, so it refuses rather than guessing. */
+ *  its own `src_in_us` / `t_start_us` are the ones that map the ranges. */
 export function resolvePauseSubject(
   layerId: string,
   snapshot: Pick<Project, 'compositions'>,
@@ -48,18 +45,7 @@ export function resolvePauseSubject(
   if (layer.params.kind === 'Audio') return { ok: true, subject: layer, composition, delegatedFrom: null }
   if (layer.params.kind !== 'VideoClip') return { ok: false, reason: 'plays_no_sound' }
 
-  // Link members are layers of ONE composition (validate enforces it), so the
-  // partner search never leaves this composition's own layer set.
-  const clipMedia = layer.params.media
-  const link = composition.links.find((l) => l.members.includes(layer.id))
-  if (!link) return { ok: false, reason: 'plays_no_sound' }
-  const byId = new Map<string, Layer>()
-  for (const track of composition.tracks) for (const l of track.layers) byId.set(l.id, l)
-  const audio = link.members
-    .map((id) => byId.get(id))
-    .filter((l): l is Layer => l !== undefined && l.params.kind === 'Audio')
-  const sameMedia = audio.find((l) => l.params.kind === 'Audio' && l.params.media === clipMedia)
-  const subject = sameMedia ?? (audio.length === 1 ? audio[0] : undefined)
+  const subject = linkedAudioPartner(composition, layer)
   return subject
     ? { ok: true, subject, composition, delegatedFrom: layer }
     : { ok: false, reason: 'plays_no_sound' }

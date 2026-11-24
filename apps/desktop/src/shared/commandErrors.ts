@@ -136,6 +136,10 @@ export type CommandError =
   // opens. Never falls back to extend silently — the caller unlink-s or asks
   // for placement 'extend' explicitly.
   | { error: 'TransitionParticipantsShareLink'; from: Uuid; to: Uuid }
+  // An audio transition edit would move picture: `layer` is the visual link
+  // sibling of the incoming Audio layer that the placement would carry along
+  // (ADR 0177). Edit the visual transition instead, or unlink first.
+  | { error: 'AudioTransitionMovesPicture'; layer: Uuid }
   | { error: 'CheckpointNotFound'; checkpoint: Uuid }
   | { error: 'MediaNotFound'; media: Uuid }
   | { error: 'MediaInUse'; media: Uuid; referenced_by: Uuid[] }

@@ -38,7 +38,8 @@ Outside the boundary rule:
 - `transition.duration_us` / `extended_us` are *distances* between canonical
   boundaries. What is enforced is `overlap == duration_us` and
   `0 ≤ extended_us ≤ duration_us`; canonical endpoints then make both whole
-  frame counts. A transition duration is measured from the cut (backward for
+  frame counts, for an audio transition too (its edges sit on frames like every
+  layer's). A transition duration is measured from the cut (backward for
   placement overlap, forward for an extend's borrowed tail, ADR 0048) — a
   duration derived from the rate alone cannot stay on grid at 29.97 / 23.976.
 - Keyframe `t_us` is snapped on write but **not enforced**: trim and split
@@ -606,6 +607,7 @@ MCP tool error with a reason and, where useful, options).
 | Endpoints, `duration_us`, marker times on their grid (see Time) | snap in the mutator, then reject (`OffGridLayerBoundary` / `OffGridTime`, carrying `snap_to`); a loaded project is repaired instead |
 | `fps` changes only while no layer exists in the timeline or any stored snapshot / checkpoint | reject (`FpsLockedByContent`, `locked_by: current \| history`) — the unrecorded rate change writes every snapshot, so undo could otherwise resurrect old-grid layers |
 | `transition.duration_us` == the participants' overlap; `0 ≤ extended_us ≤ duration_us` | reject |
+| Transition participants are two visual layers, or two Audio layers using Crossfade (ADR 0177) | reject (`TransitionUnsupportedLayerKind`) |
 | `0 ≤ src_in < src_out`, and `src_out ≤ media duration` for VideoClip / Audio (exact, through the layer's time map); an un-retimed Audio window may pass either media end (silence) | reject (`InvalidSrcRange`, `SrcRangeExceedsMedia`); a CompositionRef has no upper bound |
 | No two same-class layers on one track overlap in `[t_start, t_end)` | reject (`LayerOverlap`, with options) |
 | `duration_us == max(t_end_us)` unpinned; `≥` pinned | autofit (pinned: grow only) |
@@ -619,6 +621,7 @@ MCP tool error with a reason and, where useful, options).
 | Media and track references resolve | reject (`MissingMedia`, …) |
 | Link ids unique per composition; members in the same composition; a layer in ≤ 1 link; ≥ 2 members | reject (`DuplicateLinkId`, `LinkMemberMissing`, `LayerInMultipleLinks`, `LinkBelowMinSize`); a delete or member removal dissolves a link below two first |
 | Transition participants do not share a link | refused at `add_transition` (`TransitionParticipantsShareLink`): placement moves the incoming layer's link siblings, so the overlap would never open |
+| An audio transition never moves picture | refused at `add_transition` / `update_transition` (`AudioTransitionMovesPicture`) when the incoming layer's move carries a visual link sibling; `remove_transition` moves the incoming audio to a free lane instead (ADR 0177) |
 | `crop` valid; `graphic_role` valid; `frame_interpolation` is `FrameSampling` | `InvalidArgument` |
 | Keyframe `t_us` outside `[0, duration]` | allowed |
 

@@ -306,6 +306,7 @@ const CASES: Record<string, Case> = {
 /** Tools, or `tool.field` probes, that cannot be probed on this fixture, with
  *  the reason. Keep each one honest: where the behaviour is pinned instead. */
 const EXCEPTIONS: Record<string, string> = {
+  'add_transition.audio': 'differs only for linked audio at the cut; mutations/transitions.test.ts covers linked and none',
   restyle_to_taste: 'needs the app host\'s project style (project://taste); mcp.taste-defaults.test.ts covers its scopes',
   synthesize_speech: 'needs a TTS engine; every field is checked by the Rust parser and covered in native tts tests',
   apply_subtitles: 'parses a subtitle document through native compute (hybrids.test.ts)',

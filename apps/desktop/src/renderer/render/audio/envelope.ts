@@ -6,7 +6,7 @@
 // keep those in step; the golden (audioEnvelopeGolden.fixture.json) guards them.
 
 import { type AnimTrack, resolveAnimated } from "../animated";
-import { dbToLinear, fadeMul } from "../../eval";
+import { crossfadeGain, dbToLinear, fadeMul } from "../../eval";
 
 export const ENVELOPE_STEP_US = 10_000;
 
@@ -38,6 +38,12 @@ function isAnimated(track: AnimTrack<number>): boolean {
   return track.mode === "Keyframed" && track.value.length > 1;
 }
 
+export interface AudioCrossfade {
+  startUs: number;
+  durationUs: number;
+  incoming: boolean;
+}
+
 /// Gain envelope for one audio layer: linear(resolveAnimated(gainDb)) ×
 /// fades. Static gain + no fades short-circuits to a single point.
 export function sampleGain(
@@ -45,8 +51,9 @@ export function sampleGain(
   fadeInUs: number,
   fadeOutUs: number,
   spanUs: number,
+  crossfades: readonly AudioCrossfade[] = [],
 ): Envelope {
-  if (!isAnimated(gainDb) && fadeInUs === 0 && fadeOutUs === 0) {
+  if (!isAnimated(gainDb) && fadeInUs === 0 && fadeOutUs === 0 && crossfades.length === 0) {
     return {
       stepUs: ENVELOPE_STEP_US,
       spanUs,
@@ -58,7 +65,8 @@ export function sampleGain(
     const t = Math.min(k * ENVELOPE_STEP_US, spanUs);
     values.push(
       dbToLinear(resolveAnimated(gainDb, t, 0)) *
-        fadeMultiplier(t, spanUs, fadeInUs, fadeOutUs),
+        fadeMultiplier(t, spanUs, fadeInUs, fadeOutUs) *
+        crossfades.reduce((gain, fade) => gain * crossfadeGain((t - fade.startUs) / fade.durationUs, fade.incoming), 1),
     );
     if (t >= spanUs) break;
   }

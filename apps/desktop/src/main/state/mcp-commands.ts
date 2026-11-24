@@ -821,6 +821,12 @@ export function parseTransitionPlacement(v: unknown): 'overlap' | 'extend' {
   return v
 }
 
+export function parseTransitionAudio(v: unknown): 'linked' | 'none' {
+  if (v === undefined || v === null) return 'linked'
+  if (v !== 'linked' && v !== 'none') throw new McpArgError(`audio must be 'linked' | 'none', got ${String(v)}`, 'audio')
+  return v
+}
+
 /** update_transition's optional (kind, direction) pair → TransitionKind or
  *  undefined (no kind patch). direction rides INSIDE kind, so direction
  *  without kind is rejected — patch both together. */
@@ -1135,8 +1141,13 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
       ],
     } }
   }
+  if (e.error === 'AudioTransitionMovesPicture') {
+    return { code: 'invalid_params', message: `this audio transition edit would move the visual layer ${e.layer}, linked to the incoming Audio layer; an audio transition never moves picture. Options: edit the visual transition at this cut (its linked audio follows), or unlink the layers (update_link) and retry.`, data: {
+      error: 'AudioTransitionMovesPicture', layer: e.layer,
+    } }
+  }
   if (e.error === 'TransitionUnsupportedLayerKind') {
-    return { code: 'invalid_params', message: `transitions are for visual layers only: layer ${e.layer} is ${e.kind} (audio crossfades are not supported yet)`, data: {
+    return { code: 'invalid_params', message: `layer ${e.layer} (${e.kind}) cannot take this transition: a transition joins two visual layers, or two Audio layers with kind 'Crossfade'`, data: {
       error: 'TransitionUnsupportedLayerKind', layer: e.layer, kind: e.kind,
     } }
   }
@@ -2008,8 +2019,9 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }) },
   // ── table-exec: transitions ──────────────────────────────────────────────
   { name: 'add_transition', exec: 'table', annotations: ANN_WRITE,
-    description: "Add a transition at the cut between two adjacent layers on the same track — `from_layer_id` (outgoing) ends exactly where `to_layer_id` (incoming) starts — and return its record. `kind` 'Crossfade' (default) | 'Wipe' | 'Slide'; `direction` is the MOTION direction ('left' = the boundary or the sliding content moves left), required for Wipe/Slide and rejected for Crossfade. `placement` 'overlap' (default) moves the INCOMING layer left by the frame-rounded duration so both still play exactly their trimmed ranges and the vacated span stays a gap — nothing ripples; link siblings follow, bouncing to a free lane. 'extend' instead borrows outgoing tail media past its out-point, positions untouched (`extended_us = duration`), refused with `TransitionInsufficientHandle { available_us }` when the tail is short. A pair already overlapped by exactly the duration attaches as-is. Refuses: participants sharing a link, a move crossing t = 0, a duration longer than either participant, an Audio participant (`TransitionUnsupportedLayerKind`). Recorded — one undo restores every moved layer.",
+    description: "Add a transition at the cut between two adjacent layers on one track (`from_layer_id` ends where `to_layer_id` starts) and return its record. Visual pairs take `kind` 'Crossfade' (default) | 'Wipe' | 'Slide'; Audio pairs take 'Crossfade' only (equal-power). `direction` is the MOTION direction, required for Wipe/Slide and rejected for Crossfade. `placement` 'overlap' (default) moves the INCOMING layer left by the frame-rounded duration — nothing ripples; link siblings follow, bouncing to a free lane. 'extend' borrows outgoing tail media, positions untouched; short tail: `TransitionInsufficientHandle { available_us }`. A pair already overlapped by the duration attaches as-is. `audio` 'linked' (default): when the clips' linked Audio meets at the same cut on one track, their crossfade is added too, on its lane; 'none' skips it. Refuses: participants sharing a link, a move crossing t = 0, a duration over either layer's, a mixed pair or an audio Wipe/Slide (`TransitionUnsupportedLayerKind`), an audio move carrying picture (`AudioTransitionMovesPicture`). One undo reverts every move.",
     inputSchema: { type: 'object', properties: {
+      audio: { type: 'string', enum: ['linked', 'none'], description: "At a visual cut: 'linked' (default) also crossfades the clips' linked audio when it meets there; 'none' leaves it unpaired." },
       direction: { type: 'string', enum: ['left', 'right', 'up', 'down'], description: 'Motion direction. Required for Wipe / Slide, refused for Crossfade.' },
       duration_us: US_SCHEMA('Transition length'),
       from_layer_id: { type: 'string', description: 'Outgoing layer — the one that ends at the cut.' },
@@ -2020,10 +2032,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => {
       parseTransitionKind(a.kind ?? 'Crossfade', a.direction) // strict enum gate at the MCP boundary; dispatch re-derives from the raw args below
       parseTransitionPlacement(a.placement) // strict enum gate; dispatch re-derives (absent → 'overlap')
-      return { op: 'add_transition', args: { from: parseUuid(a.from_layer_id, 'from_layer_id'), to: parseUuid(a.to_layer_id, 'to_layer_id'), duration_us: parseNum(a.duration_us, 'duration_us'), kind: a.kind, direction: a.direction, placement: a.placement } }
+      parseTransitionAudio(a.audio)
+      return { op: 'add_transition', args: { from: parseUuid(a.from_layer_id, 'from_layer_id'), to: parseUuid(a.to_layer_id, 'to_layer_id'), duration_us: parseNum(a.duration_us, 'duration_us'), kind: a.kind, direction: a.direction, placement: a.placement, audio: a.audio } }
     } },
   { name: 'update_transition', exec: 'table', annotations: ANN_SET,
-    description: "Patch a transition's `duration_us`, `kind`/`direction` and/or `extended_us` in one recorded commit; only fields you set apply. `direction` rides with `kind`: switching to Wipe/Slide needs both, and `direction` alone or beside Crossfade is rejected. Geometry is two targets: `extended_us` is the borrowed share of the overlap (0 = pure placement, `duration_us` = pure borrow); the outgoing layer ends at its exit frame + `extended_us`, the incoming starts `duration_us` before that. With `extended_us` OMITTED the trimmed ranges are preserved — growing moves the incoming layer further left and never borrows, shrinking returns borrowed tail first then moves it right. Only an explicit `extended_us` grows the borrow (checked against the remaining tail: `TransitionInsufficientHandle { available_us }`); a NEGATIVE one is a deliberate tail trim of real content. Link siblings follow the incoming layer; a move onto occupied space or across t = 0 refuses the commit. `TransitionNotFound` for an unknown id.",
+    description: "Patch a transition's `duration_us`, `kind`/`direction` and/or `extended_us` in one recorded commit; only fields you set apply. `direction` rides with `kind`: switching to Wipe/Slide needs both, and `direction` alone or beside Crossfade is rejected. Geometry is two targets: `extended_us` is the borrowed share of the overlap (0 = pure placement, `duration_us` = pure borrow); the outgoing layer ends at its exit frame + `extended_us`, the incoming starts `duration_us` before that. With `extended_us` OMITTED the trimmed ranges are preserved — growing moves the incoming layer further left and never borrows, shrinking returns borrowed tail first then moves it right. Only an explicit `extended_us` grows the borrow (checked against the remaining tail: `TransitionInsufficientHandle { available_us }`); a NEGATIVE one is a deliberate tail trim of real content. Link siblings follow the incoming layer; a move onto occupied space or across t = 0 refuses the commit. Linked audio crossfades follow; an audio one refuses moving picture (`AudioTransitionMovesPicture`). Unknown id: `TransitionNotFound`.",
     inputSchema: { type: 'object', properties: {
       direction: { type: 'string', enum: ['left', 'right', 'up', 'down'], description: 'Motion direction; rides with `kind` (Wipe / Slide need it, Crossfade refuses it).' },
       duration_us: US_SCHEMA('New transition length'),
@@ -2038,7 +2051,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'update_transition', args: { transition: parseUuid(a.transition_id, 'transition_id'), duration_us: a.duration_us, kind: a.kind, direction: a.direction, extended_us: a.extended_us } }
     } },
   { name: 'delete_transition', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Remove a transition and restore the hard cut, routed by provenance: the outgoing layer's end shrinks back by `extended_us` (only borrowed tail is returned, never real content) and the incoming layer moves RIGHT by `duration_us − extended_us`, link siblings following. `TransitionRestoreCollision` when that destination has since been filled — move or delete the blocker first; the system never makes room. Recorded. `TransitionNotFound` for an unknown id.",
+    description: "Remove a transition and restore the hard cut, routed by provenance: the outgoing layer's end shrinks back by `extended_us` (only borrowed tail is returned, never real content) and the incoming layer moves RIGHT by `duration_us − extended_us`, link siblings following. `TransitionRestoreCollision` when that destination has since been filled — move or delete the blocker first; the system never makes room. A visual transition's linked audio crossfade follows, and goes when no overlap is left. An audio crossfade whose incoming layer is linked to picture moves nothing back: its borrowed tail returns and the incoming audio changes to a free lane. Recorded. `TransitionNotFound` for an unknown id.",
     inputSchema: { type: 'object', properties: { transition_id: ID_SCHEMA('Transition') }, required: ['transition_id'] },
     parseArgs: (a) => ({ op: 'remove_transition', args: { transition: parseUuid(a.transition_id, 'transition_id') } }) },
   // ── table-exec: composition ──────────────────────────────────────────────

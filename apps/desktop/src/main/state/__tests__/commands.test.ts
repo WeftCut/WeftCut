@@ -129,7 +129,7 @@ describe('parseMechanical transitions', () => {
       }),
     ).toEqual({
       op: 'add_transition',
-      args: { from: 'from-1', to: 'to-1', duration_us: 1_000_000, kind: 'Wipe', direction: 'left' },
+      args: { from: 'from-1', to: 'to-1', duration_us: 1_000_000, kind: 'Wipe', direction: 'left', placement: undefined, audio: undefined },
     })
   })
 
@@ -139,6 +139,11 @@ describe('parseMechanical transitions', () => {
     })
     expect(mech?.args.direction).toBeUndefined()
     expect(mech?.args.kind).toBe('Crossfade')
+  })
+
+  it('passes audio policy and placement to add_transition', () => {
+    const cmd = parseMechanical('add_transition', { fromLayerId: 'a', toLayerId: 'b', durationUs: 1_000_000, placement: 'extend', audio: 'none' })
+    expect(cmd?.args).toMatchObject({ placement: 'extend', audio: 'none' })
   })
 
   it('update_transition maps transitionId and passes the optional trio through', () => {

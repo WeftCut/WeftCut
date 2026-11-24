@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { panCoeff, fadeMul } from "./index";
+import fixture from "../../../fixtures/audio-transitions/equal-power.json";
+import { panCoeff, fadeMul, crossfadeGain } from "./index";
 
 // testSetup.ts awaits initEval() before each file.
 describe("pan + fade leaf wrappers", () => {
@@ -16,4 +17,11 @@ describe("pan + fade leaf wrappers", () => {
     expect(fadeMul(500_000, 10_000_000, 1_000_000, 0)).toBeCloseTo(0.5, 9);
     expect(fadeMul(500_000, 1_000_000, 0, 0)).toBe(1);
   });
+});
+
+it("matches the equal-power fixture", () => {
+  for (const row of fixture) {
+    expect(crossfadeGain(row.progress, false)).toBeCloseTo(row.outgoing, 12);
+    expect(crossfadeGain(row.progress, true)).toBeCloseTo(row.incoming, 12);
+  }
 });
