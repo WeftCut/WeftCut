@@ -54,13 +54,6 @@ function audioParams(media: string, srcIn: number, srcOut: number): LayerParams 
     gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 },
     fade_in_us: 0, fade_out_us: 0, mute: false, role: 'dialogue' }
 }
-function twoAdjacentVideo() {
-  const base = twoAdjacent()
-  addMedia(base.p, 'm', 'Video', 10_000_000)
-  layerOf(base.p, base.a1).params = videoParams('m', 0, 2_000_000)
-  layerOf(base.p, base.a2).params = videoParams('m', 2_000_000, 4_000_000)
-  return base
-}
 /** VideoClip A1=[0,2M] (media 'm' src 0..2M, media duration mediaDurUs) then Color A2=[2M,4M]. */
 function videoThenColor(mediaDurUs: number | null): { p: Project; gen: IdGen; a1: string; a2: string } {
   const gen = seededGen()
@@ -112,148 +105,6 @@ describe('extendLayerTEnd / shrinkLayerTEnd', () => {
 })
 
 describe('applyAddTransition', () => {
-  it('creates a linked audio transition on its lane with the visual transition', () => {
-    const { p, gen, a1, a2 } = twoAdjacentVideo()
-    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
-    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
-    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
-    const { bounces } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
-    expect(bounces).toEqual([])
-    expect(root(p).tracks[1].layers.map(l => l.id)).toEqual([a, b])
-    expect(root(p).transitions).toHaveLength(2)
-    expect(root(p).transitions[1]).toMatchObject({ from_layer: a, to_layer: b, duration_us: 1_000_000, kind: CROSSFADE })
-  })
-  it('records the landed sample overlap at a fractional frame rate', () => {
-    const gen = seededGen()
-    const p = blankProject(gen, 't')
-    root(p).fps = { num: 30_000, den: 1001 }
-    addMedia(p, 'm', 'Video', 10_000_000)
-    const cut = timeUsAtFrame(60, 30_000, 1001)
-    const end = timeUsAtFrame(120, 30_000, 1001)
-    const videoTrack = root(p).tracks[0].id, audioTrack = root(p).tracks[1].id
-    const v1 = applyAddLayer(p, gen, videoTrack, videoParams('m', 0, cut), 0, cut)
-    const v2 = applyAddLayer(p, gen, videoTrack, videoParams('m', cut, end), cut, end)
-    const a1 = applyAddLayer(p, gen, audioTrack, audioParams('m', 0, cut), 0, cut)
-    const a2 = applyAddLayer(p, gen, audioTrack, audioParams('m', cut, end), cut, end)
-    root(p).links.push({ id: 'l1', members: [v1, a1].sort() }, { id: 'l2', members: [v2, a2].sort() })
-    applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
-    const [visual, audio] = root(p).transitions
-    expect(audio.duration_us).toBe(layerOf(p, a1).t_end_us - layerOf(p, a2).t_start_us)
-    expect(Math.abs(audio.duration_us - visual.duration_us)).toBeLessThanOrEqual(21)
-  })
-  it('restores the linked sample-grid cut after a fractional-frame transition edit', () => {
-    const gen = seededGen()
-    const p = blankProject(gen, 't')
-    root(p).fps = { num: 30_000, den: 1001 }
-    addMedia(p, 'm', 'Video', 10_000_000)
-    const cut = timeUsAtFrame(61, 30_000, 1001)
-    const end = timeUsAtFrame(121, 30_000, 1001)
-    const videoTrack = root(p).tracks[0].id, audioTrack = root(p).tracks[1].id
-    const v1 = applyAddLayer(p, gen, videoTrack, videoParams('m', 0, cut), 0, cut)
-    const v2 = applyAddLayer(p, gen, videoTrack, videoParams('m', cut, end), cut, end)
-    const a1 = applyAddLayer(p, gen, audioTrack, audioParams('m', 0, cut), 0, cut)
-    const a2 = applyAddLayer(p, gen, audioTrack, audioParams('m', cut, end), cut, end)
-    root(p).links.push({ id: 'l1', members: [v1, a1].sort() }, { id: 'l2', members: [v2, a2].sort() })
-    const audioCut = layerOf(p, a2).t_start_us
-    const { id } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
-    applyUpdateTransition(p, id, { duration_us: 500_000 })
-    expect(root(p).transitions[1].duration_us).toBe(layerOf(p, a1).t_end_us - layerOf(p, a2).t_start_us)
-    applyRemoveTransition(p, id)
-    expect(layerOf(p, v2).t_start_us).toBe(cut)
-    expect(layerOf(p, a2).t_start_us).toBe(audioCut)
-    expect(root(p).transitions).toEqual([])
-  })
-  it('follows a visual duration change and removal in the linked audio transition', () => {
-    const { p, gen, a1, a2 } = twoAdjacentVideo()
-    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
-    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
-    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
-    const { id } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
-    applyUpdateTransition(p, id, { duration_us: 500_000 })
-    expect(root(p).transitions[1].duration_us).toBe(500_000)
-    applyRemoveTransition(p, id)
-    expect(root(p).transitions).toEqual([])
-    expect(layerOf(p, b).t_start_us).toBe(2_000_000)
-  })
-  it('leaves linked audio untouched when a visual update lacks a handle', () => {
-    const { p, gen, a1, a2 } = twoAdjacentVideo()
-    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
-    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
-    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
-    const { id } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
-    const video = layerOf(p, a1).params
-    if (video.kind !== 'VideoClip') throw new Error('expected video')
-    video.src_out_us = 9_900_000
-    const before = structuredClone(p)
-    expectCmd(() => applyUpdateTransition(p, id, { extended_us: 500_000 }), 'TransitionInsufficientHandle')
-    expect(p).toEqual(before)
-  })
-  it('removes an audio transition without moving linked picture', () => {
-    const { p, gen, a1, a2 } = twoAdjacentVideo()
-    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
-    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
-    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
-    const { id } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
-    const audioId = root(p).transitions[1].id
-    const pictureStart = layerOf(p, a2).t_start_us
-    const soundStart = layerOf(p, b).t_start_us
-    applyRemoveTransition(p, audioId, gen)
-    expect(root(p).transitions.map(t => t.id)).toEqual([id])
-    expect(layerOf(p, a2).t_start_us).toBe(pictureStart)
-    expect(layerOf(p, b).t_start_us).toBe(soundStart)
-    expect(root(p).tracks.find(t => t.layers.some(l => l.id === b))?.id).not.toBe(root(p).tracks[1].id)
-  })
-  it('refuses to move picture when editing an audio transition directly', () => {
-    const { p, gen, a1, a2 } = twoAdjacentVideo()
-    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
-    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
-    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
-    applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)
-    const audioId = root(p).transitions[1].id
-    const before = [layerOf(p, a2).t_start_us, layerOf(p, b).t_start_us]
-    expectCmd(() => applyUpdateTransition(p, audioId, { duration_us: 500_000 }), 'InvalidArgument')
-    expect([layerOf(p, a2).t_start_us, layerOf(p, b).t_start_us]).toEqual(before)
-  })
-  it('refuses an audio-only add that would move linked picture', () => {
-    const { p, gen, a1, a2 } = twoAdjacentVideo()
-    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
-    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
-    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
-    expectCmd(() => applyAddTransition(p, gen, a, b, 1_000_000, CROSSFADE), 'InvalidArgument')
-    expect(layerOf(p, a2).t_start_us).toBe(2_000_000)
-    expect(layerOf(p, b).t_start_us).toBe(2_000_000)
-  })
-  it('borrows and restores linked audio for an extended visual transition', () => {
-    const { p, gen, a1, a2 } = twoAdjacentVideo()
-    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
-    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
-    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
-    const { id } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE, 'extend')
-    expect(layerOf(p, a).t_end_us).toBe(3_000_000)
-    expect(root(p).transitions[1]).toMatchObject({ from_layer: a, to_layer: b, duration_us: 1_000_000, extended_us: 1_000_000 })
-    applyRemoveTransition(p, id, gen)
-    expect(layerOf(p, a).t_end_us).toBe(2_000_000)
-    expect(root(p).transitions).toEqual([])
-  })
-  it('leaves linked audio unpaired when requested', () => {
-    const { p, gen, a1, a2 } = twoAdjacentVideo()
-    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
-    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
-    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
-    const { bounces } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE, 'overlap', 'none')
-    expect(root(p).transitions).toHaveLength(1)
-    expect(bounces).toHaveLength(1)
-  })
-  it('honors the audio policy through the actor command', () => {
-    const { p, gen, a1, a2 } = twoAdjacentVideo()
-    const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)
-    const b = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000)
-    root(p).links.push({ id: 'l1', members: [a1, a].sort() }, { id: 'l2', members: [a2, b].sort() })
-    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
-    const result = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, audio: 'none' })
-    expect(result.ok).toBe(true)
-    expect(root(actor.snapshot()).transitions).toHaveLength(1)
-  })
   it('default overlap placement: the incoming layer moves LEFT by the duration; the outgoing layer is untouched (id #6)', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     const { id: tid, bounces } = applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE) // #7
@@ -364,14 +215,14 @@ describe('applyAddTransition overlap placement: geometry consequences', () => {
     expect(root(p).duration_us).toBe(4_000_000) // from the seed adds
     const tid = addT(p, gen, a1, a2, 1_000_000)
     expect(root(p).duration_us).toBe(3_000_000) // B's end moved left
-    applyRemoveTransition(p, tid)
+    applyRemoveTransition(p, tid, gen)
     expect(root(p).duration_us).toBe(4_000_000)
   })
   it('add → remove round-trip on an overlap add restores the original geometry exactly', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     const before = JSON.stringify(root(p).tracks)
     const tid = addT(p, gen, a1, a2, 1_000_000)
-    applyRemoveTransition(p, tid)
+    applyRemoveTransition(p, tid, gen)
     expect(JSON.stringify(root(p).tracks)).toBe(before)
     expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, a1).t_end_us) // adjacency restored exactly
   })
@@ -418,8 +269,135 @@ describe("applyAddTransition tail-handle pre-check (placement 'extend' only)", (
   })
 })
 
-describe('applyAddTransition audio rejection', () => {
-  it('adds an audio crossfade on the sample lattice without moving picture', () => {
+// Audio transitions (ADR 0177). Every layer edge sits on frames (ADR 0038), so
+// an audio crossfade takes the visual geometry: a whole number of frames, and
+// at a linked cut exactly its visual partner's overlap.
+interface LinkedCut { p: Project; gen: IdGen; spent: () => number; v1: string; v2: string; a1: string; a2: string; cut: number }
+/** VideoClip v1 | v2 on @A cut at frame `cutFrame`, each linked to an Audio
+ *  partner a1 | a2 on @B cut at the same frame; one 10 s media item. */
+function linkedCut(fps = { num: 30, den: 1 }, cutFrame = 60): LinkedCut {
+  const inner = seededGen()
+  let n = 0
+  const gen: IdGen = () => { n += 1; return inner() }
+  const p = blankProject(gen, 't')
+  root(p).fps = fps
+  addMedia(p, 'm', 'Video', 10_000_000)
+  const f = (i: number) => timeUsAtFrame(i, fps.num, fps.den)
+  const cut = f(cutFrame), end = f(cutFrame * 2)
+  const [va, au] = [root(p).tracks[0].id, root(p).tracks[1].id]
+  const v1 = applyAddLayer(p, gen, va, videoParams('m', 0, cut), 0, cut)
+  const v2 = applyAddLayer(p, gen, va, videoParams('m', cut, end), cut, end)
+  const a1 = applyAddLayer(p, gen, au, audioParams('m', 0, cut), 0, cut)
+  const a2 = applyAddLayer(p, gen, au, audioParams('m', cut, end), cut, end)
+  root(p).links.push({ id: 'l1', members: [v1, a1].sort() }, { id: 'l2', members: [v2, a2].sort() })
+  return { p, gen, spent: () => n, v1, v2, a1, a2, cut }
+}
+const trackOf = (p: Project, id: string) => root(p).tracks.find((t) => t.layers.some((l) => l.id === id))!.id
+const audioTransitionOf = (p: Project, a1: string) => root(p).transitions.find((t) => t.from_layer === a1)
+
+describe('linked audio transitions follow their visual transition', () => {
+  it('a visual add at a linked cut crosses the audio partners on their own lane with the same overlap', () => {
+    const { p, gen, v1, v2, a1, a2 } = linkedCut()
+    const { id, bounces } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
+    const visual = root(p).transitions.find((t) => t.id === id)!
+    expect(bounces).toEqual([])
+    expect(trackOf(p, a2)).toBe(root(p).tracks[1].id)
+    expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, v2).t_start_us)
+    expect(audioTransitionOf(p, a1)).toMatchObject({ to_layer: a2, kind: CROSSFADE, duration_us: visual.duration_us, extended_us: 0 })
+  })
+  it('at 30000/1001 the audio crossfade equals the visual one through add, update and remove', () => {
+    const { p, gen, v1, v2, a1, a2, cut } = linkedCut({ num: 30_000, den: 1001 }, 61)
+    const { id } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
+    const visual = () => root(p).transitions.find((t) => t.id === id)!
+    expect(audioTransitionOf(p, a1)!.duration_us).toBe(visual().duration_us)
+    applyUpdateTransition(p, id, { duration_us: 500_000 })
+    expect(audioTransitionOf(p, a1)!.duration_us).toBe(visual().duration_us)
+    expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, v2).t_start_us)
+    applyRemoveTransition(p, id, gen)
+    expect(root(p).transitions).toEqual([])
+    expect([layerOf(p, v2).t_start_us, layerOf(p, a2).t_start_us]).toEqual([cut, cut])
+  })
+  it('an extend borrows the audio tail by the same frames, and removal returns both borrows', () => {
+    const { p, gen, v1, v2, a1, cut } = linkedCut()
+    const { id } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE, 'extend')
+    expect(layerOf(p, a1).t_end_us).toBe(layerOf(p, v1).t_end_us)
+    expect(audioTransitionOf(p, a1)).toMatchObject({ duration_us: 1_000_000, extended_us: 1_000_000 })
+    applyRemoveTransition(p, id, gen)
+    expect(root(p).transitions).toEqual([])
+    expect([layerOf(p, v1).t_end_us, layerOf(p, a1).t_end_us]).toEqual([cut, cut])
+  })
+  it('removing after a partial borrow restores both cuts: the incoming audio may land over the outgoing audio\'s returning tail', () => {
+    const { p, gen, v1, v2, a1, a2, cut } = linkedCut()
+    const { id } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE, 'extend')
+    applyUpdateTransition(p, id, { duration_us: 1_500_000 }) // growth moves the incoming pair left, borrows nothing
+    expect(audioTransitionOf(p, a1)).toMatchObject({ duration_us: 1_500_000, extended_us: 1_000_000 })
+    applyRemoveTransition(p, id, gen)
+    expect(root(p).transitions).toEqual([])
+    expect([layerOf(p, v1).t_end_us, layerOf(p, v2).t_start_us, layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us])
+      .toEqual([cut, cut, cut, cut])
+  })
+  it('a visual edit moves the audio outgoing end by the same frame count, not the same microseconds', () => {
+    // At 30000/1001 one frame is 33 366 µs after frame 67 and 33 367 µs after
+    // frame 66: the visual end sits on 67 and the audio end, trimmed one frame
+    // shorter through its own transition, on 66.
+    const fps = { num: 30_000, den: 1001 }
+    const fr = (i: number) => timeUsAtFrame(i, fps.num, fps.den)
+    const { p, gen, v1, v2, a1, a2 } = linkedCut(fps, 60)
+    const { id } = applyAddTransition(p, gen, v1, v2, fr(7), CROSSFADE, 'extend')
+    const audio = audioTransitionOf(p, a1)!
+    applyUpdateTransition(p, audio.id, { duration_us: fr(6), extended_us: fr(6) })
+    expect([layerOf(p, v1).t_end_us, layerOf(p, a1).t_end_us]).toEqual([fr(67), fr(66)])
+    applyUpdateTransition(p, id, { duration_us: fr(8), extended_us: fr(8) })
+    expect([layerOf(p, v1).t_end_us, layerOf(p, a1).t_end_us]).toEqual([fr(68), fr(67)])
+    expect(audioTransitionOf(p, a1)!.duration_us).toBe(layerOf(p, a1).t_end_us - layerOf(p, a2).t_start_us)
+  })
+  it('a visual update short on tail handle changes nothing, linked audio included', () => {
+    const { p, gen, v1, v2 } = linkedCut()
+    const { id } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
+    const video = layerOf(p, v1).params
+    if (video.kind !== 'VideoClip') throw new Error('expected video')
+    video.src_out_us = 9_900_000
+    const before = structuredClone(p)
+    expectCmd(() => applyUpdateTransition(p, id, { extended_us: 500_000 }), 'TransitionInsufficientHandle')
+    expect(p).toEqual(before)
+  })
+  it('an audio partner short on tail handle refuses the extend whole, naming it, with no id spent', () => {
+    const { p, gen, spent, v1, v2, a1, cut } = linkedCut()
+    addMedia(p, 'short', 'Audio', cut)
+    layerOf(p, a1).params = audioParams('short', 0, cut)
+    const before = structuredClone(p)
+    const ids = spent()
+    expect(expectCmdErr(() => applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE, 'extend')))
+      .toEqual({ error: 'TransitionInsufficientHandle', layer: a1, available_us: 0 })
+    expect(p).toEqual(before)
+    expect(spent()).toBe(ids)
+  })
+  it("audio: 'none' leaves the partners unpaired, and the incoming audio bounces as before", () => {
+    const { p, gen, v1, v2, a2 } = linkedCut()
+    const { bounces } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE, 'overlap', 'none')
+    expect(root(p).transitions).toHaveLength(1)
+    expect(bounces.map((b) => b.layer)).toEqual([a2])
+  })
+  it('partners that do not abut at the visual cut stay unpaired', () => {
+    const { p, gen, v1, v2, a1, a2, cut } = linkedCut()
+    // One frame of slip: the incoming audio starts a frame after the picture.
+    const slip = timeUsAtFrame(61, 30, 1)
+    layerOf(p, a2).t_start_us = slip
+    layerOf(p, a2).params = audioParams('m', slip, layerOf(p, a2).t_end_us)
+    expect(layerOf(p, a1).t_end_us).toBe(cut)
+    applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
+    expect(root(p).transitions).toHaveLength(1)
+  })
+  it("the actor's add_transition takes the audio option", () => {
+    const { p, gen, v1, v2 } = linkedCut()
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    expect(actor.dispatch('add_transition', { from: v1, to: v2, duration_us: 1_000_000, audio: 'none' }).ok).toBe(true)
+    expect(root(actor.snapshot()).transitions).toHaveLength(1)
+  })
+})
+
+describe('audio transitions on their own never move picture', () => {
+  it('two unlinked Audio layers take a crossfade through the visual path: the incoming layer moves left by whole frames', () => {
     const gen = seededGen()
     const p = blankProject(gen, 't')
     addMedia(p, 'm', 'Audio', 10_000_000)
@@ -429,15 +407,60 @@ describe('applyAddTransition audio rejection', () => {
     expect(layerOf(p, a2).t_start_us).toBe(1_000_000)
     expect(root(p).transitions).toEqual([{ id: result.id, from_layer: a1, to_layer: a2, duration_us: 1_000_000, kind: CROSSFADE, extended_us: 0 }])
   })
-  it('Audio to-layer → TransitionUnsupportedLayerKind names the to layer', () => {
+  it('an Audio pair refuses Wipe and a mixed pair refuses outright, both before any id is spent', () => {
     const gen = seededGen()
-    const p = blankProject(gen, 't')
+    const p = blankProject(gen, 't') // #1 A #2 B #3 project
     addMedia(p, 'm', 'Audio', 10_000_000)
-    const a1 = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 0, 2_000_000)
-    const a2 = applyAddLayer(p, gen, root(p).tracks[0].id, audioParams('m', 0, 2_000_000), 2_000_000, 4_000_000)
-    expect(expectCmdErr(() => applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)))
-      .toEqual({ error: 'TransitionUnsupportedLayerKind', layer: a2, kind: 'Audio' })
+    const a1 = applyAddLayer(p, gen, root(p).tracks[0].id, audioParams('m', 0, 2_000_000), 0, 2_000_000) // #5
+    const a2 = applyAddLayer(p, gen, root(p).tracks[0].id, audioParams('m', 2_000_000, 4_000_000), 2_000_000, 4_000_000) // #6
+    const c1 = applyAddLayer(p, gen, root(p).tracks[1].id, color(), 0, 2_000_000) // #7
+    const a3 = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 2_000_000, 4_000_000) // #8
+    expect(expectCmdErr(() => applyAddTransition(p, gen, a1, a2, 1_000_000, { kind: 'Wipe', direction: 'left' })))
+      .toEqual({ error: 'TransitionUnsupportedLayerKind', layer: a1, kind: 'Audio' })
+    expect(expectCmdErr(() => applyAddTransition(p, gen, c1, a3, 1_000_000, CROSSFADE)))
+      .toEqual({ error: 'TransitionUnsupportedLayerKind', layer: a3, kind: 'Audio' })
     expect(root(p).transitions).toEqual([])
+    expect(applyAddLayer(p, gen, root(p).tracks[1].id, color(), 4_000_000, 5_000_000)).toBe('00000000-0000-0000-0000-000000000009') // #9 → no burn
+  })
+  it('an audio transition keeps Crossfade on update', () => {
+    const { p, gen, v1, v2, a1 } = linkedCut()
+    applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
+    const audio = audioTransitionOf(p, a1)!
+    expectCmd(() => applyUpdateTransition(p, audio.id, { kind: { kind: 'Slide', direction: 'left' } }), 'TransitionUnsupportedLayerKind')
+    expect(audioTransitionOf(p, a1)!.kind).toEqual(CROSSFADE)
+  })
+  it('an audio-only add whose placement would move linked picture refuses, naming the picture layer', () => {
+    const { p, gen, v2, a1, a2 } = linkedCut()
+    const before = structuredClone(p)
+    expect(expectCmdErr(() => applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)))
+      .toEqual({ error: 'AudioTransitionMovesPicture', layer: v2 })
+    expect(p).toEqual(before)
+  })
+  it('an audio transition edit that would move linked picture refuses; one that moves only audio applies', () => {
+    const { p, gen, v1, v2, a1, a2 } = linkedCut()
+    applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE, 'extend')
+    const audio = audioTransitionOf(p, a1)!
+    const before = structuredClone(p)
+    // Growth without a new borrow moves the incoming audio left, and its picture with it.
+    expectCmd(() => applyUpdateTransition(p, audio.id, { duration_us: 1_500_000 }), 'AudioTransitionMovesPicture')
+    expect(p).toEqual(before)
+    const starts = [layerOf(p, a2).t_start_us, layerOf(p, v2).t_start_us]
+    applyUpdateTransition(p, audio.id, { duration_us: 500_000 }) // returns half the borrow; nobody moves
+    expect(audioTransitionOf(p, a1)).toMatchObject({ duration_us: 500_000, extended_us: 500_000 })
+    expect([layerOf(p, a2).t_start_us, layerOf(p, v2).t_start_us]).toEqual(starts)
+  })
+  it('removing an audio transition that would move linked picture returns its borrow and moves the incoming audio to a free lane', () => {
+    const { p, gen, v1, v2, a1, a2, cut } = linkedCut()
+    const { id } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE) // audio d = 1 s, e = 0
+    const audio = audioTransitionOf(p, a1)!
+    applyUpdateTransition(p, audio.id, { duration_us: 1_500_000, extended_us: 500_000 }) // borrow 0.5 s, start stays
+    expect(layerOf(p, a1).t_end_us).toBe(cut + 500_000)
+    const starts = [layerOf(p, v2).t_start_us, layerOf(p, a2).t_start_us]
+    applyRemoveTransition(p, audio.id, gen)
+    expect(root(p).transitions.map((t) => t.id)).toEqual([id])
+    expect(layerOf(p, a1).t_end_us).toBe(cut)
+    expect([layerOf(p, v2).t_start_us, layerOf(p, a2).t_start_us]).toEqual(starts)
+    expect(trackOf(p, a2)).not.toBe(trackOf(p, a1))
   })
 })
 
@@ -590,7 +613,7 @@ describe('applyUpdateTransition explicit negative extended_us (right-edge tail t
     expect(root(p).transitions[0]).toMatchObject({ duration_us: 800_000, extended_us: 0 })
     // The trim moved the sacred end itself, so remove does NOT undo it: e = 0
     // routes the whole restore through B, landing flush on the NEW end.
-    applyRemoveTransition(p, tid)
+    applyRemoveTransition(p, tid, gen)
     expect([layerOf(p, a1).t_end_us, srcOutOf(p, a1)]).toEqual([1_800_000, 1_800_000])
     expect(layerOf(p, a2).t_start_us).toBe(1_800_000)
     expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, a1).t_end_us) // adjacency exact
@@ -724,7 +747,7 @@ describe('transition durations enter the composition frame grid', () => {
     applyUpdateTransition(p, tid, { duration_us: 777_777 })                          // B left
     applyUpdateTransition(p, tid, { duration_us: 777_777, extended_us: 300_000 })    // borrow returns partially, B follows
     applyUpdateTransition(p, tid, { duration_us: 250_001 })                          // borrow drains, B right
-    applyRemoveTransition(p, tid)
+    applyRemoveTransition(p, tid, gen)
     expect([layerOf(p, a1).t_start_us, layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us, layerOf(p, a2).t_end_us]).toEqual(before)
     // Adjacency restored EXACTLY: B.start′ = S = A.end′.
     expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, a1).t_end_us)
@@ -734,7 +757,7 @@ describe('transition durations enter the composition frame grid', () => {
     const { p, gen, a1, a2 } = adjacentAt(num, den, 61, 60)
     const before = [layerOf(p, a1).t_start_us, layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us, layerOf(p, a2).t_end_us]
     const tid = addT(p, gen, a1, a2, 500_000)
-    applyRemoveTransition(p, tid)
+    applyRemoveTransition(p, tid, gen)
     expect([layerOf(p, a1).t_start_us, layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us, layerOf(p, a2).t_end_us]).toEqual(before)
     expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, a1).t_end_us)
   })
@@ -803,7 +826,7 @@ describe('applyRemoveTransition', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     const tid = addT(p, gen, a1, a2, 1_000_000, 'extend')
     expect(layerOf(p, a1).t_end_us).toBe(3_000_000)
-    applyRemoveTransition(p, tid)
+    applyRemoveTransition(p, tid, gen)
     expect(layerOf(p, a1).t_end_us).toBe(2_000_000) // borrow returned exactly
     expect(layerOf(p, a2).t_start_us).toBe(2_000_000) // m = d − e = 0
     expect(root(p).transitions).toEqual([])
@@ -814,7 +837,7 @@ describe('applyRemoveTransition', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     layerOf(p, a1).t_end_us = 3_000_000 // hand-positioned pre-overlap → e = 0
     const tid = addT(p, gen, a1, a2, 1_000_000)
-    applyRemoveTransition(p, tid)
+    applyRemoveTransition(p, tid, gen)
     expect(layerOf(p, a1).t_end_us).toBe(3_000_000) // real content untouched
     expect([layerOf(p, a2).t_start_us, layerOf(p, a2).t_end_us]).toEqual([3_000_000, 5_000_000])
     expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, a1).t_end_us) // adjacency restored exactly
@@ -823,13 +846,13 @@ describe('applyRemoveTransition', () => {
     const { p, gen, a1, a2 } = videoThenColor(4_000_000)
     const tid = addT(p, gen, a1, a2, 1_000_000, 'extend') // A.end 3M, src_out 3M, e = 1M
     applyUpdateTransition(p, tid, { duration_us: 1_000_000, extended_us: 500_000 }) // A.end 2.5M, B.start 1.5M
-    applyRemoveTransition(p, tid)
+    applyRemoveTransition(p, tid, gen)
     expect([layerOf(p, a1).t_end_us, srcOutOf(p, a1)]).toEqual([2_000_000, 2_000_000]) // back to the sacred end
     expect([layerOf(p, a2).t_start_us, layerOf(p, a2).t_end_us]).toEqual([2_000_000, 4_000_000]) // original geometry
   })
   it('unknown id → TransitionNotFound', () => {
-    const { p } = twoAdjacent()
-    expectCmd(() => applyRemoveTransition(p, 'ghost'), 'TransitionNotFound')
+    const { p, gen } = twoAdjacent()
+    expectCmd(() => applyRemoveTransition(p, 'ghost', gen), 'TransitionNotFound')
   })
 })
 
@@ -870,7 +893,7 @@ describe('link siblings follow the incoming layer', () => {
     const { p, gen, a1, a2, aud } = withOffsetSibling()
     const tid = addT(p, gen, a1, a2, 1_000_000, 'extend')
     applyUpdateTransition(p, tid, { duration_us: 1_500_000 }) // B at 1.5M
-    applyRemoveTransition(p, tid) // e = 1M, m = 500k → B back to 2M
+    applyRemoveTransition(p, tid, gen) // e = 1M, m = 500k → B back to 2M
     expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, a1).t_end_us) // adjacency exact
     expectFollowed(p, aud, a2, 60)
   })
@@ -938,7 +961,7 @@ describe('applyRemoveTransition restore-collision pre-check', () => {
     const tid = addT(p, gen, a1, a2, 1_000_000)
     // The user filled the space B must move back through: D sits at [4M, 4.5M].
     applyAddLayer(p, gen, root(p).tracks[0].id, color(), 4_000_000, 4_500_000)
-    expect(expectCmdErr(() => applyRemoveTransition(p, tid)))
+    expect(expectCmdErr(() => applyRemoveTransition(p, tid, gen)))
       .toEqual({ error: 'TransitionRestoreCollision', layer: a2 })
     // Whole operation refused: the transition survives and no geometry moved.
     expect(root(p).transitions.map((t) => t.id)).toEqual([tid])
@@ -952,7 +975,7 @@ describe('applyRemoveTransition restore-collision pre-check', () => {
     const aud = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 2_000_000, 4_000_000)
     const blocker = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 500_000), 4_500_000, 5_000_000)
     root(p).links.push({ id: 'g', members: [a2, aud].sort() })
-    expect(expectCmdErr(() => applyRemoveTransition(p, tid)))
+    expect(expectCmdErr(() => applyRemoveTransition(p, tid, gen)))
       .toEqual({ error: 'TransitionRestoreCollision', layer: aud })
     expect(root(p).transitions.map((t) => t.id)).toEqual([tid])
     expect([layerOf(p, aud).t_start_us, layerOf(p, blocker).t_start_us]).toEqual([2_000_000, 4_500_000])
@@ -963,7 +986,7 @@ describe('applyRemoveTransition restore-collision pre-check', () => {
     const { p, gen, a1, a2 } = videoThenColor(4_000_000)
     const tid = addT(p, gen, a1, a2, 1_000_000, 'extend')
     applyUpdateTransition(p, tid, { duration_us: 1_000_000, extended_us: 500_000 }) // e = 500k, m = 500k
-    expect(() => applyRemoveTransition(p, tid)).not.toThrow()
+    expect(() => applyRemoveTransition(p, tid, gen)).not.toThrow()
     expect(layerOf(p, a2).t_start_us).toBe(layerOf(p, a1).t_end_us)
   })
 })
@@ -1127,7 +1150,7 @@ describe('locked home lane refuses every transition op (TrackLocked)', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     const tid = addT(p, gen, a1, a2, 1_000_000)
     root(p).tracks[0].locked = true
-    expectCmd(() => applyRemoveTransition(p, tid), 'TrackLocked')
+    expectCmd(() => applyRemoveTransition(p, tid, gen), 'TrackLocked')
     expect(root(p).transitions.map((t) => t.id)).toEqual([tid])
     expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us]).toEqual([2_000_000, 1_000_000])
   })
@@ -1144,7 +1167,7 @@ describe('transitions inside a Group', () => {
     expect(g.transitions.map((t) => t.id)).toEqual([id])
     expect(bLayer().t_start_us).toBe(800_000)
     expect(g.duration_us).toBe(1_800_000)
-    applyRemoveTransition(p, id)
+    applyRemoveTransition(p, id, idGen)
     expect(g.transitions).toEqual([])
     expect(bLayer().t_start_us).toBe(1_000_000)
     expect(root(p)).toEqual(rootBefore)

@@ -1012,7 +1012,8 @@ determine both window edges), `delete_transition` (restores the cut by
 provenance; `TransitionRestoreCollision` if the gap was filled). Two Audio layers
 on one track support Crossfade; visual transitions default to `audio: "linked"`
 to create a matching audio crossfade at the same cut, or accept `"none"` to
-leave linked audio unpaired. Audio transition edits never move picture.
+leave linked audio unpaired. An audio transition edit never moves picture
+(`AudioTransitionMovesPicture`).
 
 Audio roles (a mix fold, not a bus; ADR 0023): `set_role_gain` (recorded),
 `set_role_flags` (mute/solo, at least one; mute wins; gates preview and

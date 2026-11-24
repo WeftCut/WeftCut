@@ -24,11 +24,11 @@ to crossfade.
 
 - **An audio transition is a `Transition` between two Audio layers on one
   track.** Kind `Crossfade` only; Wipe, Slide and a visual/audio pair are
-  refused. Its duration equals the overlap on the sample lattice (a sample
-  count, not a frame count) and spans at least one frame, like a visual one. It
-  authorizes that overlap the way a visual transition authorizes its own, and
-  the one per-transition predicate (validate and reconcile) gains these rules
-  per class.
+  refused. Its duration equals the overlap, a whole number of frames since
+  audio edges sit on the frame grid (ADR 0038), and spans at least one frame,
+  like a visual one. It authorizes that overlap the way a visual transition
+  authorizes its own, and the one per-transition predicate (validate and
+  reconcile) gains these rules per class.
 - **The curve is equal-power.** With `p` the same linear progress a visual
   transition uses, the outgoing layer is multiplied by `cos(πp/2)` and the
   incoming by `sin(πp/2)`, on top of gain, fades and role gain. It lives in the
@@ -42,24 +42,26 @@ to crossfade.
   the two partners abut at the cut on one track. The incoming partner then
   stays on its lane. Otherwise the partners bounce as today. `add_transition`
   takes `audio: 'linked' | 'none'`, default `'linked'`.
-- **An audio transition never moves picture.** An audio-only add whose
-  placement would move a visual layer is refused. Removing an audio transition
-  moves the incoming layer back (ADR 0048) only when no visual layer moves with
-  it; otherwise the incoming audio moves to a free lane and every position
-  stays.
+- **An audio transition never moves picture.** An audio-only add or update
+  whose placement would move a visual layer is refused
+  (`AudioTransitionMovesPicture`). Removing an audio transition moves the
+  incoming layer back (ADR 0048) only when no visual layer moves with it;
+  otherwise the borrowed tail is returned and the incoming audio moves to a
+  free lane, its start unchanged.
 - **Edits through a visual transition carry its audio partners.** A duration
-  change or removal that moves an audio transition's incoming layer re-derives
-  that transition's duration from the landed overlap, or removes it in the same
-  commit when no overlap is left. Any other edit that breaks an audio overlap
-  drops it through reconcile, as for visual.
+  change or removal moves the audio transition's outgoing end by the same
+  number of frames as the visual one's, and its incoming layer moves as a link
+  sibling. Its duration is then re-derived from the landed overlap, or it is
+  removed in the same commit when no overlap is left. Any other edit that
+  breaks an audio overlap drops it through reconcile, as for visual.
 
 ## Consequences
 
 - No pairing field: which audio transition belongs to which visual one is
   derived from links when an edit needs it, so relinking cannot leave a stale
   pair.
-- At 29.97 / 59.94 an audio partner's duration can differ from its visual
-  transition's by up to ~10 µs, because the two sit on different lattices.
+- A linked pair shares its edges, so an audio partner's duration equals its
+  visual transition's exactly, at every rate.
 - Equal-power keeps uncorrelated material level. A clip crossfaded into a
   continuation of the same recording rises about 3 dB at the midpoint; the
   master limiter catches overs. A second curve waits for its own issue.

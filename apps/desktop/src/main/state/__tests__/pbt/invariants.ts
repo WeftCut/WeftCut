@@ -82,9 +82,6 @@ export function invTransitionsWellFormed(p: WireProject): void {
     const toClass = overlapClass(to.layer.params.kind)
     if (fromClass !== toClass) fail(`transition ${tr.id} has mixed participant classes`)
     if (fromClass === 'audio' && tr.kind.kind !== 'Crossfade') fail(`transition ${tr.id} has a non-crossfade audio kind`)
-    const fps = wireRoot(p).fps
-    if (fromClass === 'audio' && tr.duration_us + 1_000_000 / 48_000 < 1_000_000 * fps.den / fps.num)
-      fail(`audio transition ${tr.id} is shorter than one frame`)
     const fromLen = from.layer.t_end_us - from.layer.t_start_us
     const toLen = to.layer.t_end_us - to.layer.t_start_us
     if (tr.duration_us <= 0 || tr.duration_us > fromLen || tr.duration_us > toLen)

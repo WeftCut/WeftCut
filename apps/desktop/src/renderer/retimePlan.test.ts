@@ -58,8 +58,8 @@ describe('retime plans preserve selected content and explicit targets', () => {
   });
 
   it('keeps an unchanged audio transition authorized when retiming', () => {
-    const a = clip('a', 0, 2_000_000, { track_id: 'audio', overlap_class: 'audio', grid: AUDIO_GRID });
-    const b = clip('b', 1_000_000, 3_000_000, { track_id: 'audio', overlap_class: 'audio', grid: AUDIO_GRID });
+    const a = clip('a', 0, 2_000_000, { track_id: 'audio', overlap_class: 'audio' });
+    const b = clip('b', 1_000_000, 3_000_000, { track_id: 'audio', overlap_class: 'audio' });
     const transitions = [{ id: 't', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, extended_us: 0 }];
     expect(rate([a, b], ['a', 'b'], 1, 1, transitions).ok).toBe(true);
   });

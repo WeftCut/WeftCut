@@ -224,6 +224,7 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.transition_participants_share_link",
     args: (e, ctx) => ({ from: ctx.layer(e.from), to: ctx.layer(e.to) }),
   },
+  AudioTransitionMovesPicture: { tier: "generic" },
   CheckpointNotFound: { tier: "generic" },
   MediaNotFound: { tier: "generic" },
   // Curated PRESENTATION already exists: MediaPool's RemoveMediaDialog turns

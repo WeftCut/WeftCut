@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/mutations/links.ts
-import type { Composition, Link, Project, Uuid } from '../model'
+import type { Composition, Layer, Link, Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { locateLayerIn, requireSameComposition } from './helpers'
 
@@ -28,6 +28,24 @@ export function linkSiblingsExcluding(c: Composition, id: Uuid): Uuid[] {
   const link = c.links.find((g) => g.id === gid)
   if (!link) return []
   return [...link.members].filter((m) => m !== id).sort()
+}
+
+/** The Audio layer a VideoClip plays its sound through: the member of its link
+ *  that shares its media, else the link's SOLE Audio member, else none. Pause
+ *  operations and linked audio transitions both resolve the partner here.
+ *
+ *  Same-media BEFORE sole-member, because a paired import is the common case
+ *  and a second Audio member (music, a voiceover) must not win over the clip's
+ *  own track. Two Audio members and neither shares the media is genuinely
+ *  ambiguous, so there is no partner rather than a guess. */
+export function linkedAudioPartner(c: Composition, layer: Layer): Layer | null {
+  if (layer.params.kind !== 'VideoClip') return null
+  const media = layer.params.media
+  const audio = linkSiblingsExcluding(c, layer.id)
+    .map((id) => locateLayerIn(c, id)?.layer)
+    .filter((l): l is Layer => l !== undefined && l.params.kind === 'Audio')
+  return audio.find((l) => l.params.kind === 'Audio' && l.params.media === media)
+    ?? (audio.length === 1 ? audio[0] : null)
 }
 
 /** Reject if any `touched` member is layer-locked or on a locked track of `c`.
