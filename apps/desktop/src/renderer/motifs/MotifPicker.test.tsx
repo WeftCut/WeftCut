@@ -23,6 +23,7 @@ const ipcMocks = vi.hoisted(() => ({
   importMotif: vi.fn(),
   exportMotif: vi.fn(),
   deleteLibraryMotif: vi.fn(),
+  renameLibraryMotif: vi.fn(),
   listMotifVersions: vi.fn(),
   restoreMotifVersion: vi.fn(),
   updateProjectMotif: vi.fn(),
@@ -113,8 +114,8 @@ const onClose = vi.fn();
 const onAdded = vi.fn().mockResolvedValue(undefined);
 const onPlaced = vi.fn();
 
-async function renderPicker(catalog: MotifCatalog = { project: [], library: [lib()] }) {
-  ipcMocks.listMotifCatalog.mockResolvedValue(catalog);
+async function renderPicker(catalog: Omit<MotifCatalog, "misnamed"> & Partial<MotifCatalog> = { project: [], library: [lib()] }) {
+  ipcMocks.listMotifCatalog.mockResolvedValue({ misnamed: [], ...catalog });
   ipcMocks.addMotif.mockResolvedValue("layer-new");
   render(
     <MotifPicker
@@ -220,7 +221,7 @@ describe("two groups: this project and the library", () => {
   it("opens on the row a surface outside the panel asked for", async () => {
     ipcMocks.motifTrustSummary.mockResolvedValue({ motif_id: "received", revision: "c".repeat(64), trusted: false,
       summary: { files: 1, bytes: 10, binary: 0, scripts: [], workers: [], wasm: [], minified: [], unscanned: [] } });
-    ipcMocks.listMotifCatalog.mockResolvedValue({ project: [proj({ id: "lower" }), untrusted("received")], library: [lib()] });
+    ipcMocks.listMotifCatalog.mockResolvedValue({ project: [proj({ id: "lower" }), untrusted("received")], library: [lib()], misnamed: [] });
     openMotifsPanelAt({ group: "project", id: "received" });
     expect(openPicker).toHaveBeenCalledOnce();
     render(<MotifPicker onClose={onClose} onAdded={onAdded} onPlaced={vi.fn()} compositionId="comp-focused"
@@ -418,12 +419,27 @@ describe("library package actions", () => {
     ipcMocks.deleteLibraryMotif.mockRejectedValueOnce(new Error("File in use")).mockResolvedValueOnce(undefined);
     fireEvent.click(within(confirm).getByRole("button", { name: "Delete Motif" }));
     expect(await screen.findByText("Error: File in use")).toBeTruthy();
-    ipcMocks.listMotifCatalog.mockResolvedValue({ project: [], library: [remaining] });
+    ipcMocks.listMotifCatalog.mockResolvedValue({ project: [], library: [remaining], misnamed: [] });
     fireEvent.click(within(confirm).getByRole("button", { name: "Delete Motif" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete Motif" })).toBeNull());
     expect(ipcMocks.deleteLibraryMotif).toHaveBeenLastCalledWith("badge");
     expect(within(group("Library")).queryByTitle("badge")).toBeNull();
     expect(within(group("Library")).getByTitle("other").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("offers a library folder whose name no Motif can take its rename, then selects the renamed card", async () => {
+    await renderPicker({ project: [], library: [lib()], misnamed: ["MyMotif"] });
+    const library = group("Library");
+    expect(within(library).getByText(/Renaming makes it “mymotif”/)).toBeTruthy();
+    ipcMocks.renameLibraryMotif.mockRejectedValueOnce(new Error("The library already has a folder named “mymotif”")).mockResolvedValueOnce("mymotif");
+    const rename = within(library).getByRole("button", { name: "Rename folder “MyMotif” to “mymotif”" });
+    fireEvent.click(rename);
+    expect(await screen.findByText(/already has a folder named/)).toBeTruthy();
+    ipcMocks.listMotifCatalog.mockResolvedValue({ project: [], library: [lib(), lib({ id: "mymotif", name: "Mine" })], misnamed: [] });
+    fireEvent.click(rename);
+    await waitFor(() => expect(within(group("Library")).getByTitle("mymotif").getAttribute("aria-pressed")).toBe("true"));
+    expect(ipcMocks.renameLibraryMotif).toHaveBeenLastCalledWith("MyMotif");
+    expect(within(group("Library")).queryByText("MyMotif")).toBeNull();
   });
 
   it("imports a ZIP into the project, accepting only ZIP and respecting cancellation", async () => {

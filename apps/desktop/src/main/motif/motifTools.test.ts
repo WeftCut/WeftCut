@@ -317,6 +317,24 @@ describe('list_motifs', () => {
     expect(w.call('read_motif', { motif_id: 'MyMotif', group: 'library' })).toMatchObject({ status: 'invalid', diagnostic })
   })
 
+  it('renames a library folder whose name cannot be its host to the key it would be placed under', () => {
+    const w = world()
+    w.install('MyMotif')
+    const changes = w.changes()
+    expect(w.call('rename_library_motif', { motif_id: 'MyMotif' }, undefined)).toEqual({ motif_id: 'mymotif' })
+    expect(w.rows('library').map(r => [r.id, r.status])).toEqual([['mymotif', 'installed']])
+    expect(w.changes()).toBeGreaterThan(changes)
+  })
+
+  it('refuses to rename a library folder when the new name is taken in any case, or the name is already valid', () => {
+    const w = world()
+    w.install('MyMotif')
+    w.install('mymotif')
+    expect(() => w.call('rename_library_motif', { motif_id: 'MyMotif' }, undefined)).toThrow(/already has a folder named “mymotif”/)
+    expect(() => w.call('rename_library_motif', { motif_id: 'mymotif' }, undefined)).toThrow(/already a valid folder name/)
+    expect(w.rows('library').map(r => [r.id, r.status])).toEqual([['MyMotif', 'invalid'], ['mymotif', 'installed']])
+  })
+
   it('names a missing or invalid project Motif, and lists only the library with no project open', () => {
     const w = world()
     w.install('gone'); w.place('gone')

@@ -1197,6 +1197,7 @@ app.whenReady().then(async () => {
   })
   tsHost = createTsActorHost({
     exportJobs,
+    trash: (target) => shell.trashItem(target),
     readEditorPlayhead: () => playheadReader.read(),
     fontFamilies: catalogFamilies,
     fonts: fontStore,

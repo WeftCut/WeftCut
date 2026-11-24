@@ -19,7 +19,7 @@ describe('routeMcpTool', () => {
       expect(routeMcpTool(t), t).toBe('motif')
   })
   it('the approval, project-copy and trust channels are the renderer\'s, never MCP motif tools (ME8, ADR 0046)', () => {
-    for (const t of ['update_project_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'motif_trust_summary', 'trust_motif']) {
+    for (const t of ['update_project_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'rename_library_motif', 'motif_trust_summary', 'trust_motif']) {
       expect(MOTIF_TOOLS.has(t), t).toBe(false)
       expect(routeMcpTool(t), t).not.toBe('motif')
     }

@@ -30,7 +30,7 @@ import { captureImportSession, createMediaImporter, type MediaImporter } from '.
 import { createPoolFiles, type PoolFiles, type PoolFilesFs } from './poolFiles'
 import { BUILTIN_MANIFESTS, type Manifest } from '../../shared/motifs/catalog'
 import { libraryHost, type ProjectMotifs, type UnavailableMotif } from '../../shared/motifs/projectMotifs'
-import type { UserMotifStore } from '../motif/store'
+import type { Trash, UserMotifStore } from '../motif/store'
 import { runMotifTool } from '../motif/motifTools'
 import { legacyMigration } from '../motif/legacyResolve'
 import { copyProjectMotifs } from '../motif/projectCopy'
@@ -51,7 +51,9 @@ import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
 import { tasteView } from '../taste/view'
 import { collectExtendedStyle, styleOutsideProject } from '../taste/projectStyles'
-import { portabilityReport, type PortabilityReport } from './portability'
+import { portabilityReport } from './portability'
+import type { PortabilityReport } from '../../shared/portability'
+import { trashUntrackedMotifFolder } from './untrackedMotifFolder'
 import { AuditStore } from '../lint/audits'
 import { playheadView } from '../mcp/playheadView'
 import type { WorkspaceStore } from '../workspace'
@@ -151,6 +153,9 @@ export interface TsActorHostDeps {
    *  Optional → guard in runMotif throws if absent. Tests that don't exercise
    *  motif tools omit this so they don't need a real temp-dir store. */
   motifStore?: UserMotifStore
+  /** Moves a folder to the system trash (`shell.trashItem`). Absent → the
+   *  portability check's folder cleanup refuses: nothing is removed for good. */
+  trash?: Trash
   /** Built-in Motifs ({id, manifest, html}), loaded once at boot from the
    *  relocated served assets. Empty in tests that don't exercise built-ins.
    *  Optional — defaults to [] when absent. */
@@ -1094,6 +1099,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return actor.snapshot().settings
       case 'saveStatus':
         return saveStatus
+      case 'portability':
+        if (channel === 'project_portability') return portability()
+        return trashUntrackedMotifFolder({
+          report: portability,
+          folder: (name) => projectMotifs()!.folder(name),
+          trash: deps.trash ?? (async () => { throw new Error('No system trash is available') }),
+        }, args.name)
       case 'review': {
         if (channel === 'review_activity_view') return reviewActivityView((args as Partial<ReviewActivityArgs>).history_ids)
         const includeUser = (args as ReviewViewArgs).include_user === true

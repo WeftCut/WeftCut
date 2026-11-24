@@ -1117,11 +1117,12 @@ version?}` reports the outcome, and every transition sends
 `notifications/resources/list_changed`; there is no blocking wait, so an agent
 tells the user to review and does not poll. A newer proposal from the same
 Motif supersedes the older (`superseded_proposal_id`). Approval, rejection,
-the user's own Save to library, restoring or deleting a library Motif and
-updating a project copy from the library are renderer-only channels
+the user's own Save to library, restoring, deleting or renaming a library
+Motif and updating a project copy from the library are renderer-only channels
 (`approve_motif_proposal`, `reject_motif_proposal`, `publish_motif`,
-`restore_motif_version`, `delete_library_motif`, `update_project_motif`):
-none is an MCP tool, so no client approves its own proposal.
+`restore_motif_version`, `delete_library_motif`, `rename_library_motif`,
+`update_project_motif`): none is an MCP tool, so no client approves its own
+proposal.
 
 ### Workflow / safety
 

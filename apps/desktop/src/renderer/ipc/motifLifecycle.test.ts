@@ -39,9 +39,10 @@ describe('the Motif panel speaks the project/library channels', () => {
     expect(invoke).toHaveBeenLastCalledWith('update_motif_files', expect.objectContaining({ motif_id: 'a', expected_revision: 'old', files: expect.arrayContaining([{ path: 'index.html', text: html }]) }));
   });
 
-  it('splits list_motifs into its groups; an untrusted project Motif carries its manifest, a broken one none', async () => {
+  it('splits list_motifs into its groups; an untrusted project Motif carries its manifest, a broken one none, a misnamed library folder its name', async () => {
     invoke.mockResolvedValue([
       { group: 'library', id: 'lower', name: 'Lower', version: 2, size: [64, 64], default_duration_s: 1, props_schema: {}, status: 'installed', content_hash: 'L', revision: 'L', in_project: 'lower', html: '<x>' },
+      { group: 'library', id: 'MyMotif', status: 'invalid', diagnostic: 'The folder name must be lowercase letters, digits and single dashes', revision: 'M', in_project: null },
       { group: 'project', id: 'lower', name: 'Lower', version: 1, size: [64, 64], default_duration_s: 1, props_schema: {}, status: 'ok', state: 'update_available',
         uid: 'u', from: { uid: 'u', version: 1, revision: 'P' }, path: '/home/u/Film/Motifs/lower', content_hash: 'P', revision: 'P', html: '<x>' },
       { group: 'project', id: 'gone', uid: 'v', status: 'missing', state: 'project_only', from: null, path: '/home/u/Film/Motifs/gone', revision: null },
@@ -52,6 +53,7 @@ describe('the Motif panel speaks the project/library channels', () => {
     const catalog = await listMotifCatalog();
     expect(catalog.library).toEqual([{ group: 'library', id: 'lower', status: 'installed', revision: 'L', in_project: 'lower',
       motif: { id: 'lower', name: 'Lower', version: 2, size: [64, 64], default_duration_s: 1, props_schema: {}, content_hash: 'L' } }]);
+    expect(catalog.misnamed).toEqual(['MyMotif']);
     expect(catalog.project.map(r => [r.id, r.state, r.motif?.content_hash ?? null, r.diagnostic ?? null]))
       .toEqual([['lower', 'update_available', 'P', null], ['gone', 'project_only', null, null], ['torn', 'project_only', null, 'index.html is missing'],
         ['received', 'project_only', 'R', 'not trusted on this machine']]);

@@ -201,6 +201,17 @@ describe('the open project in its folder (host)', () => {
     t.host.stop()
   })
 
+  it('the check dialog reads the host\'s report, and its folder cleanup refuses with no project open', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    disk.fs.rm('/projects/Demo/Media/sub/clip.mp4')
+    const t = makeHost(disk)
+    await expect(t.host.handleInvoke('project_trash_motif_folder', { name: 'spare' })).rejects.toThrow(/No project is open/)
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    expect(await t.host.handleInvoke('project_portability', {})).toEqual(t.host.portability())
+    t.host.stop()
+  })
+
   it('the portability check lists a pooled file the folder no longer holds', async () => {
     const disk = memDisk()
     folder(disk, '/projects/Demo', windowsV6())

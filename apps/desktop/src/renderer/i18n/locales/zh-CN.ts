@@ -960,6 +960,8 @@ const zhCN: Resources = {
     // 按下就直接跑，没有要先问的东西。
     describe_selected: "描述片段内容",
     open_voiceover: "配音…",
+    check_portability: "检查可移植性…",
+    check_portability_hint: "列出项目文件夹未包含的内容。",
     // 带省略号，因为这一行打开的是一个界面而不是提交任何改动：接下来是审阅，
     // 应用是面板里的另一次按下。
     review_shots: "查看镜头…",
@@ -2711,6 +2713,9 @@ const zhCN: Resources = {
     save_as_new: "另存为新 Motif",
     saving: "正在保存…",
     remove_button: "从项目中移除",
+    misnamed_hint: "文件夹名只能使用小写字母、数字和连字符。重命名后为“{{to}}”。",
+    rename_folder: "重命名文件夹",
+    rename_folder_to: "将文件夹“{{id}}”重命名为“{{to}}”",
     unavailable_title: "“{{name}}”无法渲染",
     unavailable_hint: "恢复 Motifs/{{id}}/ 文件夹、修复其文件，或从库中恢复。",
     problem: {
@@ -2718,6 +2723,27 @@ const zhCN: Resources = {
       invalid: "Motifs/{{id}}/ 不是有效的 Motif",
       untrusted: "未在此设备上信任",
     },
+  },
+  portability: {
+    title: "可移植性检查",
+    loading: "正在检查…",
+    portable: "此文件夹包含项目所需的一切。",
+    lead: "项目文件夹未包含以下内容。",
+    media_outside: "文件夹外的媒体",
+    media_missing: "缺失的媒体",
+    motifs_missing: "缺失的 Motif",
+    motifs_invalid: "无效的 Motif",
+    fonts_excluded: "未纳入项目的字体",
+    excluded: "已排除",
+    excluded_not_installed: "已排除 · 本机未安装",
+    fonts_manage: "打开 设置 > 项目 > 字体",
+    fonts_missing: "缺失的字体",
+    italic: "斜体",
+    style_outside: "不在文件夹中的风格",
+    untracked: "副本不会携带",
+    untracked_hint: "没有图层使用这些 Motif 文件夹。",
+    trash: "移到回收站",
+    trash_folder: "将 Motifs/{{name}}/ 移到回收站",
   },
   motif_trust: {
     title: "未在此设备上信任",

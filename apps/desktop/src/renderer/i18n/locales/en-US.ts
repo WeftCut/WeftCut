@@ -1075,6 +1075,8 @@ const enUS = {
     // Settings → Video understanding now, so the press runs rather than asks.
     describe_selected: "Describe selected clip content",
     open_voiceover: "Voiceover…",
+    check_portability: "Check portability…",
+    check_portability_hint: "List what the project folder does not carry.",
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
     review_shots: "Review shots…",
@@ -2988,6 +2990,10 @@ const enUS = {
     save_as_new: "Save as a new Motif",
     saving: "Saving…",
     remove_button: "Remove from project",
+    // A library folder whose name no Motif can take (MotifPicker).
+    misnamed_hint: "Folder names are lowercase letters, digits and dashes. Renaming makes it “{{to}}”.",
+    rename_folder: "Rename folder",
+    rename_folder_to: "Rename folder “{{id}}” to “{{to}}”",
     unavailable_title: "“{{name}}” can't render",
     unavailable_hint: "Restore its folder under Motifs/{{id}}/, fix its files, or restore it from the library.",
     // A project Motif that cannot render (motifs/MotifProblem.tsx); an
@@ -2997,6 +3003,29 @@ const enUS = {
       invalid: "Motifs/{{id}}/ is not a valid Motif",
       untrusted: "Not trusted on this machine",
     },
+  },
+  // File > Check portability (portability/): what the project folder does
+  // not carry.
+  portability: {
+    title: "Portability check",
+    loading: "Checking…",
+    portable: "This folder carries everything the project needs.",
+    lead: "The project folder does not carry these.",
+    media_outside: "Media outside the folder",
+    media_missing: "Missing media",
+    motifs_missing: "Missing Motifs",
+    motifs_invalid: "Invalid Motifs",
+    fonts_excluded: "Fonts excluded from the project",
+    excluded: "Excluded",
+    excluded_not_installed: "Excluded · not installed here",
+    fonts_manage: "Open Settings > Project > Fonts",
+    fonts_missing: "Missing fonts",
+    italic: "Italic",
+    style_outside: "Style not in the folder",
+    untracked: "Not carried by a copy",
+    untracked_hint: "No layer uses these Motif folders.",
+    trash: "Move to trash",
+    trash_folder: "Move Motifs/{{name}}/ to the trash",
   },
   // A project Motif whose revision is not trusted on this machine, in its
   // row's pane (motifs/TrustCard.tsx). The summary is a static read of its files.
