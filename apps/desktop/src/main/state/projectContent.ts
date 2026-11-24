@@ -164,14 +164,15 @@ async function copyEntry(fs: ProjectContentFs, src: string, dst: string, link: b
 /** Save As: copies the project content (`PROJECT_CONTENT`) of the folder
  *  `from` into the existing folder `to`, replacing files of the same name.
  *  Nothing is copied when both name one folder. Throws on the first file that
- *  fails, and refuses a `to` inside `from`'s `Media/`, which the copy would
- *  copy into itself. */
+ *  fails, and refuses a `to` inside a folder Save As copies (`Media/`,
+ *  `Fonts/`, `Styles/`, `Motifs/`), which the copy would copy into itself. */
 export async function copyProjectContent(from: string, to: string, fs: ProjectContentFs, platform: PathPlatform = process.platform): Promise<void> {
   const l = pathLib(platform)
   const target = await realDir(fs, to, l)
   if (target === await realDir(fs, from, l)) return
-  if (isInside(target, await realDir(fs, toNative(from, MEDIA, platform), l), l)) {
-    throw new Error("A project cannot be saved inside the Media folder of the project it is saved from")
+  for (const folder of [...PROJECT_CONTENT, parseProjectPath(PROJECT_MOTIFS_DIR)]) {
+    if (isInside(target, await realDir(fs, toNative(from, folder, platform), l), l))
+      throw new Error(`A project cannot be saved inside the ${folder} folder of the project it is saved from`)
   }
   for (const entry of PROJECT_CONTENT) await copyEntry(fs, toNative(from, entry, platform), toNative(to, entry, platform), entry === MEDIA, l)
 }
@@ -203,12 +204,22 @@ async function listEntry(fs: Pick<ProjectContentFs, 'lstat' | 'readdir'>, src: s
  *  (`PROJECT_CONTENT`) and `Motifs/<id>/` for each id of the project's Motif
  *  table (motif/projectCopy.ts). Never `Backups/` or another machine-local
  *  entry. project.json leads because autosave may rewrite it while the pack
- *  runs, and the pack fails on a file whose size changed before it was read. */
-export async function packFiles(dir: string, motifIds: Iterable<string>, fs: Pick<ProjectContentFs, 'lstat' | 'readdir'>, platform: PathPlatform = process.platform): Promise<PackEntry[]> {
+ *  runs, and the pack fails on a file whose size changed before it was read.
+ *
+ *  `pooled` is the media pool's project paths: a file under `Media/` the pool
+ *  draws is listed even when its name is one the folder walk skips as scratch
+ *  (an imported `.voice.wav`), as Save As's `copyLateFiles` copies it. */
+export async function packFiles(dir: string, motifIds: Iterable<string>, fs: Pick<ProjectContentFs, 'lstat' | 'readdir'>, platform: PathPlatform = process.platform, pooled: Iterable<ProjectPath> = []): Promise<PackEntry[]> {
   const l = pathLib(platform)
   const out: PackEntry[] = []
   await listEntry(fs, l.join(dir, PROJECT_FILE), [PROJECT_FILE], true, l, out)
   for (const entry of PROJECT_CONTENT) await listEntry(fs, toNative(dir, entry, platform), [entry], true, l, out)
+  const listed = new Set<string>(out.map(e => e.path))
+  for (const p of pooled) {
+    if (listed.has(p) || !p.startsWith(`${MEDIA}/`)) continue
+    const st = await lstatOrNull(fs, toNative(dir, p, platform))
+    if (st?.isFile()) { out.push({ path: p, size: st.size }); listed.add(p) }
+  }
   for (const id of [...motifIds].sort()) {
     if (!isPortableSegment(id) || id.startsWith('.')) continue
     await listEntry(fs, l.join(dir, PROJECT_MOTIFS_DIR, id), [PROJECT_MOTIFS_DIR, id], false, l, out)

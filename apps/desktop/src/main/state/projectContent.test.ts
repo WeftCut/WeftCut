@@ -84,10 +84,11 @@ describe('copyProjectContent', () => {
     expect(disk.log).toEqual([])
   })
 
-  it('refuses a target inside the source\'s Media folder', async () => {
+  it.each(['Media/sub', 'Fonts', 'Styles/mine', 'Motifs/intro'])('refuses a target inside the source\'s %s folder, which it would copy into itself', async (inside) => {
     const { disk } = projectAt('/from')
-    await disk.contentFs.mkdir('/from/Media/sub/Copy', { recursive: true })
-    await expect(copyProjectContent('/from', '/from/Media/sub/Copy', disk.contentFs, 'linux')).rejects.toThrow(/Media folder/)
+    const target = `/from/${inside}/Copy`
+    await disk.contentFs.mkdir(target, { recursive: true })
+    await expect(copyProjectContent('/from', target, disk.contentFs, 'linux')).rejects.toThrow(`${inside.split('/')[0]} folder`)
     expect(disk.log).toEqual([])
   })
 
@@ -203,6 +204,21 @@ describe('packFiles', () => {
     expect(pack).not.toContain('Media/.DS_Store')
     expect(pack).not.toContain('Media/new.mp4.tmp')
     expect(pack).not.toContain('Media/link.mp4')
+  })
+
+  it('holds a pool file under Media/ whose name the folder walk skips, as Save As carries it', async () => {
+    const { disk } = packable()
+    disk.put('/from/Media/.voice.wav', 'voice')
+    const pooled = ['Media/.voice.wav', 'Media/clip.mp4', 'Cache/proxies/h.mp4'].map(p => parseProjectPath(p))
+    const pack = (await packFiles('/from', [], disk.contentFs, 'linux', pooled)).map(e => e.path as string)
+    expect(pack).toContain('Media/.voice.wav')
+    expect(pack.filter(p => p === 'Media/clip.mp4')).toHaveLength(1)
+    expect(pack).not.toContain('Cache/proxies/h.mp4')
+    expect(pack).not.toContain('Media/.DS_Store')
+
+    await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
+    await copyLateFiles('/from', '/to', pooled, disk.contentFs, 'linux')
+    expect(disk.read('/to/Media/.voice.wav')).toBe('voice')
   })
 
   it('gives each file its size', async () => {

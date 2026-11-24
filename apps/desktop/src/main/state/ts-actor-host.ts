@@ -780,7 +780,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       persistenceTail = settled.catch(() => {})
       return settled
     },
-    list: (dir, ids) => packFiles(dir, ids, deps.contentFs!, deps.platform),
+    list: (dir, ids) => packFiles(dir, ids, deps.contentFs!, deps.platform,
+      Object.values(actor.snapshot().media_pool).flatMap(item => item.path_rel ? [item.path_rel] : [])),
     readFile: (path) => deps.fs.readFile(path),
     freeBytes: deps.freeBytes ?? (async () => Number.POSITIVE_INFINITY),
     readdir: async (dir) => {
