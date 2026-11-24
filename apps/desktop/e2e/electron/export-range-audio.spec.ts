@@ -68,9 +68,9 @@ function goertzelPower(samples: Float32Array, freq: number, sr: number): number 
 }
 
 /// Dominant candidate tone over an arbitrary `[startS, endS)` window. Needed when
-/// the layer's start is NOT on a whole second — a sub-frame audio slip puts every
-/// source-second boundary at a fractional output time, so no integer-second window
-/// sits inside one tone.
+/// source time 0 does not land on a whole output second — a sub-frame audio slip
+/// puts every source-second boundary at a fractional output time, so no
+/// integer-second window sits inside one tone.
 function dominantToneIn(
   pcm: Float32Array,
   startS: number,
@@ -211,86 +211,134 @@ test.describe('export range + audio settings (Electron)', () => {
     expect(dominantTone(pcm, 1, cands)).toBe(toneHz(2)) // source 2 s -> 640 Hz
   })
 
-  // ── Sub-frame audio: the slipped-sync case (spec R2-D6 / ADR 0038) ──────────
-  // An audio layer authored to a 48 kHz sample boundary that is deliberately HALF A
-  // FRAME off the composition frame grid, driven through the real renderer → actor
-  // IPC and the real persistence round trip. Both data-loss dependencies live here at
-  // integration level: a kind-blind link fan-out would re-sync the slip on the link
-  // move, and a kind-blind load repair would erase it on reopen.
+  // ── Sub-frame audio: the slipped-sync case (ADR 0038) ──────────────────────
+  // A linked A/V pair whose edges are shared frames and whose SOUND is slipped in
+  // its source window by a whole number of 48 kHz samples that is half a frame:
+  // sync no frame edge can express. The offset is stored nowhere; it is where each
+  // member's source time 0 lands. So a link move that re-derived the audio's
+  // window, or a load repair that rewrote it, would silently re-sync the pair, and
+  // both seams are crossed here through the real renderer → actor IPC and the real
+  // persistence round trip.
   //
-  // Deliberately NOT asserted: the exported PCM's sub-frame start offset. AAC encoder
-  // delay/priming is 1024–2048 samples (21–43 ms) and is not removed by a
-  // decode-to-PCM, so it swamps the ≤16.7 ms sub-frame signal being measured — an
-  // assertion on it would be flaky rather than wrong-detecting. What is asserted is
-  // that the sub-frame geometry survives every seam AND that the export still produces
-  // faithful audio from it (the mixer places at `us_to_frame(t_start_us, 48000)`, so a
-  // sub-frame start must not break the mux). Sample-exact placement is proven in
-  // `main/state/__tests__/audio-grid.test.ts` against the same leaf math the mixer uses.
-  test('a sub-frame audio slip survives the link move, save/reopen, and export', async () => {
-    test.setTimeout(300000)
-    const projectDir = await bootProject('e2e-audio-slip-')
-    const { layerId: videoLayer } = await importAndPlaceMedia(page, { mediaAbsPath: SOURCE })
+  // The export is read in windows of a quarter second, not samples: AAC priming
+  // is 1024–2048 samples (21–43 ms) and a decode-to-PCM does not remove it.
+  // Sample-exact placement is proven in `main/state/__tests__/audio-grid.test.ts`
+  // against the same leaf math the mixer uses.
 
-    // `add_media_layer` auto-pairs an AV source: video + Audio layer on the same
-    // track, linked. Find the audio half.
-    const s0 = await summary(page)
-    const audioLayer = s0.tracks
+  /// Half a frame at 30 fps, and exactly sample 16 800 of the mix lattice.
+  const SLIP_US = 350_000
+  /// Where the pair's shared out edge is trimmed to (frame 150), so the sound's
+  /// window can move later in the source without reading past the media.
+  const PAIR_OUT_US = 5_000_000
+
+  interface PairMember {
+    t_start_us: number
+    t_end_us: number
+    src_in_us: number
+    src_out_us: number
+  }
+
+  /// One layer's edges and source window off the root summary.
+  async function memberOf(id: string): Promise<PairMember> {
+    const s = (await summary(page)) as unknown as {
+      tracks: Array<{
+        layers: Array<{
+          id: string
+          t_start_us: number
+          t_end_us: number
+          params: { src_in_us: number; src_out_us: number }
+        }>
+      }>
+    }
+    const l = s.tracks.flatMap((t) => t.layers).find((x) => x.id === id)!
+    return { t_start_us: l.t_start_us, t_end_us: l.t_end_us, src_in_us: l.params.src_in_us, src_out_us: l.params.src_out_us }
+  }
+
+  /// Where a member's source time 0 lands on the timeline. Both members play the
+  /// same media at rate 1, so the difference between the two is the pair's sync
+  /// offset (negative: the sound plays early).
+  const sourceZeroAt = (m: PairMember) => m.t_start_us - m.src_in_us
+
+  /// Place the tone source as its auto-paired, linked A/V pair at 0, trim the
+  /// pair's out edge to `PAIR_OUT_US`, and slip the sound `SLIP_US` EARLIER by
+  /// moving its source window later: the `update_layer_params` an audio nudge
+  /// sends.
+  async function placeSlippedPair(): Promise<{ videoLayer: string; audioLayer: string }> {
+    const { layerId: videoLayer } = await importAndPlaceMedia(page, { mediaAbsPath: SOURCE })
+    const audioLayer = (await summary(page)).tracks
       .flatMap((t) => t.layers)
       .find((l) => l.params.kind === 'Audio')?.id
     expect(audioLayer, 'the AV source should have auto-paired an Audio layer').toBeTruthy()
 
-    // 350_000 µs is exactly sample 16800 and exactly frame 10.5 — on the audio
-    // lattice, half a frame off the composition grid, so it is only expressible
-    // because audio no longer shares the video grid.
     // NOTE: this is the production `command` channel, whose wire args are camelCase
-    // (`commands.ts`), not the snake_case MCP dispatch names.
-    const SLIP_US = 350_000
-    await invokeCmd(page, 'move_layer', {
+    // (`commands.ts`), not the snake_case MCP dispatch names. Each half is trimmed
+    // on its own (`escapeLink`) so the geometry is stated here rather than left to
+    // the linked-trim fan-out, which this spec is not about.
+    for (const layerId of [videoLayer, audioLayer!]) {
+      await invokeCmd(page, 'trim_layer', { layerId, edge: 'out', newTUs: PAIR_OUT_US, escapeLink: true })
+    }
+    await invokeCmd(page, 'update_layer_params', {
       layerId: audioLayer,
-      newTrackId: s0.tracks.find((t) => t.layers.some((l) => l.id === audioLayer))!.id,
-      newTStartUs: SLIP_US,
-      escapeLink: true,
+      patch: { kind: 'Audio', src_in_us: SLIP_US, src_out_us: PAIR_OUT_US + SLIP_US },
     })
-    const startOf = async (id: string | undefined) =>
-      ((await summary(page)) as unknown as {
-        tracks: Array<{ layers: Array<{ id: string; t_start_us: number }> }>
-      }).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!.t_start_us
+    const video = await memberOf(videoLayer)
+    const audio = await memberOf(audioLayer!)
+    expect(audio, 'the slip moves the source window under the shared edges').toEqual({
+      t_start_us: video.t_start_us,
+      t_end_us: video.t_end_us,
+      src_in_us: SLIP_US,
+      src_out_us: PAIR_OUT_US + SLIP_US,
+    })
+    expect(sourceZeroAt(audio) - sourceZeroAt(video)).toBe(-SLIP_US)
+    return { videoLayer, audioLayer: audioLayer! }
+  }
 
-    expect(await startOf(audioLayer), 'the slip must be stored verbatim, not re-snapped to a frame').toBe(SLIP_US)
-    const videoStart = await startOf(videoLayer)
-    const offsetBefore = SLIP_US - videoStart
+  test('a sub-frame source slip survives the link move, save/reopen, and export', async () => {
+    test.setTimeout(300000)
+    const projectDir = await bootProject('e2e-audio-slip-')
+    const { videoLayer, audioLayer } = await placeSlippedPair()
+    const slipped = await memberOf(audioLayer)
 
-    // A whole-link move must shift both members by the same delta. A kind-blind
-    // fan-out would drag the audio back onto the nearest video frame here.
+    // A whole-link move carries both members by the same frames and leaves both
+    // source windows alone, so the derived offset is kept exactly.
     const MOVE_TO_US = 1_000_000 // frame 30 at 30 fps
     await invokeCmd(page, 'move_layer', {
       layerId: videoLayer,
-      newTrackId: s0.tracks.find((t) => t.layers.some((l) => l.id === videoLayer))!.id,
+      newTrackId: (await summary(page)).tracks.find((t) => t.layers.some((l) => l.id === videoLayer))!.id,
       newTStartUs: MOVE_TO_US,
       escapeLink: false,
     })
-    const movedOffset = (await startOf(audioLayer)) - (await startOf(videoLayer))
-    expect(movedOffset, 'a whole-link move must preserve the slip exactly').toBe(offsetBefore)
-    const slippedAfterMove = await startOf(audioLayer)
+    const moved = await memberOf(audioLayer)
+    expect(moved, "a whole-link move must carry the sound by the picture's frames and keep its slip").toEqual({
+      ...slipped,
+      t_start_us: MOVE_TO_US,
+      t_end_us: MOVE_TO_US + PAIR_OUT_US,
+    })
+    expect(sourceZeroAt(moved) - sourceZeroAt(await memberOf(videoLayer))).toBe(-SLIP_US)
 
-    // Save + reopen: the load repair must report nothing and move nothing.
+    // Save + reopen: the load repair must find nothing to move.
     await invokeCmd(page, 'project_save')
     await invokeCmd(page, 'project_open', { path: projectDir })
     await waitForHook(page, 'exportTimeline')
-    expect(await startOf(audioLayer), 'reopening must not repair a sample-aligned audio layer').toBe(slippedAfterMove)
+    expect(await memberOf(audioLayer), 'reopening must not repair a slipped audio layer').toEqual(moved)
 
-    // …and the export still runs and stays audio-faithful from that geometry.
+    // …and the export plays each source second where the source mapping puts it.
     const output = path.join(tmpDir('weftcut-e2e-audio-slip-'), 'slip.mp4')
     const r = await driveExport(page, { outputAbsPath: output }, { hook: 'exportTimeline' })
     if (!r.done.ok) throw new Error(`export failed: ${r.done.error} | kind=${r.lastKind} detail=${r.lastDetail}`)
     const pcm = extractPcm(output)
-    const cands = [toneHz(0), toneHz(1), toneHz(2), toneHz(3)]
-    // The audio layer now starts at 1.35 s (1 s link position + the 350 ms slip), so
-    // source second k occupies output [1.35 + k, 2.35 + k). Windows are inset 50 ms
-    // from each boundary so the assertion reads ONE tone rather than a blend.
-    const audioStartS = (MOVE_TO_US + SLIP_US) / 1_000_000
-    expect(dominantToneIn(pcm, audioStartS + 0.05, audioStartS + 0.95, cands)).toBe(toneHz(0))
-    expect(dominantToneIn(pcm, audioStartS + 1.05, audioStartS + 1.95, cands)).toBe(toneHz(1))
+    const cands = [toneHz(0), toneHz(1), toneHz(2), toneHz(3), toneHz(4)]
+    // Source time 0 lands at 0.65 s, so source second k plays over output
+    // [0.65 + k, 1.65 + k). Each window is the first 350 ms of second k, inset
+    // 50 ms for the priming delay: the stretch where an export that dropped the
+    // slip, or applied it the wrong way, would still be playing second k − 1.
+    const zeroS = sourceZeroAt(moved) / 1_000_000
+    for (const k of [1, 2, 3]) {
+      expect(
+        dominantToneIn(pcm, zeroS + k + 0.05, zeroS + k + 0.3, cands),
+        `output from ${(zeroS + k).toFixed(2)} s must carry source second ${k}`,
+      ).toBe(toneHz(k))
+    }
   })
 
   // ── Audio through a Group (ADR 0052) ────────────────────────────────────────
@@ -304,11 +352,11 @@ test.describe('export range + audio settings (Electron)', () => {
   // result into the container), so the path under test is the shipping one, minus
   // an encode that has nothing to do with the mix.
   //
-  // The slip rides along because it is the most fragile geometry available: a
-  // sub-frame start survives pre-compose only if the member's own 48 kHz lattice
-  // is what it is re-based on. Like the test above, the sub-frame OFFSET itself
-  // is not asserted — AAC priming is 1024-2048 samples and swamps a <= 16.7 ms
-  // signal. What is asserted instead is stronger than an envelope: the two
+  // The slip rides along because it is sync the Group's edges cannot carry: it
+  // survives pre-compose only if the member's source window moves in with it
+  // untouched. Like the test above, the sample-level offset itself is not read
+  // off the PCM — AAC priming is 1024-2048 samples. What is asserted instead is
+  // stronger than an envelope: the two
   // exports' decoded PCM is compared sample for sample as a signal-to-residual
   // ratio, CALIBRATED against a deliberately misplaced control (the same file
   // against itself, offset by one AAC frame — which scores about -3 dB, i.e.
@@ -346,26 +394,14 @@ test.describe('export range + audio settings (Electron)', () => {
 
   test('pre-composing a slipped A/V pair exports the same audio', async () => {
     test.setTimeout(300000)
-    // 350_000 µs is exactly sample 16800 and exactly frame 10.5 — the sub-frame
-    // geometry of the test above, minus the link move it already covers.
-    const SLIP_US = 350_000
     const outDir = tmpDir('weftcut-e2e-group-audio-')
     const flatOut = path.join(outDir, 'flat.m4a')
     const groupedOut = path.join(outDir, 'grouped.m4a')
 
+    // The slipped pair of the test above, minus the link move it already covers.
     await bootProject('e2e-group-audio-')
-    const { layerId: videoLayer } = await importAndPlaceMedia(page, { mediaAbsPath: SOURCE })
-    const s0 = await summary(page)
-    const audioLayer = s0.tracks
-      .flatMap((t) => t.layers)
-      .find((l) => l.params.kind === 'Audio')?.id
-    expect(audioLayer, 'the AV source should have auto-paired an Audio layer').toBeTruthy()
-    await invokeCmd(page, 'move_layer', {
-      layerId: audioLayer,
-      newTrackId: s0.tracks.find((t) => t.layers.some((l) => l.id === audioLayer))!.id,
-      newTStartUs: SLIP_US,
-      escapeLink: true,
-    })
+    const { videoLayer, audioLayer } = await placeSlippedPair()
+    const slipped = await memberOf(audioLayer)
 
     const flat = await driveExport(
       page,
@@ -374,10 +410,10 @@ test.describe('export range + audio settings (Electron)', () => {
     )
     if (!flat.done.ok) throw new Error(`un-grouped audio export failed: ${flat.done.error}`)
 
-    // Pre-compose the pair. The earliest start is the video's 0, so nothing
-    // re-bases and the audio keeps its 350 ms start INSIDE the composition; the
-    // Group layer is windowed over the whole thing from 0, so the mix has to come
-    // out where it did before.
+    // Pre-compose the pair. The earliest start is the pair's 0, so nothing
+    // re-bases and the audio keeps its slipped source window INSIDE the
+    // composition; the Group layer is windowed over the whole thing from 0, so
+    // the mix has to come out where it did before.
     const group = await invokeCmd<{ composition_id: string; layer_id: string }>(
       page,
       'groups_create',
@@ -387,7 +423,14 @@ test.describe('export range + audio settings (Electron)', () => {
       root_id: string
       compositions: Record<string, {
         duration_us: number
-        tracks: Array<{ layers: Array<{ id: string; t_start_us: number; params: { kind: string; src_in_us?: number } }> }>
+        tracks: Array<{
+          layers: Array<{
+            id: string
+            t_start_us: number
+            t_end_us: number
+            params: { kind: string; src_in_us?: number; src_out_us?: number }
+          }>
+        }>
       }>
     }>(page, 'project_summary', {})
     const layersIn = (id: string) => wire.compositions[id]!.tracks.flatMap((t) => t.layers)
@@ -396,7 +439,15 @@ test.describe('export range + audio settings (Electron)', () => {
     expect(layersIn(wire.root_id)[0]!.t_start_us).toBe(0)
     expect(layersIn(wire.root_id)[0]!.params.src_in_us).toBe(0)
     const inside = layersIn(group.composition_id).find((l) => l.id === audioLayer)
-    expect(inside?.t_start_us, 'pre-compose must re-base the audio on its OWN lattice').toBe(SLIP_US)
+    expect(
+      inside && {
+        t_start_us: inside.t_start_us,
+        t_end_us: inside.t_end_us,
+        src_in_us: inside.params.src_in_us,
+        src_out_us: inside.params.src_out_us,
+      },
+      'pre-compose must carry the audio in with its edges and slipped source window unchanged',
+    ).toEqual(slipped)
 
     const grouped = await driveExport(
       page,
@@ -408,19 +459,17 @@ test.describe('export range + audio settings (Electron)', () => {
 
     const flatPcm = extractPcm(flatOut)
     const groupedPcm = extractPcm(groupedOut)
-    const cands = [toneHz(0), toneHz(1), toneHz(2), toneHz(3), toneHz(4)]
-    // The audio starts at 0.35 s in both legs, so source second k occupies
-    // output [0.35 + k, 1.35 + k); windows are inset 50 ms from each boundary so
+    const cands = [toneHz(0), toneHz(1), toneHz(2), toneHz(3), toneHz(4), toneHz(5)]
+    // Source time 0 lands at −0.35 s in both legs, so source second k occupies
+    // output [k − 0.35, k + 0.65); windows are inset 50 ms from each boundary so
     // each reads ONE tone rather than a blend (the helper's contract above).
-    const audioStartS = SLIP_US / 1_000_000
-    for (let k = 0; k < 4; k++) {
+    const zeroS = sourceZeroAt(slipped) / 1_000_000
+    for (let k = 1; k <= 4; k++) {
       expect(
-        dominantToneIn(groupedPcm, audioStartS + k + 0.05, audioStartS + k + 0.95, cands),
-        `output second ${k} of the GROUPED export must carry source second ${k}`,
+        dominantToneIn(groupedPcm, zeroS + k + 0.05, zeroS + k + 0.95, cands),
+        `source second ${k} of the GROUPED export must play where its source mapping puts it`,
       ).toBe(toneHz(k))
-      expect(dominantToneIn(flatPcm, audioStartS + k + 0.05, audioStartS + k + 0.95, cands)).toBe(
-        toneHz(k),
-      )
+      expect(dominantToneIn(flatPcm, zeroS + k + 0.05, zeroS + k + 0.95, cands)).toBe(toneHz(k))
     }
 
     // One AAC frame late is the smallest misplacement a broken offset could

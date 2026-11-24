@@ -50,7 +50,7 @@ import {
   type DragState,
   type DragSubject,
 } from "./layerDragStore";
-import { floorTravelAtZero, gridForLayerKind, travelOnGrids } from "../grid";
+import { floorTravelAtZero, travelOnGrid } from "../grid";
 import {
   evaluateTimelinePlacements,
   SPAWN_TRACK_ID,
@@ -273,9 +273,8 @@ function resolveForeignDrop(
   const fps = { num: fpsNum, den: fpsDen };
   // The travel every landing below is measured by: from the anchor's start to
   // the head the gesture names, floored as one body at this composition's 0.
-  const anchorGrid = gridForLayerKind(anchor.kind, fps);
   const travelTo = (toUs: number) =>
-    floorTravelAtZero(movers, { fromUs: anchor.originalTStart, toUs }, fps, anchorGrid);
+    floorTravelAtZero(movers, { fromUs: anchor.originalTStart, toUs }, fps);
   if (trackId === null) {
     // Inside the Panel, over no row — its ruler, or the band under the last
     // lane. There is no geometry to draw in and no lane to validate against,
@@ -340,7 +339,7 @@ function resolveForeignDrop(
       // The same arithmetic `applyMoveLayersToComposition` runs on the other
       // side of the commit (`renderer/grid.ts`), which is what makes the ghost
       // a promise rather than an approximation of one.
-      const landings = travelOnGrids(movers, travel, fps);
+      const landings = travelOnGrid(movers, travel, fps);
       // Every subject lands on the ONE hit lane: the command with a named
       // destination puts every source block there, whatever lane it came from
       // (`main/state/mutations/moveToComposition.ts`). A ghost that scattered

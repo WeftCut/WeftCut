@@ -30,12 +30,10 @@ import { invokeCmd, launchApp, newProject, rootSummary, tmpDir, waitForHook } fr
  * alignment spec already depends on these exact islands, so the numbers below
  * are pinned by a second reader.
  *
- * The removal test is the one that exercises two grids at once: the cut is
- * decided by SOUND (48 kHz lattice) and the picture rides the frame grid, and
- * the first build of this feature refused every A/V-linked clip because of the
- * half-frame drift between them. `removePauses` now lands a picture-linked cut
- * on the frame grid before dispatching, and the multi-split fan-out tolerates
- * half a frame of overlap; the assertions below are what the spec asks for.
+ * The removal test is the one where a cut decided by SOUND has to land on the
+ * picture too. Every layer edge is a composition frame (ADR 0038), so
+ * `removePauses` puts each interior cut on the frame grid before one split takes
+ * both halves, and the two halves come out sharing every edge.
  *
  * Not `@serial`: no time is measured, no GPU lane driven, no reference output
  * captured (e2e/README.md § Tiers), so it runs in the `parallel` project and
@@ -46,11 +44,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const FIXTURE = path.resolve(MEDIA_DIR, 'test_audio_timing_zero_pts.mkv')
 
-/// 30 fps, the fixture's own rate — so the picture partner's re-snap is a whole
-/// number of frames from the sound's cut rather than an arbitrary remainder,
-/// and `VIDEO_SNAP_SLACK_US` below is a frame count instead of a guess.
+/// 30 fps, the fixture's own rate.
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
-const FRAME_US = 1_000_000 / 30
+
+/// True when `tUs` is a canonical 30 fps frame time (half-up µs of a whole
+/// frame index). Written out rather than imported so the grid the cut landed on
+/// is checked against one this spec derived on its own.
+const onFrame = (tUs: number): boolean => {
+  const f = Math.round((tUs * CANVAS.fpsNum) / 1_000_000)
+  return Math.floor((f * 1_000_000 + CANVAS.fpsNum / 2) / CANVAS.fpsNum) === tUs
+}
 
 /// The fixture's own length, and the span of the clip placed 1:1 at t = 0.
 const CLIP_US = 6_000_000
@@ -70,8 +73,8 @@ const NOMINAL_REMOVED_US = 4_650_000
 /// is short by up to six. The head and the tail edges are the clip's own and
 /// cost nothing.
 ///
-/// On an A/V-LINKED clip each interior core boundary is then rounded onto the
-/// 30 fps frame grid before the split (`removePauses`' `cutGridCores`), which
+/// Each interior core boundary is then rounded onto the 30 fps frame grid
+/// before the split (`removePauses`' `cutGridCores`), which
 /// moves it by up to half a frame (16.7 ms) either way — six more edges, so
 /// worst case ~100 ms on top of the LOD's 48 ms; measured here the two together
 /// come to 50 ms under. Symmetric because what this gate is about is the pad
@@ -79,15 +82,6 @@ const NOMINAL_REMOVED_US = 4_650_000
 /// bug and this catches it, while window and frame rounding is the detector
 /// and the grid working as designed.
 const REMOVED_TOLERANCE_US = 150_000
-
-/// How far the picture may sit from the sound after the cut. Every cut is
-/// re-snapped onto the target's own grid — the sound's sample lattice, the
-/// picture's frame grid — so a boundary decided by sound can land up to half a
-/// frame off on the picture, and the run of six of them accumulates. One frame
-/// per cut is the budget the ticket sets; anything past it is a fan-out that
-/// lost a cut rather than rounded one.
-const CUT_COUNT = 6
-const VIDEO_SNAP_SLACK_US = CUT_COUNT * FRAME_US
 
 interface WireLayer {
   id: string
@@ -404,19 +398,11 @@ test.describe('pauses', () => {
     }
   })
 
-  // The two-grid case. `removePauses` decides its cuts on the SUBJECT audio's
-  // times and dispatches one `split_layer_multi`, whose `applySplitLayer`
-  // re-snaps each spanning link sibling on its OWN grid — sound on the 48 kHz
-  // lattice, picture on the frame grid. Left alone, a boundary between frames
-  // became two cuts up to half a frame apart (measured: sound 897 729 µs,
-  // picture 900 000 µs), the kept picture piece lapped ~13 ms into the next
-  // hole, the fan-out doomed it, and the planner refused the merged hole as
-  // one that swallowed the clip. `removePauses` therefore snaps a
-  // picture-linked cut list onto the frame grid first (a frame boundary IS a
-  // sample boundary at every integer rate), and the fan-out only takes a
-  // partner that overlaps by more than half a frame or by most of itself. The
-  // unlinked-audio case never had the problem: `removed_us` 4 625 760 there,
-  // three survivors [0,455417] [455417,918833] [918833,1374250].
+  // `removePauses` decides its cuts on the SUBJECT audio's times, puts each
+  // interior one on the frame grid, and dispatches one `split_layer_multi` that
+  // cuts every spanning link sibling at the same instants. A cut that reached
+  // the picture somewhere else than the sound would leave a kept picture piece
+  // lapping into the next hole, which the ripple planner refuses.
   test('Remove pauses cuts the picture in lockstep and one undo puts the film back', async () => {
     test.setTimeout(240_000)
     const { app, page } = await launchApp()
@@ -455,7 +441,11 @@ test.describe('pauses', () => {
           + `audio left ${(audioLeft / 1000).toFixed(1)}ms, picture left ${(videoLeft / 1000).toFixed(1)}ms`,
       )
       expect(Math.abs(removedUs - NOMINAL_REMOVED_US)).toBeLessThanOrEqual(REMOVED_TOLERANCE_US)
-      expect(Math.abs(videoLeft - audioLeft)).toBeLessThanOrEqual(VIDEO_SNAP_SLACK_US)
+      // Every edge is a frame, so the picture was cut at the sound's instants
+      // exactly: each surviving pair shares both edges.
+      const edgesOf = (ls: readonly WireLayer[]) => ls.map((l) => [l.t_start_us, l.t_end_us])
+      expect(edgesOf(videoAfter), 'the picture must be cut where the sound was').toEqual(edgesOf(audioAfter))
+      expect(edgesOf(audioAfter).flat().every(onFrame), 'every cut lands on a frame').toBe(true)
       // The gaps are CLOSED, not merely emptied: a removal is a ripple (ADR
       // 0062), so the survivors abut and the film is shorter by what went.
       expect(audioAfter[0]!.t_start_us).toBe(0)

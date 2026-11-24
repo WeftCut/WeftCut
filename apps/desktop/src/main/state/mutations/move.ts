@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/mutations/move.ts
 import type { Composition, Layer, Project, Track, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { floorTravelAtZero, gridForLayerKind, snapOnGrid, travelBy, travelCrossesZero, travelOnGrids, type ShiftMember, type Travel } from '../snap'
+import { floorTravelAtZero, frameGrid, snapOnGrid, travelBy, travelCrossesZero, travelOnGrid, type ShiftMember, type Travel } from '../snap'
 import { applyAddTrack } from './add'
 import { applyDurationAutofit, checkTrackLock, insertSorted, locateLayerIn, locateTrack, pruneEmptiedTrack, requireLayer, requireSameComposition } from './helpers'
 import { applyShiftLayers, linkedSet } from './shift'
@@ -31,11 +31,11 @@ export function applyMoveLayers(p: Project, placements: readonly MovePlacement[]
     return { src, dest: dst.track }
   })
   const anchor = requireLayer(p, anchorId).layer
-  const anchorGrid = gridForLayerKind(anchor.params.kind, c.fps)
+  const anchorGrid = frameGrid(c.fps)
   // Floored here, as a set, because the drag that sends this drew the floored
   // landing (`moveLandings`); the shift itself refuses a crossing.
-  const movers: ShiftMember[] = located.map(({ src }) => ({ id: src.layer.id, kind: src.layer.params.kind, tStartUs: src.layer.t_start_us, tEndUs: src.layer.t_end_us }))
-  applyShiftLayers(p, ids, floorTravelAtZero(movers, { fromUs: anchor.t_start_us, toUs: snapOnGrid(tStartUs, anchorGrid) }, c.fps, anchorGrid), true)
+  const movers: ShiftMember[] = located.map(({ src }) => ({ id: src.layer.id, tStartUs: src.layer.t_start_us, tEndUs: src.layer.t_end_us }))
+  applyShiftLayers(p, ids, floorTravelAtZero(movers, { fromUs: anchor.t_start_us, toUs: snapOnGrid(tStartUs, anchorGrid) }, c.fps), true)
   const pulled = located.map(({ src, dest }) => ({
     dest,
     layer: src.track.layers.splice(src.track.layers.findIndex((l) => l.id === src.layer.id), 1)[0],
@@ -61,9 +61,7 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   // and pruning has to name the lane the layer LEFT once the move has settled.
   const srcTrackId = src.track.id
   const target = src.layer
-  // The requested start snaps on the TARGET's own grid — the audio lattice for an
-  // Audio layer, the composition frame grid otherwise (spec R2-D6).
-  const targetGrid = gridForLayerKind(target.params.kind, fps)
+  const targetGrid = frameGrid(fps)
   const snapped = snapOnGrid(newTStartUs, targetGrid)
   const curStart = target.t_start_us
   if (src.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: srcTrackId })
@@ -80,7 +78,7 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   // Both halves are `renderer/grid.ts`'s, because the timeline has to promise
   // this answer before the command gives it: the travel is CLAMPED rather than
   // each member's start, so a set dragged toward zero stops as a set, and every
-  // member then moves both endpoints by whole points of its own lattice. `NegativeLayerStart` validation
+  // member then moves both endpoints by the same whole frames. `NegativeLayerStart` validation
   // is the structural half of the floor — a negative start is otherwise perfectly
   // canonical, so the grid backstop alone would wave it through.
   //
@@ -89,12 +87,12 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   // that cannot be located is skipped, matching the fan-out loop's own tolerance
   // for a stale member id.
   const movers: ShiftMember[] = [target, ...siblings.map((sid) => locateLayerIn(c, sid)?.layer).filter((l) => l !== undefined)]
-    .map((l) => ({ id: l.id, kind: l.params.kind, tStartUs: l.t_start_us, tEndUs: l.t_end_us }))
-  const travel = floorTravelAtZero(movers, { fromUs: curStart, toUs: snapped }, fps, targetGrid)
+    .map((l) => ({ id: l.id, tStartUs: l.t_start_us, tEndUs: l.t_end_us }))
+  const travel = floorTravelAtZero(movers, { fromUs: curStart, toUs: snapped }, fps)
   // One arithmetic for every site that has to agree about where this set lands —
   // the two mutations that decide it and the two timeline surfaces that draw it
-  // in advance (`renderer/grid.ts`). Both endpoints, each member's own lattice.
-  const landings = travelOnGrids(movers, travel, fps)
+  // in advance (`renderer/grid.ts`). Both endpoints, the same whole frames.
+  const landings = travelOnGrid(movers, travel, fps)
   const targetLanding = landings.get(id)!
   const newStart = targetLanding.tStartUs
 
@@ -113,11 +111,8 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
       if (!loc) continue
       const siblingTrack = loc.track
       const s = siblingTrack.layers.splice(loc.layerIndex, 1)[0]
-      // Each sibling lands on ITS OWN lattice, which `travelOnGrids` owns and
-      // documents: snapping a linked audio member on the composition frame grid
-      // would drag it to the nearest video frame on any unrelated whole-link move
-      // and silently spend the user's deliberately slipped sync offset (R2-D7 —
-      // the offset is geometry and nothing else).
+      // Each sibling lands where `travelOnGrid` put it: the target's whole
+      // frames, so the distance between any two edges of the link is kept.
       const landed = landings.get(sid)!
       s.t_start_us = landed.tStartUs
       s.t_end_us = landed.tEndUs
@@ -149,8 +144,8 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
  *  difference between this op's two entry points:
  *
  *  - `null` — no opinion. Every layer keeps its `t_start_us` / `t_end_us`
- *    verbatim, with no re-snap: an endpoint grid follows the layer's KIND, not
- *    its track, so times that were canonical stay canonical, and a set the
+ *    verbatim, with no re-snap: the endpoint grid is the composition's, not
+ *    the track's, so times that were canonical stay canonical, and a set the
  *    caller never retimed must not drift on the way up. `applyDurationAutofit`
  *    is skipped for the same reason — nothing is added, removed or retimed, so
  *    `max(t_end_us)` cannot move, and running it would fold unrelated duration
@@ -158,7 +153,7 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
  *    menu has no ghost, so it may not silently name a time the user did not see.
  *  - `{ layerId, tStartUs }` — the drag's landing. `layerId` lands on
  *    `tStartUs`, every other member holds its phase to it, and the whole set
- *    then re-snaps on each member's own lattice. Homomorphic with
+ *    then moves by the same whole frames. Homomorphic with
  *    `applyMoveLayer` (an ABSOLUTE time, floored as a body at 0) rather than
  *    with `applyMoveLayersToComposition` (absolute, but REFUSED before 0): both
  *    of those are the rule for a move that stays inside one composition, which
@@ -208,15 +203,15 @@ export function applyMoveLayersToNewTrack(
   const landings = anchor === null ? null : (() => {
     const movers: ShiftMember[] = ids
       .map((id) => locateLayerIn(c, id)!.layer) // located by the lock walk above
-      .map((l) => ({ id: l.id, kind: l.params.kind, tStartUs: l.t_start_us, tEndUs: l.t_end_us }))
+      .map((l) => ({ id: l.id, tStartUs: l.t_start_us, tEndUs: l.t_end_us }))
     const seed = locateLayerIn(c, anchor.layerId)!.layer
-    // The requested start snaps on the ANCHOR's own grid first, then the travel
+    // The requested start snaps on the frame grid first, then the travel
     // it implies carries the set — the same order `applyMoveLayer` uses, and the
     // reason a set dragged toward zero stops as one body instead of flattening
     // its phase against the boundary.
-    const seedGrid = gridForLayerKind(seed.params.kind, c.fps)
+    const seedGrid = frameGrid(c.fps)
     const snapped = snapOnGrid(anchor.tStartUs, seedGrid)
-    return travelOnGrids(movers, floorTravelAtZero(movers, { fromUs: seed.t_start_us, toUs: snapped }, c.fps, seedGrid), c.fps)
+    return travelOnGrid(movers, floorTravelAtZero(movers, { fromUs: seed.t_start_us, toUs: snapped }, c.fps), c.fps)
   })()
 
   // `label: null` lets the renderer derive the name — a literal written here
@@ -256,13 +251,13 @@ export interface MoveSetRequest {
 
 /** What a set move touched: the set as moved (seed first, then partners), the
  *  other layers an insert shifted to close and open room, the lane a spawn
- *  minted, and the delta the seed was asked to travel (before its own grid). */
+ *  minted, and the delta the seed was asked to travel (before the grid snap). */
 export interface MoveSetResult { moved: Uuid[]; rippled: Uuid[]; spawned_track: Uuid | null; delta_us: number }
 
 /**
  * Move a named set as ONE edit — the agent's move (`move_layers`). The set is
  * `layers` plus their link partners unless `escapeLink`; every member shifts by
- * the seed's travel on its own grid and stays on its own lane, and only the
+ * the seed's travel in whole frames and stays on its own lane, and only the
  * seed changes lane (`track`), the rule `paste_layers` places clones by.
  *
  * `insert` is the ripple move: the set's footprint closes behind it the way
@@ -304,19 +299,19 @@ export function applyMoveLayerSet(p: Project, idGen: IdGen, req: MoveSetRequest)
     }
   }
   const travel: Travel = req.tStartUs !== null
-    ? { fromUs: seed.layer.t_start_us, toUs: snapOnGrid(req.tStartUs, gridForLayerKind(seed.layer.params.kind, c.fps)) }
+    ? { fromUs: seed.layer.t_start_us, toUs: snapOnGrid(req.tStartUs, frameGrid(c.fps)) }
     : travelBy(seed.layer.t_start_us, req.deltaUs ?? 0)
   const delta = travel.toUs - travel.fromUs
-  const movers: ShiftMember[] = located.map(({ layer }) => ({ id: layer.id, kind: layer.params.kind, tStartUs: layer.t_start_us, tEndUs: layer.t_end_us }))
+  const movers: ShiftMember[] = located.map(({ layer }) => ({ id: layer.id, tStartUs: layer.t_start_us, tEndUs: layer.t_end_us }))
   if (travelCrossesZero(movers, travel, c.fps)) {
     const earliest = movers.reduce((a, b) => (b.tStartUs < a.tStartUs ? b : a))
     throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: earliest.id, t_start: earliest.tStartUs + delta } })
   }
-  const landings = travelOnGrids(movers, travel, c.fps)
+  const landings = travelOnGrid(movers, travel, c.fps)
   // Read off the landings, not the delta: a delta smaller than a grid step is
   // nonzero and still rounds every member home.
   if (dest === null && req.track !== 'spawn' && movers.every((m) => landings.get(m.id)!.tStartUs === m.tStartUs && landings.get(m.id)!.tEndUs === m.tEndUs))
-    throw new CommandFailure({ error: 'InvalidArgument', field: req.tStartUs !== null ? 't_start_us' : req.deltaUs !== null ? 'delta_us' : 'track_id', detail: 'on its own grid and track every member already lands there, so nothing would move' })
+    throw new CommandFailure({ error: 'InvalidArgument', field: req.tStartUs !== null ? 't_start_us' : req.deltaUs !== null ? 'delta_us' : 'track_id', detail: 'on the frame grid and its track every member already lands there, so nothing would move' })
   const setMoves: RippleMove[] = located.map(({ layer, track }) => ({ layer: layer.id, track: track.id, t_start_us: landings.get(layer.id)!.tStartUs, t_end_us: landings.get(layer.id)!.tEndUs }))
 
   const rippled = new Set<Uuid>()
@@ -353,22 +348,20 @@ export function applyMoveLayerSet(p: Project, idGen: IdGen, req: MoveSetRequest)
   return { moved: set, rippled: [...rippled], spawned_track: spawned, delta_us: delta }
 }
 
-/** Shift every layer of `c` starting at or after `at` right by `length`, each by
- *  whole points of its own grid — the room an insert opens. `at` is read on each
- *  layer's own lattice, as a sweep reads its origin. A link with a member
- *  reaching across `at` and another starting at or after it would slip
+/** Shift every layer of `c` starting at or after `at` right by `length`, every
+ *  edge by the same whole frames — the room an insert opens. A link with a
+ *  member reaching across `at` and another starting at or after it would slip
  *  (`ShiftLinkStraddles`); a lock that would have to move refuses. */
 function openRoom(c: Composition, at: number, length: number): Uuid[] {
-  const atOn = (l: Layer): number => snapOnGrid(at, gridForLayerKind(l.params.kind, c.fps))
   const movers: Array<{ layer: Layer; track: Track }> = []
-  for (const track of c.tracks) for (const layer of track.layers) if (layer.t_start_us >= atOn(layer)) movers.push({ layer, track })
+  for (const track of c.tracks) for (const layer of track.layers) if (layer.t_start_us >= at) movers.push({ layer, track })
   if (movers.length === 0 || length <= 0) return []
   const moving = new Set(movers.map((m) => m.layer.id))
   for (const link of c.links) {
     if (!link.members.some((m) => moving.has(m))) continue
     const reaching = link.members.some((m) => {
       const l = locateLayerIn(c, m)?.layer
-      return l !== undefined && !moving.has(m) && l.t_end_us > atOn(l)
+      return l !== undefined && !moving.has(m) && l.t_end_us > at
     })
     if (reaching) throw new CommandFailure({ error: 'ShiftLinkStraddles', link: link.id, from_t_us: at })
   }
@@ -376,6 +369,6 @@ function openRoom(c: Composition, at: number, length: number): Uuid[] {
     if (track.locked) throw new CommandFailure({ error: 'TrackLocked', track: track.id })
     if (layer.locked) throw new CommandFailure({ error: 'RippleLockedLayer', layer: layer.id })
   }
-  const landings = travelOnGrids(movers.map(({ layer }) => ({ id: layer.id, kind: layer.params.kind, tStartUs: layer.t_start_us, tEndUs: layer.t_end_us })), travelBy(at, length), c.fps)
+  const landings = travelOnGrid(movers.map(({ layer }) => ({ id: layer.id, tStartUs: layer.t_start_us, tEndUs: layer.t_end_us })), travelBy(at, length), c.fps)
   return applySweep(c, movers.map(({ layer, track }) => ({ layer: layer.id, track: track.id, t_start_us: landings.get(layer.id)!.tStartUs, t_end_us: landings.get(layer.id)!.tEndUs })))
 }

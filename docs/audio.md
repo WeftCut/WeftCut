@@ -7,27 +7,27 @@ the same bytes — a **conform cache** of canonical PCM made once at import — 
 neither path decodes audio and Chromium/ffmpeg decode differences never reach a
 mix. Why: [ADR 0019](adr/0019-audio-mixes-in-rust-over-conform-pcm.md) (engine),
 [0023](adr/0023-audio-mixes-by-role-not-track.md) (roles),
-[0038](adr/0038-rate-locks-audio-authors-on-samples-ndf-stays-honest.md)
-(sample lattice), [0063](adr/0063-audio-effects-are-baked-conform-siblings.md)
+[0038](adr/0038-rate-locks-every-edge-on-frames-ndf-stays-honest.md)
+(edges on frames, source slips), [0063](adr/0063-audio-effects-are-baked-conform-siblings.md)
 (baked effects).
 
 ## The authoring grid
 
-Audio layer edges and audio automation sit on the **48 kHz sample lattice**,
-`round(i × 1e6 / 48000)` (~20.83 µs); video layers stay on the frame grid. It
-is the mixer's own lattice (`us_to_frame` in `audio/mix.rs`), so the stored
-microsecond is the sample that plays. `composition.sample_rate` is only the
-export target. `gridForLayerKind` (`renderer/grid.ts`, re-exported by
-`main/state/snap.ts`) is the single choice for the commit validator, every
-mutation snap and load repair; see [data-model.md](data-model.md).
+Audio layer edges sit on the **composition frame grid**, like every layer's, so
+a linked picture and its sound share their edges exactly. The mixer rounds an
+edge to its sample (`us_to_frame` in `audio/mix.rs`, round-half-up), so a frame
+edge plays from the sample nearest it. Sample precision lives in the source
+window instead: a nudge moves `src_in_us`/`src_out_us` by whole samples of the
+**48 kHz lattice** `round(i × 1e6 / 48000)` (~20.83 µs) under fixed edges.
+Audio automation keys also sit on that lattice (`automationGrid`,
+`renderer/grid.ts`). `composition.sample_rate` is only the export target.
 
-- Drags snap to a visible quantum; sample precision comes from nudge commands
-  (1 sample, 1 ms) and the inspector's timecode/ms/samples fields.
-- A grouped A/V pair's sync offset is derived from the members' `t_start_us`
-  (in sample indices), never stored. A group move shifts every member by the
-  same delta; a video trim does not drag slipped audio.
-- At 29.97 / 59.94 a frame boundary is not a sample boundary, so a paired
-  audio layer sits up to ~10 µs from its video frame.
+- Drags and the inspector work in frames; sample precision comes from the nudge
+  commands (1 sample, 1 ms), which slip the source.
+- A linked pair's sync offset is derived, never stored: where each same-media
+  member's source time 0 lands (`t_start_us − src_in_us`), in samples. A move
+  carries every member by the same frames, so it is kept exactly.
+- A slip that would read source outside the media is refused.
 
 The 10 ms envelope grid below is how a rendered ramp is sampled, not where a
 keyframe may sit.

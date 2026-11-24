@@ -16,12 +16,12 @@ import {
   linksCreate,
   linksDissolve,
   groupsRename,
-  moveLayer,
   removeTransition,
   separateAudioToNewTrack,
   setLayersEnabled,
   splitLayerLinked,
   updateLayer,
+  updateLayerParams,
   updateLayerParamTrack,
   updateLayerParamTracks,
   updateParamTracksMulti,
@@ -53,10 +53,11 @@ import { exportReviewCommands, exportReviewShortcuts } from "../commands/exportR
 import {
   NUDGE_MS,
   NUDGE_SAMPLE,
-  nudgedStartUs,
-  resyncStartUs,
+  nudgedSource,
+  resyncedSource,
   slippableAudioLayers,
   type SlipLayer,
+  type SourceWindow,
 } from "./audioSlip";
 import { deriveAudioSyncOffsets, setAudioSyncOffsets } from "./audioSyncOffsetStore";
 import {
@@ -644,35 +645,26 @@ export const Timeline = memo(function Timeline({
   }, []);
 
   // ── Sub-frame audio slip (ADR 0038) ────────────────────────────────────────
-  // Why keys are the authoring surface at all: see the ADR 0038 note on
-  // `ACTION_DEFS.nudgeBack`.
-  //
-  // `escapeLink: true` on every one of them: the whole point is to move the audio
-  // WITHOUT its video partner. That is also what creates the implicit sync offset
-  // R2-D7 surfaces as the clip badge — there is no field to write.
+  // Why keys are the authoring surface at all: see the note on
+  // `ACTION_DEFS.nudgeBack`. A slip moves the audio's SOURCE under its frame
+  // edges, so the video partner and both edges stay put; the sync offset the
+  // clip badge shows is derived from the two source windows.
   const layersByIdRef = useRef(new Map<string, LayerSummary>());
-  const trackOfLayerRef = useRef(new Map<string, string>());
   useLayoutEffect(() => {
     const byId = new Map<string, LayerSummary>();
-    const trackOf = new Map<string, string>();
-    for (const t of tracks) {
-      for (const l of t.layers) {
-        byId.set(l.id, l);
-        trackOf.set(l.id, t.id);
-      }
-    }
+    for (const t of tracks) for (const l of t.layers) byId.set(l.id, l);
     layersByIdRef.current = byId;
-    trackOfLayerRef.current = trackOf;
   }, [tracks]);
 
-  /// Move every selected audio layer to `nextStart(layer)`, or skip it when that
-  /// resolves to null / no movement. One `move_layer` per layer, then one refresh.
+  /// Slip every selected audio layer's source to `nextSource(layer)` under its
+  /// fixed edges, or skip it when that resolves to null / no change. One
+  /// `update_layer_params` per layer, then one refresh.
   const slipSelectedAudio = useCallback(
-    async (nextStart: (l: SlipLayer, members: SlipLayer[]) => number | null) => {
+    async (nextSource: (l: SlipLayer, members: SlipLayer[]) => SourceWindow | null) => {
       const byId = layersByIdRef.current;
       const targets = slippableAudioLayers(selectedLayerIdsRef.current, [...byId.values()]);
       if (targets.length === 0) return;
-      let moved = false;
+      let slipped = false;
       for (const audio of targets) {
         const gid = linkByLayerIdRef.current.get(audio.id);
         const members = gid
@@ -680,18 +672,16 @@ export const Timeline = memo(function Timeline({
               .map((id) => byId.get(id))
               .filter((l): l is LayerSummary => l !== undefined)
           : [];
-        const next = nextStart(audio, members);
-        if (next === null || next === audio.t_start_us) continue;
-        const trackId = trackOfLayerRef.current.get(audio.id);
-        if (trackId === undefined) continue;
+        const next = nextSource(audio, members);
+        if (next === null || (next.src_in_us === audio.src_in_us && next.src_out_us === audio.src_out_us)) continue;
         try {
-          await moveLayer(audio.id, trackId, next, true);
-          moved = true;
+          await updateLayerParams(audio.id, { kind: "Audio", ...next });
+          slipped = true;
         } catch (err) {
           logMutationFailure(err, "Slip audio");
         }
       }
-      if (moved) await onMutatedRef.current();
+      if (slipped) await onMutatedRef.current();
     },
     [],
   );
@@ -722,7 +712,7 @@ export const Timeline = memo(function Timeline({
         nudgeKeyframes(frames);
         return;
       }
-      void slipSelectedAudio((l) => nudgedStartUs(l, samples));
+      void slipSelectedAudio((l) => nudgedSource(l, samples));
     },
     [slipSelectedAudio],
   );
@@ -731,7 +721,7 @@ export const Timeline = memo(function Timeline({
   const handleNudgeLargeBack = useMemo(() => nudge(-10, -NUDGE_MS), [nudge]);
   const handleNudgeLargeForward = useMemo(() => nudge(10, NUDGE_MS), [nudge]);
   const handleResyncAudioToVideo = useCallback(
-    () => void slipSelectedAudio((l, members) => resyncStartUs(l, members)),
+    () => void slipSelectedAudio((l, members) => resyncedSource(l, members)),
     [slipSelectedAudio],
   );
 

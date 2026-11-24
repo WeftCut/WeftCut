@@ -4,7 +4,7 @@ import { canonicalCrop, cropProblem, type CropRect } from '../../../shared/crop'
 import type { Animated, AudioParams, AudioRole, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextAnimPreset, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
 import { CommandFailure } from '../errors'
 import { TEXT_INTROS, TEXT_OUTROS } from '../../../shared/textAnimation'
-import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
+import { automationGrid, snapFrameCeil, snapFrameFloor, snapOnGrid } from '../snap'
 import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
 import { checkLayerEditable, applyDurationAutofit, requireLayer } from './helpers'
 import { checkAudioEffectParamStatic } from './effects'
@@ -658,17 +658,17 @@ function checkTrackValueType(paramKey: string, track: Animated<TrackValue>): voi
  *  coordinates. */
 export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: string, track: Animated<TrackValue>): void {
   const { comp: c, layer } = checkLayerEditable(p, id) // LayerNotFound / TrackLocked — BEFORE normalize
-  // Located BEFORE normalize because the write-time grid depends on the layer's
-  // kind: an audio envelope — gain_db, pan, and the audio-role automation —
-  // quantizes on the 48 kHz lattice, so audio automation is never coarser than the
-  // mixer that renders it (spec R2-D6). Error ordering: EmptyKeyframeTrack precedes
+  // Located BEFORE normalize because the write-time grid (`automationGrid`) depends
+  // on the layer's kind: an audio envelope — gain_db, pan, and the audio-role
+  // automation — quantizes on the 48 kHz lattice, so audio automation is never
+  // coarser than the mixer that renders it. Error ordering: EmptyKeyframeTrack precedes
   // UnknownKeyframeParam.
   //
   // This changes the WRITE grid only. Keyframe times remain deliberately unenforced
   // by validate (see validate.ts's validateLayerParams note): trim/split rebase keys
   // by a delta, and re-snapping the shifted set would dedupe-merge two keys that
   // landed on one quantum — authored data lost.
-  if (!normalizeKeyframes(track, (t) => snapOnGrid(t, gridForLayerKind(layer.params.kind, c.fps)))) {
+  if (!normalizeKeyframes(track, (t) => snapOnGrid(t, automationGrid(layer.params.kind, c.fps)))) {
     throw new CommandFailure({ error: 'EmptyKeyframeTrack', layer: id, param_key: paramKey })
   }
   // Values, after the times. Both value steps — the type check here and the

@@ -6,17 +6,17 @@ import { retimeLayers, setPreservePitch, type LayerSummary } from '../ipc';
 import { useSelectedLayerIds } from '../state/selectionStore';
 import { AppInput } from '../components/AppInput';
 import { AppTimecodeField } from '../components/AppTimecodeField';
-import { formatAudioTime, parseAudioTime, useAudioUnits } from '../state/audioUnitsStore';
 import { Button } from '@/components/ui/button';
 import { Field } from './Field';
 import { exactTime } from '../timeMapping';
 import { layerRateNumber, layerContentTiming } from '../layerTiming';
+import { formatTimecode, parseTimecode } from '../frames';
 import { refusalText } from '../errors/tryMutate';
 import { formatRetimeConflict, liveRefusalContext } from '../errors/formatCommandError';
 import type { RetimeTarget } from '../../shared/timeMapping';
 
 import { planRetime, type RetimeClip } from '../retimePlan';
-import { gridForLayerKind } from '../grid';
+import { frameGrid } from '../grid';
 import { AppIcon } from "@/components/AppIcon";
 
 export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
@@ -31,9 +31,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
   const supported = ['VideoClip', 'Audio', 'Motif', 'CompositionRef', 'ImageOverlay'].includes(layer.params.kind) && (layer.params.kind !== 'ImageOverlay' || animatedImage);
   const rate = layerRateNumber(layer.params);
   const duration = (layer.t_end_us - layer.t_start_us) / 1e6;
-  const audioUnits = useAudioUnits();
-  const units = layer.params.kind === 'Audio' ? audioUnits : 'frames';
-  const formatDuration = (us: number) => formatAudioTime(us, units, fpsNum, fpsDen);
+  const formatDuration = (us: number) => formatTimecode(us, fpsNum, fpsDen);
   const durationEdited = useRef(false);
   const [durationReset, setDurationReset] = useState(0);
   const [applyToSelection, setApplyToSelection] = useState(false);
@@ -53,9 +51,9 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     durationEdited.current = false;
     setEditing(null);
     setError(null);
-    // The formatter depends only on the unit and frame rate below.
+    // The formatter depends only on the frame rate below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layer.id, layer.t_start_us, rate, duration, units, fpsNum, fpsDen]);
+  }, [layer.id, layer.t_start_us, rate, duration, fpsNum, fpsDen]);
   if (!supported) return null;
   const ids = applyToSelection && selected.has(layer.id) ? [...selected] : [layer.id];
   const conflictText = (conflict: Record<string, unknown>) => formatRetimeConflict(conflict, liveRefusalContext((key, values) => t(key, values ?? {})));
@@ -63,7 +61,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     if (!summary) return null;
     const clips: RetimeClip[] = Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(track => track.layers.map(l => ({
       id: l.id, composition_id: c.id, track_id: track.id, t_start_us: l.t_start_us, t_end_us: l.t_end_us,
-      grid: gridForLayerKind(l.params.kind, { num: c.fps_num, den: c.fps_den }), overlap_class: l.params.kind === 'Audio' ? 'audio' as const : 'visual' as const,
+      grid: frameGrid({ num: c.fps_num, den: c.fps_den }), overlap_class: l.params.kind === 'Audio' ? 'audio' as const : 'visual' as const,
       timing: ['VideoClip', 'Audio', 'Motif', 'CompositionRef'].includes(l.params.kind) || (l.params.kind === 'ImageOverlay' && summary.media.some(m => m.id === ('media_id' in l.params ? l.params.media_id : null) && (m.duration_us ?? 0) > 0)) ? layerContentTiming(l) : null,
       locked: l.locked || track.locked, ...(l.params.kind === 'CompositionRef' ? { composition_ref: l.params.composition_id } : {}),
     }))));
@@ -74,7 +72,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     if (!Number.isSafeInteger(units) || units <= 0) return null;
     return kind === 'Rate' ? { kind, value: exactTime(units, 1e6) } : { kind, duration_us: units };
   };
-  const durationUs = parseAudioTime(durationInput, units, fpsNum, fpsDen);
+  const durationUs = parseTimecode(durationInput, fpsNum, fpsDen);
   const draftTarget = editing ? targetFor(editing, editing === 'Rate' ? rateInput : (durationUs ?? 0) / 1e6) : null;
   const draft = draftTarget ? preview(draftTarget) : null;
   const previewError = editing && !draftTarget ? t('retime.conflicts.InvalidTarget')
@@ -144,7 +142,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     </label>}
     <div className="prop-retime-row">
       <Field as="div" label={t('retime.title')} hint={t('retime.hint')}>
-        {units === 'frames' ? <AppTimecodeField
+        <AppTimecodeField
           key={durationReset} valueUs={duration * 1e6} fpsNum={fpsNum} fpsDen={fpsDen}
           ariaLabel={t('retime.duration')} disabled={disabled || busy} invalid={editing === 'Duration' && !!previewError}
           onValueChange={us => {
@@ -152,14 +150,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
             setError(null); setEditing('Duration'); setDurationInput(formatDuration(us));
           }}
           onCommit={commitDuration} onCancel={cancelDuration}
-        /> : <AppInput value={durationInput} mono ariaLabel={t('retime.duration')}
-          disabled={disabled || busy} invalid={editing === 'Duration' && !!previewError} onCancel={cancelDuration}
-          onValueChange={value => {
-            durationEdited.current = true;
-            setError(null); setEditing('Duration'); setDurationInput(value);
-          }}
-          onBlur={() => commitDuration(durationUs)}
-          onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />}
+        />
         <div className="prop-retime-multiplier" title={t('retime.rate')}>
           {rateOpen ? <>
             <AppInput value={rateText} mono autoFocus inputMode="decimal" ariaLabel={t('retime.rate')}

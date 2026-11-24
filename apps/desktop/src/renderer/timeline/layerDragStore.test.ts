@@ -184,7 +184,7 @@ describe("layerDragStore", () => {
     // `moveLandings` is what every surface that PROMISES a landing calls — the
     // move projection and the drop strip's ghost — so the two rules it wraps are
     // pinned here rather than at each caller: the anchor's requested head goes
-    // through its own lattice, and the set stops as one body at zero.
+    // through the frame grid, and the set stops as one body at zero.
     const drag = {
       ...stateAt(0),
       layerId: "late",

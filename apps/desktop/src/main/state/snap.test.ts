@@ -2,17 +2,16 @@ import { describe, it, expect } from 'vitest'
 import {
   AUDIO_GRID,
   AUDIO_SAMPLE_RATE_HZ,
+  automationGrid,
   floorTravelAtZero,
   frameGrid,
-  gridForLayerKind,
   gridIndex,
   isCanonicalOnGrid,
   snapFrameRound,
   snapOnGrid,
-  spanOnGrid,
   timeUsAtGridIndex,
   travelCrossesZero,
-  travelOnGrids,
+  travelOnGrid,
   usToFrame,
 } from './snap'
 
@@ -30,31 +29,33 @@ describe('snapFrameRound (wasm leaf re-export)', () => {
   })
 })
 
-// ── The kind-keyed grid lookup (spec R2-D6) ──────────────────────────────────
-// One function, three enforcement sites. These are the properties the sites rely on.
-describe('gridForLayerKind', () => {
+// ── The two lattices ─────────────────────────────────────────────────────────
+// Every layer edge is on the frame grid; the 48 kHz lattice carries audio
+// automation keys and source slips. These are the properties those uses rely on.
+describe('automationGrid', () => {
   const FPS = { num: 30_000, den: 1001 }
 
   it('answers the sample lattice for Audio and the composition frame grid for every visual kind', () => {
-    expect(gridForLayerKind('Audio', FPS)).toEqual(AUDIO_GRID)
+    expect(automationGrid('Audio', FPS)).toEqual(AUDIO_GRID)
     for (const kind of ['VideoClip', 'ImageOverlay', 'Text', 'Motif', 'Color'] as const) {
-      expect(gridForLayerKind(kind, FPS)).toEqual(frameGrid(FPS))
+      expect(automationGrid(kind, FPS)).toEqual(frameGrid(FPS))
     }
-    // A corrupt / unknown wire kind answers the frame grid — the conservative default
-    // (`repairGrid` runs before the cast to Project, so it can hand this in).
-    expect(gridForLayerKind('', FPS)).toEqual(frameGrid(FPS))
   })
 
-  it('the audio lattice does NOT move when fps does — that was the defect', () => {
+  it('keeps Audio keys on the mix lattice whatever the composition rate', () => {
     for (const fps of [{ num: 24, den: 1 }, { num: 30_000, den: 1001 }, { num: 60, den: 1 }]) {
-      expect(gridForLayerKind('Audio', fps)).toEqual({ domain: 'sample', num: AUDIO_SAMPLE_RATE_HZ, den: 1 })
+      expect(automationGrid('Audio', fps)).toEqual({ domain: 'sample', num: AUDIO_SAMPLE_RATE_HZ, den: 1 })
     }
   })
+})
+
+describe('the 48 kHz lattice', () => {
+  const FPS = { num: 30_000, den: 1001 }
 
   it('is the SAME leaf math the export mixer uses (twin, not a parallel implementation)', () => {
     // `mix.rs` / `chunkSchedule.ts` place audio via `us_to_frame(us, 48000)`. The
-    // authoring index must be that identical integer, or a "one sample" nudge would be
-    // approximately one sample and the two would drift the way `snapFrameFloor` did.
+    // authoring index must be that identical integer, or a "one sample" nudge would
+    // be approximately one sample.
     for (const us of [0, 1, 17, 20_833, 33_367, 999_999, 1_000_000, 3_600_000_000]) {
       expect(gridIndex(us, AUDIO_GRID)).toBe(usToFrame(us, AUDIO_SAMPLE_RATE_HZ))
     }
@@ -74,10 +75,11 @@ describe('gridForLayerKind', () => {
     }
   })
 
-  it('the frame lattice is an exact sublattice of 48 kHz at every rate EXCEPT 29.97 / 59.94', () => {
-    // Not a curiosity — it is why a co-aligned A/V pair is exact at six of the eight
-    // matrix rates and ~8 µs apart at the other two, and why fixtures that only test
-    // 30/1 cannot tell a kind-blind snap from a correct one.
+  it('holds every frame at every rate EXCEPT 29.97 / 59.94', () => {
+    // Why slip and mixer fixtures run at 29.97: there an audio edge is a frame
+    // the mixer rounds to its nearest sample, and a sample step is visibly not a
+    // frame step. At the other six rates the two coincide, so a fixture there
+    // cannot tell them apart.
     const nests = (num: number, den: number) => {
       for (let i = 0; i < 200; i++) {
         const t = timeUsAtGridIndex(i, frameGrid({ num, den }))
@@ -104,9 +106,10 @@ describe('gridForLayerKind', () => {
   })
 })
 
-describe('travelOnGrids', () => {
-  const clip = (id: string, kind: string, t0: number, t1: number) => ({ id, kind, tStartUs: t0, tEndUs: t1 })
+describe('travelOnGrid', () => {
+  const clip = (id: string, t0: number, t1: number) => ({ id, tStartUs: t0, tEndUs: t1 })
   const FRACTIONAL = [{ num: 30_000, den: 1001 }, { num: 60_000, den: 1001 }, { num: 24_000, den: 1001 }]
+  const ALL = [{ num: 60, den: 1 }, { num: 30, den: 1 }, { num: 24, den: 1 }, { num: 25, den: 1 }, ...FRACTIONAL]
 
   it('moves t_end by the same point count rather than adding a duration to the landing', () => {
     // A duration is the DIFFERENCE of two lattice points and is not itself one,
@@ -114,90 +117,84 @@ describe('travelOnGrids', () => {
     // number of microseconds. 61 frames at 30 fps landing on frame 1: the sum
     // says 2_066_666, the lattice says 2_066_667.
     const fps = { num: 30, den: 1 }
-    const landed = travelOnGrids([clip('a', 'Color', 0, 2_033_333)], { fromUs: 0, toUs: 33_333 }, fps).get('a')!
+    const landed = travelOnGrid([clip('a', 0, 2_033_333)], { fromUs: 0, toUs: 33_333 }, fps).get('a')!
     expect(landed.tStartUs).toBe(33_333)
     expect(landed.tEndUs).toBe(2_066_667)
     expect(landed.tEndUs).not.toBe(landed.tStartUs + 2_033_333)
   })
 
-  it('lands every endpoint on its own lattice, across the rates whose points are not whole microseconds', () => {
-    for (const fps of [{ num: 60, den: 1 }, { num: 30, den: 1 }, { num: 24, den: 1 }, { num: 25, den: 1 }, ...FRACTIONAL]) {
+  it('lands every edge of every member on a frame, at every rate', () => {
+    for (const fps of ALL) {
       const g = frameGrid(fps)
-      const t1 = timeUsAtGridIndex(61, g)
+      const set = [clip('v', 0, timeUsAtGridIndex(61, g)), clip('a', timeUsAtGridIndex(3, g), timeUsAtGridIndex(50, g))]
       for (let frame = 0; frame < 24; frame++) {
-        const set = [clip('v', 'Color', 0, t1), clip('a', 'Audio', 0, snapOnGrid(t1, AUDIO_GRID))]
-        const landed = travelOnGrids(set, { fromUs: 0, toUs: timeUsAtGridIndex(frame, g) }, fps)
-        expect(isCanonicalOnGrid(landed.get('v')!.tStartUs, g)).toBe(true)
-        expect(isCanonicalOnGrid(landed.get('v')!.tEndUs, g)).toBe(true)
-        expect(isCanonicalOnGrid(landed.get('a')!.tStartUs, AUDIO_GRID)).toBe(true)
-        expect(isCanonicalOnGrid(landed.get('a')!.tEndUs, AUDIO_GRID)).toBe(true)
-      }
-    }
-  })
-
-  // The relation of a linked pair, in the audio's own points: its start against
-  // the sample nearest the video's start. A fresh pair at a fractional rate has
-  // 0 here while its µs edges differ; a slipped one has the slip.
-  const relation = (v: { tStartUs: number }, a: { tStartUs: number }) =>
-    gridIndex(a.tStartUs, AUDIO_GRID) - gridIndex(v.tStartUs, AUDIO_GRID)
-  // A walk of frame-sized drags in both directions, as a user's would be.
-  const step = (i: number) => ((i * 37) % 23) - 11
-
-  it('keeps a linked pair\'s relation exactly through any number of moves', () => {
-    for (const fps of FRACTIONAL) {
-      const g = frameGrid(fps)
-      for (const slip of [0, 7, -7]) {
-        const v0 = timeUsAtGridIndex(300, g)
-        let v = clip('v', 'VideoClip', v0, timeUsAtGridIndex(400, g))
-        let a = clip('a', 'Audio', timeUsAtGridIndex(gridIndex(v0, AUDIO_GRID) + slip, AUDIO_GRID), snapOnGrid(v.tEndUs, AUDIO_GRID))
-        for (let i = 0; i < 200; i++) {
-          const to = timeUsAtGridIndex(gridIndex(v.tStartUs, g) + step(i), g)
-          const landed = travelOnGrids([v, a], { fromUs: v.tStartUs, toUs: to }, fps)
-          v = { ...v, ...landed.get('v')! }
-          a = { ...a, ...landed.get('a')! }
-          expect(relation(v, a)).toBe(slip)
+        // A request instant that is not itself a frame.
+        const landed = travelOnGrid(set, { fromUs: 0, toUs: timeUsAtGridIndex(frame, g) + 7 }, fps)
+        for (const m of landed.values()) {
+          expect(isCanonicalOnGrid(m.tStartUs, g)).toBe(true)
+          expect(isCanonicalOnGrid(m.tEndUs, g)).toBe(true)
         }
       }
     }
   })
 
-  it('NEGATIVE CONTROL: adding the µs delta and re-snapping each member drifts the relation', () => {
-    // The arithmetic this replaced, inline. If it kept the relation too, the
-    // test above would prove nothing about the travel.
-    const g = frameGrid(FRACTIONAL[0])
-    let v = timeUsAtGridIndex(300, g)
-    let a = snapOnGrid(v, AUDIO_GRID)
-    let drifted = false
-    for (let i = 0; i < 200 && !drifted; i++) {
-      const delta = timeUsAtGridIndex(gridIndex(v, g) + step(i), g) - v
-      v = snapOnGrid(v + delta, g)
-      a = snapOnGrid(a + delta, AUDIO_GRID)
-      drifted = relation({ tStartUs: v }, { tStartUs: a }) !== 0
+  it('moves every edge by the same whole frames, keeping a linked pair\'s shared edges through any number of moves', () => {
+    // A walk of frame-sized drags in both directions, as a user's would be.
+    const step = (i: number) => ((i * 37) % 23) - 11
+    for (const fps of FRACTIONAL) {
+      const g = frameGrid(fps)
+      for (const lead of [0, 2, -2]) {
+        // A linked pair sharing its edges, and a third member `lead` frames off it.
+        let set = [
+          clip('v', timeUsAtGridIndex(300, g), timeUsAtGridIndex(400, g)),
+          clip('a', timeUsAtGridIndex(300, g), timeUsAtGridIndex(400, g)),
+          clip('b', timeUsAtGridIndex(300 + lead, g), timeUsAtGridIndex(350, g)),
+        ]
+        // Every edge's frame index, relative to the first member's start.
+        const relation = (s: typeof set) => {
+          const edges = s.flatMap((m) => [gridIndex(m.tStartUs, g), gridIndex(m.tEndUs, g)])
+          return edges.map((e) => e - edges[0])
+        }
+        const kept = relation(set)
+        for (let i = 0; i < 200; i++) {
+          const to = timeUsAtGridIndex(gridIndex(set[0].tStartUs, g) + step(i), g)
+          const landed = travelOnGrid(set, { fromUs: set[0].tStartUs, toUs: to }, fps)
+          set = set.map((m) => ({ ...m, ...landed.get(m.id)! }))
+          expect(set[1].tStartUs).toBe(set[0].tStartUs)
+          expect(set[1].tEndUs).toBe(set[0].tEndUs)
+          expect(relation(set)).toEqual(kept)
+        }
+      }
     }
-    expect(drifted).toBe(true)
   })
-})
 
-describe('spanOnGrid', () => {
-  it('reads a linked pair\'s merged span as each member\'s own span', () => {
-    // The span a ripple closes for a deleted V+A pair is the union of the two
-    // members' footprints, which at 29.97 starts and ends a few µs off either
-    // lattice's edge. Each lattice must read it as its own member's span.
-    const g = frameGrid({ num: 30_000, den: 1001 })
-    for (let k = 1; k < 30; k++) {
-      const vs = timeUsAtGridIndex(1000 + k, g)
-      const ve = timeUsAtGridIndex(1100 + k, g)
-      const as = snapOnGrid(vs, AUDIO_GRID)
-      const ae = snapOnGrid(ve, AUDIO_GRID)
-      const union = { s: Math.min(vs, as), e: Math.max(ve, ae) }
-      expect(spanOnGrid(union.s, union.e, g)).toEqual({ s: vs, e: ve })
-      expect(spanOnGrid(union.s, union.e, AUDIO_GRID)).toEqual({ s: as, e: ae })
-    }
+  it('first puts a member that is off this grid on its nearest frame, then moves it with the rest', () => {
+    // A layer entering a composition at another rate: 3.5 s is a frame at 30 fps
+    // and half-way between two at 25.
+    const fps = { num: 25, den: 1 }
+    const g = frameGrid(fps)
+    const landed = travelOnGrid([clip('x', 3_500_000, 4_000_000)], { fromUs: 0, toUs: timeUsAtGridIndex(3, g) }, fps)
+    expect(landed.get('x')).toEqual({
+      tStartUs: timeUsAtGridIndex(gridIndex(3_500_000, g) + 3, g),
+      tEndUs: timeUsAtGridIndex(gridIndex(4_000_000, g) + 3, g),
+    })
   })
 })
 
 describe('floorTravelAtZero', () => {
-  const clip = (id: string, kind: string, t0: number) => ({ id, kind, tStartUs: t0, tEndUs: t0 + 1_000_002 })
+  const clip = (id: string, t0: number) => ({ id, tStartUs: t0, tEndUs: t0 + 1_000_002 })
+
+  it('lands a member that is not yet a frame on 0, not a frame after it', () => {
+    // A set entering from a composition at another rate: half a frame at 25 fps
+    // rounds up to frame 13, so the stop is minus 13 frames from the anchor.
+    const fps = { num: 25, den: 1 }
+    const g = frameGrid(fps)
+    const set = [clip('anchor', 1_000_000), clip('early', 500_000)]
+    const travel = floorTravelAtZero(set, { fromUs: 1_000_000, toUs: 0 }, fps)
+    expect(travelOnGrid(set, travel, fps).get('early')!.tStartUs).toBe(0)
+    expect(isCanonicalOnGrid(travel.toUs, g)).toBe(true)
+    expect(travelCrossesZero(set, travel, fps)).toBe(false)
+  })
 
   it('stops the set as one body, keeping the phase between its members', () => {
     // The earliest member lands exactly on 0 and the later one keeps its
@@ -205,42 +202,41 @@ describe('floorTravelAtZero', () => {
     const fps = { num: 30, den: 1 }
     const g = frameGrid(fps)
     const late = timeUsAtGridIndex(15, g)
-    const set = [clip('late', 'Color', late), clip('early', 'Color', timeUsAtGridIndex(6, g))]
-    const landed = travelOnGrids(set, floorTravelAtZero(set, { fromUs: late, toUs: 0 }, fps, g), fps)
+    const set = [clip('late', late), clip('early', timeUsAtGridIndex(6, g))]
+    const landed = travelOnGrid(set, floorTravelAtZero(set, { fromUs: late, toUs: 0 }, fps), fps)
     expect(landed.get('early')!.tStartUs).toBe(0)
     expect(landed.get('late')!.tStartUs).toBe(timeUsAtGridIndex(9, g))
   })
 
   it('returns a travel that clears zero untouched, in both directions', () => {
     const fps = { num: 30, den: 1 }
-    const set = [clip('a', 'Color', 1_000_000)]
+    const set = [clip('a', 1_000_000)]
     const left = { fromUs: 1_000_000, toUs: 500_000 }
     const right = { fromUs: 1_000_000, toUs: 1_500_000 }
-    expect(floorTravelAtZero(set, left, fps, frameGrid(fps))).toBe(left)
-    expect(floorTravelAtZero(set, right, fps, frameGrid(fps))).toBe(right)
-    expect(floorTravelAtZero([], left, fps, frameGrid(fps))).toBe(left)
+    expect(floorTravelAtZero(set, left, fps)).toBe(left)
+    expect(floorTravelAtZero(set, right, fps)).toBe(right)
+    expect(floorTravelAtZero([], left, fps)).toBe(left)
   })
 
-  it('stops on the first point of the anchor\'s lattice nobody crosses, and re-flooring its landing is the same travel', () => {
+  it('stops on the first frame where nobody is before 0, from the same instant, and re-flooring its landing is the same travel', () => {
     // The timeline sends the anchor's floored landing as the request and the
-    // mutation re-snaps it on the anchor's lattice and floors again; the two
-    // must reach one travel or the commit lands off the ghost.
+    // mutation floors it again; the two must reach one travel or the commit
+    // lands off the ghost.
     for (const fps of [{ num: 30_000, den: 1001 }, { num: 60_000, den: 1001 }, { num: 25, den: 1 }]) {
       const g = frameGrid(fps)
-      for (const slip of [-9, -1, 0, 1, 9]) {
+      for (const lead of [-9, -1, 0, 1, 9]) {
         const v0 = timeUsAtGridIndex(40, g)
-        const set = [
-          clip('v', 'VideoClip', v0),
-          clip('a', 'Audio', timeUsAtGridIndex(gridIndex(v0, AUDIO_GRID) + slip, AUDIO_GRID)),
-        ]
-        const travel = floorTravelAtZero(set, { fromUs: v0, toUs: snapOnGrid(-5_000_000, g) }, fps, g)
+        const set = [clip('v', v0), clip('a', timeUsAtGridIndex(40 + lead, g))]
+        const travel = floorTravelAtZero(set, { fromUs: v0, toUs: snapOnGrid(-5_000_000, g) }, fps)
+        expect(travel.fromUs).toBe(v0)
         expect(isCanonicalOnGrid(travel.toUs, g)).toBe(true)
         expect(travelCrossesZero(set, travel, fps)).toBe(false)
         const before = { fromUs: v0, toUs: timeUsAtGridIndex(gridIndex(travel.toUs, g) - 1, g) }
         expect(travelCrossesZero(set, before, fps)).toBe(true)
-        const landed = travelOnGrids(set, travel, fps)
-        const again = floorTravelAtZero(set, { fromUs: v0, toUs: snapOnGrid(landed.get('v')!.tStartUs, g) }, fps, g)
-        expect(travelOnGrids(set, again, fps)).toEqual(landed)
+        const landed = travelOnGrid(set, travel, fps)
+        expect(Math.min(...[...landed.values()].map((m) => m.tStartUs))).toBe(0)
+        const again = floorTravelAtZero(set, { fromUs: v0, toUs: landed.get('v')!.tStartUs }, fps)
+        expect(travelOnGrid(set, again, fps)).toEqual(landed)
       }
     }
   })

@@ -153,9 +153,9 @@ test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
 
   // A sub-frame slip must not desynchronize the WAVEFORM from the PCM (ADR 0038):
   // the waveform is addressed in MEDIA time (`sampleWaveformRms` takes source µs),
-  // so slipping the layer on the timeline must leave the waveform↔PCM relationship
+  // so slipping the layer's source window must leave the waveform↔PCM relationship
   // untouched — if the slip had leaked into media addressing, these markers would move.
-  test('a sub-frame timeline slip leaves waveform ↔ PCM addressing untouched', async () => {
+  test('a sub-frame source slip leaves waveform ↔ PCM addressing untouched', async () => {
     test.setTimeout(120_000)
     const c = CASES[0]!
     await newProject(page, {
@@ -168,17 +168,19 @@ test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
     const { mediaId, layerId } = await importAndPlaceMedia(page, { mediaAbsPath: fixture(c.file) })
     const conformPath = await waitForConformPath(page, mediaId)
 
-    const trackOf = async (id: string): Promise<string> => {
+    const geometryOf = async (id: string) => {
       const s = (await summary(page)) as unknown as {
-        tracks: Array<{ id: string; layers: Array<{ id: string }> }>
+        tracks: Array<{
+          layers: Array<{
+            id: string
+            t_start_us: number
+            t_end_us: number
+            params: { src_in_us: number; src_out_us: number }
+          }>
+        }>
       }
-      return s.tracks.find((t) => t.layers.some((l) => l.id === id))!.id
-    }
-    const startOf = async (id: string): Promise<number> => {
-      const s = (await summary(page)) as unknown as {
-        tracks: Array<{ layers: Array<{ id: string; t_start_us: number }> }>
-      }
-      return s.tracks.flatMap((t) => t.layers).find((l) => l.id === id)!.t_start_us
+      const l = s.tracks.flatMap((t) => t.layers).find((x) => x.id === id)!
+      return { t_start_us: l.t_start_us, t_end_us: l.t_end_us, src_in_us: l.params.src_in_us, src_out_us: l.params.src_out_us }
     }
     // The AV source auto-pairs, so the Audio member is the one to slip.
     const audioLayer = ((await summary(page)) as unknown as {
@@ -188,18 +190,27 @@ test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
       .find((l) => l.params.kind === 'Audio')?.id
     expect(audioLayer, 'the AV source should have auto-paired an Audio layer').toBeTruthy()
 
-    // 16_667 µs is sample 800 — exactly half a 30 fps frame, so it is only reachable
-    // because audio no longer shares the video grid. Production `command` channel, so
+    // 16_667 µs is sample 800 — exactly half a 30 fps frame, so only a source slip
+    // can express it. Both halves are first trimmed a second short at their out
+    // edge so the window has media to slip into. Production `command` channel, so
     // the wire args are camelCase.
     const SLIP_US = 16_667
-    await invokeCmd(page, 'move_layer', {
+    const PAIR_OUT_US = 5_000_000
+    for (const id of [layerId, audioLayer!]) {
+      await invokeCmd(page, 'trim_layer', { layerId: id, edge: 'out', newTUs: PAIR_OUT_US, escapeLink: true })
+    }
+    const video = await geometryOf(layerId)
+    await invokeCmd(page, 'update_layer_params', {
       layerId: audioLayer,
-      newTrackId: await trackOf(audioLayer!),
-      newTStartUs: SLIP_US,
-      escapeLink: true,
+      patch: { kind: 'Audio', src_in_us: SLIP_US, src_out_us: PAIR_OUT_US + SLIP_US },
     })
-    expect(await startOf(audioLayer!), 'the slip must be stored verbatim').toBe(SLIP_US)
-    expect(await startOf(layerId), 'the video member must not move').toBe(0)
+    expect(await geometryOf(audioLayer!), 'the slip moves the source window under the shared edges').toEqual({
+      t_start_us: video.t_start_us,
+      t_end_us: video.t_end_us,
+      src_in_us: SLIP_US,
+      src_out_us: PAIR_OUT_US + SLIP_US,
+    })
+    expect(await geometryOf(layerId), 'the video member must not move').toEqual(video)
 
     // The waveform is keyed on MEDIA time, so every known marker must read exactly as
     // it did before the timeline edit — and still agree with the conform PCM.

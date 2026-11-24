@@ -12,7 +12,7 @@ import { CommandFailure } from './errors'
 import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
 import { eachLayer } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
-import { frameGrid, gridForLayerKind, isCanonicalOnGrid, layerOverlapClass, snapFrameRound, snapOnGrid, type Grid } from './snap'
+import { frameGrid, isCanonicalOnGrid, layerOverlapClass, snapFrameRound, snapOnGrid, type Grid } from './snap'
 // The `src_in_us`/`src_out_us` family, from the mutations layer. No cycle: this
 // is a leaf helper module (model + errors + snap + animated), and nothing it
 // reaches imports back here — the mutation modules that DO import validate
@@ -92,16 +92,15 @@ function validateLattice(c: Composition, root: Composition): void {
 // off-grid project unopenable. `parseProject` repairs on load instead, in one
 // pass, so validate only ever sees canonical input.
 
-/** The grid a layer's timeline endpoints must land on. Delegates to the ONE lookup
- *  in `snap.ts` — the mutation snaps and `serialize.ts`'s load repair ask the same
- *  function, which is what stops the three sites from disagreeing about where audio
- *  lives (spec § Two data-loss dependencies).
+/** The grid a layer's timeline endpoints must land on: the composition frame grid,
+ *  for every kind (ADR 0038), the same grid the mutation snaps and `serialize.ts`'s
+ *  load repair use.
  *
  *  Deliberately still NOT `i >= 0`: a negative canonical time passes this predicate
  *  and is caught by `NegativeLayerStart` instead. Bounds and lattice stay separate
  *  rules because they have different fixes — folding them together would report
  *  "off grid" for a time that is exactly on it. */
-const layerEndpointGrid = gridForLayerKind
+const layerEndpointGrid = frameGrid
 
 /** Strip the `Grid` down to its wire shape for the error payload: `fps` carries the
  *  lattice rational, `grid` names which lattice it is. Built here rather than
@@ -118,10 +117,7 @@ function offGridBoundary(layer: Uuid, field: 't_start_us' | 't_end_us', t: numbe
 function validateComposition(c: Composition): void {
   if (c.width === 0 || c.height === 0) fail({ rule: 'InvalidCanvas', width: c.width, height: c.height })
   if (c.fps.num === 0 || c.fps.den === 0) fail({ rule: 'InvalidFps', num: c.fps.num, den: c.fps.den })
-  // The composition duration is a FRAME count even when the content reaching
-  // furthest is audio on the sample lattice — `applyDurationAutofit` rounds the
-  // high-water mark UP to the enclosing frame, so a sub-frame audio tail still fits
-  // inside the composition rather than pushing its duration off grid.
+  // The composition duration is a FRAME count, on the same grid as every layer edge.
   const compGrid = frameGrid(c.fps)
   if (!isCanonicalOnGrid(c.duration_us, compGrid))
     fail({ rule: 'OffGridTime', entity: 'Composition', id: c.id, field: 'duration_us', t: c.duration_us, fps: c.fps, snap_to: snapOnGrid(c.duration_us, compGrid) })
@@ -473,7 +469,7 @@ function validateTrack(p: Project, c: Composition, track: Track, authorized: Map
     // the sign, not the quantum). `t_end` needs no companion rule — start >= 0 and
     // start < end together force it positive.
     if (layer.t_start_us < 0) fail({ rule: 'NegativeLayerStart', layer: layer.id, t_start: layer.t_start_us })
-    const grid = layerEndpointGrid(layer.params.kind, c.fps)
+    const grid = layerEndpointGrid(c.fps)
     if (!isCanonicalOnGrid(layer.t_start_us, grid))
       fail(offGridBoundary(layer.id, 't_start_us', layer.t_start_us, grid))
     if (!isCanonicalOnGrid(layer.t_end_us, grid))
@@ -481,11 +477,8 @@ function validateTrack(p: Project, c: Composition, track: Track, authorized: Map
     validateLayerParams(p, layer)
     const cls = layerOverlapClass(layer.params)
     const prev = cls === 'visual' ? prevVisual : prevAudio
-    // Half-open `[t_start, t_end)`, which is what makes this correct at the audio
-    // lattice's 20.83 µs quantum for free: two audio layers whose edges differ by
-    // ONE SAMPLE do not overlap, and abutting ones (start === prev end) do not
-    // either. No sample-aware special case is wanted here — a tolerance would be
-    // the bug, not the fix.
+    // Half-open `[t_start, t_end)`: abutting layers (start === prev end) do not
+    // overlap. No tolerance is wanted here — a tolerance would be the bug, not the fix.
     if (prev && layer.t_start_us < prev.t_end_us) {
       const overlap = prev.t_end_us - layer.t_start_us
       const allowed = authorized.get(pairKey(prev.id, layer.id)) ?? 0

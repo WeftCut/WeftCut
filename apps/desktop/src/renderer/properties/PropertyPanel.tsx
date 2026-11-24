@@ -3,14 +3,6 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { useTranslation } from "react-i18next";
 import { Lock, LockOpen, Power, Tag } from "lucide-react";
 import { formatTimecode, parseTimecode } from "../frames";
-import {
-  AUDIO_UNITS_ORDER,
-  formatAudioTime,
-  parseAudioTime,
-  setAudioUnits,
-  useAudioUnits,
-  type AudioUnits,
-} from "../state/audioUnitsStore";
 import { AppColorField, hexToRgba, rgbaToHex } from "../components/AppColorField";
 import { AppInput } from "../components/AppInput";
 import { AppTimecodeField } from "../components/AppTimecodeField";
@@ -415,74 +407,33 @@ function LayerPanel({
       ) : null}
       <PropSection layerKind={layer.kind} sectionId="timing" title={t("property_panel.timing")}>
         <Field label={t("property_panel.t_start")} hint={t("property_panel.t_start_hint")}>
-          {env.isAudio && env.units !== "frames" ? (
-            <AppInput
-              value={env.startTc}
-              mono
-              disabled={env.timingDisabled}
-              ariaLabel={t("property_panel.t_start")}
-              onValueChange={env.setStartTc}
-              onBlur={() => void env.commitStart()}
-            />
-          ) : (
-            <AppTimecodeField
-              key={`${layer.id}:start:${env.startReset}`}
-              valueUs={parseTimecode(env.startTc, fpsNum, fpsDen) ?? 0}
-              fpsNum={fpsNum}
-              fpsDen={fpsDen}
-              disabled={env.timingDisabled}
-              ariaLabel={t("property_panel.t_start")}
-              onCommit={(us) => void env.commitStart(formatTimecode(us, fpsNum, fpsDen))}
-            />
-          )}
+          <AppTimecodeField
+            key={`${layer.id}:start:${env.startReset}`}
+            valueUs={parseTimecode(env.startTc, fpsNum, fpsDen) ?? 0}
+            fpsNum={fpsNum}
+            fpsDen={fpsDen}
+            disabled={env.timingDisabled}
+            ariaLabel={t("property_panel.t_start")}
+            onCommit={(us) => void env.commitStart(formatTimecode(us, fpsNum, fpsDen))}
+          />
         </Field>
         <Field label={t("property_panel.duration")}>
-          {env.isAudio && env.units !== "frames" ? (
-            <AppInput
-              value={env.durTc}
-              mono
-              disabled={env.timingDisabled}
-              ariaLabel={t("property_panel.duration")}
-              onValueChange={env.setDurTc}
-              onBlur={() => void env.commitDuration()}
-            />
-          ) : (
-            <AppTimecodeField
-              key={`${layer.id}:duration:${env.durationReset}`}
-              valueUs={parseTimecode(env.durTc, fpsNum, fpsDen) ?? 0}
-              fpsNum={fpsNum}
-              fpsDen={fpsDen}
-              disabled={env.timingDisabled}
-              ariaLabel={t("property_panel.duration")}
-              onCommit={(us) => void env.commitDuration(formatTimecode(us, fpsNum, fpsDen))}
-            />
-          )}
+          <AppTimecodeField
+            key={`${layer.id}:duration:${env.durationReset}`}
+            valueUs={parseTimecode(env.durTc, fpsNum, fpsDen) ?? 0}
+            fpsNum={fpsNum}
+            fpsDen={fpsDen}
+            disabled={env.timingDisabled}
+            ariaLabel={t("property_panel.duration")}
+            onCommit={(us) => void env.commitDuration(formatTimecode(us, fpsNum, fpsDen))}
+          />
         </Field>
         <Field as="div" label={t("property_panel.t_end")}>
           <output className="prop-time-end-value" aria-label={t("property_panel.t_end")}>
-            {env.isAudio
-              ? formatAudioTime(layer.t_end_us, env.units, fpsNum, fpsDen)
-              : formatTimecode(layer.t_end_us, fpsNum, fpsDen)}
+            {formatTimecode(layer.t_end_us, fpsNum, fpsDen)}
           </output>
         </Field>
         <RetimeFields key={layer.id} layer={layer} disabled={env.timingDisabled} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />
-        {env.isAudio ? (
-          // Premiere's "audio units" equivalent, placed with the readouts it governs.
-          // Scoped to audio times only: the ruler stays frame-based, because there is no
-          // zoom at which a sample ruler is legible and it would put a second grid on
-          // screen (ADR 0038).
-          <Field label={t("timeline.audio_units")} hint={t("property_panel.audio_units_hint")}>
-            <AppSelect
-              value={env.units}
-              ariaLabel={t("timeline.audio_units")}
-              onValueChange={(v) => setAudioUnits(v as AudioUnits)}
-              options={AUDIO_UNITS_ORDER.map((u) => ({
-                value: u,
-                label: t(`timeline.audio_units_${u}`),
-              }))}
-            />
-          </Field>
-        ) : null}
       </PropSection>
       <KindFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />
       <PausesSection layer={layer} />
@@ -512,17 +463,10 @@ function useEnvelope({
   fpsNum: number;
   fpsDen: number;
 }) {
-  // ── Audio-layer timing reads and writes on the SAMPLE lattice (ADR 0038) ────
-  // Sample precision is unreachable by dragging (0.042 px per sample at the zoom
-  // ceiling), so these fields — together with the nudge commands — ARE the
-  // fine-authoring surface. The unit is a reading preference scoped to audio
-  // readouts; the ruler, the playhead and every visual layer stay frame-based.
-  const units = useAudioUnits();
-  const isAudio = layer.kind === "Audio";
-  const fmtTime = (us: number): string =>
-    isAudio ? formatAudioTime(us, units, fpsNum, fpsDen) : formatTimecode(us, fpsNum, fpsDen);
-  const parseTime = (s: string): number | null =>
-    isAudio ? parseAudioTime(s, units, fpsNum, fpsDen) : parseTimecode(s, fpsNum, fpsDen);
+  // Every layer's edges are frames (ADR 0038), audio included: an audio clip's
+  // sample precision is its source slip, which the nudge commands author.
+  const fmtTime = (us: number): string => formatTimecode(us, fpsNum, fpsDen);
+  const parseTime = (s: string): number | null => parseTimecode(s, fpsNum, fpsDen);
 
   const [label, setLabel] = useState(layer.label ?? "");
   const labelCancelled = useRef(false);
@@ -532,8 +476,7 @@ function useEnvelope({
   const [startTc, setStartTc] = useState(() => fmtTime(layer.t_start_us));
   const [durTc, setDurTc] = useState(() => fmtTime(layer.t_end_us - layer.t_start_us));
   // Resync from the authoritative snapshot whenever the committed envelope
-  // changes (own commit round-trip, link fan-out, undo) — or when the audio unit
-  // flips, which re-renders the same times in the new unit. Primitive deps —
+  // changes (own commit round-trip, link fan-out, undo). Primitive deps —
   // not the layer object — so unrelated project refreshes can't clobber a
   // field mid-typing.
   useEffect(() => {
@@ -545,7 +488,7 @@ function useEnvelope({
     setDurTc(fmtTime(layer.t_end_us - layer.t_start_us));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fmtTime is derived from
     // exactly the primitives listed here; including it would re-run every render.
-  }, [layer.id, layer.t_start_us, layer.t_end_us, fpsNum, fpsDen, isAudio, units]);
+  }, [layer.id, layer.t_start_us, layer.t_end_us, fpsNum, fpsDen]);
 
   // Timeline gesture suppression parity: a locked Layer (or a Layer on a
   // locked Track) can't be moved/trimmed from the Timeline, so the
@@ -590,12 +533,8 @@ function useEnvelope({
     }
     if (us === layer.t_start_us || !track || timingDisabled) return;
     setStartTc(nextTc);
-    // `escapeLink` on an audio layer: a sub-frame start edit is a SLIP, so it must
-    // move this member alone. Dragging the whole link to a sample boundary would
-    // put the video member off its own grid (ADR 0038 / R2-D7). The link
-    // override escapes too, as it does for every timeline gesture.
-    const escape = isAudio || !linkFanoutActive();
-    if (await tryMutate(() => moveLayer(layer.id, track.id, us, escape), "Move layer")) {
+    // The link override escapes, as it does for every timeline gesture.
+    if (await tryMutate(() => moveLayer(layer.id, track.id, us, !linkFanoutActive()), "Move layer")) {
       await onMutated();
     } else {
       setStartTc(fmtTime(layer.t_start_us));
@@ -642,8 +581,6 @@ function useEnvelope({
     setStartTc,
     durTc,
     setDurTc,
-    units,
-    isAudio,
     timingDisabled,
     commitLabel,
     commitFlag,

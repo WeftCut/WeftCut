@@ -1,8 +1,9 @@
-/// Two time domains, ONE grid implementation.
+/// Two lattices, ONE grid implementation.
 ///
-/// Video geometry lives on the composition frame grid; audio geometry lives on the
-/// fixed 48 kHz mix lattice (ADR 0037, 0038). Which lattice a layer uses is decided
-/// in exactly one place — `gridForLayerKind` below, which owns that rationale.
+/// Every layer edge, of every kind, lives on the composition frame grid (ADR 0037,
+/// 0038), so a linked picture and its sound share their edges exactly. The fixed
+/// 48 kHz mix lattice is kept for what is audio-only and inside a layer: audio
+/// automation keys (`automationGrid`) and the source slip a sample nudge makes.
 ///
 /// THE KEY FACT, and the reason this is not a second grid: a 48 kHz sample boundary
 /// IS a frame boundary at rate 48000/1.
@@ -59,17 +60,14 @@ export function frameGrid(fps: RateLike): Grid {
   return { domain: 'frame', num: fps.num, den: fps.den }
 }
 
-/** THE grid lookup — the single seam every enforcement and authoring site shares
- *  (`validate.ts`'s predicate, the mutation snaps incl. `move`'s link fan-out,
- *  `serialize.ts`'s load repair, and the UI's nudge + readout paths). Adding another
- *  site means calling this, never re-deriving the choice.
+/** The lattice a layer's automation keys live on: the mix lattice for Audio, whose
+ *  gain and pan the mixer evaluates per sample, the frame grid for everything that
+ *  renders per frame. Keys are layer-local, so this never meets an edge.
  *
- *  `kind` is a plain `string` on purpose: `repairGrid` runs on the WIRE shape before
- *  the cast to `Project`, and the renderer reads kinds off the project summary, so
- *  neither side has the narrowed union to hand. An unrecognized kind answers the
- *  frame grid — the conservative default, since every visual kind is on it and a
- *  corrupt kind is validate's to reject. */
-export function gridForLayerKind(kind: string, fps: RateLike): Grid {
+ *  `kind` is a plain `string` because the renderer reads kinds off the project
+ *  summary and has no narrowed union to hand; an unrecognized kind answers the
+ *  frame grid, and a corrupt kind is validate's to reject. */
+export function automationGrid(kind: string, fps: RateLike): Grid {
   return kind === 'Audio' ? AUDIO_GRID : frameGrid(fps)
 }
 
@@ -86,8 +84,8 @@ export type OverlapClass = 'visual' | 'audio'
  *  be a picture — and may be a transition participant for the same reason
  *  (ADR 0052 §4).
  *
- *  Beside `gridForLayerKind`, and structural for the same reason it takes a plain
- *  `string` kind: the actor's overlap scan reads it off a `LayerParams`, its batch
+ *  Structural, taking a plain `string` kind: the actor's overlap scan reads it
+ *  off a `LayerParams`, its batch
  *  pre-checks off a clone plan, and the ripple planner off its own view. Two
  *  copies of "what counts as the same class" is exactly the drift a shared seam
  *  prevents. */
@@ -129,25 +127,12 @@ export function isCanonicalOnGrid(tUs: number, g: Grid): boolean {
   return snapOnGrid(tUs, g) === tUs
 }
 
-/** `tUs` stepped by `steps` lattice points, clamped at 0.
- *
- *  Resolved through the INDEX, never by adding a quantum's width in µs. That is the
- *  whole reason a nudge is exact: lattice spacing is not an integer number of
- *  microseconds (48 kHz alternates 20/21 µs), so `tUs + steps * 20.83` accumulates
- *  error and 10 000 nudges out-and-back would not return to the start — the same
- *  defect class as the video frame-step bug. Index arithmetic is exact by
- *  construction, so out-and-back is the identity for any step count. */
-export function stepOnGrid(tUs: number, steps: number, g: Grid): number {
-  return timeUsAtGridIndex(Math.max(0, gridIndex(tUs, g) + steps), g)
-}
-
 /** A move in time, stated as two instants: what sat at `fromUs` ends up at
- *  `toUs`. Never a µs delta, because a delta has no lattice: the same 0.5 s is
- *  a different number of frames and samples depending on where it starts, and
- *  a delta measured on one lattice, added to an edge on the other and snapped,
- *  re-rounds that edge's residue against its neighbours. Two instants project
- *  onto every lattice (`travelSteps`), so each layer moves by a whole number of
- *  its OWN points. */
+ *  `toUs`. Never a µs delta: a frame is not a whole number of µs at most rates,
+ *  so the same delta is a different number of frames depending on where it
+ *  starts, and an edge plus a delta re-snapped rounds twice. Two instants
+ *  project onto the grid (`travelSteps`), so every edge moves by the same whole
+ *  number of points. */
 export interface Travel {
   fromUs: number
   toUs: number
@@ -168,26 +153,21 @@ export function travelSteps(travel: Travel, g: Grid): number {
 }
 
 /** A point of `g` moved by `steps` points, with no clamp at 0: a caller that
- *  can go negative refuses or floors before it gets here. */
+ *  can go negative refuses or floors before it gets here.
+ *
+ *  Resolved through the INDEX, never by adding a quantum's width in µs: lattice
+ *  spacing is not a whole number of microseconds (48 kHz alternates 20/21 µs), so
+ *  an additive step accumulates error and 10 000 nudges out and back would not
+ *  return to the start. Index arithmetic makes out-and-back the identity. */
 export function stepPointOnGrid(tUs: number, steps: number, g: Grid): number {
   return timeUsAtGridIndex(gridIndex(tUs, g) + steps, g)
 }
 
-/** A half-open span `[s, e)` as one lattice sees it: both edges at their nearest
- *  points of `g`. A span closed or compared across layers of both kinds is
- *  measured against each layer's own projection, because at a fractional rate a
- *  linked pair's edges sit a few µs apart by construction (ADR 0038) and the
- *  raw span puts the other kind's edge inside it. */
-export function spanOnGrid(s: number, e: number, g: Grid): { s: number; e: number } {
-  return { s: snapOnGrid(s, g), e: snapOnGrid(e, g) }
-}
-
-/** One member of a set on the move: whatever carries a kind and a span. Neither
- *  side's layer model appears here — the actor adapts its `Layer`, the timeline
- *  adapts its `DragSubject` — so this stays a statement about lattices. */
+/** One member of a set on the move: whatever carries a span. Neither side's
+ *  layer model appears here — the actor adapts its `Layer`, the timeline adapts
+ *  its `DragSubject` — so this stays a statement about the grid. */
 export interface ShiftMember {
   id: string
-  kind: string
   tStartUs: number
   tEndUs: number
 }
@@ -200,29 +180,25 @@ export interface ShiftMember {
  *  computed by an arithmetic the mutation does not share is one the project can
  *  never satisfy.
  *
- *  Each member moves by `travelSteps` on ITS OWN lattice (`gridForLayerKind`),
- *  both endpoints by the same count. That makes a linked pair's relation an
- *  invariant rather than an approximation: the audio member keeps its sample
- *  index relative to the projection of the video member's edge, so the grid
- *  residue a fresh pair carries at 29.97/59.94 and a deliberately slipped sync
- *  offset (R2-D7) both survive any number of moves exactly. A stored member is
- *  already a point of its lattice (validate holds it there); one that is not —
- *  a layer entering a composition at another rate — first takes its nearest
- *  point there.
+ *  Every endpoint moves by the same `travelSteps`, so the distance between any
+ *  two edges of the set, a linked pair's included, is kept in whole frames. A
+ *  stored edge is already a point of the grid (validate holds it there); one
+ *  that is not, a layer entering a composition at another rate, first takes its
+ *  nearest point there.
  *
  *  Pure, and deliberately free of policy: the zero boundary is `floorTravelAtZero`
  *  for a caller that CLAMPS and a refusal for a caller that does not
  *  (`applyMoveLayersToComposition` refuses, on the grounds that sliding a set off
  *  the picture it was placed against is not a repair). */
-export function travelOnGrids(
+export function travelOnGrid(
   members: readonly ShiftMember[],
   travel: Travel,
   fps: RateLike,
 ): Map<string, { tStartUs: number; tEndUs: number }> {
+  const g = frameGrid(fps)
+  const steps = travelSteps(travel, g)
   const landings = new Map<string, { tStartUs: number; tEndUs: number }>()
   for (const m of members) {
-    const g = gridForLayerKind(m.kind, fps)
-    const steps = travelSteps(travel, g)
     landings.set(m.id, {
       tStartUs: stepPointOnGrid(m.tStartUs, steps, g),
       tEndUs: stepPointOnGrid(m.tEndUs, steps, g),
@@ -232,37 +208,34 @@ export function travelOnGrids(
 }
 
 /** `travel`, or — when it would carry some member before 0 — the travel from
- *  the same instant that stops the set as ONE body: the one that brings the
- *  earliest member to 0, taken to the nearest point of `onGrid` and moved on
- *  by one point while any member would still cross. Clamping each member where
- *  it lands would flatten a slipped pair's phase against the boundary; this
- *  keeps every relation, so a pair whose earlier member is slipped a sample
- *  ahead of its video stops a frame short of 0 rather than arrive in sync.
+ *  the same instant that lands the EARLIEST member on 0: the set stopping as ONE
+ *  body rather than each member clamped where it lands, which would flatten the
+ *  set's phase against the boundary.
  *
- *  `onGrid` is the lattice `travel`'s instants are points of — the anchor's,
- *  whose request a gesture snapped — and the stopped `toUs` is a point of it
- *  too. That is what keeps a ghost and its commit on one travel: the timeline
- *  sends the anchor's landing as the request, and the mutation re-snapping it
- *  on the anchor's lattice reaches this same `toUs`, which no longer crosses.
- *  The anchor must be one of `members`, so the earliest member starts at or
- *  before `fromUs` and every instant searched is at or after 0. */
-export function floorTravelAtZero(members: readonly ShiftMember[], travel: Travel, fps: RateLike, onGrid: Grid): Travel {
+ *  Counted in frames, the unit the members move by: the stop is the travel of
+ *  minus the earliest member's frame, so that member lands exactly on 0 even
+ *  when it is not yet a point of this grid (a layer entering from a composition
+ *  at another rate takes its nearest frame first).
+ *
+ *  The stopped `toUs` is a point of the grid. That is what keeps a ghost and its
+ *  commit on one travel: the timeline sends the anchor's landing as the request,
+ *  and the mutation re-snapping it reaches this same `toUs`, which no longer
+ *  crosses. The anchor must be one of `members`, so the earliest member's frame
+ *  is at or before `fromUs`'s and no time before 0 is asked of the leaf. */
+export function floorTravelAtZero(members: readonly ShiftMember[], travel: Travel, fps: RateLike): Travel {
   if (!travelCrossesZero(members, travel, fps)) return travel
+  const g = frameGrid(fps)
   let earliest = Infinity
-  for (const m of members) earliest = Math.min(earliest, m.tStartUs)
-  let toUs = snapOnGrid(Math.max(0, travel.fromUs - earliest), onGrid)
-  while (travelCrossesZero(members, { fromUs: travel.fromUs, toUs }, fps))
-    toUs = stepPointOnGrid(toUs, 1, onGrid)
-  return { fromUs: travel.fromUs, toUs }
+  for (const m of members) earliest = Math.min(earliest, gridIndex(m.tStartUs, g))
+  return { fromUs: travel.fromUs, toUs: timeUsAtGridIndex(Math.max(0, gridIndex(travel.fromUs, g) - earliest), g) }
 }
 
 /** True when `travel` would carry some member before 0 — the strict callers'
- *  refusal test, read in the same points `travelOnGrids` moves by. Compared as
+ *  refusal test, read in the same points `travelOnGrid` moves by. Compared as
  *  indices, so no time before 0 is ever asked of the leaf. */
 export function travelCrossesZero(members: readonly ShiftMember[], travel: Travel, fps: RateLike): boolean {
-  for (const m of members) {
-    const g = gridForLayerKind(m.kind, fps)
-    if (gridIndex(m.tStartUs, g) + travelSteps(travel, g) < 0) return true
-  }
+  const g = frameGrid(fps)
+  const steps = travelSteps(travel, g)
+  for (const m of members) if (gridIndex(m.tStartUs, g) + steps < 0) return true
   return false
 }

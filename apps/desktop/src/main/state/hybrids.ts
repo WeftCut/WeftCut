@@ -574,40 +574,16 @@ export function pauseCores(
   return cores
 }
 
-/** The cores as the split can actually take them when the subject travels with a
- *  picture.
- *
- *  `split_layer_multi` re-snaps every spanning link member on ITS OWN grid: the
- *  Audio subject on the 48 kHz lattice, a linked VideoClip on the frame grid. A
- *  boundary that lands between frames is therefore cut in two places up to half a
- *  frame apart, and the picture piece of a KEPT segment then overlaps the next
- *  hole by that half frame — enough for the fan-out to doom it and for the
- *  ripple planner to refuse the whole edit (`RippleInsideHole` over a hole that
- *  has swallowed the clip). Snapping the interior boundaries onto the
- *  composition's frame grid FIRST puts both members' cuts on one instant: a frame
- *  boundary is a sample boundary at every integer rate, and at 29.97 / 59.94 the
- *  residue is ~10 µs, which the fan-out's half-frame slack absorbs. The head and
- *  tail boundaries are the subject's own edges and are left alone.
- *
- *  Only when a frame-grid member shares the link: an unlinked Audio clip keeps
- *  its sample precision, because nothing else has to be cut where it is cut.
- *  A core the snap collapses is dropped, like one the pad collapsed. */
+/** The cores as the split can actually take them: interior boundaries on the
+ *  composition's frame grid, where every layer edge lives (ADR 0038). Snapping
+ *  here rather than leaving it to the split lets a core the snap collapses drop
+ *  out, like one the pad collapsed, instead of becoming a zero-length cut. The
+ *  head and tail boundaries are the subject's own edges and are left alone. */
 function cutGridCores(
   cores: readonly PauseRegion[],
   subject: Pick<Layer, 'id' | 't_start_us' | 't_end_us'>,
   composition: Composition,
 ): PauseRegion[] {
-  const link = composition.links.find((g) => g.members.includes(subject.id))
-  if (!link) return [...cores]
-  const kindOf = (id: string): string | undefined => {
-    for (const track of composition.tracks) {
-      const hit = track.layers.find((l) => l.id === id)
-      if (hit) return hit.params.kind
-    }
-    return undefined
-  }
-  const sharesFrameGrid = link.members.some((m) => m !== subject.id && kindOf(m) !== 'Audio')
-  if (!sharesFrameGrid) return [...cores]
   const { num, den } = composition.fps
   const onFrame = (t: number): number => snapFrameRound(t, num, den)
   const out: PauseRegion[] = []

@@ -102,15 +102,11 @@ export function requireSameComposition(p: Project, layerIds: readonly Uuid[]): C
 /** Reconcile composition.duration_us with the layer high-water mark
  *  (docs/data-model.md#composition).
  *
- *  The high-water mark is rounded UP to the enclosing composition frame, which
- *  matters only once audio lives on the 48 kHz lattice (spec R2-D6): an audio
- *  `t_end_us` is a sample boundary and at 29.97 / 59.94 that is generally NOT a
- *  frame boundary, so copying it verbatim would put `duration_us` off the frame grid
- *  and validate would reject the edit that caused it (`OffGridTime`). Up, not
- *  nearest: content ending mid-frame occupies that frame, and rounding down would
- *  make the composition shorter than its own content. Identity for frame-aligned
- *  content, which is every visual layer and all audio at the six rates where the
- *  frame lattice is an exact sublattice of the sample lattice. */
+ *  The high-water mark is rounded UP to the enclosing composition frame: identity
+ *  for every edge on the frame grid (ADR 0038), and for one that is not, a
+ *  `duration_us` validate accepts (`OffGridTime`). Up, not nearest: content ending
+ *  mid-frame occupies that frame, and rounding down would make the composition
+ *  shorter than its own content. */
 export function applyDurationAutofit(c: Composition): void {
   let maxEnd = 0
   for (const t of c.tracks) for (const l of t.layers) if (l.t_end_us > maxEnd) maxEnd = l.t_end_us

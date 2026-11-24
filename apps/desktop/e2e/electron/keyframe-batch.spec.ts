@@ -36,6 +36,13 @@ const frameUs = (f: number) =>
 /// must be, whatever gesture produced it.
 const onGrid = (tUs: number) => frameUs(Math.round((tUs * FPS_NUM) / (1_000_000 * FPS_DEN))) === tUs;
 
+/// The 48 kHz mix lattice an audio nudge steps on, written out for the same
+/// reason as the frame grid above: index → canonical µs, and µs → nearest
+/// index, both half-up.
+const SAMPLE_HZ = 48_000;
+const sampleUs = (i: number) => Math.floor((i * 1_000_000 + SAMPLE_HZ / 2) / SAMPLE_HZ);
+const sampleIndex = (tUs: number) => Math.floor((tUs * SAMPLE_HZ + 500_000) / 1_000_000);
+
 interface Keyframe {
   id: string;
   t_us: number;
@@ -84,9 +91,26 @@ const opacityKeys = (s: BatchSummary, layerId: string): Keyframe[] => {
 const keyTime = (s: BatchSummary, layerId: string, kfId: string): number | null =>
   opacityKeys(s, layerId).find((k) => k.id === kfId)?.t_us ?? null;
 
-const layerStart = (s: BatchSummary, layerId: string): number | null => {
+/// An audio layer's edges and source window: the four numbers a slip must
+/// split into "unchanged" and "moved".
+interface AudioGeometry {
+  t_start_us: number;
+  t_end_us: number;
+  src_in_us: number;
+  src_out_us: number;
+}
+
+const audioGeometry = (s: BatchSummary, layerId: string): AudioGeometry | null => {
   for (const track of s.tracks) {
-    for (const layer of track.layers) if (layer.id === layerId) return layer.t_start_us;
+    for (const layer of track.layers) {
+      if (layer.id !== layerId) continue;
+      return {
+        t_start_us: layer.t_start_us,
+        t_end_us: layer.t_end_us,
+        src_in_us: layer.params.src_in_us as number,
+        src_out_us: layer.params.src_out_us as number,
+      };
+    }
   }
   return null;
 };
@@ -398,7 +422,7 @@ test.describe("keyframe batch gestures — the pointer and the keys agree", () =
     }
   });
 
-  test("Alt+Arrow nudges keyframes by a frame, and slips audio when none are selected", async () => {
+  test("Alt+Arrow nudges keyframes by a frame, and slips audio by a sample when none are selected", async () => {
     test.setTimeout(120_000);
     test.skip(
       !existsSync(TONES),
@@ -414,6 +438,12 @@ test.describe("keyframe batch gestures — the pointer and the keys agree", () =
 
       const clip = await place(page, trackIds[0]!, imageId, 1_000_000);
       const audio = await place(page, trackIds[1]!, audioId, 1_000_000);
+      // Placed whole, the audio reads its source from 0 to the media's end, and
+      // any slip would read outside the media, which the actor refuses. A
+      // second off each end leaves the window [1 s, 9 s]: room on both sides,
+      // and both ends on the sample lattice whatever the media's probed length.
+      await invokeCmd(page, "trim_layer", { layerId: audio, edge: "in", newTUs: frameUs(60) });
+      await invokeCmd(page, "trim_layer", { layerId: audio, edge: "out", newTUs: frameUs(300) });
       await keyOpacity(page, clip, [{ id: "n0", t_us: frameUs(15), value: 0.5 }]);
 
       await expect(page.locator(".timeline-layer")).toHaveCount(2, { timeout: 20_000 });
@@ -421,15 +451,21 @@ test.describe("keyframe batch gestures — the pointer and the keys agree", () =
       // Pressing a diamond selects it — the same press that would start a drag,
       // released without travel.
       await diamond(page, "n0").click();
-      const audioStart = layerStart(await snapshot(page), audio)!;
+      const placed = audioGeometry(await snapshot(page), audio)!;
+      expect(placed).toEqual({
+        t_start_us: frameUs(60),
+        t_end_us: frameUs(300),
+        src_in_us: 1_000_000,
+        src_out_us: 9_000_000,
+      });
 
       await page.keyboard.press("Alt+ArrowRight");
       await expect
         .poll(async () => keyTime(await snapshot(page), clip, "n0"), { timeout: 20_000 })
         .toBe(frameUs(16));
-      // The audio did not move: the key with a keyframe selection standing is
+      // The audio did not slip: the key with a keyframe selection standing is
       // the keyframes' key and nothing else's.
-      expect(layerStart(await snapshot(page), audio)).toBe(audioStart);
+      expect(audioGeometry(await snapshot(page), audio)).toEqual(placed);
 
       // Deselect All is the documented way to clear all three selections that
       // arm an edit; then the audio clip alone is selected and the SAME key is
@@ -444,18 +480,32 @@ test.describe("keyframe batch gestures — the pointer and the keys agree", () =
         )
         .toBe(audio);
 
+      // A forward nudge makes the sound play one sample LATER under the same
+      // edges, so the source window moves one sample EARLIER (ADR 0038). Both
+      // ends move by exactly one index of the mix lattice.
       await page.keyboard.press("Alt+ArrowRight");
-      // One SAMPLE at 48 kHz is ~21 µs — far under a frame, which is exactly
-      // why the audio tier exists and why the key had to keep reaching it.
+      const slippedIn = sampleUs(sampleIndex(placed.src_in_us) - 1);
       await expect
-        .poll(async () => layerStart(await snapshot(page), audio)! - audioStart, {
+        .poll(async () => audioGeometry(await snapshot(page), audio)!.src_in_us, {
           timeout: 20_000,
         })
-        .toBeGreaterThan(0);
+        .toBe(slippedIn);
       const slipped = await snapshot(page);
-      expect(layerStart(slipped, audio)! - audioStart).toBeLessThan(frameUs(1));
+      expect(audioGeometry(slipped, audio)).toEqual({
+        t_start_us: placed.t_start_us,
+        t_end_us: placed.t_end_us,
+        src_in_us: slippedIn,
+        src_out_us: sampleUs(sampleIndex(placed.src_out_us) - 1),
+      });
       // And the keyframe stayed where the first nudge left it.
       expect(keyTime(slipped, clip, "n0")).toBe(frameUs(16));
+
+      // The opposite nudge is the exact inverse: a step is an index on the
+      // lattice, so out and back returns the window the layer started with.
+      await page.keyboard.press("Alt+ArrowLeft");
+      await expect
+        .poll(async () => audioGeometry(await snapshot(page), audio), { timeout: 20_000 })
+        .toEqual(placed);
     } finally {
       await app.close();
     }

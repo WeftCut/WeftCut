@@ -4,7 +4,7 @@ import { TimeMappingError } from '../../../shared/timeMapping';
 import { planRetime, type RetimeClip } from '../../../renderer/retimePlan';
 import { addTime, exactTime, multiplyTime, ZERO_TIME } from '../../../renderer/timeMapping';
 import { keyTimeExact, layerContentTiming, splitExact, writeKeyTime, writeLayerTiming } from '../../../renderer/layerTiming';
-import { gridForLayerKind, layerOverlapClass } from '../snap';
+import { frameGrid, layerOverlapClass } from '../snap';
 import { eachLayer } from '../model';
 import { applyDurationAutofit, requireLayer, checkLayerEditable } from './helpers';
 import { forEachAnimatedF64, forEachAnimatedRgba } from './animated';
@@ -26,7 +26,7 @@ export function applyRetimeLayers(p: Project, ids: readonly string[], target: Re
     for (const { layer, track, composition: comp } of eachLayer(p)) {
       clips.push({ id: layer.id, composition_id: comp.id, track_id: track.id,
         t_start_us: layer.t_start_us, t_end_us: layer.t_end_us,
-        grid: gridForLayerKind(layer.params.kind, comp.fps), overlap_class: layerOverlapClass(layer.params),
+        grid: frameGrid(comp.fps), overlap_class: layerOverlapClass(layer.params),
         timing: canRetime(p, layer) ? layerContentTiming(layer) : null,
         locked: layer.locked || track.locked,
         ...(layer.params.kind === 'CompositionRef' ? { composition_ref: layer.params.composition } : {}),

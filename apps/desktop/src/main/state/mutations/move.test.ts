@@ -5,7 +5,7 @@ import { blankProject, type Layer, type LayerParams } from '../model'
 import { applyAddLayer, colorParams } from './add'
 import { applyMoveLayer, applyMoveLayersToNewTrack } from './move'
 import { isCommandFailure } from '../errors'
-import { AUDIO_GRID, frameGrid, gridIndex, timeUsAtGridIndex } from '../snap'
+import { frameGrid, timeUsAtGridIndex } from '../snap'
 import { applyLinksCreate } from './links'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
@@ -106,30 +106,28 @@ describe('move link lock checks (not corpus-gated)', () => {
     expect(a.t_end_us - a.t_start_us).toBe(1_000_000) // left b at [0, -400_000)
   })
 
-  it('lets a sample-aligned audio member decide where the link stops, keeping its slip', () => {
-    // The stop is driven by whichever member is earliest, on WHICHEVER lattice — an
-    // `earliestStart` that only scanned the frame grid would walk the audio negative.
-    // 999_979 µs is sample 47 999 at 48 kHz, one sample ahead of the video's
-    // 1 s (sample 48 000); it is not a 30 fps frame boundary. With the video on
-    // frame 0 the audio would sit at sample -1, so the set stops at frame 1.
+  it('lets an audio member one frame ahead decide where the link stops, its slipped source untouched', () => {
+    // At 30 fps the audio starts at frame 29, one frame ahead of the picture's
+    // frame 30, and reads its source from a slipped in point. With the picture
+    // on frame 0 the audio would sit at frame -1, so the set stops one frame on.
     const p = blankProject(seededGen(), 't')
-    const au = color('au', 999_979, 1_999_979)
+    const frame = (i: number) => timeUsAtGridIndex(i, frameGrid(root(p).fps))
+    const au = color('au', frame(29), frame(59))
     au.params = {
-      kind: 'Audio', media: 'm', src_in_us: 0, src_out_us: 1_000_000,
+      kind: 'Audio', media: 'm', src_in_us: 979, src_out_us: 1_000_979,
       gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 },
       fade_in_us: 0, fade_out_us: 0, mute: false, role: 'dialogue',
     }
-    root(p).tracks[0].layers = [color('v', 1_000_000, 2_000_000)]
+    root(p).tracks[0].layers = [color('v', frame(30), frame(60))]
     root(p).tracks[1].layers = [au]
     applyLinksCreate(p, seededGen(), ['v', 'au'], false)
 
-    const slip = (q: typeof p) => gridIndex(root(q).tracks[1].layers[0].t_start_us, AUDIO_GRID) - gridIndex(root(q).tracks[0].layers[0].t_start_us, AUDIO_GRID)
-    const before = slip(p)
     applyMoveLayer(p, 'v', root(p).tracks[0].id, -3_000_000, false)
 
-    expect(root(p).tracks[1].layers[0].t_start_us).toBeGreaterThanOrEqual(0)
-    expect(root(p).tracks[0].layers[0].t_start_us).toBe(timeUsAtGridIndex(1, frameGrid(root(p).fps)))
-    expect(slip(p)).toBe(before)
+    const [v, a] = [root(p).tracks[0].layers[0], root(p).tracks[1].layers[0]]
+    expect([a.t_start_us, a.t_end_us]).toEqual([0, frame(30)])
+    expect([v.t_start_us, v.t_end_us]).toEqual([frame(1), frame(31)])
+    expect(a.params).toMatchObject({ src_in_us: 979, src_out_us: 1_000_979 })
   })
 
   it('cross-track link move changes only the target track and shifts siblings in place', () => {

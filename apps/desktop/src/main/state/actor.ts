@@ -14,7 +14,7 @@ import { HISTORY_SUMMARY, addedLayersSummary, groupAddMembersSummary, groupCreat
 import { motifUsers, parseMotifSource, parseRevision } from './mutations/projectMotifs'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, type DroppedTransition } from './validate'
-import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
+import { automationGrid, frameGrid, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyRestyleToTaste, type RestyleGroup } from './mutations/restyleTaste'
 import { styleText } from '../taste/apply'
 import { motifTokenProps } from '../taste/motifProps'
@@ -99,9 +99,6 @@ export interface ProjectMotifAccess {
   place(id: string, table: Readonly<ProjectMotifs>): { id: string; entry: ProjectMotifEntry; manifest: Manifest } | null
 }
 
-/** The lattice a layer's keys are written on, as a snap of a layer-local µs:
- *  the frame grid of its composition, or 48 kHz samples for Audio — the snap
- *  `applyUpdateLayerParamTrack` applies at write time. */
 /** MCP's linked Scale (CONTEXT "Linked scale"), the UI fan-out's rule: while
  *  the layer is linked and stays linked, a patch naming one scale axis writes
  *  that value to both. `linkTo === false` unlinks first, so the axis lands
@@ -115,10 +112,12 @@ function fanOutLinkedScale(p: Project, layer: Uuid, patch: LayerParamsPatch, lin
   return { ...patch, scale_x: v, scale_y: v } as LayerParamsPatch
 }
 
+/** The lattice a layer's keys are written on (`automationGrid`), as a snap of a
+ *  layer-local µs — the snap `applyUpdateLayerParamTrack` applies at write time. */
 function keyLatticeOf(p: Project, layer: Uuid): (localUs: number) => number {
   const loc = locateLayer(p, layer)
   if (!loc) return (t) => t
-  const grid = gridForLayerKind(loc.layer.params.kind, loc.comp.fps)
+  const grid = automationGrid(loc.layer.params.kind, loc.comp.fps)
   return (t) => snapOnGrid(t, grid)
 }
 
@@ -619,11 +618,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // marker + duration re-snap below is NOT dead: a layer-less project can hold
         // both, and validate's grid backstop rejects the whole fps change without it.
         for (const t of c.tracks) for (const l of t.layers) {
-          // Per-KIND grid: an audio layer lives on the fixed 48 kHz lattice, which
-          // does not move when fps does, so re-snapping it here would be wrong twice
-          // over — it would drop a sample-precise edit AND put the endpoint off the
-          // audio grid the backstop now checks it against (spec R2-D6).
-          const g = gridForLayerKind(l.params.kind, nf)
+          // Every kind's edges, Audio's included, ride the new frame grid (ADR 0038).
+          const g = frameGrid(nf)
           l.t_start_us = snapOnGrid(l.t_start_us, g)
           l.t_end_us = snapOnGrid(l.t_end_us, g)
           // Motif src_in_us lives on the COMPOSITION grid (re-snap); VideoClip/
@@ -1370,15 +1366,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
             const carrier: Uuid[] = []
             for (let i = 0; i < ats.length; i++) {
               const at = ats[i]
-              // Re-snap on the CURRENT SEGMENT's own grid and skip a cut that no
-              // longer falls strictly inside it — defensive against a redundant cut so
-              // applySplitLayer never rejects mid-batch. The segment must be located
-              // first because the grid depends on its kind (spec R2-D6); shot splits
-              // target video, but this op is reachable for any kind.
+              // Re-snap on the frame grid and skip a cut that no longer falls
+              // strictly inside the CURRENT SEGMENT — defensive against a redundant
+              // cut so applySplitLayer never rejects mid-batch. The segment is
+              // located first for its composition's rate.
               const loc = locateLayer(d, currentId)
               const seg = loc ? loc.layer : null
               if (!seg) continue
-              const atSnapped = snapOnGrid(parseNum(at, 'at_t_us'), gridForLayerKind(seg.params.kind, loc!.comp.fps))
+              const atSnapped = snapOnGrid(parseNum(at, 'at_t_us'), frameGrid(loc!.comp.fps))
               if (atSnapped <= seg.t_start_us || atSnapped >= seg.t_end_us) continue
               const { left, right } = applySplitLayer(d, idGen, currentId, atSnapped, false)
               while (carrier.length <= i) carrier.push(left)
@@ -1400,21 +1395,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
               // Read the link BEFORE this segment's own delete: a link
               // auto-dissolves below two members, so a two-member pair would
               // have no siblings left to read afterwards.
-              // Half a frame of slack on the overlap: members on different
-              // grids are cut up to half a frame apart (a sample-lattice cut
-              // rounds onto the frame grid), so the piece of a KEPT neighbour
-              // can lap into this segment by that much without belonging to
-              // it. A piece that is mostly inside still travels however short
-              // it is, and a piece longer than the slack overlap is a partner
-              // that genuinely shares the span (a slipped or longer partner).
-              const halfFrameUs = (500_000 * loc!.comp.fps.den) / loc!.comp.fps.num
+              // A partner is a sibling that shares any of the segment's span:
+              // every edge is on the frame grid, so a sibling that merely abuts
+              // the segment overlaps by 0 and one that shares it by a frame or
+              // more.
               const partners = linkSiblingsExcluding(loc!.comp, id).filter((sid) => {
                 if (targets.has(sid)) return false // never another segment of the target
                 const s = locateLayer(d, sid)?.layer
                 if (s === undefined) return false
-                const overlapUs = Math.min(s.t_end_us, seg.t_end_us) - Math.max(s.t_start_us, seg.t_start_us)
-                if (overlapUs <= 0) return false
-                return overlapUs * 2 > s.t_end_us - s.t_start_us || overlapUs > halfFrameUs
+                return Math.min(s.t_end_us, seg.t_end_us) > Math.max(s.t_start_us, seg.t_start_us)
               })
               if (ripple) { doomed.add(id); for (const sid of partners) doomed.add(sid); continue }
               applyDeleteLayer(d, id)
@@ -1982,11 +1971,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const at = l.at
     const t0 = l.t_start_us
     let t1 = l.t_end_us
-    // A source window is the in point plus the span AS STORED: each layer's
-    // edges snap to its own lattice, so the window is derived after the snap
-    // and plays at rate 1 (T25).
-    const span = (kind: LayerParams['kind']): number => {
-      const g = gridForLayerKind(kind, comp.fps)
+    // A source window is the in point plus the span AS STORED: the edges snap
+    // to the frame grid, so the window is derived after the snap and plays at
+    // rate 1 (T25).
+    const span = (): number => {
+      const g = frameGrid(comp.fps)
       return snapOnGrid(t1!, g) - snapOnGrid(t0, g)
     }
     const media = (id: Uuid): MediaItem => {
@@ -2011,8 +2000,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         const hasAudio = item.metadata.audio != null
         if (c.audio === 'linked' && !hasAudio) throw new McpArgError(`${at}.content.audio: media ${c.media} has no audio stream to link; omit audio or send "none"`, `${at}.content.audio`)
         const pair = c.audio === 'linked' || (c.audio === null && hasAudio && snap.settings.auto_pair_audio_on_import === true)
-        params = videoClipParams(c.media, c.src_in_us, c.src_in_us + span('VideoClip'), mediaExtent(item))
-        if (pair) audio = { ...audioParams(c.media, c.src_in_us, c.src_in_us + span('Audio')), role: 'dialogue' }
+        params = videoClipParams(c.media, c.src_in_us, c.src_in_us + span(), mediaExtent(item))
+        if (pair) audio = { ...audioParams(c.media, c.src_in_us, c.src_in_us + span()), role: 'dialogue' }
         break
       }
       case 'image': {
@@ -2027,7 +2016,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // knows a source range does not fit, which reads as arithmetic.
         if (item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null))
           throw new McpArgError(`${at}: media ${c.media} carries no audio (kind ${item.kind}${item.kind === 'Video' ? ', no audio stream' : ''}), so there is nothing for an Audio layer to play. A picture is kind video or image; a subtitle document goes through apply_subtitles.`, `${at}.content.media_id`)
-        const base = audioParams(c.media, c.src_in_us, c.src_in_us + span('Audio'))
+        const base = audioParams(c.media, c.src_in_us, c.src_in_us + span())
         params = c.role === null ? base : { ...base, role: c.role as AudioRole }
         break
       }

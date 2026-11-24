@@ -25,7 +25,7 @@
 /// across, a lock that would have to move — with no second vocabulary.
 ///
 /// See docs/features.md#ripple-delete.
-import { gridForLayerKind, gridIndex, layerOverlapClass, spanOnGrid, stepPointOnGrid, type Grid, type OverlapClass } from '../grid'
+import { frameGrid, gridIndex, layerOverlapClass, stepPointOnGrid, type OverlapClass } from '../grid'
 import type { CommandError, Rational, TimeUs, Uuid } from '../../shared/commandErrors'
 import { isGapOn } from './gap'
 
@@ -55,7 +55,7 @@ export interface RippleView {
 export interface RippleHole { s: TimeUs; e: TimeUs }
 
 /** Both endpoints, never a landing plus a duration: a duration is the difference
- *  of two lattice points and is not itself one (see `travelOnGrids`). */
+ *  of two lattice points and is not itself one (see `travelOnGrid`). */
 export interface RippleMove { layer: Uuid; track: Uuid; t_start_us: TimeUs; t_end_us: TimeUs }
 
 export type RipplePlan =
@@ -74,7 +74,6 @@ interface Placed {
   layer: RippleLayerView
   track: RippleTrackView
   cls: OverlapClass
-  grid: Grid
 }
 
 /** A remaining layer as the collision scan sees it: where it ends up. */
@@ -185,7 +184,7 @@ function indexOf(view: RippleView): Map<Uuid, Placed> {
   const index = new Map<Uuid, Placed>()
   for (const track of view.tracks)
     for (const layer of track.layers)
-      index.set(layer.id, { layer, track, cls: layerOverlapClass(layer), grid: gridForLayerKind(layer.kind, view.fps) })
+      index.set(layer.id, { layer, track, cls: layerOverlapClass(layer) })
   return index
 }
 
@@ -194,7 +193,7 @@ function remainingOf(view: RippleView, doomed: ReadonlySet<Uuid>): Placed[] {
   const remaining: Placed[] = []
   for (const track of view.tracks)
     for (const layer of track.layers)
-      if (!doomed.has(layer.id)) remaining.push({ layer, track, cls: layerOverlapClass(layer), grid: gridForLayerKind(layer.kind, view.fps) })
+      if (!doomed.has(layer.id)) remaining.push({ layer, track, cls: layerOverlapClass(layer) })
   return remaining
 }
 
@@ -218,12 +217,6 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
     else holes.push({ s: h.s, e: h.e })
   }
 
-  // From here on every layer is measured against a hole as ITS OWN lattice sees
-  // it (`spanOnGrid`), never against the merged µs span: at 29.97/59.94 a linked
-  // pair's edges sit a few µs apart, so the raw span of a deleted pair starts
-  // before the video cut and ends after the audio one, and the other member's
-  // surviving piece would read as starting inside it.
-  //
   // 5 — the hole must be clean. A layer that merely reaches into the span from
   // before `s` is anchored ahead of the cut and stays; one that STARTS inside it
   // has nowhere honest to go, so the ripple names it and stops. Earliest hole
@@ -242,9 +235,8 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
   for (const h of holes) {
     let offender: RippleLayerView | null = null
     for (const r of remaining) {
-      const own = spanOnGrid(h.s, h.e, r.grid)
-      if (r.layer.t_start_us < own.s || r.layer.t_start_us >= own.e) continue
-      if (own.s === 0 && r.layer.t_start_us === 0 && !linkedToDoomed.has(r.layer.id)) continue
+      if (r.layer.t_start_us < h.s || r.layer.t_start_us >= h.e) continue
+      if (h.s === 0 && r.layer.t_start_us === 0 && !linkedToDoomed.has(r.layer.id)) continue
       if (offender === null || r.layer.t_start_us < offender.t_start_us) offender = r.layer
     }
     if (offender !== null)
@@ -272,34 +264,30 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
         if (doomed.has(member)) continue
         const placed = index.get(member)
         if (placed === undefined) continue
-        const own = spanOnGrid(h.s, h.e, placed.grid)
-        if (placed.layer.t_start_us <= own.s) { if (placed.layer.t_end_us > own.s) reaching = true }
-        else if (placed.layer.t_start_us >= own.e) after = true
+        if (placed.layer.t_start_us <= h.s) { if (placed.layer.t_end_us > h.s) reaching = true }
+        else if (placed.layer.t_start_us >= h.e) after = true
       }
       if (reaching && after)
         return { ok: false, refusal: { error: 'RippleLinkStraddles', link: link.id, hole: { s: h.s, e: h.e } } }
     }
   }
 
-  // 7 — a layer moves left by the points of ITS OWN lattice that the holes
-  // entirely to its left cover: the sum, per hole, of the distance between the
-  // hole's projected edges. Counted in points rather than µs, so a linked pair's
-  // two pieces after the cut land exactly on their own neighbours' edges, and two
-  // touching holes merged into one close by the same count the two separate
-  // holes would have (the projections of touching spans telescope).
+  // 7 — a layer moves left by the frames the holes entirely to its left cover,
+  // counted by index rather than summed in µs: a frame is not a whole number of
+  // µs at most rates, so µs lengths summed and re-snapped round twice, while
+  // touching holes merged into one close by exactly the frames the two separate
+  // holes would have.
+  const g = frameGrid(view.fps)
   const stepsOf = new Map<Uuid, number>()
   const landings = new Map<Uuid, { tStartUs: number; tEndUs: number }>()
   for (const r of remaining) {
     let steps = 0
-    for (const h of holes) {
-      const own = spanOnGrid(h.s, h.e, r.grid)
-      if (own.e <= r.layer.t_start_us) steps += gridIndex(own.e, r.grid) - gridIndex(own.s, r.grid)
-    }
+    for (const h of holes) if (h.e <= r.layer.t_start_us) steps += gridIndex(h.e, g) - gridIndex(h.s, g)
     if (steps === 0) continue
     stepsOf.set(r.layer.id, steps)
     landings.set(r.layer.id, {
-      tStartUs: stepPointOnGrid(r.layer.t_start_us, -steps, r.grid),
-      tEndUs: stepPointOnGrid(r.layer.t_end_us, -steps, r.grid),
+      tStartUs: stepPointOnGrid(r.layer.t_start_us, -steps, g),
+      tEndUs: stepPointOnGrid(r.layer.t_end_us, -steps, g),
     })
   }
 

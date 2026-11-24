@@ -19,23 +19,14 @@ surfaces. Never round-trip a time through `f64 / 1e6` and back inside the model.
 
 ### Timeline-field alignment: composition frame
 
-Visual layer `t_start_us` / `t_end_us`, every `composition.duration_us` and
-marker `t_us` / `end_t_us` sit on the composition frame grid
-`round(i × 1e6 × den / num)`. **Audio layer endpoints sit on the fixed 48 kHz
-mix lattice** `round(i × 1e6 / 48000)`, which is the mixer's own sample index,
-so nothing rounds where authoring meets render. The rate is a constant, not
-`composition.sample_rate`; that field is only the export target.
-
-One function, `gridForLayerKind(kind, fps)` (`state/snap.ts`), picks the
-lattice for all three enforcement sites: the validator, every mutation snap
-(including `move`'s link fan-out), and the load repair. A kind-blind fan-out or
-repair would silently drag a slipped audio member back onto a video frame.
-
-A frame boundary is a sample boundary at 24/25/30/50/60/23.976 fps. At 29.97 and
-59.94 (1601.6 / 800.8 samples per frame) a paired audio layer sits on the
-nearest sample boundary, up to ~10 µs from the video frame. That is where the
-mixer would play it anyway. `composition.duration_us` stays a frame count: the
-autofit rounds the high-water mark **up** to the enclosing frame.
+Every layer's `t_start_us` / `t_end_us`, Audio's included, every
+`composition.duration_us` and marker `t_us` / `end_t_us` sit on the composition
+frame grid `round(i × 1e6 × den / num)`, so a linked picture and its sound share
+their edges exactly. The mixer plays an audio edge from its nearest sample; an
+audio layer's sub-frame placement is its source window, slipped by whole samples
+of the 48 kHz mix lattice `round(i × 1e6 / 48000)` (ADR 0038,
+[audio.md](audio.md)). That rate is a constant, not `composition.sample_rate`,
+which is only the export target.
 
 Mutators snap-round (half-up) every time parameter against the grid, so all
 callers get aligned state. Source-time fields (`src_in_us` / `src_out_us`) are

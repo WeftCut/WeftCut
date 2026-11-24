@@ -432,9 +432,9 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
     }
   },
   // `moved` is every layer the sweep re-timed, each with where it landed and
-  // `adjusted` for its own grid snap: the set has no single applied delta,
-  // since a frame-grid member and a sample-grid member land different
-  // distances from one request.
+  // `adjusted` for its grid snap: the set has no single applied delta in µs,
+  // since at a fractional rate the same whole frames span a different µs
+  // count from each start.
   shift_layers: (c) => {
     const v = c.value as { moved: Uuid[]; delta_us: number }
     const requested = typeof c.args.delta_us === 'number' ? c.args.delta_us : v.delta_us

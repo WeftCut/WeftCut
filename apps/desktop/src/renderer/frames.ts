@@ -13,11 +13,9 @@
 /// indices that cross the wasm ABI as f64 are far below that bound; the
 /// intermediate products are not.
 ///
-/// This module is the COMPOSITION-frame surface. Audio geometry lives on a second
-/// lattice (the fixed 48 kHz mix rate, ADR 0038), and which lattice a given layer
-/// uses is decided in exactly one place — `gridForLayerKind` in `./grid.ts`. Reach
-/// for that when the answer depends on layer kind; reach for this when you already
-/// know you mean composition frames (the ruler, the playhead, timecode).
+/// This module is the COMPOSITION-frame surface. The second lattice, the fixed
+/// 48 kHz mix rate for audio automation keys and source slips, and the move
+/// arithmetic every layer edge shares live in `./grid.ts` (ADR 0038).
 ///
 /// `initEval()` must have resolved before any call (the renderer bootstrap and
 /// the main-process boot both await it; vitest does it in `testSetup.ts`).
