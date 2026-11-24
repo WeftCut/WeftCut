@@ -181,24 +181,33 @@ export function dedupe(names: readonly string[]): string[] {
 
 export interface FaceStyle { weight: number; italic: boolean }
 
-/** Weight and italic from `OS/2` (usWeightClass; fsSelection ITALIC or
- *  OBLIQUE), else from `head.macStyle` (bold → 700), else 400 upright. */
+/** Weight from `OS/2` usWeightClass, else `head.macStyle` (bold → 700), else
+ *  400. Italic when any record says so: fsSelection ITALIC or OBLIQUE,
+ *  macStyle italic, or a subfamily name with Italic or Oblique. Vendors set
+ *  only some of them: macOS's Avenir Next Bold Italic leaves fsSelection
+ *  empty, and its Ultra Light Italic says so in its names alone. */
 export function readStyle(face: SfntFace): FaceStyle {
+  let weight = 400
+  let italic = false
   try {
     const os2 = tableBytes(face, 'OS/2', 64)
-    if (os2) {
-      const fsSelection = os2.readUInt16BE(62)
-      return { weight: cssWeight(os2.readUInt16BE(4)), italic: (fsSelection & 0x0201) !== 0 }
-    }
     const head = tableBytes(face, 'head', 46)
-    if (head) {
-      const macStyle = head.readUInt16BE(44)
-      return { weight: macStyle & 1 ? 700 : 400, italic: (macStyle & 2) !== 0 }
+    const macStyle = head ? head.readUInt16BE(44) : 0
+    if (os2) {
+      weight = cssWeight(os2.readUInt16BE(4))
+      italic = (os2.readUInt16BE(62) & 0x0201) !== 0
+    } else if (head) {
+      weight = macStyle & 1 ? 700 : 400
     }
+    italic ||= (macStyle & 2) !== 0
   } catch {
-    // fall through to the default
+    // the defaults stand
   }
-  return { weight: 400, italic: false }
+  if (!italic) {
+    const names = readNames(face)
+    italic = !!names && [...names.typographicSubfamily, ...names.subfamily].some(n => /\b(italic|oblique)\b/i.test(n))
+  }
+  return { weight, italic }
 }
 
 /** usWeightClass on the CSS scale. Some CFF fonts store 1–9 for 100–900, as
