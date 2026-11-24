@@ -362,6 +362,16 @@ describe('linked audio transitions follow their visual transition', () => {
     expect([layerOf(p, v1).t_end_us, layerOf(p, v2).t_start_us, layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us])
       .toEqual([cut, cut, cut, cut])
   })
+  it('removing the visual after the audio borrow was grown on its own restores the audio cut too', () => {
+    const { p, gen, v1, v2, a1, a2, cut } = linkedCut()
+    const { id } = applyAddTransition(p, gen, v1, v2, 500_000, CROSSFADE, 'extend')
+    applyUpdateTransition(p, audioTransitionOf(p, a1)!.id, { duration_us: 1_000_000, extended_us: 1_000_000 })
+    expect(layerOf(p, a1).t_end_us).toBeGreaterThan(layerOf(p, v1).t_end_us)
+    applyRemoveTransition(p, id, gen)
+    expect(root(p).transitions).toEqual([])
+    expect([layerOf(p, v1).t_end_us, layerOf(p, v2).t_start_us, layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us])
+      .toEqual([cut, cut, cut, cut])
+  })
   it('shrinking the visual past the audio\'s own borrow never cuts the audio before its cut', () => {
     const { p, gen, v1, v2, a1, a2, cut } = linkedCut()
     const { id } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE, 'extend')

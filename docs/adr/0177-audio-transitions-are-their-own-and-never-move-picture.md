@@ -53,8 +53,9 @@ to crossfade.
   number of frames as the visual one's, and its incoming layer moves as a link
   sibling. A returned borrow gives back at most what the audio transition still
   borrows: after the audio was shortened on its own, the rest would cut sound
-  before the audio cut. A deliberate tail trim (negative `extended_us`) moves
-  both cuts by the same frames. Its duration is then re-derived from the landed overlap, or it is
+  before the audio cut. A removal returns all the audio borrows, so both cuts
+  come back however the audio was edited on its own. A deliberate tail trim
+  (negative `extended_us`) moves both cuts by the same frames. Its duration is then re-derived from the landed overlap, or it is
   removed in the same commit when no overlap is left. Any other edit that
   breaks an audio overlap drops it through reconcile, as for visual.
 

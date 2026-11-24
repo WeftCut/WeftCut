@@ -286,7 +286,8 @@ function linkedAudioTransition(c: Composition, visual: Transition): Transition |
  *  A returned borrow gives back at most the audio's own: once the audio
  *  transition was shortened on its own, the visual one returns more than the
  *  audio still holds, and the rest would cut sound before the audio cut. A
- *  trim moves both sacred ends by the same frames. */
+ *  remove passes -Infinity: the audio returns all it borrows. A trim moves
+ *  both sacred ends by the same frames. */
 function planAudioCarry(p: Project, c: Composition, visualFrom: Uuid, audio: Transition, borrowFrames: number, trimFrames = 0): (() => void) | null {
   const from = locateLayerIn(c, audio.from_layer)?.layer
   if (!from) return null
@@ -625,7 +626,8 @@ function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], tr
  *  (ADR 0177): the borrow is returned as above, and the incoming Audio layer,
  *  still overlapping by `duration_us − extended_us`, changes to a free lane
  *  (minting one when none is free). A visual transition's linked audio
- *  transition follows the restore as it follows an update. */
+ *  transition follows the restore: its outgoing layer returns all the audio
+ *  borrows, whatever the visual borrowed. */
 export function applyRemoveTransition(p: Project, transitionId: Uuid, idGen: IdGen): void {
   const { comp: c, transition: tr, index: idx } = requireTransition(p, transitionId)
   const moveUs = tr.duration_us - tr.extended_us // ≥ 0: validate holds e ≤ d
@@ -661,13 +663,10 @@ export function applyRemoveTransition(p: Project, transitionId: Uuid, idGen: IdG
     const shrunkFromEnd = fromLoc ? fromLoc.layer.t_end_us - tr.extended_us : null
     precheckRestoreCollision(c, moveSet, travel, tr.from_layer, shrunkFromEnd, linkedAudio)
   }
-  // The visual outgoing end returns its borrow, `extended_us` in whole frames.
-  let carryAudio: (() => void) | null = null
-  if (linkedAudio && fromLoc) {
-    const { num, den } = c.fps
-    const end = fromLoc.layer.t_end_us
-    carryAudio = planAudioCarry(p, c, tr.from_layer, linkedAudio, frameIndexRound(end - tr.extended_us, num, den) - frameIndexRound(end, num, den))
-  }
+  // The visual outgoing end returns its borrow; the audio returns all of its
+  // own, which an audio edit may have made shorter or longer, so both cuts
+  // come back.
+  const carryAudio = linkedAudio && fromLoc ? planAudioCarry(p, c, tr.from_layer, linkedAudio, -Infinity) : null
 
   c.transitions.splice(idx, 1)
   if (fromLoc) shrinkLayerTEnd(fromLoc.layer, tr.extended_us)
