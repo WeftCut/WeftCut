@@ -301,9 +301,9 @@ and its same-media video's source time 0 land, in samples. A non-zero offset
 shows as a badge on the audio clip (`+3 smp`, `−2.00 ms`), and every move keeps
 it. `Alt+←/→` slips the selected audio's sound one sample, `Alt+Shift+←/→` one
 millisecond (48 samples), `Alt+Shift+S` re-syncs it to its video — all commands
-(palette, Settings → Keyboard, agent-callable). A slip that would need source
-the media does not have is refused. Pointer drags, the inspector and the ruler
-work in frames.
+(palette, Settings → Keyboard, agent-callable). A slip past the media's start
+or end plays silence there, drawn as no waveform; a trim never reaches further
+into that silence. Pointer drags, the inspector and the ruler work in frames.
 
 Mutations: `apps/desktop/src/main/state/mutations/links.ts`, with fan-out in
 `move.ts` / `trim.ts` / `split.ts`. Agents read links from `project://links`
