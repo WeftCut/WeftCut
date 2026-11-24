@@ -8,7 +8,7 @@
 import { BUNDLED_FONT_FAMILIES, DEFAULT_CAPTION_FONT_FAMILY } from "../../../shared/fonts";
 import { missingLeaves } from "../../../shared/fonts/missing";
 import {
-  faceAlias, isBundledFamily, isGenericFamily, parseFamilyList, requestItalic, requestWeight, resolveFace,
+  faceAlias, isBundledFamily, isGenericFamily, parseFamilyList, requestItalic, requestWeight, resolveFace, styleName,
 } from "../../../shared/fonts/resolve";
 import type { FaceIndexEntry, FaceRef, FontIndex } from "../../../shared/fonts/types";
 import type { Manifest } from "../../../shared/motifs/catalog";
@@ -134,20 +134,6 @@ export interface MissingFont {
   /// bundled chain for Text and null for a Motif (the capture browser's own
   /// default).
   fallback: string | null;
-}
-
-const WEIGHT_NAMES: Record<number, string> = {
-  100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular", 500: "Medium",
-  600: "SemiBold", 700: "Bold", 800: "ExtraBold", 900: "Black",
-};
-
-/// "Bold Italic", "Regular", "Italic", "650": the name a font menu gives the
-/// style.
-function styleName(weight: number, italic: boolean): string {
-  const w = requestWeight(weight);
-  const name = WEIGHT_NAMES[w] ?? String(w);
-  if (!requestItalic(italic)) return name;
-  return w === 400 ? "Italic" : `${name} Italic`;
 }
 
 /// The missing leaves of a Text layer's family list, by the rule main names

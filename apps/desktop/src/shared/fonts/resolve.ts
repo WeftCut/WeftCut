@@ -93,6 +93,20 @@ export function requestItalic(italic: boolean | null | undefined): boolean {
   return italic === true
 }
 
+const WEIGHT_NAMES: Record<number, string> = {
+  100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium',
+  600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black',
+}
+
+/** "Bold Italic", "Regular", "Italic", "650": the name a font menu gives the
+ *  style a request asks for. */
+export function styleName(weight: number | null | undefined, italic: boolean | null | undefined): string {
+  const w = requestWeight(weight)
+  const name = WEIGHT_NAMES[w] ?? String(w)
+  if (!requestItalic(italic)) return name
+  return w === 400 ? 'Italic' : `${name} Italic`
+}
+
 /** The family name a renderer registers a catalog face under: one alias per
  *  face, so faces of one family from different sources never merge in a
  *  FontFaceSet. */

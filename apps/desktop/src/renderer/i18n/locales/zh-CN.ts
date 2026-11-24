@@ -2762,7 +2762,6 @@ const zhCN: Resources = {
     excluded_not_installed: "已排除 · 本机未安装",
     fonts_manage: "打开 设置 > 项目 > 字体",
     fonts_missing: "缺失的字体",
-    italic: "斜体",
     style_outside: "不在文件夹中的风格",
     untracked: "副本不会携带",
     untracked_hint: "没有图层使用这些 Motif 文件夹。",
