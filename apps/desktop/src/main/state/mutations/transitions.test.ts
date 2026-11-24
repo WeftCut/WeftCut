@@ -141,6 +141,28 @@ describe('applyAddTransition', () => {
     expect(audio.duration_us).toBe(layerOf(p, a1).t_end_us - layerOf(p, a2).t_start_us)
     expect(Math.abs(audio.duration_us - visual.duration_us)).toBeLessThanOrEqual(21)
   })
+  it('restores the linked sample-grid cut after a fractional-frame transition edit', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    root(p).fps = { num: 30_000, den: 1001 }
+    addMedia(p, 'm', 'Video', 10_000_000)
+    const cut = timeUsAtFrame(61, 30_000, 1001)
+    const end = timeUsAtFrame(121, 30_000, 1001)
+    const videoTrack = root(p).tracks[0].id, audioTrack = root(p).tracks[1].id
+    const v1 = applyAddLayer(p, gen, videoTrack, videoParams('m', 0, cut), 0, cut)
+    const v2 = applyAddLayer(p, gen, videoTrack, videoParams('m', cut, end), cut, end)
+    const a1 = applyAddLayer(p, gen, audioTrack, audioParams('m', 0, cut), 0, cut)
+    const a2 = applyAddLayer(p, gen, audioTrack, audioParams('m', cut, end), cut, end)
+    root(p).links.push({ id: 'l1', members: [v1, a1].sort() }, { id: 'l2', members: [v2, a2].sort() })
+    const audioCut = layerOf(p, a2).t_start_us
+    const { id } = applyAddTransition(p, gen, v1, v2, 1_000_000, CROSSFADE)
+    applyUpdateTransition(p, id, { duration_us: 500_000 })
+    expect(root(p).transitions[1].duration_us).toBe(layerOf(p, a1).t_end_us - layerOf(p, a2).t_start_us)
+    applyRemoveTransition(p, id)
+    expect(layerOf(p, v2).t_start_us).toBe(cut)
+    expect(layerOf(p, a2).t_start_us).toBe(audioCut)
+    expect(root(p).transitions).toEqual([])
+  })
   it('follows a visual duration change and removal in the linked audio transition', () => {
     const { p, gen, a1, a2 } = twoAdjacentVideo()
     const a = applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('m', 0, 2_000_000), 0, 2_000_000)

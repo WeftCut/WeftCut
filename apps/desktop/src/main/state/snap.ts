@@ -22,18 +22,22 @@ export {
 export {
   AUDIO_GRID,
   AUDIO_SAMPLE_RATE_HZ,
-  floorShiftAtZero,
+  floorTravelAtZero,
   frameGrid,
   gridIndex,
   isCanonicalOnGrid,
   layerOverlapClass,
-  shiftOnGrids,
   snapDownOnGrid,
   snapOnGrid,
   snapUpOnGrid,
+  spanOnGrid,
   timeUsAtGridIndex,
+  travelBy,
+  travelCrossesZero,
+  travelOnGrids,
   type Grid,
   type ShiftMember,
+  type Travel,
 } from '../../renderer/grid'
 
 import { gridForLayerKind as gridForKindString } from '../../renderer/grid'

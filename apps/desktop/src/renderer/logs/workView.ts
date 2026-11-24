@@ -1,6 +1,6 @@
 // What the status bar's work pill shows: background work grouped by what owns
 // it — clip-compute jobs, agent calls, derivative jobs per media item, copies
-// into the project's Fonts/. Pure, so
+// into the project's Fonts/, a pack or unpack. Pure, so
 // counting, de-duplication and the show delay are tested without a renderer.
 //
 // One piece of work is one row. An agent call that runs a clip-compute job is
@@ -11,6 +11,7 @@ import type { ComputeJob } from "../../shared/compute-jobs";
 import { isWaiting } from "../compute/computeJobView";
 import type { DerivativeJob } from "../state/derivativeJobsStore";
 import type { FontCopies } from "./fontCopiesStore";
+import type { PackJobProgress } from "../../shared/projectPack";
 
 /// Work shows once it has run this long, the log's own threshold for "worth a
 /// row" (docs/status-log.md § Producers): an agent's quick reads never flash.
@@ -28,6 +29,8 @@ export interface WorkView {
   derivatives: MediaWork[];
   /// The font copy batch: one row however many files it holds.
   fonts: FontCopies | null;
+  /// The running pack or unpack.
+  pack: PackJobProgress | null;
   /// Rows across the groups.
   count: number;
   /// Every row is queued for admission: the pill shows waiting, not work.
@@ -42,6 +45,7 @@ export interface WorkInput {
   activities: readonly AgentActivity[];
   derivatives: readonly DerivativeJob[];
   fontCopies: FontCopies | null;
+  pack?: PackJobProgress | null;
   now: number;
 }
 
@@ -52,7 +56,7 @@ const startOf = (iso: string): number => {
   return Number.isNaN(ms) ? Number.NEGATIVE_INFINITY : ms;
 };
 
-export function workView({ jobs, activities, derivatives, fontCopies, now }: WorkInput): WorkView {
+export function workView({ jobs, activities, derivatives, fontCopies, pack = null, now }: WorkInput): WorkView {
   let nextDueAt: number | null = null;
   const due = (since: number): boolean => {
     const at = since + WORK_SHOW_AFTER_MS;
@@ -88,8 +92,9 @@ export function workView({ jobs, activities, derivatives, fontCopies, now }: Wor
 
   const fonts = fontCopies && due(fontCopies.since) ? fontCopies : null;
 
-  const count = compute.length + agent.length + derivativeRows.length + (fonts ? 1 : 0);
-  const waiting = count > 0 && agent.length === 0 && derivativeRows.length === 0 && fonts === null
+  // A pack or unpack is the user's own, like an export: no show delay.
+  const count = compute.length + agent.length + derivativeRows.length + (fonts ? 1 : 0) + (pack ? 1 : 0);
+  const waiting = count > 0 && agent.length === 0 && derivativeRows.length === 0 && fonts === null && pack === null
     && compute.every((job) => isWaiting(job.phase));
-  return { compute, agent, derivatives: derivativeRows, fonts, count, waiting, nextDueAt };
+  return { compute, agent, derivatives: derivativeRows, fonts, pack, count, waiting, nextDueAt };
 }

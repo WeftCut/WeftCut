@@ -2716,6 +2716,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "ffmpeg-sidecar",
+ "filetime",
  "flate2",
  "image",
  "image-compare",
@@ -2745,6 +2746,7 @@ dependencies = [
  "weftcut-eval",
  "weftcut-reaper",
  "windows 0.62.2",
+ "zip",
  "zstd",
 ]
 

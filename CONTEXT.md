@@ -959,6 +959,12 @@ What a project folder keeps for this machine alone and a copy leaves behind:
 files. Everything Save As copies is the project's content.
 _Avoid_: temp files, junk
 
+**Pack**:
+One `.weftcut` file holding a project's content (what Save As copies), made by
+File > Pack project and opened into a new folder from the start screen or the
+File menu. Machine-local entries stay out. See ADR 0178.
+_Avoid_: export (that renders video), archive, bundle
+
 **Portability check**:
 The list of what the open project still needs from outside its folder for a
 copy to play the same elsewhere (File > Check portability,

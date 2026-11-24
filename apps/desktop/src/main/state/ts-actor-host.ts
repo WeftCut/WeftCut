@@ -10,7 +10,9 @@ import { CommandFailure } from './errors'
 import { createAutosave, type AutosaveController, type AutosaveFs, type AutosaveSaveState } from './autosave'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type MissingMotif, type SchemaUpgradeReport } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
-import type { ProjectContentFs } from './projectContent'
+import { ensureGitignore, packFiles, type ProjectContentFs } from './projectContent'
+import { createProjectPacker, type PackNative, type PackSource, type ProjectPacker } from './projectPack'
+import { PROJECT_PACK_PROGRESS_EVENT } from '../../shared/projectPack'
 import { serializeProjectToJson } from './persistence'
 import { currentEditTrace, editTraceId, EDIT_TRACE_ARG, runEditTrace } from '../../shared/editTrace'
 import { describeGridRepairs, type GridRepair } from './serialize'
@@ -106,6 +108,14 @@ export interface TsActorHostDeps {
   contentFs?: ProjectContentFs
   /** node:path.join — injected for testability. */
   join: (...parts: string[]) => string
+  /** The backend's pack commands and job cancel (projectPack.ts). Absent
+   *  (tests) → Pack project and Open packed project refuse. */
+  packNative?: PackNative
+  /** Bytes free for new files in a folder (`fs.statfs`): an unpack refuses
+   *  a parent without room for the pack. */
+  freeBytes?: (dir: string) => Promise<number>
+  /** The app's version, written into each pack's manifest. */
+  appVersion?: string
   /** Backend napi facade for workspace bookkeeping. */
   napi: WorkspaceNapi
   /** Rust compute facade for the native-compute → TS-write hybrids. */
@@ -279,6 +289,9 @@ export interface TsActorHost {
    *  (`project://portability`, `state/portability.ts`); null with no project
    *  open. */
   portability: () => PortabilityReport | null
+  /** Pack project and Open packed project; null without `packNative`. Main
+   *  feeds it the backend's `project_pack:progress` events. */
+  packer: ProjectPacker | null
   /** The open project's `Motifs/<id>/` changed on disk (`watchProjectMotifs`):
    *  a new revision of a Motif the project records becomes a recorded edit
    *  (`ProjectMotifRecords.folderChanged`). */
@@ -745,6 +758,46 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     },
   }
 
+  const packSource = (): PackSource | null => {
+    if (!opened) return null
+    const project = actor.snapshot()
+    return { dir: opened.dir, name: project.metadata.name, motifIds: Object.keys(project.motifs) }
+  }
+  const packer = deps.packNative && deps.contentFs ? createProjectPacker({
+    native: deps.packNative,
+    current: packSource,
+    // What Save As writes before it copies, in its order, queued behind any
+    // open or close so the folder answered is the one that stays open.
+    settle: () => {
+      const settled = persistenceTail.then(async () => {
+        const dir = opened?.dir
+        if (!dir) return null
+        await collectStyle(dir)
+        try { await deps.fonts?.drain() } finally { deps.fonts?.projectChanged(opened?.dir ?? null) }
+        autosave.forceFlush()
+        return packSource()
+      })
+      persistenceTail = settled.catch(() => {})
+      return settled
+    },
+    list: (dir, ids) => packFiles(dir, ids, deps.contentFs!, deps.platform),
+    readFile: (path) => deps.fs.readFile(path),
+    freeBytes: deps.freeBytes ?? (async () => Number.POSITIVE_INFINITY),
+    readdir: async (dir) => {
+      try { return await deps.contentFs!.readdir(dir) } catch (error) {
+        if ((error as { code?: unknown } | null)?.code === 'ENOENT') return null
+        throw error
+      }
+    },
+    ensureGitignore: (dir) => ensureGitignore(dir, deps.fs, deps.join),
+    open: async (dir) => { await agentProjects.open(dir) },
+    progress: (progress) => deps.send(PROJECT_PACK_PROGRESS_EVENT, progress),
+    appVersion: deps.appVersion ?? '',
+    join: deps.join,
+    basename: (p) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1),
+    newJobId: () => `pack-${idGen()}`,
+  }) : null
+
   // One judge for every surface: the resolver's, which reads an edit made on
   // disk while open against what the open project last observed in the
   // folder, never against this table.
@@ -1123,6 +1176,17 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         }
         return { applied, view: reviewView(includeUser) } satisfies ReviewActionResult
       }
+      case 'pack': {
+        if (!packer) throw new Error('Packing is not available')
+        const a = args as { archive?: unknown; parent?: unknown }
+        if (channel === 'project_pack_plan') return packer.plan()
+        if (channel === 'project_pack_cancel') return packer.cancel()
+        if (typeof a.archive !== 'string') throw new Error('archive is required')
+        if (channel === 'project_pack') return packer.pack(a.archive)
+        if (channel === 'project_unpack_inspect') return packer.inspect(a.archive)
+        if (typeof a.parent !== 'string') throw new Error('parent is required')
+        return packer.unpack(a.archive, a.parent)
+      }
       case 'open': return persistence.open((args as { path: string }).path)
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)
       case 'newWorkspace': return persistence.newWorkspace(args as never)
@@ -1288,6 +1352,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     unavailableMotifs,
     missingFonts: () => (opened ? deps.fonts?.missing() ?? [] : []),
     portability,
+    packer,
     motifFolderChanged: (id, state) => {
       motifRecords.folderChanged(id, state)
       deps.fonts?.motifFolderChanged()

@@ -74,7 +74,7 @@ export function exportPhaseView(state: ExportState, t: TFunction): { phase: stri
 /// "Reveal in Explorer"), the way Premiere and Resolve label it. Spelled out
 /// for the same reason as FINALIZE_STEP_KEY: a new RendererOS is a compile
 /// error here, not a missing-key string at runtime.
-const REVEAL_KEY: Record<RendererOS, string> = {
+export const REVEAL_KEY: Record<RendererOS, string> = {
   windows: "export.reveal_windows",
   mac: "export.reveal_mac",
   linux: "export.reveal_linux",

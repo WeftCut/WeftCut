@@ -199,14 +199,16 @@ already says what it is has no title.
   it appears. The button's accessible name is the count, the message and
   "Open the log".
 - **Work pill** (`WorkPill`, model in `logs/workView.ts`): one pill for a
-  background export (Preview during export), clip-compute jobs (ADR 0121),
-  agent calls, derivative jobs and font copies into the project ("Copying
+  background export (Preview during export), a pack or unpack (ADR 0178),
+  clip-compute jobs (ADR 0121), agent calls, derivative jobs and font copies
+  into the project ("Copying
   fonts 2/6"; "Copying fonts into the project…" while a close waits for them). One piece of work is one row: an agent call
   running a clip-compute job is that job's row, tagged with the agent. Work
   shows once it has run 250 ms, so an agent's quick reads never flash; the
-  export, started by the user, shows at once. The label: a running export
-  leads with a progress ring and its percent, the rest counted after it
-  ("Export 42% · 3 more"); otherwise one row names what it does (Transcribing,
+  export and a pack, started by the user, show at once. The label: a running
+  export leads with a progress ring and its percent, the rest counted after it
+  ("Export 42% · 3 more"), and a pack leads the same way when no export runs
+  ("Packing 42%"); otherwise one row names what it does (Transcribing,
   Generating derivatives…) and several are counted; when every row is queued
   for admission the spinner becomes an hourglass. The popover groups rows by
   owner, the export first. A lone group has no heading, its rows and the
@@ -216,7 +218,10 @@ already says what it is has no title.
   Cancel staying on the last line), and a group's action, the agent link,
   closes the group. The export's percent is the trigger's alone. The export:
   the file and elapsed time, a bar, fps and
-  speed, Cancel (no remaining-time estimate); clip jobs with their status and
+  speed, Cancel (no remaining-time estimate); a pack or unpack: the pack file,
+  a bar, bytes done of the total and Cancel (no remaining-time estimate either;
+  the start screen, which has no pill, shows an unpack it started the same way);
+  clip jobs with their status and
   Cancel (`ComputeJobStatus`); agent calls with a link to the Activity tab;
   derivatives one row per media item with the kinds in progress. Every Cancel
   here is a small secondary button, so a row's one action shows focus. Log ops are

@@ -18,6 +18,7 @@ export type Route =
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'saveStatus' }    // whether project.json is reaching disk (shared/save-status.ts) — READ-only
   | { kind: 'portability' }   // the portability check (state/portability.ts) and its cleanup — never a project write
+  | { kind: 'pack' }          // Pack project / Open packed project (state/projectPack.ts) — no project write; an unpack opens through 'open'
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
   | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
   | { kind: 'agentSessionBegin' } // legacy local channel: request agent view only
@@ -185,6 +186,13 @@ export function routeChannel(channel: string): Route {
     // no layer places, to the system trash. Neither is project content.
     case 'project_portability':
     case 'project_trash_motif_folder': return { kind: 'portability' }
+    // A pack reads the project folder after the flush Save As makes; an
+    // unpack writes a new folder and opens it as Open… does (ADR 0178).
+    case 'project_pack_plan':
+    case 'project_pack':
+    case 'project_pack_cancel':
+    case 'project_unpack_inspect':
+    case 'project_unpack': return { kind: 'pack' }
     // Review: two reads (the baseline view; what one activity's ops did),
     // approve all and revert all, both checked against the view the user
     // acted on. Approval folds the current state into the Review baseline; it

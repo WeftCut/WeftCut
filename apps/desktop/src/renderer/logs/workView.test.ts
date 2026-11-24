@@ -3,6 +3,7 @@ import type { AgentActivity } from "../../shared/agent-activity";
 import type { ComputeJob, ComputePhase } from "../../shared/compute-jobs";
 import type { DerivativeJob } from "../state/derivativeJobsStore";
 import type { FontCopies } from "./fontCopiesStore";
+import type { PackJobProgress } from "../../shared/projectPack";
 import { WORK_SHOW_AFTER_MS, workView } from "./workView";
 
 const T0 = Date.parse("2026-01-02T03:04:05.000Z");
@@ -27,11 +28,13 @@ const derivative = (media_id: string, kind: string, since = LONG_AGO): Derivativ
 const fontBatch = (done: number, total: number, opts: { closing?: boolean; since?: number } = {}): FontCopies =>
   ({ done, total, closing: opts.closing ?? false, since: opts.since ?? LONG_AGO });
 
-const view = (input: { jobs?: ComputeJob[]; activities?: AgentActivity[]; derivatives?: DerivativeJob[]; fontCopies?: FontCopies; now?: number }) =>
+const view = (input: { jobs?: ComputeJob[]; activities?: AgentActivity[]; derivatives?: DerivativeJob[]; fontCopies?: FontCopies; pack?: PackJobProgress; now?: number }) =>
   workView({
     jobs: input.jobs ?? [], activities: input.activities ?? [], derivatives: input.derivatives ?? [],
-    fontCopies: input.fontCopies ?? null, now: input.now ?? T0,
+    fontCopies: input.fontCopies ?? null, pack: input.pack ?? null, now: input.now ?? T0,
   });
+
+const packing: PackJobProgress = { job_id: "pack-1", kind: "pack", file: "Example.weftcut", done: 0, total: 0, cancelling: false };
 
 describe("workView", () => {
   it("is empty with nothing running", () => {
@@ -107,5 +110,13 @@ describe("workView", () => {
   it("orders each group by start", () => {
     const v = view({ jobs: [job("late", undefined, LONG_AGO + 2), job("early", undefined, LONG_AGO + 1)] });
     expect(v.compute.map((j) => j.job_id)).toEqual(["early", "late"]);
+  });
+
+  it("shows a pack the moment it starts, as one row, and never as waiting", () => {
+    const started = view({ pack: packing, jobs: [job("q", { kind: "queued", reason: "budget" })] });
+    expect(started.pack).toEqual(packing);
+    expect(started.count).toBe(2);
+    expect(started.waiting).toBe(false);
+    expect(started.nextDueAt).toBeNull();
   });
 });
