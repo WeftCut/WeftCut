@@ -254,6 +254,18 @@ describe('closing', () => {
     expect(inFonts()).toEqual([])
   })
 
+  it('drain copies back a collected face that left Fonts/ while the project was open, so Save As and a pack carry it', async () => {
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    const h = await harness([textLayer('a', 'Example')])
+    await h.open()
+    fs.rmSync(path.join(fontsDir(), 'Example-Regular.ttf'))
+    await h.store.rescan()
+    await h.store.settled()
+    expect(inFonts()).toEqual([])
+    await h.store.drain()
+    expect(inFonts()).toEqual(['Example-Regular.ttf'])
+  })
+
   it('drain collects what the last edit draws, whose quiet window has not ended', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     installFont('Example-Regular.ttf', { family: 'Example' })

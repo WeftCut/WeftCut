@@ -289,6 +289,34 @@ it('refuses only for a Motif the export draws: outside its range, on a disabled 
     .resolves.toMatchObject({ state: expect.any(String) });
 });
 
+it('reads a Group through its window, and an export without video draws no Motif', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'weftcut-export-group-')); cleanup.push(dir);
+  const idGen = seededGen();
+  // A 3 s Group whose only Motif, missing, plays from 2 s to 3 s.
+  const { p: project, refLayerId } = withGroup(blankProject(idGen, 'Project'), idGen, (g) => {
+    g.tracks[0]!.layers.push({ id: idGen(), label: null, t_start_us: 2_000_000, t_end_us: 3_000_000, enabled: true, locked: false,
+      metadata: {}, params: motifLayerParams('late', {}, [64, 64]), effects: [] } as never);
+  });
+  rootComposition(project).duration_us = 3_000_000;
+  expect([...exportedMotifIds(project, { startUs: 0, endUs: 1_000_000 })]).toEqual([]);
+  expect([...exportedMotifIds(project, { startUs: 2_000_000, endUs: 3_000_000 })]).toEqual(['late']);
+
+  const unavailable: UnavailableMotif[] = [{ motif_id: 'late', status: 'missing', diagnostic: 'Motifs/late/ is missing' }];
+  const host = { actor: { snapshot: () => project }, openedProject: () => ({ dir }), handleInvoke: async () => null, unavailableMotifs: () => unavailable } as unknown as TsActorHost;
+  const jobs = () => new ExportJobs({ host: () => host, send: vi.fn(), native: vi.fn(async () => null), readyTimeoutMs: 40 });
+  await expect(jobs().start({ settings: { include_audio: false }, range: { t_start_us: 0, t_end_us: 1_000_000 } }))
+    .resolves.toMatchObject({ state: expect.any(String) });
+  await expect(jobs().start({ settings: { include_video: false } })).resolves.toMatchObject({ state: expect.any(String) });
+  await expect(jobs().start({ settings: { include_audio: false } })).rejects.toMatchObject({ code: 'motif_unavailable' });
+
+  // The same Group placed for its last second only, at the start of the root.
+  const ref = rootComposition(project).tracks.flatMap(t => t.layers).find(l => l.id === refLayerId)!;
+  Object.assign(ref, { t_start_us: 0, t_end_us: 1_000_000 });
+  Object.assign(ref.params, { src_in_us: 2_000_000, src_out_us: 3_000_000 });
+  expect([...exportedMotifIds(project, { startUs: 0, endUs: 1_000_000 })]).toEqual(['late']);
+  expect([...exportedMotifIds(project, { startUs: 1_000_000, endUs: 3_000_000 })]).toEqual([]);
+});
+
 it('the UI\'s strict conflict still fails in view, and the latest job outlives its end (ME11)', async () => {
   const s = await setup(); const output = path.join(s.dir, 'exists.mp4'); await fs.writeFile(output, 'original');
   const job = await s.jobs.start({ output_path: output, on_conflict: 'fail', settings: { includeAudio: false } }, false);

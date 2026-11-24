@@ -202,14 +202,15 @@ export class ProjectFontStore {
     this.#kick()
   }
 
-  /** Finishes the batch under way and any already asked for, the one an
-   *  edit's quiet window still holds included, then refuses new ones until
-   *  `projectChanged`. While the system scan has not landed and the project
-   *  asks for a family it may find, waits for the scan and the batch it
+  /** Finishes the batch under way and one more that copies, then refuses new
+   *  ones until `projectChanged`. While the system scan has not landed and the
+   *  project asks for a family it may find, waits for the scan and the batch it
    *  allows. Never rejects. */
   async drain(): Promise<void> {
-    // The last edit's uses are collected before the folder is let go.
-    if (this.#timer) this.#kick()
+    // Copies before the folder is let go or carried (Save As, a pack): the last
+    // edit's uses, and a collected face that left `Fonts/` while the project was
+    // open, which `rescan` does not copy back.
+    this.#kick()
     const dir = this.#dir
     const published = this.#published
     const scan = dir !== null && published && !this.#deps.catalog.index().complete
@@ -244,8 +245,9 @@ export class ProjectFontStore {
 
   /** `Fonts/` changed on disk: index it again, tell, and walk the uses again
    *  so `missing` follows the folder. Never copies: a face deleted by hand
-   *  comes back at the next open or change to what the project draws, not
-   *  while a sync may still be writing the folder. */
+   *  comes back at the next open, change to what the project draws, or
+   *  `drain` (close, Save As, a pack), not while a sync may still be writing
+   *  the folder. */
   async rescan(): Promise<void> {
     if (this.#dir === null) return
     await this.#rescan(this.#generation)
