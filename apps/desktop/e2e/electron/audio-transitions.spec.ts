@@ -64,9 +64,21 @@ test('linked crossfade is equal-power in preview before compression and in expor
       await invokeCmd<string>(page, 'import_media', { path: sources[1] })]
     const from = await invokeCmd<string>(page, 'add_media_layer', { trackId, mediaId: media[0], tStartUs: 0 })
     const to = await invokeCmd<string>(page, 'add_media_layer', { trackId, mediaId: media[1], tStartUs: 2_000_000 })
+    await page.screenshot({ path: test.info().outputPath('before.png') })
     await invokeCmd(page, 'add_transition', { fromLayerId: from, toLayerId: to, durationUs: 1_000_000, audio: 'linked' })
-    const state = await rootSummary(page) as { transitions: unknown[] }
+    const state = await rootSummary(page) as { transitions: Array<{ id: string; from_layer: string }>; tracks: Array<{ layers: Array<{ id: string; kind: string }> }> }
     expect(state.transitions).toHaveLength(2)
+    for (const transition of state.transitions) {
+      await expect(page.locator(`[data-testid="transition-chip"][data-transition-id="${transition.id}"]`)).toBeVisible()
+    }
+    await page.screenshot({ path: test.info().outputPath('after.png') })
+    const audioIds = new Set(state.tracks.flatMap(track => track.layers.filter(layer => layer.kind === 'Audio').map(layer => layer.id)))
+    const audioTransition = state.transitions.find(transition => audioIds.has(transition.from_layer))!
+    await page.locator(`[data-testid="transition-chip"][data-transition-id="${audioTransition.id}"]`).click({ button: 'right' })
+    const menu = page.getByTestId('transition-chip-menu')
+    await expect(menu).toBeVisible()
+    await expect(menu.getByText('Kind', { exact: true })).toHaveCount(0)
+    await page.keyboard.press('Escape')
     await expect.poll(async () => (await summary(page)).media.filter(m => media.includes(m.id) && m.conform_path).length, { timeout: 90_000 }).toBe(2)
     await waitForHook(page, 'audioPreCompressorSamples')
     await expect.poll(() => page.evaluate(() => (window as any).__weftcutTest.previewResourceProbe())).not.toBeNull()

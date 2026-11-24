@@ -226,7 +226,7 @@ export function transitionChipsForTrack(
     const toLayer = track.layers.find((l) => l.id === tr.to_layer);
     if (!toLayer) continue;
     const fromLayer = track.layers.find((l) => l.id === tr.from_layer);
-    if (!fromLayer || fromLayer.kind === "Audio" || toLayer.kind === "Audio") continue;
+    if (!fromLayer) continue;
     out.push({
       transition: tr,
       fromLayer,

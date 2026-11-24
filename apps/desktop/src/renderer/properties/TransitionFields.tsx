@@ -29,11 +29,13 @@ import {
 /// alone); the picker's preselected default is 'left'.
 export function TransitionFields({
   transition,
+  audioOnly = false,
   fpsNum,
   fpsDen,
   onMutated,
 }: {
   transition: TransitionSummary;
+  audioOnly?: boolean;
   fpsNum: number;
   fpsDen: number;
   onMutated: () => Promise<void>;
@@ -133,7 +135,7 @@ export function TransitionFields({
           value={kind}
           ariaLabel={t("property_panel.kind", { defaultValue: "Kind" })}
           onValueChange={(v) => void commitKind(v as TransitionKindName)}
-          options={TRANSITION_KIND_NAMES.map((name) => ({
+          options={(audioOnly ? ["Crossfade" as const] : TRANSITION_KIND_NAMES).map((name) => ({
             value: name,
             label: t(`transitions.kind_${name.toLowerCase()}`, {
               defaultValue: name,

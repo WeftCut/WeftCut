@@ -35,6 +35,7 @@ export function TransitionChipMenu({
   x,
   y,
   transition,
+  audioOnly = false,
   fpsNum,
   fpsDen,
   onClose,
@@ -44,6 +45,7 @@ export function TransitionChipMenu({
   x: number;
   y: number;
   transition: TransitionSummary;
+  audioOnly?: boolean;
   fpsNum: number;
   fpsDen: number;
   onClose: () => void;
@@ -84,7 +86,7 @@ export function TransitionChipMenu({
             className="app-menu-list"
             data-testid="transition-chip-menu"
           >
-            <SubMenu label={t("timeline.transition_menu_kind")}>
+            {!audioOnly && <SubMenu label={t("timeline.transition_menu_kind")}>
               {TRANSITION_KIND_NAMES.map((kind) => (
                 <MenuItem
                   key={kind}
@@ -95,7 +97,7 @@ export function TransitionChipMenu({
                   onSelect={() => commit(transitionKindUpdateArgs(transition, kind))}
                 />
               ))}
-            </SubMenu>
+            </SubMenu>}
             {/* Hidden entirely for Crossfade — the inspector's rule: a
                 directionless kind offering a direction would promise an
                 effect it cannot have. */}
