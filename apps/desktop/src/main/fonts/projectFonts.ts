@@ -245,8 +245,9 @@ export class ProjectFontStore {
 
   /** `Fonts/` changed on disk: index it again, tell, and walk the uses again
    *  so `missing` follows the folder. Never copies: a face deleted by hand
-   *  comes back at the next open or change to what the project draws, not
-   *  while a sync may still be writing the folder. */
+   *  comes back at the next open, change to what the project draws, or
+   *  `drain` (close, Save As, a pack), not while a sync may still be writing
+   *  the folder. */
   async rescan(): Promise<void> {
     if (this.#dir === null) return
     await this.#rescan(this.#generation)
