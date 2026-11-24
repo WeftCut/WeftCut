@@ -183,7 +183,8 @@ const zhCN: Resources = {
       "Numeric": "请求的时间超出了支持的精度范围。",
       "DurationTooShort": "时长必须至少包含一帧。",
       "Transition": "此变更会使现有转场失效。",
-      "Collision": "新的时长会与其他片段重叠，请缩短时长或提高速率。"
+      "Collision": "新的时长会与其他片段重叠，请缩短时长或提高速率。",
+      "SilencePadded": "此音频在素材之外播放静音，请先修剪掉静音部分再变速。"
     },
     "rate": "播放倍率",
     "duration": "目标时长",

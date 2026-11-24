@@ -57,8 +57,8 @@ interface Fixture {
 }
 
 /** A linked picture/sound pair of ONE recording, on separate tracks, both reading
- *  the media from `SRC_IN`. */
-function pairedFixture(): Fixture {
+ *  the media from `srcIn` for `spanUs`. */
+function pairedFixture(srcIn = SRC_IN, spanUs = 2_000_000): Fixture {
   const idGen = seededGen()
   const initial = blankProject(idGen, 'audio-grid')
   root(initial).fps = FPS
@@ -66,8 +66,8 @@ function pairedFixture(): Fixture {
   actor.dispatch('add_media', { id: AV_MEDIA, kind: 'Video', duration_us: MEDIA_US, with_audio: true })
   const [videoTrack, audioTrack] = root(actor.snapshot()).tracks.map((t) => t.id)
   const at = frame(V_START_FRAME())
-  const v = actor.dispatch('add_layer', { track: videoTrack, kind: 'video', media: AV_MEDIA, src_in_us: SRC_IN, src_out_us: SRC_IN + 2_000_000, t_start_us: at, t_end_us: at + 2_000_000 })
-  const a = actor.dispatch('add_layer', { track: audioTrack, kind: 'audio', media: AV_MEDIA, src_in_us: SRC_IN, src_out_us: SRC_IN + 2_000_000, t_start_us: at, t_end_us: at + 2_000_000 })
+  const v = actor.dispatch('add_layer', { track: videoTrack, kind: 'video', media: AV_MEDIA, src_in_us: srcIn, src_out_us: srcIn + spanUs, t_start_us: at, t_end_us: at + spanUs })
+  const a = actor.dispatch('add_layer', { track: audioTrack, kind: 'audio', media: AV_MEDIA, src_in_us: srcIn, src_out_us: srcIn + spanUs, t_start_us: at, t_end_us: at + spanUs })
   expect([v.ok, a.ok]).toEqual([true, true])
   const videoLayer = v.ok ? (v.value as string) : ''
   const audioLayer = a.ok ? (a.value as string) : ''
@@ -92,12 +92,16 @@ const srcOut = (l: Layer) => (l.params as { src_out_us: number }).src_out_us
  *  sample at the same instant. */
 const mixOrigin = (l: Layer) => gridIndex(l.t_start_us, AUDIO_GRID) - gridIndex(srcIn(l), AUDIO_GRID)
 
-/** Slip the audio layer's sound `samples` later through the command the nudge sends. */
-function slip(f: Fixture, samples: number): void {
+/** Slip the audio layer's sound `samples` later through the command the nudge
+ *  sends, returning whether the actor took it. */
+function trySlip(f: Fixture, samples: number): boolean {
   const snap = f.actor.snapshot()
   const next = nudgedSource(slipLayer(findLayer(snap, f.audioLayer), snap), samples)
   expect(next).not.toBeNull()
-  expect(f.actor.dispatch('update_layer_params', { layer: f.audioLayer, patch: { kind: 'Audio', ...next! } }).ok).toBe(true)
+  return f.actor.dispatch('update_layer_params', { layer: f.audioLayer, patch: { kind: 'Audio', ...next! } }).ok
+}
+function slip(f: Fixture, samples: number): void {
+  expect(trySlip(f, samples)).toBe(true)
 }
 
 function offsetOf(p: Project, f: Fixture): number | null {
@@ -248,6 +252,63 @@ describe('audio grid — edges on frames, precision in the source', () => {
   })
 })
 
+describe('silence past the media: a slip at the media\'s ends', () => {
+  it('a clip read from the media\'s first sample slips later: the head plays silence and the offset reads the slip', () => {
+    const f = pairedFixture(0)
+    slip(f, 7)
+    const audio = findLayer(stateOf(f), f.audioLayer)
+    expect(gridIndex(srcIn(audio), AUDIO_GRID)).toBe(-7)
+    expect(offsetOf(stateOf(f), f)).toBe(7)
+  })
+
+  it('a clip spanning the whole media slips both ways, and back to where it was', () => {
+    const f = pairedFixture(0, MEDIA_US)
+    const start = findLayer(stateOf(f), f.audioLayer)
+    slip(f, 48)
+    expect(offsetOf(stateOf(f), f)).toBe(48)
+    slip(f, -96)
+    expect(srcOut(findLayer(stateOf(f), f.audioLayer))).toBeGreaterThan(MEDIA_US)
+    expect(offsetOf(stateOf(f), f)).toBe(-48)
+    slip(f, 48)
+    expect(findLayer(stateOf(f), f.audioLayer).params).toEqual(start.params)
+  })
+
+  it('a cut inside the head silence splits the pair, the left piece silent throughout', () => {
+    const f = pairedFixture(0)
+    slip(f, 4_800) // 100 ms of silence at the head: frames 0-2 of the clip
+    const cut = frame(V_START_FRAME() + 1)
+    expect(f.actor.dispatch('split_layer', { layer: f.videoLayer, at_t_us: cut, escape_link: false }).ok).toBe(true)
+    const audioPieces = root(stateOf(f)).tracks.find((t) => t.id === f.audioTrack)!.layers
+    expect(audioPieces).toHaveLength(2)
+    expect(srcOut(audioPieces[0]!)).toBeLessThanOrEqual(0)
+  })
+
+  it('a trim does not reach further into the silence, and an inward trim of a padded edge is free', () => {
+    const f = pairedFixture(0)
+    slip(f, 4_800) // 100 ms of silence at the head
+    const audio = () => findLayer(stateOf(f), f.audioLayer)
+    const t0 = audio().t_start_us
+    f.actor.dispatch('trim_layer', { layer: f.audioLayer, edge: 'in', new_t_us: frame(V_START_FRAME() - 2), escape_link: true })
+    expect(audio().t_start_us).toBe(t0)
+    expect(f.actor.dispatch('trim_layer', { layer: f.audioLayer, edge: 'in', new_t_us: frame(V_START_FRAME() + 1), escape_link: true }).ok).toBe(true)
+    expect(audio().t_start_us).toBe(frame(V_START_FRAME() + 1))
+    expect(offsetOf(stateOf(f), f)).toBe(4_800)
+  })
+
+  it('a speed change is refused by name while the sound plays silence past its media', () => {
+    const f = pairedFixture(0)
+    slip(f, 7)
+    const r = f.actor.dispatch('retime_layers', { layers: [f.audioLayer], target: { kind: 'Rate', value: { num: 2, den: 1 } } })
+    expect(r.ok).toBe(false)
+    expect(JSON.stringify(r)).toContain('SilencePadded')
+  })
+
+  it('a picture still reads inside its media', () => {
+    const f = pairedFixture(0)
+    expect(f.actor.dispatch('update_layer_params', { layer: f.videoLayer, patch: { kind: 'VideoClip', src_in_us: -1000, src_out_us: 1_999_000 } }).ok).toBe(false)
+  })
+})
+
 /** The wire project the actor would save, as a mutable record. */
 type WireLayer = Record<string, unknown> & { id: string; t_start_us: number; t_end_us: number; params: Record<string, unknown> }
 function wireOf(p: Project): { wire: Record<string, unknown>; layer: (id: string) => WireLayer } {
@@ -264,8 +325,8 @@ describe('load repair of audio edges written on the sample lattice', () => {
    *  edges sit `slipSamples` past the samples nearest the picture's frames, and its
    *  source window reads from `SRC_IN` for as many samples as its edges span, as
    *  every edit of that time wrote it. */
-  function legacyPair(slipSamples: number) {
-    const f = pairedFixture()
+  function legacyPair(slipSamples: number, srcIn = SRC_IN) {
+    const f = pairedFixture(srcIn)
     const { wire, layer } = wireOf(stateOf(f))
     const audio = layer(f.audioLayer)
     audio.t_start_us = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + slipSamples)
@@ -285,10 +346,11 @@ describe('load repair of audio edges written on the sample lattice', () => {
   }
 
   it.each([
-    ['grid residue only', 0],
-    ['a 7-sample slip', 7],
-  ])('%s: edges move onto the picture\'s frames, every sample plays where it did, and the repair is reported once', (_name, slipSamples) => {
-    const { f, wire, legacy, legacyOrigin } = legacyPair(slipSamples)
+    ['grid residue only', 0, SRC_IN],
+    ['a 7-sample slip', 7, SRC_IN],
+    ['a 7-sample slip read from the media\'s first sample', 7, 0],
+  ])('%s: edges move onto the picture\'s frames, every sample plays where it did, and the repair is reported once', (_name, slipSamples, srcInUs) => {
+    const { f, wire, legacy, legacyOrigin } = legacyPair(slipSamples, srcInUs)
     const { project, repairs } = open(wire)
     const audio = findLayer(project, f.audioLayer)
     const video = findLayer(project, f.videoLayer)

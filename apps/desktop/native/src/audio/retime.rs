@@ -109,14 +109,25 @@ async fn stretch_window(
 ) -> Result<PathBuf> {
     check_cancelled(cancel)?;
     let frames = us_to_frame(duration).max(0) as u64;
-    let start = start_us / 1e6;
+    // An Audio window may start before its media (ADR 0038): that part is
+    // silence, so the read starts at 0 and the stretched sound is delayed by
+    // the silence's length in output samples.
+    let lead = (-start_us).max(0.0);
+    let lead_samples = (lead / timing.rate() * 48_000.0 / 1e6).round() as u64;
+    let start = start_us.max(0.0) / 1e6;
     let end = end_us / 1e6;
-    let graph = format!("[0:a]atrim=start={start:.17}:end={end:.17},asetpts=PTS-STARTPTS,{},apad=whole_len={frames},atrim=end_sample={frames}[out]", rate_filter(timing.rate(), timing.preserve_pitch != Some(false))?);
+    let delay = if lead_samples > 0 {
+        format!(",adelay=delays={lead_samples}S:all=1")
+    } else {
+        String::new()
+    };
+    let graph = format!("[0:a]atrim=start={start:.17}:end={end:.17},asetpts=PTS-STARTPTS,{}{delay},apad=whole_len={frames},atrim=end_sample={frames}[out]", rate_filter(timing.rate(), timing.preserve_pitch != Some(false))?);
     let dest = dir.join(format!("retime-{}.vconf", digest(&(2, source, &graph))?));
     if !crate::cache::cached_ok(&dest) {
         let header = crate::jobs::conform::read_header(source)?;
-        if start * 48_000.0 >= header.frame_count as f64 {
-            // Legal Group overhangs can cover no child samples at all.
+        if start * 48_000.0 >= header.frame_count as f64 || end_us <= 0.0 {
+            // Legal Group overhangs, and an Audio window wholly in its silence,
+            // can cover no source samples at all.
             let empty = MixPlan {
                 window_start_frame: 0,
                 window_end_frame: frames as i64,
@@ -420,6 +431,35 @@ mod tests {
             .unwrap()
             .iter()
             .all(|v| *v == 0.0));
+    }
+
+    #[tokio::test]
+    async fn an_audio_window_before_its_media_plays_silence_then_the_media_from_its_first_sample() {
+        assert!(
+            crate::ffmpeg::ffmpeg_is_installed(),
+            "this integration test requires ffmpeg"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("dc.vconf");
+        write_vconf(&source, 1, &[0.5; 48_000]);
+        // 100 ms of silence (4 800 samples) before the media, then 400 ms of it.
+        let path = stretch(
+            &source,
+            &TimingFields::default(),
+            -100_000,
+            400_000,
+            500_000,
+            dir.path(),
+            &None,
+        )
+        .await
+        .unwrap();
+        let mut reader = ConformReader::open(&path).unwrap();
+        assert_eq!(reader.header.frame_count, 24_000);
+        let pcm = reader.read_frames(0, 24_000).unwrap();
+        let first_sound = pcm.iter().position(|v| *v != 0.0).unwrap();
+        assert_eq!(first_sound, 4_800);
+        assert!(pcm[4_800..].iter().all(|v| (*v - 0.5).abs() < 1e-6));
     }
 
     fn frequency(samples: &[f32], channels: usize) -> f64 {

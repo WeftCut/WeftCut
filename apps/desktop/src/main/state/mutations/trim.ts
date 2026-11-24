@@ -26,6 +26,11 @@ export function clampSigned(d: number, min: number, max: number): number {
  *  overhangs its composition (legal in state, ADR 0052 §6) may not grow, and
  *  must not be dragged back either — an outward drag is refused, not inverted.
  *
+ *  A window that already reads silence past its media (`padsWithSilence`) is
+ *  bounded by the media widened to include it: an edge already in silence may
+ *  not reach further out (no trim grows the silence), and any inward trim stays
+ *  legal.
+ *
  *  LANDMINE: every `- 1` below is a STRICT-inequality exclusion (`t_start` must
  *  land strictly before `t_end`; `src_in` strictly before `src_out`), never a
  *  minimum duration — `trimEdgeWindowUs`' inward snap is what widens each of
@@ -44,14 +49,21 @@ export function trimDeltaBounds(
     const timelineMin = -layer.t_start_us
     const timelineMax = dur - 1
     let srcMin = -INF, srcMax = INF
-    if (hasSourceWindow(pa)) { srcMin = -approximateTime(sourceIn(pa)) / rate; srcMax = (approximateTime(sourceOut(layer)) - approximateTime(sourceIn(pa))) / rate - 1 }
+    if (hasSourceWindow(pa)) {
+      const sIn = approximateTime(sourceIn(pa)), sOut = approximateTime(sourceOut(layer))
+      // Floored at zero for the same reason as the Out cap below: an in point
+      // already before the media (a padded Audio window) may not reach further.
+      srcMin = -Math.max(0, sIn) / rate
+      srcMax = (sOut - sIn) / rate - 1
+    }
     return { min: Math.max(timelineMin, srcMin), max: Math.min(timelineMax, srcMax) }
   } else {
     const timelineMin = -(dur - 1)
     let srcMin = -INF; let srcMax = INF
     if (hasSourceWindow(pa)) {
-      srcMin = -((approximateTime(sourceOut(layer)) - approximateTime(sourceIn(pa))) / rate - 1)
-      if (sourceDurationUs != null) srcMax = Math.max(0, (sourceDurationUs - approximateTime(sourceOut(layer))) / rate)
+      const sIn = approximateTime(sourceIn(pa)), sOut = approximateTime(sourceOut(layer))
+      srcMin = -((sOut - sIn) / rate - 1)
+      if (sourceDurationUs != null) srcMax = Math.max(0, (sourceDurationUs - sOut) / rate)
     }
     return { min: Math.max(timelineMin, srcMin), max: srcMax }
   }

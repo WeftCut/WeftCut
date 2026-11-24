@@ -5,6 +5,7 @@ import {
   computeLanes,
   mergeStereo,
   TimelineWaveform,
+  visibleWindowUs,
   WAVEFORM_REFETCH_DEBOUNCE_MS,
 } from "./TimelineWaveform";
 import { tileEngine } from "./tileEngine/TileEngine";
@@ -64,6 +65,18 @@ async function flushMicrotasks(turns = 10): Promise<void> {
     }
   });
 }
+
+describe("visibleWindowUs", () => {
+  const seg = [{ startPx: 0, widthPx: 1000 }];
+  it("starts the fetch at the media's first sample when the clip opens in silence before it", () => {
+    // 1 px = 1 ms across a window reading source [-100 ms, 900 ms).
+    expect(visibleWindowUs(seg, () => true, 1000, -100_000, 900_000)).toEqual({ loUs: 0, hiUs: 900_000 });
+  });
+  it("fetches nothing when every visible segment lies in that silence", () => {
+    const head = [{ startPx: 0, widthPx: 50 }];
+    expect(visibleWindowUs(head, () => true, 10_000, -10_000_000, 0)).toBeNull();
+  });
+});
 
 describe("computeLanes", () => {
   it("returns two lanes at exactly the stereo threshold height", () => {

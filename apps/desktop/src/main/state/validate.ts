@@ -1,5 +1,5 @@
 import { enterClock, ROOT_CLOCK, type CompositionClock } from '../../renderer/render/compositionClock'
-import { layerRate, sourceIn, sourceOut, validateTimeFraction, keyTimeExact } from '../../renderer/layerTiming'
+import { layerRate, padsWithSilence, sourceIn, sourceOut, validateTimeFraction, keyTimeExact } from '../../renderer/layerTiming'
 import { approximateTime, exactTime, compareTime, ZERO_TIME } from '../../renderer/timeMapping'
 import { forEachAnimatedF64, forEachAnimatedRgba } from './mutations/animated'
 import { TimeMappingError } from '../../shared/timeMapping'
@@ -417,8 +417,11 @@ function validateLayerParams(p: Project, layer: Layer): void {
       if (pa.frame_interpolation && pa.frame_interpolation.kind !== 'FrameSampling')
         throw new CommandFailure({ error: 'InvalidArgument', field: 'frame_interpolation', detail: 'This build supports FrameSampling only' });
       const start = sourceIn(pa), end = sourceOut(layer);
-      if (compareTime(start, ZERO_TIME) < 0 || compareTime(start, end) >= 0) fail({ rule: 'InvalidSrcRange', layer: layer.id, src_in: approximateTime(start), src_out: approximateTime(end) });
-      if (pa.kind === 'VideoClip' || pa.kind === 'Audio') {
+      // An un-retimed Audio window may reach past either end of its media; that
+      // part plays as silence (ADR 0038), so it has no media bound at all.
+      const padded = padsWithSilence(pa);
+      if ((!padded && compareTime(start, ZERO_TIME) < 0) || compareTime(start, end) >= 0) fail({ rule: 'InvalidSrcRange', layer: layer.id, src_in: approximateTime(start), src_out: approximateTime(end) });
+      if (!padded && (pa.kind === 'VideoClip' || pa.kind === 'Audio')) {
         const duration = p.media_pool[pa.media]?.metadata.duration_us;
         if (duration != null && compareTime(end, exactTime(duration)) > 0)
           fail({ rule: 'SrcRangeExceedsMedia', layer: layer.id, src_in: approximateTime(start), src_out: approximateTime(end), media_duration: duration });

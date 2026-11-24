@@ -46,8 +46,7 @@ export interface SourceWindow {
  *  Resolved through the sample index, never by adding a sample's width in µs — 48 kHz
  *  spacing alternates 20/21 µs, so a µs-additive step drifts and nudging out and back
  *  10 000 times would not return to the original sample. Not clamped: a window that
- *  would leave the media is refused by the actor (`InvalidSrcRange`,
- *  `SrcRangeExceedsMedia`), which is the notice the user sees. */
+ *  reaches past the media plays silence there (ADR 0038). */
 export function nudgedSource(layer: SlipLayer, steps: number): SourceWindow | null {
   const { src_in_us: srcIn, src_out_us: srcOut } = layer.params;
   if (srcIn === undefined || srcOut === undefined) return null;

@@ -14,9 +14,10 @@ mix. Why: [ADR 0019](adr/0019-audio-mixes-in-rust-over-conform-pcm.md) (engine),
 ## The authoring grid
 
 Audio layer edges sit on the **composition frame grid**, like every layer's, so
-a linked picture and its sound share their edges exactly. The mixer rounds an
-edge to its sample (`us_to_frame` in `audio/mix.rs`, round-half-up), so a frame
-edge plays from the sample nearest it. Sample precision lives in the source
+a linked picture and its sound share their edges exactly. The mixer starts a
+layer at the sample nearest its start edge (`us_to_frame` in `audio/mix.rs`,
+round-half-up) and plays the source window's length in samples; the end edge is
+not read. Sample precision lives in the source
 window instead: a nudge moves `src_in_us`/`src_out_us` by whole samples of the
 **48 kHz lattice** `round(i × 1e6 / 48000)` (~20.83 µs) under fixed edges.
 Audio automation keys also sit on that lattice (`automationGrid`,
@@ -27,7 +28,11 @@ Audio automation keys also sit on that lattice (`automationGrid`,
 - A linked pair's sync offset is derived, never stored: where each same-media
   member's source time 0 lands (`t_start_us − src_in_us`), in samples. A move
   carries every member by the same frames, so it is kept exactly.
-- A slip that would read source outside the media is refused.
+- An un-retimed audio layer's source window may reach before 0 or past the
+  media's end: that part plays as silence (the conform reader returns zeros
+  outside the file) and draws no waveform. A slip keeps the edges and a trim may
+  not move an edge further into silence, so silence never grows by itself. A
+  speed change is refused while the sound plays silence.
 
 The 10 ms envelope grid below is how a rendered ramp is sampled, not where a
 keyframe may sit.

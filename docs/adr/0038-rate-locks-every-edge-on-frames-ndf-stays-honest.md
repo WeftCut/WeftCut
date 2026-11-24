@@ -36,11 +36,18 @@ Date: 2026-07-25
   edit reads one lattice. A move carries every edge by the same whole frames,
   computed once for the mutation and for the timeline's preview of it.
 - **Audio precision is a source slip.** A sample nudge moves an audio layer's
-  source window by whole 48 kHz samples under fixed edges; the mixer rounds the
-  frame edge to its sample at render. The sync offset is derived, never stored:
+  source window by whole 48 kHz samples under fixed edges. The mixer plays from
+  the sample nearest the start edge for the window's length in samples; it does
+  not read the end edge. The sync offset is derived, never stored:
   the difference between where each same-media member's source time 0 lands.
   Audio automation keys stay on the 48 kHz lattice; they are layer-local and
   never meet an edge.
+- **Silence past the media.** An un-retimed audio layer's source window may
+  reach before 0 or past the media's end, and that part plays as silence and
+  draws no waveform. No edit grows the silence by itself: a slip keeps the
+  edges, and a trim may not move an edge further into it. A retimed layer and
+  every picture stay inside their media, and a speed change is refused while
+  the sound plays silence (`RetimeRejected`, `SilencePadded`).
 - **No drop-frame.** NDF timecode only; starting timecode is zero. Where a
   duration is shown at a fractional rate, the wall-clock figure is shown beside
   it.
@@ -50,12 +57,16 @@ Date: 2026-07-25
 - An audio cut point is a frame; sound can start or end within a frame only
   through its source slip. A sample-exact butt edit between two audio clips is
   not expressible.
-- A slip is refused when it would read source outside the media; silence past
-  the media's ends is not represented.
+- A slip at the media's head or tail is not refused: the sound moves within the
+  clip and the clip's edge plays silence where the media has none. A clip, or a
+  piece a cut leaves, may be silence throughout.
 - Projects with audio edges on the sample lattice open with a reported repair:
   edges go to the nearest frame and the source window moves by the samples the
-  start moved, so every sample plays where it did. A slipped layer's automation
-  keys shift against the sound by under half a frame.
+  start moved, so every sample plays where it did, reading silence where the
+  move passes the media's ends. A slipped layer's automation keys shift
+  against the sound by under half a frame.
 - `composition.duration_us` stays a frame count. `OffGridLayerBoundary` keeps
   its `grid` field for MCP clients; it is always `frame`.
-- No schema change: no DF flag, no timecode offset, no stored sync offset.
+- No new field: no DF flag, no timecode offset, no stored sync offset. The
+  schema version bumps (identity step) only because an older build's validator
+  refuses a window past the media, so it refuses the file by version instead.

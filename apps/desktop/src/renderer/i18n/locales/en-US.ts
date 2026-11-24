@@ -181,7 +181,8 @@ const enUS = {
       "Numeric": "The requested timing exceeds the supported precision.",
       "DurationTooShort": "The duration must span at least one frame.",
       "Transition": "This change would invalidate an existing transition.",
-      "Collision": "The new duration overlaps another clip. Shorten it or increase the rate."
+      "Collision": "The new duration overlaps another clip. Shorten it or increase the rate.",
+      "SilencePadded": "This audio plays silence past its media. Trim the silence away before changing speed."
     },
     "rate": "Speed",
     "duration": "Target duration",

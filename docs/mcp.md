@@ -800,7 +800,9 @@ Layers: `add_layers` places 1–50 layers in one recorded edit, all or nothing
 plus the span at rate 1; `audio` defaults to `auto_pair_audio_on_import` and
 `linked` lands and links the dialogue Audio on the same track's audio lane),
 `image` (a still), `audio` (the only path for audio-only media; never paired;
-frame-grid endpoints like every layer; `role` defaults to `music`), `text` (born in the
+frame-grid endpoints like every layer, sub-frame sync is a slip of
+`src_in_us` through `update_layer_params`, and the window may reach past the
+media into silence; `role` defaults to `music`), `text` (born in the
 style's tokens for its `graphic_role`), `color` (the composition's size),
 `motif` (props validated against `props_schema`; omitted props take style
 tokens, then manifest defaults; a `media` prop names `"<media_id>"` or

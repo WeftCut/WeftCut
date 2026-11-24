@@ -136,21 +136,19 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
    *  29.97/59.94 carried — leaves the source untouched and the mix identical; a
    *  slipped one moves both source ends by exactly the samples its start moved. The
    *  mixer plays the source window's length whatever the edges say, so keeping that
-   *  length keeps every sample where it played; only an end that would leave the
-   *  media is clamped (`InvalidSrcRange` / `SrcRangeExceedsMedia` would otherwise
-   *  refuse the open). A retimed layer (`time_map`) maps time non-linearly and is
-   *  left to its edges. Automation keys are layer-local and are not rebased, so on a
+   *  length keeps every sample where it played. Nothing is clamped: an end that
+   *  moves past the media reads silence there (`padsWithSilence`), which is what the
+   *  legacy edge played, so a slip near the media's head or tail survives too. A
+   *  retimed layer (`time_map`) maps time non-linearly and is left to its edges. Automation keys are layer-local and are not rebased, so on a
    *  slipped layer they move against the sound by less than half a frame. */
   const keepAudioInPlace = (id: string | null, params: Record<string, unknown>, fromStart: number, toStart: number): void => {
     if (params.time_map !== undefined) return
     const moved = gridIndex(toStart, AUDIO_GRID) - gridIndex(fromStart, AUDIO_GRID)
     if (moved === 0) return
-    const media = typeof params.media === 'string' ? (o.media_pool as Record<string, { metadata?: { duration_us?: unknown } }> | undefined)?.[params.media] : undefined
-    const mediaEnd = typeof media?.metadata?.duration_us === 'number' ? media.metadata.duration_us : Infinity
     const shift = (field: 'src_in_us' | 'src_out_us'): void => {
       const cur = params[field]
       if (typeof cur !== 'number') return
-      const next = Math.min(mediaEnd, Math.max(0, timeUsAtGridIndex(gridIndex(cur, AUDIO_GRID) + moved, AUDIO_GRID)))
+      const next = timeUsAtGridIndex(gridIndex(cur, AUDIO_GRID) + moved, AUDIO_GRID)
       if (next !== cur) { params[field] = next; repairs.push({ entity: 'Layer', id, field, from: cur, to: next }) }
     }
     shift('src_in_us')

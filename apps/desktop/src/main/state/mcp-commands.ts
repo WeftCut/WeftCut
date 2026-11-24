@@ -1585,7 +1585,7 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   letter_spacing: { type: 'number', description: 'Letter spacing, px.' },
   outline_width: { type: 'number', description: 'Stroke width, composition px; 0 removes the outline.' },
   outline_color: { ...RGBA_SCHEMA, description: 'Stroke colour.' },
-  src_in_us: { type: 'integer', description: 'Source in point, µs — a slip: the window moves and keeps its length, so the span is unchanged. Its end follows; change the length with trim_layer.' },
+  src_in_us: { type: 'integer', description: 'Source in point, µs — a slip: the window moves and keeps its length, so the span is unchanged. Its end follows; change the length with trim_layer. An un-retimed Audio window may start before 0 or end past its media; that part plays silence.' },
   scale_x: { type: 'number', description: 'Horizontal scale factor; 1 = native size.' },
   scale_y: { type: 'number', description: 'Vertical scale factor; 1 = native size.' },
   scale_linked: { type: 'boolean', description: 'After the scale fields: true links the pair, copying the scale_x track onto scale_y (destructive to an animated scale_y); false unlinks.' },

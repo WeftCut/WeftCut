@@ -24,9 +24,9 @@ Every layer's `t_start_us` / `t_end_us`, Audio's included, every
 frame grid `round(i × 1e6 × den / num)`, so a linked picture and its sound share
 their edges exactly. The mixer plays an audio edge from its nearest sample; an
 audio layer's sub-frame placement is its source window, slipped by whole samples
-of the 48 kHz mix lattice `round(i × 1e6 / 48000)` (ADR 0038,
-[audio.md](audio.md)). That rate is a constant, not `composition.sample_rate`,
-which is only the export target.
+of the 48 kHz mix lattice `round(i × 1e6 / 48000)`, and may reach past the
+media's ends, which play as silence (ADR 0038, [audio.md](audio.md)). That rate
+is a constant, not `composition.sample_rate`, which is only the export target.
 
 Mutators snap-round (half-up) every time parameter against the grid, so all
 callers get aligned state. Source-time fields (`src_in_us` / `src_out_us`) are
@@ -606,7 +606,7 @@ MCP tool error with a reason and, where useful, options).
 | Endpoints, `duration_us`, marker times on their grid (see Time) | snap in the mutator, then reject (`OffGridLayerBoundary` / `OffGridTime`, carrying `snap_to`); a loaded project is repaired instead |
 | `fps` changes only while no layer exists in the timeline or any stored snapshot / checkpoint | reject (`FpsLockedByContent`, `locked_by: current \| history`) — the unrecorded rate change writes every snapshot, so undo could otherwise resurrect old-grid layers |
 | `transition.duration_us` == the participants' overlap; `0 ≤ extended_us ≤ duration_us` | reject |
-| `0 ≤ src_in < src_out`, and `src_out ≤ media duration` for VideoClip / Audio (exact, through the layer's time map) | reject (`InvalidSrcRange`, `SrcRangeExceedsMedia`); a CompositionRef has no upper bound |
+| `0 ≤ src_in < src_out`, and `src_out ≤ media duration` for VideoClip / Audio (exact, through the layer's time map); an un-retimed Audio window may pass either media end (silence) | reject (`InvalidSrcRange`, `SrcRangeExceedsMedia`); a CompositionRef has no upper bound |
 | No two same-class layers on one track overlap in `[t_start, t_end)` | reject (`LayerOverlap`, with options) |
 | `duration_us == max(t_end_us)` unpinned; `≥` pinned | autofit (pinned: grow only) |
 | `width/height > 0`, `fps` num/den non-zero | reject (`InvalidCanvas`, `InvalidFps`) |
@@ -850,7 +850,7 @@ after relaunch — copy mode only, explicit confirm, never `userData` itself.
 ## Versioning
 
 `project.json` carries `schema_version`. `SCHEMA_VERSION` (`state/model.ts`,
-currently **7**) is the only home of the number; Rust round-trips the field and
+currently **8**) is the only home of the number; Rust round-trips the field and
 never gates on it.
 
 The load path is a **version-keyed upgrade chain** ([ADR 0047](adr/0047-project-schema-upgrades-are-a-version-keyed-chain.md)):
