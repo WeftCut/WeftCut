@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { extractFace, hasGlyph, readCoverage, readFace, readFaces, readIdentity, readNames, readStyle } from './sfnt.js'
-import { cmapFormat12, cmapFormat4, cmapTable, faceTables, font, nameTable, sfnt, ttc } from './testing/syntheticFonts.js'
+import { cmapFormat12, cmapFormat4, cmapTable, faceTables, font, headTable, nameTable, sfnt, ttc } from './testing/syntheticFonts.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -41,6 +41,17 @@ describe('face identity', () => {
     expect(readStyle(only(font({ family: 'A', italic: true, weight: 300 })))).toEqual({ weight: 300, italic: true })
     expect(readStyle(only(font({ family: 'A', noOs2: true, macStyle: { italic: true, bold: true } })))).toEqual({ weight: 700, italic: true })
     expect(readStyle(only(font({ family: 'A', noOs2: true })))).toEqual({ weight: 400, italic: false })
+  })
+
+  it('a face is italic when macStyle or its subfamily name says so, though OS/2 fsSelection does not', () => {
+    // As macOS's Avenir Next Bold Italic: OS/2 present, its ITALIC bit clear.
+    const boldItalic = sfnt({ ...faceTables({ family: 'Avenir Next', weight: 700 }), head: headTable({ bold: true, italic: true }) })
+    expect(readStyle(only(boldItalic))).toEqual({ weight: 700, italic: true })
+    // As its Ultra Light Italic: only the names say italic.
+    const ultraLightItalic = font({ family: 'Avenir Next Ultra Light', typographicFamily: 'Avenir Next', subfamily: 'Ultra Light Italic', weight: 275 })
+    expect(readStyle(only(ultraLightItalic))).toEqual({ weight: 275, italic: true })
+    // Its upright faces stay upright.
+    expect(readStyle(only(font({ family: 'Avenir Next Ultra Light', typographicFamily: 'Avenir Next', subfamily: 'Ultra Light', weight: 275 })))).toEqual({ weight: 275, italic: false })
   })
 
   it("a variable font's identity carries its wght range, not the default instance", () => {
