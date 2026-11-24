@@ -50,7 +50,8 @@ import type { ExportSettingsStore } from '../export-settings'
 import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
 import { tasteView } from '../taste/view'
-import { collectExtendedStyle } from '../taste/projectStyles'
+import { collectExtendedStyle, styleOutsideProject } from '../taste/projectStyles'
+import { portabilityReport, type PortabilityReport } from './portability'
 import { AuditStore } from '../lint/audits'
 import { playheadView } from '../mcp/playheadView'
 import type { WorkspaceStore } from '../workspace'
@@ -60,7 +61,7 @@ import type { ProjectFontStore } from '../fonts/projectFonts'
 import type { MissingFontUse } from '../fonts/uses'
 
 /** What the host asks of the project font store. */
-export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'projectChanged' | 'published' | 'missing'>
+export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'projectChanged' | 'published' | 'missing' | 'view'>
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -269,6 +270,10 @@ export interface TsActorHost {
   /** Families the open project asks for that resolve nowhere
    *  (`project://session` `fonts.missing`). Empty with no project open. */
   missingFonts?: () => MissingFontUse[]
+  /** What the open project still needs from outside its folder
+   *  (`project://portability`, `state/portability.ts`); null with no project
+   *  open. */
+  portability: () => PortabilityReport | null
   /** The open project's `Motifs/<id>/` changed on disk (`watchProjectMotifs`):
    *  a new revision of a Motif the project records becomes a recorded edit
    *  (`ProjectMotifRecords.folderChanged`). */
@@ -819,6 +824,21 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return out
   }
 
+  function portability(): PortabilityReport | null {
+    const summary = publication().summary
+    if (!opened || !summary || publishedProject === null) return null
+    const pool = publishedProject.media_pool
+    return portabilityReport({
+      media: summary.media.map(m => ({ id: m.id, label: m.label, path: m.path, path_rel: pool[m.id]?.path_rel ?? null, available: m.available })),
+      unavailableMotifs: unavailableMotifs(),
+      motifTable: Object.keys(publishedProject.motifs),
+      motifFolders: projectMotifs()?.ids() ?? [],
+      excludedFonts: deps.fonts?.view()?.excluded ?? [],
+      missingFonts: deps.fonts?.missing() ?? [],
+      outsideStyle: deps.styleDirs ? styleOutsideProject(deps.styleDirs, opened.dir) : null,
+    })
+  }
+
   function publishChange(e?: ChangeEvent, traceId?: string, newSession = false, settledWorkspace = false): void {
     publicationVersion = {
       session: publicationVersion.session + (newSession ? 1 : 0),
@@ -1255,6 +1275,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     motifTool: runMotif,
     unavailableMotifs,
     missingFonts: () => (opened ? deps.fonts?.missing() ?? [] : []),
+    portability,
     motifFolderChanged: (id, state) => motifRecords.folderChanged(id, state),
     start() {
       agent.start()

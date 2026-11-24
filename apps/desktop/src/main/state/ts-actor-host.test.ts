@@ -465,6 +465,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       projectChanged: vi.fn((dir: string | null) => { order.push(`folder ${dir}`) }),
       published: vi.fn(),
       missing: () => [],
+      view: () => null,
     }
     const endWorkspace = vi.fn(async () => { order.push('workspace ended') })
     fonts.drain.mockImplementationOnce(async () => {})

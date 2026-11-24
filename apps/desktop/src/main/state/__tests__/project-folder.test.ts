@@ -191,6 +191,26 @@ describe('the open project in its folder (host)', () => {
     t.host.stop()
   })
 
+  it('the portability check finds a complete folder portable, and nothing to check on the start screen', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    const t = makeHost(disk)
+    expect(t.host.portability()).toBeNull()
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    expect(t.host.portability()).toMatchObject({ portable: true, media: { outside: [], missing: [] } })
+    t.host.stop()
+  })
+
+  it('the portability check lists a pooled file the folder no longer holds', async () => {
+    const disk = memDisk()
+    folder(disk, '/projects/Demo', windowsV6())
+    disk.fs.rm('/projects/Demo/Media/sub/clip.mp4')
+    const t = makeHost(disk)
+    await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
+    expect(t.host.portability()).toMatchObject({ portable: false, media: { missing: [{ media_id: MEDIA_ID }], outside: [] } })
+    t.host.stop()
+  })
+
   async function savedAs() {
     const disk = memDisk()
     folder(disk, '/projects/Demo', windowsV6())

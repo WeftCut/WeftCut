@@ -3,7 +3,7 @@ import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSy
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { packageHash } from './packages'
-import { collectExtendedStyle } from './projectStyles'
+import { collectExtendedStyle, styleOutsideProject } from './projectStyles'
 import { tasteView, type StyleDirs } from './view'
 
 const BUILTIN = path.join(import.meta.dirname, '../../shared/styles/builtin')
@@ -75,5 +75,30 @@ describe('collectExtendedStyle', () => {
     mkdirSync(path.join(dir, 'Styles', '.paper.stale.part'), { recursive: true })
     expect(await collectExtendedStyle({ builtin: BUILTIN, user }, dir)).toBe('paper')
     expect(readdirSync(path.join(dir, 'Styles'))).toEqual(['paper'])
+  })
+})
+
+describe('styleOutsideProject', () => {
+  it('names a user style TASTE.md extends that the folder does not carry, until it is collected', async () => {
+    const user = temp()
+    style(user, 'paper', 40)
+    const dirs: StyleDirs = { builtin: BUILTIN, user }
+    const dir = project('---\nextends: paper\n---\n')
+    expect(styleOutsideProject(dirs, dir)).toBe('paper')
+    await collectExtendedStyle(dirs, dir)
+    expect(styleOutsideProject(dirs, dir)).toBeNull()
+  })
+
+  it('names a style that resolves nowhere', () => {
+    const dir = project('---\nextends: gone\n---\n')
+    expect(styleOutsideProject({ builtin: BUILTIN, user: temp() }, dir)).toBe('gone')
+  })
+
+  it('names nothing for a built-in style or a TASTE.md that extends nothing', () => {
+    const builtin = readdirSync(BUILTIN).find(n => !n.startsWith('.'))!
+    const dirs: StyleDirs = { builtin: BUILTIN, user: temp() }
+    expect(styleOutsideProject(dirs, project(`---\nextends: ${builtin}\n---\n`))).toBeNull()
+    expect(styleOutsideProject(dirs, project('---\ntokens: {}\n---\n'))).toBeNull()
+    expect(styleOutsideProject(dirs, temp())).toBeNull()
   })
 })

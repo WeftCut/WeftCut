@@ -32,12 +32,21 @@ export function collectExtendedStyle(dirs: StyleDirs, projectDir: string): Promi
   return next
 }
 
-async function copyExtended(dirs: StyleDirs, projectDir: string, stylesDir: string): Promise<string | null> {
+/** The name of the style TASTE.md extends when the project folder does not
+ *  carry it: neither a built-in nor under `Styles/`, so it resolves from this
+ *  machine's user styles or nowhere. Null when TASTE.md extends nothing or
+ *  the folder carries the style. */
+export function styleOutsideProject(dirs: StyleDirs, projectDir: string): string | null {
   const file = readTasteFile(projectDir)
   const data = file && 'frontmatter' in file ? file.frontmatter.data : null
   if (!data || data.extends === undefined) return null
   const { name } = parseExtends(data.extends, [])
-  if (listStyleDirs(dirs.builtin).has(name) || listStyleDirs(stylesDir).has(name)) return null
+  return listStyleDirs(dirs.builtin).has(name) || listStyleDirs(path.join(projectDir, STYLES_DIR)).has(name) ? null : name
+}
+
+async function copyExtended(dirs: StyleDirs, projectDir: string, stylesDir: string): Promise<string | null> {
+  const name = styleOutsideProject(dirs, projectDir)
+  if (name === null) return null
   const source = listStyleDirs(dirs.user).get(name)
   if (!source) return null
   await removeStaleParts(stylesDir)
