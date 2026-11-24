@@ -514,6 +514,27 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.stop()
   })
 
+  it('the pack dialog sizes the pack after the fonts its check copies back', async () => {
+    const { deps } = makeInMemoryDeps()
+    const order: string[] = []
+    const fonts = {
+      drain: vi.fn(async () => {}),
+      collectNow: vi.fn(async () => { order.push('collect') }),
+      projectChanged: vi.fn(),
+      published: vi.fn(),
+      motifFolderChanged: vi.fn(),
+      missing: () => [],
+      uncarried: () => [],
+      view: () => null,
+    }
+    const contentFs = new Proxy({}, { get: () => { order.push('list'); throw new Error('listing stops here') } })
+    const host = createTsActorHost({ ...deps, fonts, packNative: {} as never, contentFs: contentFs as never })
+    await host.handleInvoke('project_new_workspace', publicationProject)
+    await host.handleInvoke('project_pack_plan', {}).catch(() => {})
+    expect(order.slice(0, 2)).toEqual(['collect', 'list'])
+    host.stop()
+  })
+
   it('close copies the user style TASTE.md extends into Styles/ when nothing has read the tokens since the edit', async () => {
     const { deps } = makeInMemoryDeps()
     const root = mkdtempSync(nodePath.join(tmpdir(), 'host-project-styles-'))

@@ -1201,7 +1201,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'pack': {
         if (!packer) throw new Error('Packing is not available')
         const a = args as { archive?: unknown; parent?: unknown }
-        if (channel === 'project_pack_plan') return packer.plan()
+        if (channel === 'project_pack_plan') {
+          // Opened with the pack dialog's check: its size counts the fonts
+          // that check copies back (see 'portability' below).
+          await deps.fonts?.collectNow()
+          return packer.plan()
+        }
         if (channel === 'project_pack_cancel') return packer.cancel()
         if (typeof a.archive !== 'string') throw new Error('archive is required')
         if (channel === 'project_pack') return packer.pack(a.archive)
