@@ -61,7 +61,7 @@ describe("the portability check dialog", () => {
     expect(within(fonts).getByText("Excluded")).toBeTruthy();
     expect(within(fonts).getByText("Excluded · not installed here")).toBeTruthy();
     expect(within(fonts).getAllByRole("button").map((b) => b.textContent)).toEqual(["Open Settings > Project > Fonts"]);
-    expect(within(region("Missing fonts")).getByText("700 Italic")).toBeTruthy();
+    expect(within(region("Missing fonts")).getByText("Bold Italic")).toBeTruthy();
     expect(within(region("Style not in the folder")).getByText("/home/u/styles/house")).toBeTruthy();
     expect(within(region("Not carried by a copy")).getByRole("button", { name: "Move Motifs/spare/ to the trash" })).toBeTruthy();
   });

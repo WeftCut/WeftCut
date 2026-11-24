@@ -68,12 +68,15 @@ export function PackDialog({ onClose }: { onClose: () => void }) {
             ? <PortabilityReportList report={report} busy={busy} onTrashFolder={(name) => void trash(name)}
               onOpenFonts={() => { onClose(); requestSettings("project"); }} />
             : !error && <p className="settings-status">{t("portability.loading")}</p>}
-          {plan && (
-            <p className="settings-blurb">
-              {t("pack.size", { count: plan.files, size: formatBytes(plan.bytes) })}
-            </p>
-          )}
-          <p className="settings-status">{t("pack.licence")}</p>
+          {/* What the pack itself holds, apart from the report above. */}
+          <div className="pack-summary">
+            {plan && (
+              <p className="settings-blurb">
+                {t("pack.size", { count: plan.files, size: formatBytes(plan.bytes) })}
+              </p>
+            )}
+            <p className="settings-status">{t("pack.licence")}</p>
+          </div>
         </div>
       </div>
       <footer className="new-project-actions pack-dialog-actions">

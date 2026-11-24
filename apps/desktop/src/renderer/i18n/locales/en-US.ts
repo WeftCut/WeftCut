@@ -3051,7 +3051,6 @@ const enUS = {
     excluded_not_installed: "Excluded · not installed here",
     fonts_manage: "Open Settings > Project > Fonts",
     fonts_missing: "Missing fonts",
-    italic: "Italic",
     style_outside: "Style not in the folder",
     untracked: "Not carried by a copy",
     untracked_hint: "No layer uses these Motif folders.",

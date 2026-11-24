@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import type { PortabilityReport } from "../ipc";
+import { styleName } from "../../shared/fonts/resolve";
 
 interface Props {
   report: PortabilityReport;
@@ -42,10 +43,11 @@ export function PortabilityReportList({ report, busy, onTrashFolder, onOpenFonts
           <Row key={f.family} name={f.family}
             tag={t(f.installed ? "portability.excluded" : "portability.excluded_not_installed")} />
         ))} />
-      <Group title={t("portability.fonts_missing")} rows={fonts.missing.map((f) => {
-        const face = [f.weight, f.italic ? t("portability.italic") : null].filter((part) => part !== null).join(" ");
-        return <Row key={`${f.family}:${f.weight}:${f.italic}`} name={f.family} {...(face ? { detail: face } : {})} />;
-      })} />
+      {/* A Motif's use carries no style: its own CSS picks the face. */}
+      <Group title={t("portability.fonts_missing")} rows={fonts.missing.map((f) => (
+        <Row key={`${f.family}:${f.weight}:${f.italic}`} name={f.family}
+          {...(f.weight === null ? {} : { detail: styleName(f.weight, f.italic) })} />
+      ))} />
       <Group title={t("portability.style_outside")}
         rows={style.outside === null ? [] : [<Row key="style" name={style.outside} />]} />
       <Group title={t("portability.untracked")} hint={t("portability.untracked_hint")}
