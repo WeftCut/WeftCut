@@ -18,6 +18,9 @@ export interface PortabilityInputs {
   /** The folder names under `Motifs/`. */
   motifFolders: readonly string[]
   excludedFonts: readonly { family: string; installed: boolean }[]
+  /** Families the folder does not carry (`ProjectFontStore.uncarried`):
+   *  resolving nowhere, or drawn from this machine's installed fonts while
+   *  `Fonts/` lacks a face of them. */
   missingFonts: readonly MissingFontUse[]
   outsideStyle: string | null
 }

@@ -29,8 +29,9 @@ export interface PortabilityReport {
     /** Families the user excluded from `Fonts/` (Settings > Project > Fonts):
      *  the project draws them from this machine's installed fonts. */
     excluded: { family: string; installed: boolean }[]
-    /** Families the project asks for that resolve nowhere, here included
-     *  (main's `MissingFontUse`). */
+    /** Families the project asks for that the folder does not carry: they
+     *  resolve nowhere, or this machine draws them from its installed fonts
+     *  while `Fonts/` lacks a face of them (main's `MissingFontUse`). */
     missing: { family: string; weight: number | null; italic: boolean | null; layer_ids: string[] }[]
   }
   /** The user style TASTE.md extends when the folder does not hold it. */

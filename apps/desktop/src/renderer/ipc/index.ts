@@ -859,7 +859,8 @@ export async function projectClose(): Promise<void> {
 
 export type { PortabilityReport } from '../../shared/portability';
 
-/// The portability check; null with no project open.
+/// The portability check, after main copies into `Fonts/` what the project
+/// draws and the folder lacks; null with no project open.
 export async function projectPortability(): Promise<PortabilityReport | null> {
   return invoke<PortabilityReport | null>("project_portability");
 }

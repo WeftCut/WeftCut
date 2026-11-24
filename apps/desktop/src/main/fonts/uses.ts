@@ -1,7 +1,8 @@
 // The project's font uses: which catalog families it draws with, so the
 // project font store (./projectFonts.ts) copies every face of them into
-// `Fonts/`, and which families it asks for that resolve nowhere, so
-// `project://session` and the log can name the layers they affect. Only
+// `Fonts/`; which families it asks for that resolve nowhere, so
+// `project://session` and the log can name the layers they affect; and which
+// it asks for that `Fonts/` does not carry, for the portability check. Only
 // families that draw are uses, and a use is the whole family (ADR 0176).
 // Matching a family to a face is ../../shared/fonts/resolve.ts and the missing
 // rule is ../../shared/fonts/missing.ts; the walk here decides which of the
@@ -16,9 +17,10 @@ import { eachLayer, type MotifParams, type Project, type TextParams } from '../s
 import { fontFamilyKey } from '../state/excludedFonts'
 import { hasGlyph, type Coverage } from './sfnt'
 
-/** A family a layer asks for that no `Fonts/` face, system face or bundled
- *  font answers to. A Text layer's use carries its weight and italic; a
- *  Motif's is null for both: its own CSS picks the face. */
+/** A family the layers in `layer_ids` ask for that is absent: from this
+ *  machine (`FontUses.missing`) or from the project folder
+ *  (`FontUses.uncarried`). A Text layer's use carries its weight and italic;
+ *  a Motif's is null for both: its own CSS picks the face. */
 export interface MissingFontUse {
   family: string
   weight: number | null
@@ -30,8 +32,14 @@ export interface FontUses {
   /** SHA-256 keys of the system faces of every family the project draws
    *  with that `Fonts/` lacks: what to copy. Sorted. */
   collect: string[]
-  /** Sorted by family, then weight. */
+  /** Families no `Fonts/` face, system face or bundled font answers to.
+   *  Sorted by family, then weight. */
   missing: MissingFontUse[]
+  /** What a copy of the folder lacks: `missing`, and each family the project
+   *  draws with that has a face in `collect`, at the weight and italic of the
+   *  layers drawing it (not of the absent face). One entry per family, weight
+   *  and italic; sorted as `missing`. */
+  uncarried: MissingFontUse[]
 }
 
 /** The manifest fields the walk reads; null for a Motif that cannot be read. */
@@ -199,13 +207,17 @@ export async function fontUses(input: FontUsesInput): Promise<FontUses> {
     if (!c) { c = input.coverage(sha).catch(() => null); coverageOf.set(sha, c) }
     return c
   }
-  /** Families some character is drawn with, by their faces' first name. */
-  const drawn = new Set<string>()
+  /** Who asks: a Text request's weight and italic, null for a Motif's. */
+  type Asker = Pick<MissingFontUse, 'weight' | 'italic'> & { layerIds: readonly string[] }
+  /** Families some character is drawn with, by their faces' first name, each
+   *  with the requests drawing with it. */
+  const drawn = new Map<string, Asker[]>()
   const missing = new Map<string, MissingFontUse>()
-  const miss = (family: string, weight: number | null, italic: boolean | null, layerIds: readonly string[]) => {
+  const uncarried = new Map<string, MissingFontUse>()
+  const note = (into: Map<string, MissingFontUse>, family: string, { weight, italic, layerIds }: Asker) => {
     const key = `${fontFamilyKey(family)}\0${weight}\0${italic}`
-    let use = missing.get(key)
-    if (!use) { use = { family, weight, italic, layer_ids: [] }; missing.set(key, use) }
+    let use = into.get(key)
+    if (!use) { use = { family, weight, italic, layer_ids: [] }; into.set(key, use) }
     for (const id of layerIds) if (!use.layer_ids.includes(id)) use.layer_ids.push(id)
   }
 
@@ -215,39 +227,51 @@ export async function fontUses(input: FontUsesInput): Promise<FontUses> {
    *  font of the machine. A bundled or shipped leaf is passed over, never a
    *  use: whether it draws the character is not read, so a later leaf that
    *  can draw it is a use too, and nothing the page may reach is left behind.
-   *  Returns the request's missing leaves. */
-  const walk = async (r: Request): Promise<string[]> => {
+   *  Notes the request's missing leaves. */
+  const walk = async (r: Request, asker: Asker): Promise<void> => {
     const leaves = parseFamilyList(r.css)
     const end = leaves.findIndex(isGenericFamily)
     const walked = end < 0 ? leaves : leaves.slice(0, end)
     const own = (leaf: string) => isBundledFamily(leaf) || r.shipped.has(fontFamilyKey(leaf))
     const resolved = walked.map(leaf => (own(leaf) ? null : resolveFace(faces, leaf, r.weight, r.italic)))
     const covers = await Promise.all(resolved.map(face => (face ? coverage(face.sha256) : Promise.resolve(null))))
+    const drew = new Set<string>()
     for (const cp of r.codePoints) {
       for (let i = 0; i < walked.length; i++) {
         const face = resolved[i]
         const cover = covers[i]
         // The family is the face's own first name, not the leaf's: a legacy
         // name such as "Segoe UI Semibold" names one face of "Segoe UI".
-        if (face && cover && hasGlyph(cover, cp)) { drawn.add(face.families[0] as string); break }
+        if (face && cover && hasGlyph(cover, cp)) { drew.add(face.families[0] as string); break }
       }
       // No leaf draws it: the bundled tail or the browser's default does,
       // which is no use.
     }
-    return missingLeaves(leaves, leaf => r.shipped.has(fontFamilyKey(leaf)) || familyFaces(faces, leaf).length > 0).missing
+    for (const family of drew) {
+      const askers = drawn.get(family)
+      if (askers) askers.push(asker)
+      else drawn.set(family, [asker])
+    }
+    const absent = missingLeaves(leaves, leaf => r.shipped.has(fontFamilyKey(leaf)) || familyFaces(faces, leaf).length > 0).missing
+    for (const family of absent) { note(missing, family, asker); note(uncarried, family, asker) }
   }
 
   const { text, motif } = requests(project, manifestOf)
-  for (const r of text) for (const family of await walk(r)) miss(family, r.weight, r.italic, r.layerIds)
-  for (const r of motif) for (const family of await walk(r)) miss(family, null, null, r.layerIds)
+  for (const r of text) await walk(r, { weight: r.weight, italic: r.italic, layerIds: r.layerIds })
+  for (const r of motif) await walk(r, { weight: null, italic: null, layerIds: r.layerIds })
 
   const collect = new Set<string>()
-  for (const family of drawn) {
+  for (const [family, askers] of drawn) {
+    let lacking = false
     for (const face of familyFaces(faces, family)) {
-      if (face.source === 'system' && !face.families.some(n => excluded.has(fontFamilyKey(n))) && !presentInProject(faces, face)) collect.add(face.sha256)
+      if (face.source === 'system' && !face.families.some(n => excluded.has(fontFamilyKey(n))) && !presentInProject(faces, face)) {
+        collect.add(face.sha256)
+        lacking = true
+      }
     }
+    if (lacking) for (const asker of askers) note(uncarried, family, asker)
   }
-  const missingList = [...missing.values()].sort((a, b) =>
+  const sorted = (uses: Map<string, MissingFontUse>) => [...uses.values()].sort((a, b) =>
     a.family.localeCompare(b.family) || (a.weight ?? 0) - (b.weight ?? 0) || Number(a.italic) - Number(b.italic))
-  return { collect: [...collect].sort(), missing: missingList }
+  return { collect: [...collect].sort(), missing: sorted(missing), uncarried: sorted(uncarried) }
 }

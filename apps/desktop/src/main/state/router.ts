@@ -182,8 +182,9 @@ export function routeChannel(channel: string): Route {
     case 'project_history_view': return { kind: 'historyView' }
     case 'get_project_settings': return { kind: 'projectSettings' }
     case SAVE_STATUS_CHANNEL: return { kind: 'saveStatus' }
-    // The check dialog's report, and its one action: a folder under Motifs/
-    // no layer places, to the system trash. Neither is project content.
+    // The check dialog's report, which first copies into Fonts/ what the
+    // folder lacks, and its one action: a folder under Motifs/ no layer
+    // places, to the system trash. Neither is project content.
     case 'project_portability':
     case 'project_trash_motif_folder': return { kind: 'portability' }
     // A pack reads the project folder after the flush Save As makes; an

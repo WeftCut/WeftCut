@@ -28,6 +28,7 @@ import { sessionView } from '../mcp/server'
 import { autosaveMaxWaitMs } from './autosave'
 import { rootComposition } from './model'
 import { errno } from './__tests__/fixtures/memAtomicIo'
+import type { PortabilityReport } from '../../shared/portability'
 import { settleQuitSave } from '../quitSave'
 import { SAVE_STATUS_CHANNEL, SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
 import { parseProjectPath } from '../../shared/projectPath'
@@ -465,7 +466,9 @@ describe('createTsActorHost — persistence-route integration', () => {
       projectChanged: vi.fn((dir: string | null) => { order.push(`folder ${dir}`) }),
       published: vi.fn(),
       motifFolderChanged: vi.fn(),
+      collectNow: vi.fn(async () => {}),
       missing: () => [],
+      uncarried: () => [],
       view: () => null,
     }
     const endWorkspace = vi.fn(async () => { order.push('workspace ended') })
@@ -482,6 +485,32 @@ describe('createTsActorHost — persistence-route integration', () => {
     copyLands()
     await closing
     expect(order).toEqual([`folder ${dir}`, 'copy landed', 'workspace ended', 'folder null'])
+    host.stop()
+  })
+
+  it('the check dialog copies fonts before it reports what the folder lacks; the read the agents share copies nothing', async () => {
+    const { deps } = makeInMemoryDeps()
+    const order: string[] = []
+    const lacking = { family: 'Example', weight: 400, italic: false, layer_ids: ['L1'] }
+    let copied = false
+    const fonts = {
+      drain: vi.fn(async () => {}),
+      collectNow: vi.fn(async () => { order.push('collect'); copied = true }),
+      projectChanged: vi.fn(),
+      published: vi.fn(),
+      motifFolderChanged: vi.fn(),
+      missing: () => [],
+      uncarried: () => { order.push('report'); return copied ? [] : [lacking] },
+      view: () => null,
+    }
+    const host = createTsActorHost({ ...deps, fonts })
+    await host.handleInvoke('project_new_workspace', publicationProject)
+    expect(host.portability()?.fonts.missing, 'a read reports the folder as it stands').toEqual([lacking])
+    expect(fonts.collectNow).not.toHaveBeenCalled()
+    order.length = 0
+    const report = await host.handleInvoke('project_portability', {}) as PortabilityReport
+    expect(order).toEqual(['collect', 'report'])
+    expect(report.fonts.missing).toEqual([])
     host.stop()
   })
 
