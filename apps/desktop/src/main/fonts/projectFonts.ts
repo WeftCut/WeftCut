@@ -156,6 +156,13 @@ export class ProjectFontStore {
     this.#schedule()
   }
 
+  /** A project Motif's folder changed on disk. A folder that comes back
+   *  holding the revision the table records publishes nothing, yet only now
+   *  does its manifest tell what it draws: walk the uses again. */
+  motifFolderChanged(): void {
+    if (this.#published !== null) this.#schedule()
+  }
+
   /** The open project's folder after a replacement settled (`null`: none).
    *  Lifts `drain`'s refusal. A new folder is cleaned of stale `.part` files,
    *  indexed and reconciled at once; the same folder catches up on what

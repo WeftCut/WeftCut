@@ -86,27 +86,15 @@ function drawnCodePoints(p: TextParams): readonly number[] {
 /** The text a Motif draws, as far as the app can see: its `string` props other
  *  than font props, the layer's value when it is a string, else the
  *  manifest's default. Text a Motif writes into its own HTML is not seen
- *  (docs/motif-authoring.md § Style Motifs). Without a readable manifest, the
- *  layer's own string props. */
-function motifTexts(params: MotifParams, manifest: Pick<Manifest, 'props_schema'> | null): string[] {
+ *  (docs/motif-authoring.md § Style Motifs). */
+function motifTexts(params: MotifParams, manifest: Pick<Manifest, 'props_schema'>): string[] {
   const out: string[] = []
-  if (manifest) {
-    for (const [key, spec] of Object.entries(manifest.props_schema)) {
-      if (spec.type !== 'string' || key.startsWith('font_')) continue
-      const value = params.props[key]
-      out.push(typeof value === 'string' ? value : spec.default)
-    }
-  } else {
-    for (const [key, value] of Object.entries(params.props)) if (!key.startsWith('font_') && typeof value === 'string') out.push(value)
+  for (const [key, spec] of Object.entries(manifest.props_schema)) {
+    if (spec.type !== 'string' || key.startsWith('font_')) continue
+    const value = params.props[key]
+    out.push(typeof value === 'string' ? value : spec.default)
   }
   return out
-}
-
-/** A Motif layer's font slots' family lists; without a readable manifest,
- *  the layer's `font_*` strings as stored. */
-function motifSlots(params: MotifParams, manifest: Pick<Manifest, 'props_schema'> | null): string[] {
-  if (manifest) return motifFontSlots(manifest, params.props).map(s => s.css)
-  return Object.entries(params.props).filter((e): e is [string, string] => e[0].startsWith('font_') && typeof e[1] === 'string').map(([, v]) => v)
 }
 
 /** What changes the uses, as one string: a publish compares it with the last
@@ -168,10 +156,15 @@ function requests(project: Pick<Project, 'compositions'>, manifestOf: MotifFontM
       const italic = requestItalic(p.font.italic)
       add(text, `${p.font.family}\0${weight}\0${italic ? 1 : 0}`, () => ({ css: p.font.family, weight, italic, shipped: new Set() }), drawnCodePoints(p), layer.id)
     } else if (p.kind === 'Motif') {
+      // Without its manifest the Motif draws nothing here, and which stored
+      // strings are text and which are colours or choices is unknown. Its
+      // folder coming back may move no revision: the font store walks again
+      // on the folder change (`ProjectFontStore.motifFolderChanged`).
       const manifest = manifestOf(p.motif_id)
-      const shipped = [...new Set((manifest?.fonts ?? []).map(f => fontFamilyKey(f.family)))].sort()
+      if (!manifest) continue
+      const shipped = [...new Set((manifest.fonts ?? []).map(f => fontFamilyKey(f.family)))].sort()
       const drawn = drawnOf(motifTexts(p, manifest))
-      for (const css of motifSlots(p, manifest)) {
+      for (const { css } of motifFontSlots(manifest, p.props)) {
         add(motif, `${css}\0${shipped.join('\0')}`, () => ({ css, weight: 400, italic: false, shipped: new Set(shipped) }), drawn, layer.id)
       }
     }

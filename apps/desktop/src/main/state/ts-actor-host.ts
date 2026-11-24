@@ -60,7 +60,7 @@ import type { ProjectFontStore } from '../fonts/projectFonts'
 import type { MissingFontUse } from '../fonts/uses'
 
 /** What the host asks of the project font store. */
-export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'projectChanged' | 'published' | 'missing'>
+export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'projectChanged' | 'published' | 'missing' | 'motifFolderChanged'>
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -1255,7 +1255,10 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     motifTool: runMotif,
     unavailableMotifs,
     missingFonts: () => (opened ? deps.fonts?.missing() ?? [] : []),
-    motifFolderChanged: (id, state) => motifRecords.folderChanged(id, state),
+    motifFolderChanged: (id, state) => {
+      motifRecords.folderChanged(id, state)
+      deps.fonts?.motifFolderChanged()
+    },
     start() {
       agent.start()
       emitting = true

@@ -185,6 +185,11 @@ describe('Motif uses: the characters of its string props through each font slot'
     expect(result).toEqual({ collect: ['display'], missing: [] })
   })
 
+  it('asks nothing of a Motif whose manifest cannot be read: its stored strings may be colours, not text', async () => {
+    const result = await uses(project([[motif('card', { font_headline: STACK, ink: '#D2261C', headline: 'Breaking' }, 'M')]]), faces, coverage)
+    expect(result).toEqual({ collect: [], missing: [] })
+  })
+
   it('names a slot family before the first that draws, but not the package\'s own, a bundled one or a later one', async () => {
     const result = await uses(project([[
       motif('card', { font_headline: "'Shipped Sans', Gone" }, 'M1'),

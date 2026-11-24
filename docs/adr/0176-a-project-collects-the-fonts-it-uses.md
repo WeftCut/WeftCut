@@ -28,6 +28,12 @@ had its own gaps:
   on that machine, so a project made where the first choice was missing kept
   the fallback forever.
 
+An earlier proposal for an app-wide store of imported fonts was declined:
+fonts are installed through the OS and picked in the app, and the app would
+not take on parsing arbitrary font files. Nothing here imports a font
+app-wide. A project folder, though, now carries font files, and the app reads
+them as they stand, so it does parse font files a folder brings.
+
 ## Decision
 
 - **Fonts a project draws are copied into `Fonts/` automatically**, like
@@ -41,7 +47,9 @@ had its own gaps:
   "Segoe UI". A Motif's text is the characters of its
   string props (the layer's values, else the manifest's defaults), walked the
   same way through each `font_<slot>` list; text written into a Motif's HTML
-  is not seen. A CSS generic family ends a walk. A bundled family, or one the
+  is not seen. A Motif whose manifest cannot be read (its folder missing, or
+  holding no package) draws nothing and asks for nothing: which of its stored
+  strings are text is unknown. Its folder changing walks the uses again. A CSS generic family ends a walk. A bundled family, or one the
   Motif package ships, is passed over: which characters it covers is not
   read, so a family after it that can draw a character is a use too. A style
   slot no layer uses collects nothing. Bundled and generic families and the
@@ -57,6 +65,19 @@ had its own gaps:
   other. The index is `complete` once the system scan has landed and the open
   project's `Fonts/` has been read; an export starts only then, so it never
   fixes a fallback where the folder carries the face.
+- **`Fonts/` is read as it stands.** Every font file in it is a project face,
+  whoever put it there: the collector, whoever sent the folder, or the user by
+  hand. The picker lists its families, and its face wins over the system's
+  same face. Only the exclusion list removes one.
+- **No trust gate on `Fonts/`.** A received folder's fonts are untrusted
+  bytes, but they never run: main reads only table directories, names,
+  weights and coverage, with readers that skip what they cannot read
+  (`main/fonts/sfnt.ts`), and glyph data is used only inside Chromium, where
+  every load path (`FontFace` from bytes, in the page and in the export
+  Worker, and `url()` on a Motif's origin) passes the OpenType Sanitizer,
+  which refuses a malformed font. A refused face is skipped and the next
+  family in the list draws, in preview and export alike. Motif code does run,
+  and keeps its gate ([ADR 0174](0174-a-motif-runs-only-when-trusted-on-this-machine.md)).
 - **No licence gate.** The app reads no `fsType` and refuses no font: the
   user's own licence decides, and it may differ from a font's default
   embedding flags. The app tells, once per batch that first copies a family,
@@ -117,6 +138,8 @@ had its own gaps:
   at the next open.
 - Deleting a family's files from `Fonts/` does not keep it out; only the
   exclusion list does.
+- A font put into `Fonts/` by hand serves that project: per project, what the
+  declined app-wide import would have been.
 
 Rejected: a licence gate on `fsType` (it answers the font's default, not the
 user's licence); collection on a user action (a folder copied by hand would
