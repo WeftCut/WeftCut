@@ -130,7 +130,7 @@ describe('audio grid — the 48 kHz mix lattice', () => {
   })
 
   // ── Acceptance 2 + data-loss dependency #1: move.ts's link fan-out ──────────
-  it('a whole-link move preserves a slipped audio offset EXACTLY (sample index shifts by the delta)', () => {
+  it('a whole-link move preserves a slipped audio offset EXACTLY (sample index shifts by the travel\'s projection)', () => {
     const { actor, videoLayer, audioLayer, audioTrack, videoTrack } = pairedFixture()
 
     // Slip the audio 7 samples late, escaping the link so only it moves.
@@ -145,16 +145,14 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     const newVideoStart = frame(V_MOVE_FRAME())
     expect(actor.dispatch('move_layer', { layer: videoLayer, to_track: videoTrack, t_start_us: newVideoStart, escape_link: false }).ok).toBe(true)
     const after = actor.snapshot()
-    const videoDelta = findLayer(after, videoLayer).t_start_us - findLayer(before, videoLayer).t_start_us
 
-    // The audio's SAMPLE INDEX moved by the delta expressed in samples — not by a
-    // re-snap onto the video frame grid. That is what keeps the offset intact.
+    // The audio's SAMPLE INDEX moved by the video's travel projected onto the
+    // sample lattice — not by a re-snap onto the video frame grid, and not by
+    // the µs delta re-snapped on its own lattice, which re-rounds the residue.
+    // That is what keeps the offset intact through any number of moves.
     const audioIndexAfter = gridIndex(findLayer(after, audioLayer).t_start_us, AUDIO_GRID)
     expect(audioIndexAfter - audioIndexBefore).toBe(
-      gridIndex(findLayer(before, audioLayer).t_start_us + videoDelta, AUDIO_GRID) - audioIndexBefore,
-    )
-    expect(findLayer(after, audioLayer).t_start_us).toBe(
-      snapFrameRound(findLayer(before, audioLayer).t_start_us + videoDelta, AUDIO_GRID.num, AUDIO_GRID.den),
+      gridIndex(findLayer(after, videoLayer).t_start_us, AUDIO_GRID) - gridIndex(findLayer(before, videoLayer).t_start_us, AUDIO_GRID),
     )
     // …and the slip survives the move at sample precision.
     const offsetAfter = findLayer(after, audioLayer).t_start_us - findLayer(after, videoLayer).t_start_us

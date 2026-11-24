@@ -141,6 +141,47 @@ export function stepOnGrid(tUs: number, steps: number, g: Grid): number {
   return timeUsAtGridIndex(Math.max(0, gridIndex(tUs, g) + steps), g)
 }
 
+/** A move in time, stated as two instants: what sat at `fromUs` ends up at
+ *  `toUs`. Never a µs delta, because a delta has no lattice: the same 0.5 s is
+ *  a different number of frames and samples depending on where it starts, and
+ *  a delta measured on one lattice, added to an edge on the other and snapped,
+ *  re-rounds that edge's residue against its neighbours. Two instants project
+ *  onto every lattice (`travelSteps`), so each layer moves by a whole number of
+ *  its OWN points. */
+export interface Travel {
+  fromUs: number
+  toUs: number
+}
+
+/** The travel `deltaUs` from `fromUs` — for a caller whose request IS a delta
+ *  (a sweep length, an agent's `delta_us`). `fromUs` is the instant the delta
+ *  is measured from, and it decides the projection, so pass the instant the
+ *  request names (the seed's start, the sweep origin), not zero. */
+export function travelBy(fromUs: number, deltaUs: number): Travel {
+  return { fromUs, toUs: fromUs + deltaUs }
+}
+
+/** How many points of `g` a travel moves: the distance between the nearest
+ *  points of `g` to its two instants. */
+export function travelSteps(travel: Travel, g: Grid): number {
+  return gridIndex(travel.toUs, g) - gridIndex(travel.fromUs, g)
+}
+
+/** A point of `g` moved by `steps` points, with no clamp at 0: a caller that
+ *  can go negative refuses or floors before it gets here. */
+export function stepPointOnGrid(tUs: number, steps: number, g: Grid): number {
+  return timeUsAtGridIndex(gridIndex(tUs, g) + steps, g)
+}
+
+/** A half-open span `[s, e)` as one lattice sees it: both edges at their nearest
+ *  points of `g`. A span closed or compared across layers of both kinds is
+ *  measured against each layer's own projection, because at a fractional rate a
+ *  linked pair's edges sit a few µs apart by construction (ADR 0038) and the
+ *  raw span puts the other kind's edge inside it. */
+export function spanOnGrid(s: number, e: number, g: Grid): { s: number; e: number } {
+  return { s: snapOnGrid(s, g), e: snapOnGrid(e, g) }
+}
+
 /** One member of a set on the move: whatever carries a kind and a span. Neither
  *  side's layer model appears here — the actor adapts its `Layer`, the timeline
  *  adapts its `DragSubject` — so this stays a statement about lattices. */
@@ -151,59 +192,77 @@ export interface ShiftMember {
   tEndUs: number
 }
 
-/** Where every member of a set lands when the whole set shifts by `deltaUs`.
+/** Where every member of a set lands when the set makes `travel`.
  *
  *  THE arithmetic of a move, and the reason it is one function rather than one
- *  per caller. Four sites need it — `applyMoveLayer`, `applyMoveLayersToComposition`,
- *  the timeline's move projection and the cross-Panel ghost — and the first two
- *  DECIDE where a clip goes while the last two PROMISE it in advance, drawing the
- *  answer and, in the projection's case, holding the project to it until it
- *  matches. A promise computed by an arithmetic the mutation does not share is one
- *  the project can never satisfy.
+ *  per caller: the mutations DECIDE where a clip goes while the timeline's move
+ *  projection and the cross-Panel ghost PROMISE it in advance, and a promise
+ *  computed by an arithmetic the mutation does not share is one the project can
+ *  never satisfy.
  *
- *  Two rules, and both are the ones a hand-written copy gets wrong:
+ *  Each member moves by `travelSteps` on ITS OWN lattice (`gridForLayerKind`),
+ *  both endpoints by the same count. That makes a linked pair's relation an
+ *  invariant rather than an approximation: the audio member keeps its sample
+ *  index relative to the projection of the video member's edge, so the grid
+ *  residue a fresh pair carries at 29.97/59.94 and a deliberately slipped sync
+ *  offset (R2-D7) both survive any number of moves exactly. A stored member is
+ *  already a point of its lattice (validate holds it there); one that is not —
+ *  a layer entering a composition at another rate — first takes its nearest
+ *  point there.
  *
- *  - BOTH endpoints take the same `deltaUs` and are snapped. Never
- *    `landing + duration`: a duration is the difference of two lattice points and
- *    is not itself one, so the sum is off-lattice wherever a frame is not a whole
- *    number of microseconds — 1 µs at 60 fps, on roughly 30 % of landings.
- *  - Each member snaps on ITS OWN lattice (`gridForLayerKind`), never the anchor's.
- *    That is what carries a deliberately slipped A/V sync offset through a
- *    whole-link move intact (R2-D7): the offset is stored as geometry and nothing
- *    else, so it survives exactly as long as every member keeps landing on the
- *    lattice it was authored on.
- *
- *  Pure, and deliberately free of policy: the zero boundary is `floorShiftAtZero`
+ *  Pure, and deliberately free of policy: the zero boundary is `floorTravelAtZero`
  *  for a caller that CLAMPS and a refusal for a caller that does not
  *  (`applyMoveLayersToComposition` refuses, on the grounds that sliding a set off
  *  the picture it was placed against is not a repair). */
-export function shiftOnGrids(
+export function travelOnGrids(
   members: readonly ShiftMember[],
-  deltaUs: number,
+  travel: Travel,
   fps: RateLike,
 ): Map<string, { tStartUs: number; tEndUs: number }> {
   const landings = new Map<string, { tStartUs: number; tEndUs: number }>()
   for (const m of members) {
     const g = gridForLayerKind(m.kind, fps)
+    const steps = travelSteps(travel, g)
     landings.set(m.id, {
-      tStartUs: snapOnGrid(m.tStartUs + deltaUs, g),
-      tEndUs: snapOnGrid(m.tEndUs + deltaUs, g),
+      tStartUs: stepPointOnGrid(m.tStartUs, steps, g),
+      tEndUs: stepPointOnGrid(m.tEndUs, steps, g),
     })
   }
   return landings
 }
 
-/** `deltaUs` floored so the EARLIEST member lands on 0 — the set stopping as ONE
- *  body rather than each member clamped where it lands.
+/** `travel`, or — when it would carry some member before 0 — the travel from
+ *  the same instant that stops the set as ONE body: the one that brings the
+ *  earliest member to 0, taken to the nearest point of `onGrid` and moved on
+ *  by one point while any member would still cross. Clamping each member where
+ *  it lands would flatten a slipped pair's phase against the boundary; this
+ *  keeps every relation, so a pair whose earlier member is slipped a sample
+ *  ahead of its video stops a frame short of 0 rather than arrive in sync.
  *
- *  Clamping per member would flatten the set's phase against the boundary, which
- *  is the same data loss as re-snapping a sibling on the anchor's lattice: an
- *  A/V pair dragged past zero would arrive in sync having started slipped. 0 is a
- *  lattice point on every grid, so the floored delta needs no snap of its own —
- *  `shiftOnGrids` still snaps every member, and the earliest one is already
- *  canonical at 0. */
-export function floorShiftAtZero(members: readonly ShiftMember[], deltaUs: number): number {
+ *  `onGrid` is the lattice `travel`'s instants are points of — the anchor's,
+ *  whose request a gesture snapped — and the stopped `toUs` is a point of it
+ *  too. That is what keeps a ghost and its commit on one travel: the timeline
+ *  sends the anchor's landing as the request, and the mutation re-snapping it
+ *  on the anchor's lattice reaches this same `toUs`, which no longer crosses.
+ *  The anchor must be one of `members`, so the earliest member starts at or
+ *  before `fromUs` and every instant searched is at or after 0. */
+export function floorTravelAtZero(members: readonly ShiftMember[], travel: Travel, fps: RateLike, onGrid: Grid): Travel {
+  if (!travelCrossesZero(members, travel, fps)) return travel
   let earliest = Infinity
   for (const m of members) earliest = Math.min(earliest, m.tStartUs)
-  return earliest === Infinity ? deltaUs : Math.max(deltaUs, -earliest)
+  let toUs = snapOnGrid(Math.max(0, travel.fromUs - earliest), onGrid)
+  while (travelCrossesZero(members, { fromUs: travel.fromUs, toUs }, fps))
+    toUs = stepPointOnGrid(toUs, 1, onGrid)
+  return { fromUs: travel.fromUs, toUs }
+}
+
+/** True when `travel` would carry some member before 0 — the strict callers'
+ *  refusal test, read in the same points `travelOnGrids` moves by. Compared as
+ *  indices, so no time before 0 is ever asked of the leaf. */
+export function travelCrossesZero(members: readonly ShiftMember[], travel: Travel, fps: RateLike): boolean {
+  for (const m of members) {
+    const g = gridForLayerKind(m.kind, fps)
+    if (gridIndex(m.tStartUs, g) + travelSteps(travel, g) < 0) return true
+  }
+  return false
 }

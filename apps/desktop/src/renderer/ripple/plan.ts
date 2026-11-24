@@ -25,7 +25,7 @@
 /// across, a lock that would have to move — with no second vocabulary.
 ///
 /// See docs/features.md#ripple-delete.
-import { layerOverlapClass, shiftOnGrids, type OverlapClass } from '../grid'
+import { gridForLayerKind, gridIndex, layerOverlapClass, spanOnGrid, stepPointOnGrid, type Grid, type OverlapClass } from '../grid'
 import type { CommandError, Rational, TimeUs, Uuid } from '../../shared/commandErrors'
 import { isGapOn } from './gap'
 
@@ -55,7 +55,7 @@ export interface RippleView {
 export interface RippleHole { s: TimeUs; e: TimeUs }
 
 /** Both endpoints, never a landing plus a duration: a duration is the difference
- *  of two lattice points and is not itself one (see `shiftOnGrids`). */
+ *  of two lattice points and is not itself one (see `travelOnGrids`). */
 export interface RippleMove { layer: Uuid; track: Uuid; t_start_us: TimeUs; t_end_us: TimeUs }
 
 export type RipplePlan =
@@ -74,6 +74,7 @@ interface Placed {
   layer: RippleLayerView
   track: RippleTrackView
   cls: OverlapClass
+  grid: Grid
 }
 
 /** A remaining layer as the collision scan sees it: where it ends up. */
@@ -184,7 +185,7 @@ function indexOf(view: RippleView): Map<Uuid, Placed> {
   const index = new Map<Uuid, Placed>()
   for (const track of view.tracks)
     for (const layer of track.layers)
-      index.set(layer.id, { layer, track, cls: layerOverlapClass(layer) })
+      index.set(layer.id, { layer, track, cls: layerOverlapClass(layer), grid: gridForLayerKind(layer.kind, view.fps) })
   return index
 }
 
@@ -193,7 +194,7 @@ function remainingOf(view: RippleView, doomed: ReadonlySet<Uuid>): Placed[] {
   const remaining: Placed[] = []
   for (const track of view.tracks)
     for (const layer of track.layers)
-      if (!doomed.has(layer.id)) remaining.push({ layer, track, cls: layerOverlapClass(layer) })
+      if (!doomed.has(layer.id)) remaining.push({ layer, track, cls: layerOverlapClass(layer), grid: gridForLayerKind(layer.kind, view.fps) })
   return remaining
 }
 
@@ -217,6 +218,12 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
     else holes.push({ s: h.s, e: h.e })
   }
 
+  // From here on every layer is measured against a hole as ITS OWN lattice sees
+  // it (`spanOnGrid`), never against the merged µs span: at 29.97/59.94 a linked
+  // pair's edges sit a few µs apart, so the raw span of a deleted pair starts
+  // before the video cut and ends after the audio one, and the other member's
+  // surviving piece would read as starting inside it.
+  //
   // 5 — the hole must be clean. A layer that merely reaches into the span from
   // before `s` is anchored ahead of the cut and stays; one that STARTS inside it
   // has nowhere honest to go, so the ripple names it and stops. Earliest hole
@@ -235,8 +242,9 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
   for (const h of holes) {
     let offender: RippleLayerView | null = null
     for (const r of remaining) {
-      if (r.layer.t_start_us < h.s || r.layer.t_start_us >= h.e) continue
-      if (h.s === 0 && r.layer.t_start_us === 0 && !linkedToDoomed.has(r.layer.id)) continue
+      const own = spanOnGrid(h.s, h.e, r.grid)
+      if (r.layer.t_start_us < own.s || r.layer.t_start_us >= own.e) continue
+      if (own.s === 0 && r.layer.t_start_us === 0 && !linkedToDoomed.has(r.layer.id)) continue
       if (offender === null || r.layer.t_start_us < offender.t_start_us) offender = r.layer
     }
     if (offender !== null)
@@ -264,42 +272,35 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
         if (doomed.has(member)) continue
         const placed = index.get(member)
         if (placed === undefined) continue
-        if (placed.layer.t_start_us <= h.s) { if (placed.layer.t_end_us > h.s) reaching = true }
-        else if (placed.layer.t_start_us >= h.e) after = true
+        const own = spanOnGrid(h.s, h.e, placed.grid)
+        if (placed.layer.t_start_us <= own.s) { if (placed.layer.t_end_us > own.s) reaching = true }
+        else if (placed.layer.t_start_us >= own.e) after = true
       }
       if (reaching && after)
         return { ok: false, refusal: { error: 'RippleLinkStraddles', link: link.id, hole: { s: h.s, e: h.e } } }
     }
   }
 
-  // 7 — a layer's delta is the SUM of the holes entirely to its left, and the
-  // landing is ONE `shiftOnGrids` call per distinct delta rather than one snap per
-  // hole applied right to left. Summing is not merely cheaper, it is the
-  // formulation step 4 already committed to: two touching holes merged into one
-  // must land everything downstream exactly where the two separate holes would
-  // have, and only a single snap of the total does that — re-snapping after each
-  // hole rounds twice and the merged and unmerged answers drift apart. Each mover
-  // still snaps on ITS OWN lattice inside `shiftOnGrids`, so a sample-lattice
-  // deletion lands audio exactly and visual movers on the nearest frame.
-  const deltaOf = new Map<Uuid, number>()
-  const byDelta = new Map<number, Placed[]>()
-  for (const r of remaining) {
-    let delta = 0
-    for (const h of holes) if (h.e <= r.layer.t_start_us) delta += h.e - h.s
-    if (delta === 0) continue
-    deltaOf.set(r.layer.id, delta)
-    const bucket = byDelta.get(delta)
-    if (bucket === undefined) byDelta.set(delta, [r])
-    else bucket.push(r)
-  }
+  // 7 — a layer moves left by the points of ITS OWN lattice that the holes
+  // entirely to its left cover: the sum, per hole, of the distance between the
+  // hole's projected edges. Counted in points rather than µs, so a linked pair's
+  // two pieces after the cut land exactly on their own neighbours' edges, and two
+  // touching holes merged into one close by the same count the two separate
+  // holes would have (the projections of touching spans telescope).
+  const stepsOf = new Map<Uuid, number>()
   const landings = new Map<Uuid, { tStartUs: number; tEndUs: number }>()
-  for (const [delta, members] of byDelta) {
-    const shifted = shiftOnGrids(
-      members.map((m) => ({ id: m.layer.id, kind: m.layer.kind, tStartUs: m.layer.t_start_us, tEndUs: m.layer.t_end_us })),
-      -delta,
-      view.fps,
-    )
-    for (const [id, at] of shifted) landings.set(id, at)
+  for (const r of remaining) {
+    let steps = 0
+    for (const h of holes) {
+      const own = spanOnGrid(h.s, h.e, r.grid)
+      if (own.e <= r.layer.t_start_us) steps += gridIndex(own.e, r.grid) - gridIndex(own.s, r.grid)
+    }
+    if (steps === 0) continue
+    stepsOf.set(r.layer.id, steps)
+    landings.set(r.layer.id, {
+      tStartUs: stepPointOnGrid(r.layer.t_start_us, -steps, r.grid),
+      tEndUs: stepPointOnGrid(r.layer.t_end_us, -steps, r.grid),
+    })
   }
 
   // 8 — the lenient lock reading: only a layer that would actually shift blocks,
@@ -308,10 +309,10 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
   // the lane" is the coarser remedy and clears every locked layer on it at once,
   // so it is the sentence worth showing first.
   for (const r of remaining)
-    if (deltaOf.has(r.layer.id) && r.track.locked)
+    if (stepsOf.has(r.layer.id) && r.track.locked)
       return { ok: false, refusal: { error: 'TrackLocked', track: r.track.id } }
   for (const r of remaining)
-    if (deltaOf.has(r.layer.id) && r.layer.locked)
+    if (stepsOf.has(r.layer.id) && r.layer.locked)
       return { ok: false, refusal: { error: 'RippleLockedLayer', layer: r.layer.id } }
 
   // 9 — the post-move layout, checked by validate's own rule so a plan and the
@@ -334,9 +335,9 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
     const from = index.get(t.from_layer)
     const to = index.get(t.to_layer)
     if (from === undefined || to === undefined) continue
-    const fromDelta = deltaOf.get(t.from_layer) ?? 0
-    if (fromDelta !== (deltaOf.get(t.to_layer) ?? 0)) continue
-    if (fromDelta === 0) { authorized.set(pairKey(t.from_layer, t.to_layer), t.duration_us); continue }
+    const fromSteps = stepsOf.get(t.from_layer) ?? 0
+    if (fromSteps !== (stepsOf.get(t.to_layer) ?? 0)) continue
+    if (fromSteps === 0) { authorized.set(pairKey(t.from_layer, t.to_layer), t.duration_us); continue }
     const fromEnd = landings.get(t.from_layer)?.tEndUs ?? from.layer.t_end_us
     const toStart = landings.get(t.to_layer)?.tStartUs ?? to.layer.t_start_us
     authorized.set(pairKey(t.from_layer, t.to_layer), fromEnd - toStart)
@@ -351,7 +352,7 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
         cls: r.cls,
         start: at?.tStartUs ?? r.layer.t_start_us,
         end: at?.tEndUs ?? r.layer.t_end_us,
-        moved: deltaOf.has(r.layer.id),
+        moved: stepsOf.has(r.layer.id),
       })
     }
     after.sort((a, b) => a.start - b.start)

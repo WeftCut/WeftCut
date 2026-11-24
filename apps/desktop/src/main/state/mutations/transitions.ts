@@ -3,7 +3,7 @@ import { addTime, multiplyTime, exactTime, approximateTime } from '../../../rend
 import type { Composition, Layer, Project, Transition, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
-import { frameIndexRound, gridForLayerKind, shiftOnGrids, snapOnGrid, timeUsAtFrame } from '../snap'
+import { frameIndexRound, travelBy, travelOnGrids, timeUsAtFrame, type Travel } from '../snap'
 import { applyDurationAutofit, hasSourceWindow, locateLayerIn, pickFreeOverlayTrack, requireLayer, sourceDurationUs } from './helpers'
 import { applyAddTrack } from './add'
 import { checkLinkLock, linkSiblingsExcluding, indexLinks } from './links'
@@ -108,33 +108,34 @@ function rejectAudioParticipant(layer: Layer): void {
     throw new CommandFailure({ error: 'TransitionUnsupportedLayerKind', layer: layer.id, kind: layer.params.kind })
 }
 
-/** Where each member of `memberIds` lands under a `deltaUs` shift — the shared
+/** Where each member of `memberIds` lands under `travel` — the shared
  *  arithmetic (`renderer/grid.ts`), fed from this composition. Both the write
  *  and the pre-check that guards it read this one map, so they cannot round
  *  apart. An unlocatable member simply has no entry. */
-function shiftedSpans(c: Composition, memberIds: readonly Uuid[], deltaUs: number): Map<Uuid, { tStartUs: number; tEndUs: number }> {
-  return shiftOnGrids(
+function shiftedSpans(c: Composition, memberIds: readonly Uuid[], travel: Travel): Map<Uuid, { tStartUs: number; tEndUs: number }> {
+  return travelOnGrids(
     memberIds.flatMap((id) => {
       const loc = locateLayerIn(c, id)
       return loc ? [{ id, kind: loc.layer.params.kind, tStartUs: loc.layer.t_start_us, tEndUs: loc.layer.t_end_us }] : []
     }),
-    deltaUs, c.fps,
+    travel, c.fps,
   )
 }
 
-/** Shift a moving set (the incoming layer + its link siblings) by ONE µs delta,
- *  each member landing on its OWN lattice, and re-insert each at its track's
- *  sorted position — the applyMoveLayer discipline verbatim.
+/** Move a moving set (the incoming layer + its link siblings) by ONE travel,
+ *  stated from the incoming layer's start, each member moving by whole points of
+ *  its OWN lattice, and re-insert each at its track's sorted position — the
+ *  applyMoveLayer discipline verbatim.
  *
  *  Not "the same as move.ts" by convention — literally the same function
- *  (`shiftOnGrids`, `renderer/grid.ts`), which owns the reason a member snaps
+ *  (`travelOnGrids`, `renderer/grid.ts`), which owns the reason a member moves
  *  on ITS OWN grid: on the frame grid a linked audio member would be dragged to
  *  the nearest video frame on every duration edit and a deliberately slipped
  *  sync offset would silently go with it. An unlocatable member is skipped, the
  *  move loop's own tolerance for a stale id. */
-function shiftLayerSet(c: Composition, memberIds: readonly Uuid[], deltaUs: number): void {
-  if (deltaUs === 0) return
-  const landings = shiftedSpans(c, memberIds, deltaUs)
+function shiftLayerSet(c: Composition, memberIds: readonly Uuid[], travel: Travel): void {
+  if (travel.toUs === travel.fromUs) return
+  const landings = shiftedSpans(c, memberIds, travel)
   // Located again per member, deliberately: the splice below invalidates any
   // index taken during the pass above, and re-locating is the loop's existing
   // tolerance for a member that has since gone.
@@ -296,18 +297,15 @@ export function applyAddTransition(
       if (fromLink !== undefined && fromLink === linkIdx.get(toLayer))
         throw new CommandFailure({ error: 'TransitionParticipantsShareLink', from: fromLayer, to: toLayer })
       const moveSet = incomingMoveSet(c, toLayer) // link-lock refusal inside
-      // Zero-cross pre-check over the whole moving set, mirroring shiftLayerSet's
-      // own-lattice snap: B cannot cross (see maxDur), but an earlier-starting
-      // link sibling can. Pre-mint and pre-mutation, like every refusal here.
-      for (const id of moveSet) {
-        const loc = locateLayerIn(c, id)
-        if (!loc) continue
-        const l = loc.layer
-        const destStart = snapOnGrid(l.t_start_us - durUs, gridForLayerKind(l.params.kind, c.fps))
-        if (destStart < 0)
-          throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: id, t_start: destStart } })
-      }
-      shiftLayerSet(c, moveSet, -durUs)
+      const travel = travelBy(toStart, -durUs)
+      // Zero-cross pre-check over the whole moving set, read off the landings
+      // shiftLayerSet will write: B cannot cross (see maxDur), but an
+      // earlier-starting link sibling can. Pre-mint and pre-mutation, like every
+      // refusal here.
+      for (const [id, { tStartUs }] of shiftedSpans(c, moveSet, travel))
+        if (tStartUs < 0)
+          throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: id, t_start: tStartUs } })
+      shiftLayerSet(c, moveSet, travel)
       bounceCollidingSiblings(p, c, idGen, moveSet, toLayer, bounces)
       extendedUs = 0
     }
@@ -413,7 +411,7 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
           throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: tr.from_layer, available_us: available })
         extendLayerTEnd(fromLayerObj, endDelta)
       } else if (endDelta < 0) shrinkLayerTEnd(fromLayerObj, -endDelta)
-      shiftLayerSet(c, moveSet, startDelta)
+      shiftLayerSet(c, moveSet, { fromUs: toLayerObj.t_start_us, toUs: newStartUs })
       tr.duration_us = newEndUs - newStartUs
       // Negative e′ (tail trim) stores 0, never a negative counter: the trim
       // moved the sacred end itself, so post-commit NOTHING is borrowed.
@@ -432,11 +430,11 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
  *  is not misread as a collision with the not-yet-shrunk tail. Throws the
  *  structured refusal naming the member that cannot land; the system never
  *  makes room (the user may have filled the vacated gap deliberately). */
-function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], deltaUs: number, fromLayer: Uuid, shrunkFromEnd: number | null): void {
+function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], travel: Travel, fromLayer: Uuid, shrunkFromEnd: number | null): void {
   // The SAME call `shiftLayerSet` will make, not a re-derivation of it: a
   // pre-check that rounded differently from the write it guards would refuse
   // landings that fit and admit ones that do not.
-  const landings = shiftedSpans(c, memberIds, deltaUs)
+  const landings = shiftedSpans(c, memberIds, travel)
   const moving = new Set(memberIds)
   for (const id of memberIds) {
     const loc = locateLayerIn(c, id)
@@ -478,14 +476,16 @@ export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
   for (const loc of [fromLoc, toLoc]) if (loc) checkTransitionTrackLock(c, loc.trackIndex)
 
   let moveSet: Uuid[] = []
+  // Stated from the incoming layer's start, the instant the restore names.
+  const travel = travelBy(toLoc?.layer.t_start_us ?? 0, moveUs)
   if (toLoc && moveUs > 0) {
     moveSet = incomingMoveSet(c, tr.to_layer)
     const shrunkFromEnd = fromLoc ? fromLoc.layer.t_end_us - tr.extended_us : null
-    precheckRestoreCollision(c, moveSet, moveUs, tr.from_layer, shrunkFromEnd)
+    precheckRestoreCollision(c, moveSet, travel, tr.from_layer, shrunkFromEnd)
   }
 
   c.transitions.splice(idx, 1)
   if (fromLoc) shrinkLayerTEnd(fromLoc.layer, tr.extended_us)
-  shiftLayerSet(c, moveSet, moveUs)
+  shiftLayerSet(c, moveSet, travel)
   applyDurationAutofit(c)
 }
