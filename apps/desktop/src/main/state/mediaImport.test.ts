@@ -92,6 +92,27 @@ describe('ensureImported', () => {
     expect(actor.snapshot()).toEqual(replacement)
   })
 
+  it('is idle only once each import with a pool row has queued its copy, and stops waiting on abort', async () => {
+    const actor = freshActor(), deps = makeDeps(actor, { workspaceDir: 'C:/proj' })
+    const importer = createMediaImporter(deps)
+    await expect(importer.idle(new AbortController().signal)).resolves.toBeUndefined()
+    let queue!: () => void
+    deps._enqueueWorkspaceCopy.mockImplementation(() => new Promise<void>(resolve => { queue = resolve }))
+    const imported = importer.ensureImported('D:/source.mp4')
+    await vi.waitFor(() => expect(deps._enqueueWorkspaceCopy).toHaveBeenCalledOnce())
+    let idle = false
+    const waiting = importer.idle(new AbortController().signal).then(() => { idle = true })
+    const abort = new AbortController()
+    const abandoned = importer.idle(abort.signal)
+    abort.abort(new Error('pack cancelled'))
+    await expect(abandoned).rejects.toThrow('pack cancelled')
+    expect(idle).toBe(false)
+    queue()
+    await imported
+    await waiting
+    expect(idle).toBe(true)
+  })
+
   it('reports added, reused and relinked outcomes without transport inference', async () => {
     const actor = freshActor(), deps = makeDeps(actor)
     const source = 'C:/x.mp4'

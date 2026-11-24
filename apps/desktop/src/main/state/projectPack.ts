@@ -25,6 +25,10 @@ export interface ProjectPackDeps {
   /** The open project as it stands, without writing anything; null with none
    *  open. */
   current(): PackSource | null
+  /** Resolves once the imports into the open project have each landed their
+   *  copy in Media/ or failed; rejects with the signal's reason when `signal`
+   *  aborts first. */
+  importsSettled(signal: AbortSignal): Promise<void>
   /** Writes what Save As writes before it copies (project.json, the font
    *  copies, the style TASTE.md extends), then answers the project as it
    *  stands; null with none open. */
@@ -72,6 +76,8 @@ interface Running {
   native: boolean
   /** The registry took the cancel. */
   stopped: boolean
+  /** Aborted by Cancel: ends a wait before the native call. */
+  abort: AbortController
 }
 
 export interface ProjectPacker {
@@ -97,6 +103,7 @@ export function createProjectPacker(deps: ProjectPackDeps): ProjectPacker {
       progress: { job_id: deps.newJobId(), kind, file: deps.basename(archive), done: 0, total: 0, cancelling: false },
       native: false,
       stopped: false,
+      abort: new AbortController(),
     }
     publish()
     return running
@@ -171,8 +178,18 @@ export function createProjectPacker(deps: ProjectPackDeps): ProjectPacker {
       const archive = chosen.toLowerCase().endsWith(`.${PACK_EXTENSION}`) ? chosen : `${chosen}.${PACK_EXTENSION}`
       const run = begin('pack', archive)
       try {
+        const asked = deps.current()
+        if (!asked) throw new PackFailure({ refusal: 'NoProjectOpen' })
+        // A pack holds the folder only, so a file still on its way into
+        // Media/ would be left out, its record naming the source outside.
+        try { await deps.importsSettled(run.abort.signal) } catch (error) {
+          if (run.abort.signal.aborted) return { outcome: 'cancelled' }
+          throw error
+        }
         const project = await deps.settle()
         if (!project) throw new PackFailure({ refusal: 'NoProjectOpen' })
+        // The wait can be long, and another project may have opened meanwhile.
+        if (project.dir !== asked.dir) return { outcome: 'cancelled' }
         const schemaVersion = schemaOf(deps.readFile(deps.join(project.dir, PROJECT_FILE)))
         const files = await deps.list(project.dir, project.motifIds)
         run.progress.total = files.reduce((sum, f) => sum + f.size, 0)
@@ -221,6 +238,7 @@ export function createProjectPacker(deps: ProjectPackDeps): ProjectPacker {
         run.progress.cancelling = true
         publish()
       }
+      run.abort.abort()
       stop(run)
       return true
     },
