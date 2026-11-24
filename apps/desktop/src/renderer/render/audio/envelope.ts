@@ -2,7 +2,7 @@
 // drift-prone MATH — dB→linear and keyframe interpolation — now runs the shared
 // weftcut-eval wasm (dbToLinear below + resolveAnimated; ADR 0025), so it can't
 // diverge from Rust. The SAMPLER STRUCTURE here (the 10 ms grid loop, fade
-// ramps, evalEnvelope lerp) is still parallel to native/src/audio/envelope.rs —
+// ramps, envelopeSegment lerp) is still parallel to native/src/audio/envelope.rs —
 // keep those in step; the golden (audioEnvelopeGolden.fixture.json) guards them.
 
 import { type AnimTrack, resolveAnimated } from "../animated";
@@ -10,6 +10,8 @@ import { crossfadeGain, dbToLinear, fadeMul } from "../../eval";
 
 export const ENVELOPE_STEP_US = 10_000;
 
+/// `values[k]` sits at `min(k * stepUs, spanUs)`, so the last segment is
+/// usually shorter than a step.
 export interface Envelope {
   stepUs: number;
   spanUs: number;
@@ -98,11 +100,21 @@ export function samplePan(pan: AnimTrack<number>, spanUs: number): Envelope {
 export function evalEnvelope(e: Envelope, tUs: number): number {
   if (e.values.length === 0) return 1;
   if (e.values.length === 1) return e.values[0]!;
-  if (tUs <= 0) return e.values[0]!;
+  const [i, j, u] = envelopeSegment(e, tUs);
+  return e.values[i]! + (e.values[j]! - e.values[i]!) * u;
+}
+
+/// The control points straddling layer-local `tUs` and the fraction between
+/// them; both indices name the same point outside the span. The last segment is
+/// interpolated over its real length, not a full step, or a fade ending on a
+/// frame edge stops short of its end value there. Twin of `Envelope::locate`;
+/// needs two or more points.
+export function envelopeSegment(e: Envelope, tUs: number): [number, number, number] {
   const last = e.values.length - 1;
-  const pos = tUs / e.stepUs;
-  const i = Math.floor(pos);
-  if (i >= last) return e.values[last]!;
-  const u = pos - i;
-  return e.values[i]! + (e.values[i + 1]! - e.values[i]!) * u;
+  if (tUs <= 0) return [0, 0, 0];
+  if (tUs >= e.spanUs) return [last, last, 0];
+  const i = Math.min(Math.floor(tUs / e.stepUs), last - 1);
+  const start = i * e.stepUs;
+  const len = i + 1 === last ? e.spanUs - start : e.stepUs;
+  return [i, i + 1, Math.min((tUs - start) / Math.max(len, 1), 1)];
 }

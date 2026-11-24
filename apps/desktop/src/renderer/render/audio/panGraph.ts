@@ -6,7 +6,7 @@
 // law. Coefficient curves are sampled on the 10 ms grid and lerped by
 // setValueCurveAtTime (the X parity contract; twin of envelope.rs::pan_coeffs_at).
 import { panCoeff } from "../../eval";
-import { type Envelope } from "./envelope";
+import { type Envelope, envelopeSegment } from "./envelope";
 
 export interface PanGraph {
   input: AudioNode;
@@ -23,13 +23,10 @@ export function panCoeffsAt(env: Envelope, channels: number, tUs: number): numbe
     const p = env.values[0] ?? 0;
     return [0, 1, 2, 3].map((i) => panCoeff(p, channels, i));
   }
-  const last = env.values.length - 1;
-  const pos = Math.max(0, tUs) / env.stepUs;
-  const i = Math.min(Math.floor(pos), last);
+  const [i, j, u] = envelopeSegment(env, tUs);
   const a = [0, 1, 2, 3].map((k) => panCoeff(env.values[i]!, channels, k));
-  if (i >= last) return a;
-  const b = [0, 1, 2, 3].map((k) => panCoeff(env.values[i + 1]!, channels, k));
-  const u = pos - i;
+  if (i === j) return a;
+  const b = [0, 1, 2, 3].map((k) => panCoeff(env.values[j]!, channels, k));
   return a.map((av, k) => av + (b[k]! - av) * u);
 }
 

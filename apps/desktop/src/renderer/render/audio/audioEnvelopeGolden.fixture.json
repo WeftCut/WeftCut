@@ -62,6 +62,19 @@
         { "t_us": 500000, "expect": 1 },
         { "t_us": 510000, "expect": 0.1 }
       ]
+    },
+    {
+      "name": "fade_out_ends_off_grid",
+      "gain_db": { "mode": "Static", "value": 0 },
+      "fade_in_us": 0,
+      "fade_out_us": 25000,
+      "span_us": 25000,
+      "samples": [
+        { "t_us": 0, "expect": 1 },
+        { "t_us": 10000, "expect": 0.6 },
+        { "t_us": 22500, "expect": 0.1 },
+        { "t_us": 25000, "expect": 0 }
+      ]
     }
   ],
   "pan_cases": [
@@ -81,6 +94,24 @@
       "samples": [
         { "t_us": 0, "expect": -0.8 },
         { "t_us": 999000, "expect": -0.8 }
+      ]
+    },
+    {
+      "name": "linear pan ends off grid",
+      "pan": {
+        "mode": "Keyframed",
+        "value": [
+          { "id": "00000000-0000-7000-8000-000000000005", "t_us": 0, "value": -1, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } },
+          { "id": "00000000-0000-7000-8000-000000000006", "t_us": 25000, "value": 1, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
+      },
+      "span_us": 25000,
+      "samples": [
+        { "t_us": 0, "expect": -1 },
+        { "t_us": 10000, "expect": -0.2 },
+        { "t_us": 22500, "expect": 0.8 },
+        { "t_us": 25000, "expect": 1 }
       ]
     }
   ],
