@@ -50,11 +50,10 @@ export function describeGridRepairs(repairs: readonly GridRepair[]): string {
 }
 
 interface Span { start: number; end: number }
-/** A wire layer during the repair: its end as the file wrote it, its edges before
- *  the frame snap (`raw`, after any negative-start repair) and as they now stand,
- *  and whether `placeCollapsed` moved it beside where it collapsed or parked it
- *  past its track. */
-interface SnappedLayer extends Span { layer: Record<string, unknown>; id: string | null; raw: Span; writtenEnd: number; placed: 'snapped' | 'moved' | 'parked' }
+/** A wire layer during the repair: its edges before the frame snap (`raw`, after
+ *  any negative-start repair) and as they now stand, and whether `placeCollapsed`
+ *  moved it beside where it collapsed or parked it past its track. */
+interface SnappedLayer extends Span { layer: Record<string, unknown>; id: string | null; raw: Span; placed: 'snapped' | 'moved' | 'parked' }
 
 function warnGridRepair(repairs: readonly GridRepair[]): void {
   console.warn(`[grid-repair] repaired ${repairs.length} timeline field(s) on load: ${describeGridRepairs(repairs)}`)
@@ -217,7 +216,6 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     // Layer endpoints first: transition durations are re-derived from the repaired
     // geometry below, so they must read the final values.
     const geometry = new Map<string, { start: number; end: number }>()
-    let repairedEnd = 0
     for (const track of (comp.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
       const layers = (track?.layers as Array<Record<string, unknown>> | undefined) ?? []
       // Where an entirely-negative layer gets parked. Read from the RAW ends before any
@@ -232,13 +230,12 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
       for (const layer of layers) {
         if (layer === null || typeof layer !== 'object') continue
         const id = typeof layer.id === 'string' ? layer.id : null
-        const writtenEnd = layer.t_end_us
         parkAt = repairNegativeStart(id, layer, compGrid, parkAt)
         const raw = { start: layer.t_start_us, end: layer.t_end_us }
         const start = snapField('Layer', id, layer, 't_start_us', compGrid)
         const end = snapField('Layer', id, layer, 't_end_us', compGrid)
         if (start === null || end === null) continue
-        snapped.push({ layer, id, raw: { start: raw.start as number, end: raw.end as number }, writtenEnd: writtenEnd as number, start, end, placed: 'snapped' })
+        snapped.push({ layer, id, raw: { start: raw.start as number, end: raw.end as number }, start, end, placed: 'snapped' })
       }
       placeCollapsed(snapped, compGrid)
       for (const s of snapped) {
@@ -248,9 +245,6 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
         const from = s.placed === 'snapped' ? s.raw : { start: s.start, end: s.start + (s.raw.end - s.raw.start) }
         if (params?.kind === 'Audio') trimAudioSource(s.id, params, from, s)
         if (s.id !== null) geometry.set(s.id, { start: s.start, end: s.end })
-        // Only an end this pass moved can have crossed the duration. A parked layer
-        // is off past its track's content and must not lengthen what plays.
-        if (s.placed !== 'parked' && s.end !== s.writtenEnd && s.end > repairedEnd) repairedEnd = s.end
       }
     }
 
@@ -281,7 +275,9 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     // the tail. Grow-only, so a deliberately pinned longer duration is never
     // shortened here.
     if (snappedDuration !== null) {
-      const needed = snapUpOnGrid(repairedEnd, compGrid)
+      let maxEnd = 0
+      for (const g of geometry.values()) if (g.end > maxEnd) maxEnd = g.end
+      const needed = snapUpOnGrid(maxEnd, compGrid)
       if (needed > snappedDuration) {
         repairs.push({ entity: 'Composition', id: compId, field: 'duration_us', from: snappedDuration, to: needed })
         comp.duration_us = needed
