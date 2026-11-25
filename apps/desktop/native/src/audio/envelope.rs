@@ -2,8 +2,8 @@
 //!
 //! `sample_gain` composes Animated gain_db (collected once via `eval_kfs` and
 //! evaluated through `weftcut_eval::eval_f64_ext` with the track's stored
-//! extrapolation) with the layer's linear fade
-//! ramps, on a fixed 10 ms grid, in LINEAR gain (10^(dB/20)). Both renderers
+//! extrapolation) with the layer's linear fade ramps, on a 10 ms grid closed
+//! at the layer end, in LINEAR gain (10^(dB/20)). Both renderers
 //! linearly interpolate between the same points: Web Audio
 //! `setValueCurveAtTime` on the TS side, `Envelope::eval` per sample on this
 //! side. The TS twin is `apps/desktop/src/renderer/render/audio/envelope.ts`;
@@ -14,8 +14,9 @@ use crate::state::animated::Animated;
 
 pub const ENVELOPE_STEP_US: i64 = 10_000; // 10 ms grid
 
-/// Control points on the implicit grid: `values[k]` sits at `t = k * step_us`,
-/// the last point clamps to the layer end. len()==1 ⇔ effectively static.
+/// Control points on the implicit grid: `values[k]` sits at
+/// `t = min(k * step_us, span_us)`, so the last segment is usually shorter than
+/// a step. len()==1 ⇔ effectively static.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Envelope {
     pub step_us: i64,
@@ -43,21 +44,36 @@ impl Envelope {
             0 => 1.0,
             1 => self.values[0],
             _ => {
-                if t_us <= 0 {
-                    return self.values[0];
-                }
-                let last = (self.values.len() - 1) as i64;
-                let pos = t_us as f64 / self.step_us as f64;
-                let i = pos.floor() as i64;
-                if i >= last {
-                    return *self.values.last().unwrap();
-                }
-                let u = (pos - i as f64) as f32;
-                let a = self.values[i as usize];
-                let b = self.values[(i + 1) as usize];
+                let (i, j, u) = self.locate(t_us);
+                let (a, b) = (self.values[i], self.values[j]);
                 a + (b - a) * u
             }
         }
+    }
+
+    /// The control points straddling layer-local `t_us` and the fraction
+    /// between them; both indices name the same point outside the span. The
+    /// last segment is interpolated over its real length, not a full step, or
+    /// a fade ending on a frame edge stops short of its end value there.
+    /// Twin of `envelopeSegment` in render/audio/envelope.ts. Needs two or
+    /// more points.
+    fn locate(&self, t_us: i64) -> (usize, usize, f32) {
+        let last = self.values.len() - 1;
+        if t_us <= 0 {
+            return (0, 0, 0.0);
+        }
+        if t_us >= self.span_us {
+            return (last, last, 0.0);
+        }
+        let i = ((t_us / self.step_us) as usize).min(last - 1);
+        let start = i as i64 * self.step_us;
+        let len = if i + 1 == last {
+            self.span_us - start
+        } else {
+            self.step_us
+        };
+        let u = ((t_us - start) as f64 / len.max(1) as f64).min(1.0) as f32;
+        (i, i + 1, u)
     }
 
     /// Multiply every control point by `factor`. Used to fold a role's
@@ -227,15 +243,12 @@ pub fn pan_coeffs_at(pan: &Envelope, channels: i32, t_us: i64) -> [f32; 4] {
     if pan.values.len() <= 1 {
         return pan_coeffs(*pan.values.first().unwrap_or(&0.0) as f64, channels);
     }
-    let last = (pan.values.len() - 1) as i64;
-    let pos = (t_us.max(0) as f64) / pan.step_us as f64;
-    let i = (pos.floor() as i64).min(last);
-    let a = pan_coeffs(pan.values[i as usize] as f64, channels);
-    if i >= last {
+    let (i, j, u) = pan.locate(t_us);
+    let a = pan_coeffs(pan.values[i] as f64, channels);
+    if i == j {
         return a;
     }
-    let b = pan_coeffs(pan.values[(i + 1) as usize] as f64, channels);
-    let u = (pos - i as f64) as f32;
+    let b = pan_coeffs(pan.values[j] as f64, channels);
     [
         a[0] + (b[0] - a[0]) * u,
         a[1] + (b[1] - a[1]) * u,
@@ -259,13 +272,23 @@ mod pbt {
             values in proptest::collection::vec(-1.0f64..=1.0, 1usize..8),
             step_us in select(vec![10_000i64, 20_000]),
             channels in select(vec![1i32, 2]),
-            t_us in -50_000i64..200_000,
+            // Query time as a fraction of the span, so it lands in every
+            // segment (the short last one included) and before/after the ends.
+            t_frac in -0.2f64..1.2,
+            // Length of the last segment: layer ends rarely land on the grid.
+            last_us in 1i64..=20_000,
         ) {
             // Build an Envelope directly from the generated grid — same shape
             // that sample_pan produces (values already clamped f64→f32).
+            let span_us = if values.len() < 2 {
+                0
+            } else {
+                (values.len() as i64 - 2) * step_us + last_us.min(step_us)
+            };
+            let t_us = (t_frac * span_us.max(step_us) as f64).round() as i64;
             let env = Envelope {
                 step_us,
-                span_us: (values.len() as i64 - 1) * step_us,
+                span_us,
                 values: values.iter().map(|&v| v as f32).collect(),
             };
 
@@ -277,32 +300,35 @@ mod pbt {
             // comparison is on identical inputs — not the raw proptest f64 vec.
             // The outer loop (index/clamp/lerp) is still derived independently.
             let coeff = |idx: usize| weftcut_eval::pan_coeffs(env.values[idx] as f64, channels);
+            // Control points sit at min(k * step_us, span_us); find the
+            // segment by walking the knots rather than dividing by the step.
             let last = values.len() - 1;
-            let exp: [f32; 4] = if last == 0 {
+            let knot = |k: usize| (k as i64 * step_us).min(span_us);
+            let exp: [f32; 4] = if last == 0 || t_us <= 0 {
                 coeff(0)
+            } else if t_us >= span_us {
+                coeff(last)
             } else {
-                let pos = (t_us.max(0) as f64) / step_us as f64;
-                let i = (pos.floor() as usize).min(last);
-                if i >= last {
-                    coeff(last)
-                } else {
-                    let frac = (pos - i as f64) as f32;
-                    let a = coeff(i);
-                    let b = coeff(i + 1);
-                    [
-                        a[0] + (b[0] - a[0]) * frac,
-                        a[1] + (b[1] - a[1]) * frac,
-                        a[2] + (b[2] - a[2]) * frac,
-                        a[3] + (b[3] - a[3]) * frac,
-                    ]
+                let mut i = 0;
+                while knot(i + 1) <= t_us {
+                    i += 1;
                 }
+                let frac = ((t_us - knot(i)) as f64 / (knot(i + 1) - knot(i)) as f64) as f32;
+                let a = coeff(i);
+                let b = coeff(i + 1);
+                [
+                    a[0] + (b[0] - a[0]) * frac,
+                    a[1] + (b[1] - a[1]) * frac,
+                    a[2] + (b[2] - a[2]) * frac,
+                    a[3] + (b[3] - a[3]) * frac,
+                ]
             };
 
             for k in 0..4 {
                 prop_assert!(
                     (got[k] - exp[k]).abs() < 1e-6,
-                    "k={} got={} exp={} (t_us={} step_us={} channels={} values={:?})",
-                    k, got[k], exp[k], t_us, step_us, channels, values
+                    "k={} got={} exp={} (t_us={} step_us={} span_us={} channels={} values={:?})",
+                    k, got[k], exp[k], t_us, step_us, span_us, channels, values
                 );
             }
         }
@@ -395,6 +421,121 @@ mod tests {
         let e = sample_gain(&track, 0, 0, 1_000_000);
         assert!(!e.is_constant());
         assert!((e.eval(500_000) - db_to_linear(-10.0)).abs() < 2e-3);
+    }
+
+    /// Layer edges sit on frames, so the span rarely lands on the 10 ms grid.
+    /// `(frame, span)` at 60 and 30 fps, a frame rounded to the µs as edges are.
+    fn off_grid_spans() -> Vec<(i64, i64)> {
+        [60i64, 30]
+            .iter()
+            .map(|fps| {
+                let frame = (1_000_000 + fps / 2) / fps;
+                let span = frame * (fps + 1);
+                assert_ne!(
+                    span % ENVELOPE_STEP_US,
+                    0,
+                    "span {span} must end off the grid"
+                );
+                (frame, span)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn linear_fade_is_reproduced_through_a_short_last_segment() {
+        // A whole-layer fade-out is linear in time, so lerping its control
+        // points must give 1 - t/span everywhere, including between the last
+        // grid point and the layer end.
+        for (_, span) in off_grid_spans() {
+            let e = sample_gain(&Animated::Static(0.0), 0, span, span);
+            let last_grid = (span / ENVELOPE_STEP_US) * ENVELOPE_STEP_US;
+            for t in [
+                0,
+                last_grid / 2,
+                last_grid,
+                (last_grid + span) / 2,
+                span - 1,
+                span,
+            ] {
+                let expect = 1.0 - t as f32 / span as f32;
+                assert!(
+                    (e.eval(t) - expect).abs() < 1e-5,
+                    "span {span} t {t}: got {}, expect {expect}",
+                    e.eval(t)
+                );
+            }
+            assert_eq!(
+                e.eval(span),
+                *e.values.last().unwrap(),
+                "end reaches the last point"
+            );
+            assert_eq!(
+                e.eval(span + ENVELOPE_STEP_US / 2),
+                *e.values.last().unwrap(),
+                "past the end holds"
+            );
+        }
+    }
+
+    #[test]
+    fn one_frame_crossfade_outgoing_stays_under_the_equal_power_curve() {
+        // Between control points the envelope is a chord of the outgoing
+        // cos arc, which is concave on [0, 1], so the chord never rises above
+        // the curve. At the last mixed sample the curve is ≈ 0: the outgoing
+        // layer must be (almost) silent there, not cut off mid-fade.
+        use crate::audio::mix::MIX_SAMPLE_RATE;
+        for (duration_us, span) in off_grid_spans() {
+            let start_us = span - duration_us;
+            let mut e = sample_gain(&Animated::Static(0.0), 0, 0, span);
+            apply_crossfades(
+                &mut e,
+                &[AudioCrossfade {
+                    start_us,
+                    duration_us,
+                    incoming: false,
+                }],
+            );
+            let t = span - 1_000_000 / MIX_SAMPLE_RATE;
+            let progress = (t - start_us) as f64 / duration_us as f64;
+            let curve = weftcut_eval::equal_power_crossfade(progress).0 as f32;
+            let got = e.eval(t);
+            assert!(
+                (0.0..=curve + 1e-6).contains(&got),
+                "span {span}: outgoing gain {got} at progress {progress} exceeds the curve {curve}"
+            );
+        }
+    }
+
+    #[test]
+    fn pan_coeffs_follow_a_short_last_segment() {
+        for (_, span) in off_grid_spans() {
+            let track = Animated::Keyframed(
+                vec![kf(0, -1.0), kf(span, 1.0)].into_iter().collect(),
+                Extrapolation::HOLD,
+            );
+            let e = sample_pan(&track, span);
+            let n = e.values.len();
+            let last_grid = (n as i64 - 2) * ENVELOPE_STEP_US;
+            let a = weftcut_eval::pan_coeffs(e.values[n - 2] as f64, 2);
+            let b = weftcut_eval::pan_coeffs(e.values[n - 1] as f64, 2);
+            let mid = pan_coeffs_at(&e, 2, (last_grid + span) / 2);
+            let end = pan_coeffs_at(&e, 2, span);
+            for k in 0..4 {
+                assert!(
+                    (mid[k] - (a[k] + b[k]) / 2.0).abs() < 1e-5,
+                    "span {span} idx {k}: midpoint {} is not the mean of {} and {}",
+                    mid[k],
+                    a[k],
+                    b[k]
+                );
+                assert!(
+                    (end[k] - b[k]).abs() < 1e-6,
+                    "span {span} idx {k}: end {} != last {}",
+                    end[k],
+                    b[k]
+                );
+            }
+        }
     }
 
     #[test]

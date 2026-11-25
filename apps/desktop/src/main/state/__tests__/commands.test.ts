@@ -403,6 +403,20 @@ describe('pickFreeOverlayTrack', () => {
     // 'shut' wins the reverse scan on position but is locked → 'open' is picked.
     expect(pickFreeOverlayTrack(root(p), 0, 5_000_000)).toBe('open')
   })
+
+  it('a disabled or muted lane is never a candidate — content placed there would stop playing or go silent', () => {
+    const p = makeProject({ tracks: [
+      { id: 'a', label: null, enabled: true, locked: false, muted: false, solo: false,
+        removable: false, role: 'ARoll', transient: false, height_px: 64, layers: [] },
+      { id: 'on', label: 'On', enabled: true, locked: false, muted: false, solo: false,
+        removable: true, role: null, transient: false, height_px: 64, layers: [] },
+      { id: 'quiet', label: 'Quiet', enabled: true, locked: false, muted: true, solo: false,
+        removable: true, role: null, transient: false, height_px: 64, layers: [] },
+      { id: 'off', label: 'Off', enabled: false, locked: false, muted: false, solo: false,
+        removable: true, role: null, transient: false, height_px: 64, layers: [] },
+    ] })
+    expect(pickFreeOverlayTrack(root(p), 0, 5_000_000)).toBe('on')
+  })
 })
 
 // ── add_media_layer auto-pair ─────────────────────

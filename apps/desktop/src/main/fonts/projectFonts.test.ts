@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Layer, LayerParams, Project } from '../state/model'
+import { portabilityReport } from '../state/portability'
 import { FontCatalog } from './catalog'
 import { ProjectFontStore, USE_DEBOUNCE_MS, type FontLogEntry, type ProjectFontsFs } from './projectFonts'
 import { readFaces } from './sfnt'
@@ -63,6 +64,7 @@ async function harness(layers: Layer[], excluded: string[] = [], manifest: Motif
   const logs: FontLogEntry[] = []
   const name = (p: string) => path.basename(p)
   let hold: Promise<void> | null = null
+  let fail: NodeJS.ErrnoException | null = null
   const recorded: ProjectFontsFs = {
     mkdir: (d, o) => fs.promises.mkdir(d, o),
     readdir: (d) => fs.promises.readdir(d),
@@ -72,6 +74,7 @@ async function harness(layers: Layer[], excluded: string[] = [], manifest: Motif
     writeFile: async (p, data) => {
       if (path.dirname(p) === fontsDir()) calls.push(`write ${name(p)}`)
       if (hold) await hold
+      if (fail && path.dirname(p) === fontsDir()) throw fail
       await fs.promises.writeFile(p, data)
       if (path.dirname(p) === fontsDir()) calls.push(`wrote ${name(p)}`)
     },
@@ -94,7 +97,8 @@ async function harness(layers: Layer[], excluded: string[] = [], manifest: Motif
   // As the host does: the opened project is published, then its folder told.
   const open = async () => { store.published(project, manifest); store.projectChanged(projectDir); await store.settled() }
   const edit = (next: Layer[]) => { project = { ...project, compositions: projectOf(next).compositions }; store.published(project, manifest) }
-  return { store, catalog, calls, logs, open, edit, holdWrites: (p: Promise<void> | null) => { hold = p } }
+  return { store, catalog, calls, logs, open, edit, holdWrites: (p: Promise<void> | null) => { hold = p },
+    failWrites: (error: NodeJS.ErrnoException | null) => { fail = error } }
 }
 
 describe('copying into Fonts/', () => {
@@ -309,6 +313,93 @@ describe('closing', () => {
     land()
     await Promise.all([opening, draining])
     expect(inFonts()).toEqual(['Example-Regular.ttf', 'Second-Regular.ttf'])
+  })
+})
+
+describe('what a copy of the folder lacks', () => {
+  /** The portability check's answer with the store's fonts and nothing else
+   *  outside the folder. */
+  const report = (store: ProjectFontStore) => portabilityReport({
+    media: [], unavailableMotifs: [], motifTable: [], motifFolders: [], excludedFonts: [],
+    missingFonts: store.uncarried(), outsideStyle: null,
+  })
+
+  it('a collected face deleted from Fonts/ while open makes the folder not portable, though this machine still draws it', async () => {
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    const h = await harness([textLayer('a', 'Example')])
+    await h.open()
+    expect(report(h.store).portable).toBe(true)
+    fs.rmSync(path.join(fontsDir(), 'Example-Regular.ttf'))
+    await h.store.rescan()
+    await h.store.settled()
+    const r = report(h.store)
+    expect(r.portable).toBe(false)
+    expect(r.fonts.missing).toEqual([{ family: 'Example', weight: 400, italic: false, layer_ids: ['text-Example-400'] }])
+    expect(h.store.missing()).toEqual([])
+  })
+
+  it('collectNow copies the face back, the folder is portable again, and later batches still run', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    const h = await harness([textLayer('a', 'Example')])
+    await h.open()
+    fs.rmSync(path.join(fontsDir(), 'Example-Regular.ttf'))
+    await h.store.rescan()
+    await h.store.settled()
+    await h.store.collectNow()
+    expect(inFonts()).toEqual(['Example-Regular.ttf'])
+    expect(report(h.store).portable).toBe(true)
+    expect(h.store.missing()).toEqual([])
+    // Unlike `drain`, no refusal follows: an edit's batch copies again.
+    fs.rmSync(path.join(fontsDir(), 'Example-Regular.ttf'))
+    await h.store.rescan()
+    await h.store.settled()
+    h.edit([textLayer('ab', 'Example')])
+    vi.advanceTimersByTime(USE_DEBOUNCE_MS)
+    await h.store.settled()
+    expect(inFonts()).toEqual(['Example-Regular.ttf'])
+  })
+
+  it('a face whose copy fails stays listed after collectNow', async () => {
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    const h = await harness([textLayer('a', 'Example')])
+    h.failWrites(Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }))
+    await h.open()
+    const tries = () => h.calls.filter(c => c.startsWith('write')).length
+    const before = tries()
+    await h.store.collectNow()
+    expect(tries(), 'collectNow tries the copy again').toBeGreaterThan(before)
+    expect(inFonts()).toEqual([])
+    expect(report(h.store).fonts.missing.map(f => f.family)).toEqual(['Example'])
+    expect(h.store.missing()).toEqual([])
+  })
+
+  it('a copy that lands on a later try takes the family off the list', async () => {
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    const h = await harness([textLayer('a', 'Example')])
+    h.failWrites(Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }))
+    await h.open()
+    expect(h.store.uncarried().map(f => f.family)).toEqual(['Example'])
+    h.failWrites(null)
+    await h.store.collectNow()
+    expect(h.store.uncarried()).toEqual([])
+  })
+
+  it('an excluded family is listed as excluded only, not as lacking from Fonts/', async () => {
+    installFont('Example-Regular.ttf', { family: 'Example' })
+    const h = await harness([textLayer('a', 'Example')], ['Example'])
+    await h.open()
+    await h.store.collectNow()
+    expect(inFonts()).toEqual([])
+    expect(h.store.uncarried()).toEqual([])
+    expect(h.store.view()?.excluded).toEqual([{ family: 'Example', installed: true }])
+  })
+
+  it('a family resolving nowhere is listed once, as on this machine', async () => {
+    const h = await harness([textLayer('a', 'Gone')])
+    await h.open()
+    expect(h.store.uncarried()).toEqual(h.store.missing())
+    expect(h.store.missing().map(f => f.family)).toEqual(['Gone'])
   })
 })
 

@@ -147,9 +147,9 @@ export function insertSorted(track: Track, layer: Layer): void {
   track.layers.splice(at < 0 ? track.layers.length : at, 0, layer)
 }
 
-/** Scan tracks in reverse for the first non-reserved, UNLOCKED track with no
- *  layer overlap in [t0, t1). Returns null if none found, which means the
- *  caller must spawn a track via `applyAddTrack`. This IS the bounce policy
+/** Scan tracks in reverse for the first non-reserved, UNLOCKED, ENABLED,
+ *  UNMUTED track with no layer overlap in [t0, t1). Returns null if none found, which means
+ *  the caller must spawn a track via `applyAddTrack`. This IS the bounce policy
  *  ("no free lane, so make one", docs/features.md#track-placement); it lives
  *  here rather than commands.ts so the transition mutations can share it
  *  without importing the command adapter (commands.ts imports mutations — the
@@ -159,11 +159,12 @@ export function insertSorted(track: Track, layer: Layer): void {
  *  returned lane (agent color/text adds, paste, transition sibling bounces),
  *  and a locked lane must not receive content any more than it may lose it —
  *  the renderer's drop placement already refuses locked lanes for the same
- *  reason. */
+ *  reason. A disabled or muted lane is passed over too: content placed there
+ *  would stop playing or go silent, which no automatic placement may decide. */
 export function pickFreeOverlayTrack(c: Composition, t0: number, t1: number): Uuid | null {
   const tracks = [...c.tracks].reverse()
   for (const t of tracks) {
-    if (t.role !== null || t.locked) continue
+    if (t.role !== null || t.locked || !t.enabled || t.muted) continue
     const free = t.layers.every((l) => !(t0 < l.t_end_us && l.t_start_us < t1))
     if (free) return t.id
   }
