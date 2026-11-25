@@ -524,6 +524,10 @@ const zhCN: Resources = {
   help: {
     check_updates: "检查更新…",
     report_issue: "报告问题…",
+    whats_new: "新变化…",
+    release_notes_title: "WeftCut {{version}} 新变化",
+    release_notes_close: "知道了",
+    release_notes_language: "更新说明目前只有英文版。",
     about: "关于 WeftCut",
     version: "版本 {{version}}",
     developed_by: "作者:UncleChair",

@@ -11,6 +11,7 @@ import ReactDOM from "react-dom/client";
 import { PROJECT_OPENED_EVENT,type ProjectOpenedPayload } from "../shared/project-events";
 import { App } from "./App";
 import { PreviousSessionReport } from './app/DiagnosticReport';
+import { LaunchReleaseNotes } from './releaseNotes/ReleaseNotesDialog';
 import { initEval } from "./eval";
 import { useAppNoticeEvents } from "./notifications/appNotices";
 import { useFocusRegions } from "./focus/useFocusRegions";
@@ -357,6 +358,7 @@ function Root() {
         />
       )}
       {launchReady && !splashVisible && <PreviousSessionReport />}
+      {launchReady && !splashVisible && <LaunchReleaseNotes />}
       {(splashVisible || !launchReady) && (
         <SplashScreen
           ready={destinationReady}

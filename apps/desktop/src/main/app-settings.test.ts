@@ -122,6 +122,24 @@ describe('app-settings store', () => {
     expect(files.get(PATH)).toBe(before)
   })
 
+  describe('release notes seen version', () => {
+    it('remembers the version whose notes were closed across restart', () => {
+      const { fs } = memFs()
+      const deps = { fs, path: PATH, dir: DIR }
+      expect(createAppSettingsStore(deps).get().release_notes_seen_version).toBeUndefined()
+      createAppSettingsStore(deps).apply({ release_notes_seen_version: '0.9.0' })
+      expect(createAppSettingsStore(deps).get().release_notes_seen_version).toBe('0.9.0')
+    })
+    it.each([7, '', null])('refuses version %s without writing', version => {
+      const { fs, files } = memFs()
+      const deps = { fs, path: PATH, dir: DIR }
+      createAppSettingsStore(deps).apply({ release_notes_seen_version: '0.9.0' })
+      const before = files.get(PATH)
+      expect(() => createAppSettingsStore(deps).apply({ release_notes_seen_version: version as never })).toThrow()
+      expect(files.get(PATH)).toBe(before)
+    })
+  })
+
   describe('dismissed notices', () => {
     it('keeps no dismissal list on disk until a notice is dismissed', () => {
       const { fs, files } = memFs()

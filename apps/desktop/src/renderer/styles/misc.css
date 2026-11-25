@@ -246,3 +246,54 @@
 .settings-panel.update-dialog {
   width: min(var(--dialog-width-prompt), calc(100vw - calc(32 * var(--ui-px))));
 }
+
+/* Release notes (launch after an update, Help → What's New…): the notes scroll
+   inside .settings-body while the footer stays pinned under them. */
+.settings-panel.release-notes-dialog {
+  width: min(var(--dialog-width-confirm), calc(100vw - calc(32 * var(--ui-px))));
+}
+
+.release-notes {
+  color: var(--foreground);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+}
+
+.release-notes h3 {
+  font-size: var(--font-size-title);
+  margin: calc(18 * var(--ui-px)) 0 calc(8 * var(--ui-px));
+}
+
+.release-notes p {
+  margin: 0 0 calc(10 * var(--ui-px));
+}
+
+.release-notes ul {
+  margin: 0 0 calc(10 * var(--ui-px));
+  padding-left: calc(18 * var(--ui-px));
+  list-style: disc;
+}
+
+.release-notes ul ul {
+  margin: calc(4 * var(--ui-px)) 0 0;
+  list-style: circle;
+}
+
+.release-notes li + li {
+  margin-top: calc(4 * var(--ui-px));
+}
+
+.release-notes code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95em;
+  padding: 0 calc(3 * var(--ui-px));
+  border-radius: calc(3 * var(--ui-px));
+  background: var(--muted);
+}
+
+.release-notes-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: calc(12 * var(--ui-px)) calc(16 * var(--ui-px));
+  border-top: 1px solid var(--border-soft);
+}

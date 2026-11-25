@@ -12,6 +12,12 @@ A version that breaks something (before 1.0, a minor bump) gets
 before updating. The release puts it ahead of the install steps and the
 generated changelog; a version without one gets those alone.
 
+The app bundles the same files. The first launch of a version that has notes
+opens them once (until closed; dev and E2E builds never do), and Help → What's
+New… reopens them. The dialog reads headings (`##`, `###`), paragraphs, `-`
+lists nested by two spaces, `**bold**`, `*italic*` and `` `code` ``; anything
+else fails `releaseNotes.test.ts`. Notes are English in every UI language.
+
 On a push to `main` in `WeftCut/WeftCut`, electron-ci's `release-plan` job
 compares the version with the one at the commit the push replaced and with
 published GitHub Releases. Only a push that changes the version to an

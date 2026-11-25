@@ -12,33 +12,18 @@ import {
 } from "./links";
 
 interface AboutDialogProps {
+  /// Null until main answers; the version reads "…" meanwhile.
+  versions: AppVersions | null;
   onClose: () => void;
 }
 
-/// The Help → About box: brand, version identity (pulled from the main
-/// process — the renderer bundle has no package.json access), author/license
-/// lines, and the repo link. The copy button hands bug reports a ready-made
+/// The Help → About box: brand, version identity (from the main process, via
+/// HelpMenu), author/license lines, and the repo link. The copy button hands bug reports a ready-made
 /// environment line (app / Electron / Chrome / platform). Skin reuses the
 /// legacy settings-panel chrome; layout classes live in misc.css.
-export function AboutDialog({ onClose }: AboutDialogProps) {
+export function AboutDialog({ versions, onClose }: AboutDialogProps) {
   const { t } = useTranslation();
-  const [versions, setVersions] = useState<AppVersions | null>(null);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    window.api.app
-      .versions()
-      .then((next) => {
-        if (alive) setVersions(next);
-      })
-      .catch(() => {
-        // Version identity is informational; never block the dialog on it.
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   // "Copied" feedback reverts after a beat so the button is reusable.
   useEffect(() => {
