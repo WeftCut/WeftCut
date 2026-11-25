@@ -45,9 +45,10 @@ capture frames ([motifs.md](motifs.md)). Three axes bound it:
   partition (`main/motif/captureSession.ts`), apart from the editor's session.
   The browser process cancels every `http:`, `https:`, `ws:`, `wss:` and `file:`
   request there and denies every permission, device, screen-capture request and
-  download. Only `motif:` has a handler in it. The webRequest filter names only
-  those schemes, so a Motif's own `motif:`, `data:` and `blob:` loads never wait
-  on the main process.
+  download. Only `motif:` has a handler in it. The webRequest listener runs
+  only for those schemes, though its presence sends every request of the
+  partition, a Motif's own `motif:` loads included, through Electron's request
+  proxy (a fraction of a millisecond each).
 - **Content confinement.** Every render document is served by the `motif:`
   scheme (`MOTIF_CSP` in `main/motif/protocol.ts`):
 

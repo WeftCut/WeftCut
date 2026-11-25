@@ -10,9 +10,11 @@ import type { MotifProtocolHandler } from './protocol.js'
  *  cache on disk, and nothing in it outlives the app. */
 const MOTIF_CAPTURE_PARTITION = 'motif-capture'
 
-/** Every URL a Motif could reach outside the app. Only these reach the
- *  listener, so `motif:`, `data:` and `blob:` loads (every frame's assets) pay
- *  no main-process hop. Other schemes have no handler in this partition. */
+/** Every URL a Motif could reach outside the app; other schemes have no
+ *  handler in this partition. The listener runs only for these, but while it
+ *  exists Electron routes every request of the session, `motif:` included,
+ *  through its request proxy: a fraction of a millisecond each, which a host
+ *  build's few dozen loads absorb. */
 const MOTIF_BLOCKED_URLS = ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'file://*/*'] as const
 
 /** Makes the capture partition: serves `motif:` through `handler`, refuses
