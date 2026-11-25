@@ -326,9 +326,8 @@
   letter-spacing: 0.05em;
 }
 
-/* A broken or untrusted row's pane leads with a title, not a section label. */
-.motif-picker-form .motif-picker-unavailable h3,
-.motif-picker-form .motif-trust h3 {
+/* A row's pane that cannot preview leads with a title, not a section label. */
+.motif-picker-form .motif-picker-unavailable h3 {
   font-size: var(--font-size-label);
   color: var(--foreground);
   text-transform: none;
@@ -387,25 +386,37 @@
   gap: calc(8 * var(--ui-px));
 }
 
-/* The trust card's static summary (TrustCard): a label column and the
-   findings, paths wrapping anywhere. */
-.motif-trust-summary {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: calc(4 * var(--ui-px)) calc(12 * var(--ui-px));
-  margin: calc(12 * var(--ui-px)) 0 0;
-  font-size: var(--font-size-caption);
-}
-.motif-trust-summary > div { display: contents; }
-.motif-trust-summary dt { color: var(--muted-foreground); }
-.motif-trust-summary dd { margin: 0; overflow-wrap: anywhere; }
-/* Trust sits under the findings it acts on, aligned with them, its hint
-   below: an inline pane action, not a dialog footer. */
-.motif-trust-actions {
+/* The project group's note when some of its Motifs wait for the project's
+   trust: the count, and the action that opens the trust dialog. */
+.motif-picker-group-note {
   display: flex;
+  align-items: center;
+  gap: calc(6 * var(--ui-px));
+  margin: 0 calc(4 * var(--ui-px)) calc(4 * var(--ui-px));
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+}
+
+/* The project trust dialog (ProjectTrustDialog): the waiting Motifs under a
+   disclosure, then the ask-an-agent text action with its confirmation. */
+.project-trust-list { margin-top: calc(8 * var(--ui-px)); }
+.project-trust-list > summary {
+  cursor: pointer;
+  width: fit-content;
+  font-size: var(--font-size-body);
+  color: var(--muted-foreground);
+}
+.project-trust-list > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: calc(3 * var(--ui-px)); }
+.project-trust-list .portability-list { margin-top: calc(4 * var(--ui-px)); }
+.project-trust-list .portability-row-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.project-trust-agent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(4 * var(--ui-px));
   margin-top: calc(12 * var(--ui-px));
 }
-.motif-trust .motif-picker-hint { margin-top: calc(8 * var(--ui-px)); }
+.project-trust-agent .settings-status { margin: 0; }
 
 .motif-bake-dot {
   position: absolute;

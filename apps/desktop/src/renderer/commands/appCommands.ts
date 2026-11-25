@@ -3,6 +3,7 @@ import { canEditCrop, canResetCrop, editCrop, resetCrop } from './cropCommands';
 import { canScaleLayer, scalePrimaryLayer } from './scaleCommands';
 import { useCropEditingStore } from '../state/cropEditingStore';
 import { usePackJobStore } from '../pack/packJobStore';
+import { projectTrustLabelKey, useProjectTrust } from '../motifs/projectTrust';
 import {
   logEmit,
   updateLayerParamTracks,
@@ -141,6 +142,9 @@ export const MENU_ONLY_COMMAND_IDS = [
   // A read of the whole project, with no object to act on and no reflex
   // behind it: the File menu and the palette are its homes.
   "checkPortability",
+  // Trust the project's folder, or stop trusting it (ADR 0182): a decision
+  // about the whole project, made rarely, so the same homes again.
+  "projectTrust",
   // The whole project into one file, and Open project, which takes a project
   // file or a pack (ADR 0178, ADR 0180): the same homes, for the same reason.
   "packProject",
@@ -166,6 +170,8 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   applyDefaultTransition: "actions.apply_default_transition",
   openVoiceoverDialog: "actions.open_voiceover",
   checkPortability: "actions.check_portability",
+  // The untrusted label; a trusted project's is `projectTrustLabelKey`'s.
+  projectTrust: "actions.project_trust",
   packProject: "actions.pack_project",
   openProject: "actions.open_project",
 };
@@ -527,6 +533,14 @@ export function buildAppCommands(
     packProject: () => usePackJobStore.getState().job === null,
     // A pack can be picked, and an open replaces the project as Close does.
     openProject: () => !flags.busy && usePackJobStore.getState().job === null,
+    // Until the first read lands, which of its two actions it is is unknown.
+    projectTrust: () => useProjectTrust.getState().summary !== null,
+  };
+
+  // Labels that follow state, live-read for `clearRange`'s reason; the store
+  // notifies the registry when it changes.
+  const menuLabelFor: Partial<Record<MenuOnlyCommandId, () => string>> = {
+    projectTrust: projectTrustLabelKey,
   };
 
   // …and check state, same shape and same rule as `checkedFor` above: a
@@ -540,7 +554,7 @@ export function buildAppCommands(
     const checked = menuCheckedFor[id];
     defs.push({
       id,
-      labelKey: MENU_ONLY_LABEL_KEYS[id],
+      labelKey: menuLabelFor[id]?.() ?? MENU_ONLY_LABEL_KEYS[id],
       ...(enabled ? { enabled } : {}),
       ...(checked ? { checked } : {}),
       run: menu[id],

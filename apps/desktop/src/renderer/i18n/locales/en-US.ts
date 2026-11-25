@@ -1080,6 +1080,11 @@ const enUS = {
     open_voiceover: "Voiceover…",
     check_portability: "Check portability…",
     check_portability_hint: "List what the project folder does not carry.",
+    // One File menu item whose label says what choosing it does: the dialog
+    // on an untrusted project, an immediate stop on a trusted one.
+    project_trust: "Trust this project…",
+    untrust_project: "Stop trusting this project",
+    project_trust_hint: "Decide whether this project's Motifs run on this computer.",
     pack_project: "Pack project…",
     pack_project_hint: "Put the project in one file to move or share it.",
     open_project: "Open project…",
@@ -2787,7 +2792,7 @@ const enUS = {
     pauses: "Pauses",
     props: "Props",
     unknown_motif: "Loading this Motif…",
-    motif_review_trust: "Review in Motifs panel",
+    motif_review_trust: "Trust this project…",
     bake_warming: "Warming preview… {{done}}/{{total}}",
     bake_preview_ready: "Preview ready",
     bake_queued: "Queued… {{done}}/{{total}}",
@@ -3058,27 +3063,33 @@ const enUS = {
     trash: "Move to trash",
     trash_folder: "Move Motifs/{{name}}/ to the trash",
   },
-  // A project Motif whose revision is not trusted on this machine, in its
-  // row's pane (motifs/TrustCard.tsx). The summary is a static read of its files.
-  motif_trust: {
-    title: "Not trusted on this machine",
-    lead: "This Motif came with the project; its code has not run here.",
-    loading: "Reading its files…",
-    files: "Files",
+  // The project trust dialog (motifs/ProjectTrustDialog.tsx, ADR 0182) and the
+  // Motifs panel's note on its project group. A row's facts are a static read
+  // of the Motif's files. `agent_prompt` is pasted into an agent: it must name
+  // project://session and read_motif as written.
+  project_trust: {
+    title: "Run this project's Motifs?",
+    lead_one: "{{project}} has {{count}} Motif that has not run on this computer. Motifs run code that came with the project. Trust the project and its Motifs run from now on, including ones added later.",
+    lead_other: "{{project}} has {{count}} Motifs that have not run on this computer. Motifs run code that came with the project. Trust the project and its Motifs run from now on, including ones added later.",
+    lead_none: "Motifs run code that came with the project. Trust {{project}} and its Motifs run from now on, including ones added later.",
+    loading: "Reading the project's Motifs…",
+    show_one: "Show {{count}} Motif",
+    show_other: "Show {{count}} Motifs",
     files_value_one: "{{count}} file · {{size}}",
     files_value_other: "{{count}} files · {{size}}",
-    binary: "{{count}} not text",
-    scripts: "Scripts",
-    workers: "Workers",
     wasm: "WebAssembly",
-    minified: "Long minified lines",
-    minified_item: "{{path}} ({{chars}} characters)",
-    unscanned: "Too large to scan",
-    more: "+{{count}} more",
-    trust: "Trust",
+    workers: "Workers",
+    minified: "Minified code",
+    later: "Later",
+    trust: "Trust this project",
     trusting: "Trusting…",
-    changed: "Its files changed. This is what they hold now.",
-    hint: "Not sure? Ask your agent to look first: read_motif reads its files as text and never runs them.",
+    changed: "The project's Motifs changed. This is what its folder holds now.",
+    ask_agent: "Ask an agent to check first",
+    ask_agent_copied: "Copied. Paste it to your agent; it only reads the files and runs nothing.",
+    agent_prompt: "Before I trust the WeftCut project “{{project}}”, check its Motifs for me. Read the resource project://session: motifs.untrusted lists them ({{ids}}). Read each one with the read_motif tool. Only read: do not run, preview, export or edit anything, and do not add, place or change any Motif. Then tell me what each Motif does, anything in its code that looks risky (network access, obfuscated or minified code, WebAssembly, Workers), and whether you recommend trusting the project.",
+    panel_untrusted_one: "{{count}} not trusted",
+    panel_untrusted_other: "{{count}} not trusted",
+    panel_action: "Trust this project…",
   },
   motif_proposal: {
     heading_one: "1 Motif awaiting your approval",
@@ -3208,6 +3219,9 @@ const enUS = {
     fonts_missing: "{{name}} is not installed here. Clips drawn with another font: {{layers}}.",
     save_failing: "Save failed: project.wcpr cannot be written",
     save_recovered: "Project saved again",
+    // A trusted project's Motifs whose files changed while the app was closed
+    // (main/state/ts-actor-host.ts). `ids` arrives joined by main.
+    motifs_changed_while_closed: "Motifs changed while WeftCut was closed: {{ids}}. This project is trusted, so they run.",
     level_filter: "Severity filter",
     level_all: "All",
     level_info: "Info+",

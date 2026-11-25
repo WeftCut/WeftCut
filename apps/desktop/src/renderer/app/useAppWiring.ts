@@ -20,6 +20,7 @@ import { wireProxyPrefStore } from "../state/proxyPreferenceStore";
 import { wireSaveStatus } from "../state/saveStatusStore";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
 import { clearProjectMotifs, syncProjectMotifsFromBackend } from "../render/motifs/syncCatalog";
+import { useProjectTrustPrompt } from "../motifs/projectTrust";
 
 /// Owns the App-root backend wiring: the pong healthcheck, keybindings +
 /// agent activity snapshots and independent view selection, and the
@@ -55,6 +56,9 @@ export function useAppWiring(): {
     void syncProjectMotifsFromBackend();
     return clearProjectMotifs;
   }, []);
+
+  // Whether this project's Motifs run here, asked once as it opens (ADR 0182).
+  useProjectTrustPrompt();
 
   useEffect(() => {
     let cancelled = false;

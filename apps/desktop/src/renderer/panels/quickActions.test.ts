@@ -41,6 +41,7 @@ function commandIds(): Set<string> {
       applyDefaultTransition: () => {},
       openVoiceoverDialog: () => {},
       checkPortability: () => {},
+      projectTrust: () => {},
       packProject: () => {},
       openProject: () => {},
     },

@@ -1,7 +1,7 @@
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
 
 /// Bytes as the largest unit that keeps the number under 1024: a file's size
-/// as the media panel and the Motif trust card show it. Export estimates use
+/// as the media panel and the project trust dialog show it. Export estimates use
 /// the decimal `formatBytes` in `shared/exportSettings.ts`.
 export function formatBytes(bytes: number): string {
   let value = Math.max(0, bytes);
