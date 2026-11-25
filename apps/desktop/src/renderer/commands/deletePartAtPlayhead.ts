@@ -8,8 +8,7 @@
 
 import { rippleDeletePart } from "../ipc";
 import { displayMode } from "../settings/appSettingsStore";
-import { seekToClamped } from "../state/navigation";
-import { focusedPlayheadUs, focusedRootUs } from "../state/playheadProjection";
+import { focusedPlayheadUs, seekLocalUs } from "../state/playheadProjection";
 import { currentOpenComposition } from "../state/projectStore";
 import { currentSelection, layerIdsOf } from "../state/selectionStore";
 import { linkFanoutActive } from "../timeline/linkEligibility";
@@ -51,7 +50,9 @@ async function deletePartAtPlayhead(part: "start" | "end"): Promise<void> {
     part,
     escapeLink: !fanout,
   });
-  if (part === "start") seekToClamped(focusedRootUs(at_t_us));
+  // On the composition's own clock, so a cut inside an orphan parks its own
+  // playhead rather than writing a local time as the film's.
+  if (part === "start") seekLocalUs(composition.id, at_t_us);
 }
 
 export function deleteStartToPlayhead(): Promise<void> {

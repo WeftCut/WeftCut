@@ -98,6 +98,28 @@ describe('ripple_delete_part removes one side of the cut and closes it', () => {
     expect(spanOf(a.snapshot(), v)).toEqual([0, 2 * S])
   })
 
+  it('arrives from the renderer channel with the renderer’s argument names', () => {
+    const { a, tA } = setup()
+    const clip = color(a, tA, 0, 4 * S)
+    const r = a.command('ripple_delete_part', { layerIds: [clip], atTUs: S, part: 'start', escapeLink: false })
+    expect(val(r)).toEqual({ at_t_us: 0 })
+    expect(spanOf(a.snapshot(), clip)).toEqual([0, 3 * S])
+  })
+
+  it('handed an underlay that started earlier, its start goes too, and the edit refuses over the clips that span held', () => {
+    // What a press with nothing selected sends over a bed running under the
+    // cut: Split at playhead's targets, so the bed is cut as well and its hole
+    // reaches back to its own start. The clip at 0 stays (the origin rule), and
+    // the cut clip's survivor would land on it.
+    const { a, tA, tB } = setup()
+    color(a, tA, 0, 2 * S)
+    const clip = color(a, tA, 2 * S, 6 * S)
+    const bed = color(a, tB, 0, 10 * S)
+    const r = deletePart(a, [clip, bed], 3 * S, 'start')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('RippleCollision')
+  })
+
   it('cuts every clip it is handed in the one edit, closing their holes together', () => {
     const { a, tA, tB } = setup()
     const low = color(a, tA, 0, 4 * S)
