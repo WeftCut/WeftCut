@@ -140,9 +140,9 @@
 .status-bar-indicator {
   position: relative;
   flex-shrink: 0;
-  width: calc(16 * var(--ui-px));
-  height: calc(16 * var(--ui-px));
-  font-size: var(--font-size-micro);
+  width: calc(14 * var(--ui-px));
+  height: calc(14 * var(--ui-px));
+  font-size: var(--font-size-fine);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -156,9 +156,9 @@
   border-radius: 999px;
   transform: translate(-50%, -50%);
   transition-property: width, height;
-  transition-duration: 180ms;
-  transition-timing-function: ease-in-out;
-  transition-delay: 120ms;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+  transition-delay: 50ms;
 }
 
 /* The count's red, a layer over the level colour: the level changes at once
@@ -193,8 +193,9 @@
 }
 
 .status-bar-indicator[data-state="count"] .status-bar-indicator-mark {
-  width: max(calc(16 * var(--ui-px)), calc(var(--count-chars) * 1ch + 8 * var(--ui-px)));
-  height: calc(16 * var(--ui-px));
+  width: max(calc(14 * var(--ui-px)), calc(var(--count-chars) * 1ch + 6 * var(--ui-px)));
+  height: calc(14 * var(--ui-px));
+  transition-duration: 180ms;
   transition-timing-function: ease-out;
   transition-delay: 0ms;
 }
@@ -214,7 +215,7 @@
   white-space: nowrap;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 140ms ease-in, visibility 0s linear 140ms;
+  transition: opacity 90ms ease-in, visibility 0s linear 90ms;
 }
 
 .status-bar-indicator[data-state="count"] .status-bar-errors {
