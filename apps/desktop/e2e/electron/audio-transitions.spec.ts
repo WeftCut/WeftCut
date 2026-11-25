@@ -15,24 +15,73 @@ function amplitude(samples: readonly number[], hz: number, rate: number): number
   return 2 * Math.hypot(re, im) / weight
 }
 
-async function previewAt(page: Page, timeUs: number): Promise<{ samples: number[]; sampleRate: number }> {
-  return page.evaluate(async (target) => {
+/// A capture of the pre-compressor mix, with the transport position read with it.
+interface Capture { positionUs: number; samples: number[]; sampleRate: number }
+
+/// Plays `fromUs` to `toUs` and captures the mix on every animation frame.
+async function capturePlayback(page: Page, fromUs: number, toUs: number): Promise<Capture[]> {
+  return page.evaluate(async ([from, to]) => {
     const hook = (window as any).__weftcutTest
     hook.transportPause()
-    hook.transportSeekUs(Math.max(0, target - 300_000))
+    hook.transportSeekUs(from)
     hook.transportPlay()
+    const captures: { positionUs: number; samples: number[]; sampleRate: number }[] = []
     const deadline = performance.now() + 60_000
     while (performance.now() < deadline) {
       const state = hook.audioTransportSnapshot()
       if (state?.phase === 'error') throw new Error('preview playback failed')
-      if (state?.phase === 'playing' && state.positionUs >= target) {
-        const sample = hook.audioPreCompressorSamples()
-        if (sample) return sample
+      if (state?.phase === 'playing') {
+        const capture = hook.audioPreCompressorSamples()
+        if (capture) captures.push(capture)
+        if (capture && capture.positionUs > to) break
       }
       await new Promise(resolve => requestAnimationFrame(resolve))
     }
-    throw new Error(`preview did not reach ${target}`)
-  }, timeUs)
+    hook.transportPause()
+    if ((captures.at(-1)?.positionUs ?? 0) <= to) throw new Error(`preview did not reach ${to}`)
+    return captures
+  }, [fromUs, toUs])
+}
+
+const median = (values: number[]): number => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]!
+
+// The captured samples are the mix being rendered, which runs ahead of the
+// heard position the transport reports by the device's output latency, plus
+// up to a frame of the position's snapping and of the poll: a capture's
+// position places it only roughly in the fade. Equal power holds everywhere in
+// the fade, so it is checked in the fade's middle, where a linear fade would
+// fall to 0.68 or lower and a fade that went missing rises toward 2.
+const MIDDLE = 0.2
+// Out² + in² of one capture: the gain changes across the 43 ms analyser
+// window, and the AAC tones carry a little leakage.
+const POWER_TOLERANCE = 0.15
+// A tone's level away from the fade, which the rough position cannot blur.
+const CLEAR_US = 150_000
+// A stalled runner can leave a stretch without captures; the play is repeated.
+const PLAYS = 3
+
+/// Every capture in the middle of the fade `[startUs, startUs + durationUs]`
+/// keeps the power of either tone alone: out² + in² = 1. Each tone's level is
+/// read where it plays alone, from `fromUs` and until `toUs`.
+async function expectEqualPowerPreview(page: Page, fromUs: number, startUs: number, durationUs: number, toUs: number) {
+  const endUs = startUs + durationUs
+  const level = (c: Capture, hz: number) => amplitude(c.samples, hz, c.sampleRate)
+  for (let play = 1; ; play++) {
+    const captures = await capturePlayback(page, fromUs, toUs)
+    const outAlone = captures.filter(c => c.positionUs < startUs - CLEAR_US)
+    const inAlone = captures.filter(c => c.positionUs > endUs + CLEAR_US)
+    const middle = captures.filter(c => c.positionUs >= startUs + MIDDLE * durationUs && c.positionUs <= endUs - MIDDLE * durationUs)
+    if (outAlone.length === 0 || inAlone.length === 0 || middle.length === 0) {
+      expect(play, `captures before (${outAlone.length}), inside (${middle.length}) and after (${inAlone.length}) the fade`).toBeLessThan(PLAYS)
+      continue
+    }
+    const outRef = median(outAlone.map(c => level(c, 400)))
+    const inRef = median(inAlone.map(c => level(c, 800)))
+    const powers = middle.map(c => (level(c, 400) / outRef) ** 2 + (level(c, 800) / inRef) ** 2)
+    console.log('preview fade powers', powers.map(p => +p.toFixed(3)))
+    for (const power of powers) expect(Math.abs(power - 1), `out² + in² = ${power}`).toBeLessThan(POWER_TOLERANCE)
+    return
+  }
 }
 
 function decode(file: string): number[] {
@@ -75,17 +124,7 @@ test('linked crossfade is equal-power in preview before compression and in expor
     await expect.poll(async () => (await summary(page)).media.filter(m => media.includes(m.id) && m.conform_path).length, { timeout: 90_000 }).toBe(2)
     await waitForHook(page, 'audioPreCompressorSamples')
     await expect.poll(() => page.evaluate(() => (window as any).__weftcutTest.previewResourceProbe())).not.toBeNull()
-    const before = await previewAt(page, 500_000)
-    const mid = await previewAt(page, 1_500_000)
-    const after = await previewAt(page, 2_500_000)
-    const previewRatios = [amplitude(mid.samples, 400, mid.sampleRate) / amplitude(before.samples, 400, before.sampleRate),
-      amplitude(mid.samples, 800, mid.sampleRate) / amplitude(after.samples, 800, after.sampleRate)]
-    console.log('preview ratios', previewRatios)
-    for (const ratio of previewRatios) {
-      expect(ratio).toBeGreaterThan(0.60)
-      expect(ratio).toBeLessThan(0.80)
-    }
-    await page.evaluate(() => (window as any).__weftcutTest.transportPause())
+    await expectEqualPowerPreview(page, 200_000, 1_000_000, 1_000_000, 2_800_000)
     const output = path.join(dir, 'Audio transitions', 'crossfade.m4a')
     const exportResult = await driveExport(page, { outputAbsPath: output, settings: { includeVideo: false, includeAudio: true } }, { hook: 'exportTimeline' })
     expect(exportResult.done.ok, exportResult.done.error).toBe(true)
@@ -101,17 +140,7 @@ test('linked crossfade is equal-power in preview before compression and in expor
     const layerIds = (await summary(page)).tracks.flatMap(track => track.layers.map(layer => layer.id))
     const group = await invokeCmd<{ layer_id: string }>(page, 'groups_create', { layerIds })
     await invokeCmd(page, 'retime_layers', { layerIds: [group.layer_id], target: { kind: 'Rate', value: { num: 2, den: 1 } } })
-    const retimeBefore = await previewAt(page, 250_000)
-    const retimeMid = await previewAt(page, 750_000)
-    const retimeAfter = await previewAt(page, 1_250_000)
-    const retimedPreviewRatios = [amplitude(retimeMid.samples, 400, retimeMid.sampleRate) / amplitude(retimeBefore.samples, 400, retimeBefore.sampleRate),
-      amplitude(retimeMid.samples, 800, retimeMid.sampleRate) / amplitude(retimeAfter.samples, 800, retimeAfter.sampleRate)]
-    console.log('retimed preview ratios', retimedPreviewRatios)
-    for (const ratio of retimedPreviewRatios) {
-      expect(ratio).toBeGreaterThan(0.55)
-      expect(ratio).toBeLessThan(0.85)
-    }
-    await page.evaluate(() => (window as any).__weftcutTest.transportPause())
+    await expectEqualPowerPreview(page, 50_000, 500_000, 500_000, 1_450_000)
     const retimed = path.join(dir, 'Audio transitions', 'retimed.m4a')
     const retimeExport = await driveExport(page, { outputAbsPath: retimed, settings: { includeVideo: false, includeAudio: true } }, { hook: 'exportTimeline' })
     expect(retimeExport.done.ok, retimeExport.done.error).toBe(true)
