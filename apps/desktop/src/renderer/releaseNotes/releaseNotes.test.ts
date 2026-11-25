@@ -82,6 +82,7 @@ describe("parseReleaseNotes", () => {
     ["a quote", "> quoted"],
     ["a star bullet", "* item"],
     ["an unbalanced mark", "a **bold"],
+    ["code inside bold", "**open `x`**"],
   ])("refuses %s", (_name, markdown) => {
     expect(() => parseReleaseNotes(markdown)).toThrow();
   });

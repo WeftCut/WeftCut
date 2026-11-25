@@ -117,7 +117,7 @@ describe("HelpMenu", () => {
   });
 
   it("opens this version's release notes from What's New", async () => {
-    const { versions } = stubApi();
+    const { versions, open } = stubApi();
     versions.mockResolvedValue({ ...VERSIONS, app: "0.9.0" });
     render(<HelpMenu />);
 
@@ -126,6 +126,8 @@ describe("HelpMenu", () => {
     await vi.waitFor(() => expect(item.closest("[aria-disabled='true'],[data-disabled]")).toBeNull());
     fireEvent.click(item);
     expect(await screen.findByRole("dialog", { name: "What's New in WeftCut 0.9.0" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Full Release Notes" }));
+    expect(open).toHaveBeenCalledWith(`${RELEASES_URL}/tag/v0.9.0`);
     fireEvent.click(screen.getByRole("button", { name: "Got it" }));
     expect(screen.queryByRole("dialog")).toBeNull();
   });

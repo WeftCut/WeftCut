@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AppDialog } from "../components/AppDialog";
+import { openExternal, RELEASES_URL } from "../app/links";
 import { Button } from "@/components/ui/button";
 import { setAppSettings, useAppSettingsLoaded, useAppSettingsStore } from "../settings/appSettingsStore";
 import { launchReleaseNotes, parseReleaseNotes, type Block, type Inline, type ListItem } from "./releaseNotes";
@@ -12,7 +13,8 @@ interface ReleaseNotesDialogProps {
   onClose: () => void;
 }
 
-/// One version's release notes. The notes are English in every UI language.
+/// One version's short notes, with a way to the full release page. The notes
+/// are English in every UI language.
 export function ReleaseNotesDialog({ version, markdown, onClose }: ReleaseNotesDialogProps) {
   const { t, i18n } = useTranslation();
   const blocks = useMemo(() => parseReleaseNotes(markdown), [markdown]);
@@ -32,6 +34,10 @@ export function ReleaseNotesDialog({ version, markdown, onClose }: ReleaseNotesD
         </div>
       </div>
       <footer className="release-notes-footer">
+        <Button variant="ghost" size="lg" className="mr-auto"
+          onClick={() => openExternal(`${RELEASES_URL}/tag/v${version}`)}>
+          {t("help.release_notes_full")}
+        </Button>
         <Button variant="default" size="lg" onClick={onClose} autoFocus>
           {t("help.release_notes_close")}
         </Button>

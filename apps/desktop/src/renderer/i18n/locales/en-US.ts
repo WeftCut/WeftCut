@@ -544,6 +544,7 @@ const enUS = {
     whats_new: "What's New…",
     release_notes_title: "What's New in WeftCut {{version}}",
     release_notes_close: "Got it",
+    release_notes_full: "Full Release Notes",
     release_notes_language: "These notes are in English.",
     about: "About WeftCut",
     version: "Version {{version}}",

@@ -1,4 +1,4 @@
-// The release notes the app shows after an update: docs/release-notes/<version>.md,
+// The short notes the app shows after an update: docs/release-notes/in-app/<version>.md,
 // bundled at build time, parsed into a small block tree. See docs/releases.md.
 
 export type Inline =
@@ -17,7 +17,7 @@ export type Block =
   | { kind: "paragraph"; inlines: Inline[] }
   | { kind: "list"; items: ListItem[] };
 
-const BUNDLED = import.meta.glob<string>("../../../../../docs/release-notes/*.md", {
+const BUNDLED = import.meta.glob<string>("../../../../../docs/release-notes/in-app/*.md", {
   query: "?raw",
   import: "default",
   eager: true,
@@ -166,8 +166,10 @@ function parseInlines(text: string): Inline[] {
     last = match.index + match[0].length;
   }
   if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
-  if (out.some((part) => part.kind === "text" && /[*`]/.test(part.text))) {
-    throw new Error(`Unbalanced emphasis or code in release notes: ${text}`);
+  // Marks do not nest: a stray `*` or backtick, outside a mark or inside one,
+  // would show literally.
+  if (out.some((part) => part.kind !== "code" && /[*`]/.test(part.text))) {
+    throw new Error(`Unbalanced or nested emphasis or code in release notes: ${text}`);
   }
   return out;
 }
