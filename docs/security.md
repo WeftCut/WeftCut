@@ -68,18 +68,23 @@ reach. Neither stops a renderer exploit chained with a sandbox escape reaching
 the OS; the OS sandbox and a current Electron are what stand there.
 
 **Trust decides whether a project Motif runs at all**
-([ADR 0174](adr/0174-a-motif-runs-only-when-trusted-on-this-machine.md)).
+([ADR 0174](adr/0174-a-motif-runs-only-when-trusted-on-this-machine.md),
+[ADR 0182](adr/0182-a-projects-motifs-run-once-its-folder-is-trusted.md)).
 A project carries its Motifs' code (ADR 0173), and the sandbox above is not
 hardened against a renderer exploit, so a revision this machine has not trusted
 never runs: one found when a project opens, or brought in from a ZIP or an
 outside folder. The gate is one place, `MotifResolver` (`main/motif/resolver.ts`),
 which answers such a project host `untrusted`; the protocol (`params.html`
 included), capture hosts, previews, bakes and covers all resolve through it.
-The record (`<dataRoot>/motifs/.trust.json`, `main/motif/trust.ts`) is keyed by
-revision, never by lineage or project, and the library's revisions are trusted
-by derivation. Only the user trusts, on the Motifs panel's trust card, from a
-summary read as text without running anything; its channels are renderer-only
-and no MCP tool can trust. Trust guards against code arriving in a folder, not
+The record (`<dataRoot>/motifs/.trust.json`, `main/motif/trust.ts`) holds
+trusted revisions and trusted project folders, never a lineage, and the
+library's revisions are trusted by derivation. The user trusts a project: every
+revision under a trusted folder runs, whoever wrote it, so trusting a folder
+trusts every writer of it (a sync service, a collaborator on a shared drive).
+Only the user trusts, in the project trust dialog, from a summary read as text
+without running anything; its channels are renderer-only and no MCP tool can
+trust. The rest of this paragraph decides the revisions of a project whose
+folder is not trusted. Trust guards against code arriving in a folder, not
 against a local agent writing code: edits made while a project is open, from a
 trusted revision, are trusted. Everything a received project folder holds is
 its sender's, `project.wcpr`'s Motif table and `Backups/motifs/` included, so
