@@ -169,6 +169,22 @@ describe('ripple_delete_part keeps the surviving part the same clip', () => {
   })
 })
 
+describe('ripple_delete_part names in its history row only layers a snapshot holds', () => {
+  it('the cut-off pieces never existed outside the edit, so the row leaves them out', () => {
+    const { a, tA, tB } = setup()
+    const v = video(a, tA, 0, 4 * S)
+    const au = audio(a, tA, 0, 4 * S)
+    const title = color(a, tB, 0, S)
+    idOf(a.dispatch('links_create', { layers: [v, au, title] }))
+    const before = new Set(layersOf(a.snapshot()).map((l) => l.id))
+    val(deletePart(a, [v], 2 * S, 'start'))
+    const after = new Set(layersOf(a.snapshot()).map((l) => l.id))
+    const named = a.historyView(1).ops[0]!.affected.map((e) => e.id)
+    expect(named).toEqual(expect.arrayContaining([v, au, title]))
+    for (const id of named) expect(before.has(id) || after.has(id), id).toBe(true)
+  })
+})
+
 describe('ripple_delete_part refuses without recording', () => {
   const expectUntouched = (a: ActorHandle, r: ReturnType<ActorHandle['dispatch']>, error: string, before: Project, len: number) => {
     expect(r.ok).toBe(false)
@@ -194,6 +210,33 @@ describe('ripple_delete_part refuses without recording', () => {
     const before = a.snapshot()
     const len = a.historyStatus().len
     expectUntouched(a, deletePart(a, [clip], 3 * S, 'start'), 'RippleInsideHole', before, len)
+  })
+
+  // A cut strictly inside the overlap leaves the transition a duration its
+  // layers no longer overlap by; Split refuses there, and so does this edit,
+  // whichever of the two layers it cuts.
+  const crossfade = () => {
+    const { a, tA } = setup()
+    const out = color(a, tA, 0, 4 * S)
+    const next = color(a, tA, 4 * S, 8 * S)
+    idOf(a.dispatch('add_transition', { from: out, to: next, duration_us: 2 * S, placement: 'overlap' }))
+    const [start, end] = [spanOf(a.snapshot(), next)![0], spanOf(a.snapshot(), out)![1]]
+    expect(end - start).toBe(2 * S)
+    return { a, out, next, inside: start + S }
+  }
+
+  it('a cut inside a transition is LayerOverlap, as it is for Split, for both clips or either one', () => {
+    for (const part of ['start', 'end'] as const) {
+      for (const pick of [(o: string, n: string) => [o, n], (o: string) => [o], (_o: string, n: string) => [n]]) {
+        const { a, out, next, inside } = crossfade()
+        for (const id of pick(out, next)) expect(a.dispatch('split_layer', { layer: id, at_t_us: inside }).ok).toBe(false)
+        const before = a.snapshot()
+        const len = a.historyStatus().len
+        const r = deletePart(a, pick(out, next), inside, part)
+        expectUntouched(a, r, 'ValidationFailed', before, len)
+        if (!r.ok && r.error.error === 'ValidationFailed') expect(r.error.detail.rule).toBe('LayerOverlap')
+      }
+    }
   })
 
   it('names a bad part or an empty set as InvalidArgument', () => {

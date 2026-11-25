@@ -28,8 +28,9 @@ export interface RippleDeleteResult { deleted: Uuid[]; moved: Uuid[]; prunedTrac
 /** The part of a clip a cut leaves behind it (`start`) or ahead of it (`end`). */
 export type ClipPart = 'start' | 'end'
 
-/** What deleting a part touched: the layers the cut shortened (`kept`), what the
- *  ripple removed and re-timed, and where the cut sits once the hole is closed —
+/** What deleting a part touched: the layers the cut shortened (`kept`), the
+ *  layers that existed before it and are gone (`deleted`), what the ripple
+ *  re-timed, and where the cut sits once the hole is closed —
  *  the start of what was after it (`start`), or the cut itself, which nothing
  *  moved (`end`). */
 export interface RippleDeletePartResult extends RippleDeleteResult { kept: Uuid[]; at_t_us: number }
@@ -98,7 +99,8 @@ export function applyRippleDeleteLayers(p: Project, ids: readonly Uuid[]): Rippl
  * leave the survivor overlapping the next clip with nothing authorizing it.
  *
  * A target an earlier target's fan-out already cut is skipped; one the cut
- * does not fall strictly inside is `SplitOutsideLayer`. Every refusal throws
+ * does not fall strictly inside is `SplitOutsideLayer`; a cut strictly inside
+ * a transition's overlap is `LayerOverlap`, as Split's is. Every refusal throws
  * inside the recipe, so the draft is discarded and nothing records.
  */
 export function applyRippleDeletePart(p: Project, idGen: IdGen, ids: readonly Uuid[], atTUsRaw: number, part: ClipPart, escapeLink: boolean): RippleDeletePartResult {
@@ -106,6 +108,7 @@ export function applyRippleDeletePart(p: Project, idGen: IdGen, ids: readonly Uu
   const at = snapOnGrid(atTUsRaw, frameGrid(c.fps))
   const targets = [...new Set(ids)]
   const keep = part === 'start' ? 'right' : 'left'
+  const overlaps = transitionOverlaps(c)
   const cut = new Set<Uuid>()
   const pieces: Uuid[] = []
   for (const id of targets) {
@@ -115,11 +118,42 @@ export function applyRippleDeletePart(p: Project, idGen: IdGen, ids: readonly Uu
       pieces.push(keep === 'left' ? halves.right : halves.left)
     }
   }
+  refuseCutInsideTransition(overlaps, cut, at)
   const doomed = new Set(pieces)
   for (const piece of pieces) for (const sid of linkSiblingsOverlapping(c, piece)) doomed.add(sid)
   const result = applyRippleDeleteLayers(p, [...doomed])
   const survivor = locateLayerIn(c, targets[0])!.layer
-  return { ...result, kept: [...cut], at_t_us: part === 'start' ? survivor.t_start_us : survivor.t_end_us }
+  // The pieces are born and removed inside this edit, so no snapshot holds
+  // them and nothing outside it can name them; `deleted` lists only layers
+  // that existed before (a linked member that went along).
+  const fresh = new Set(pieces)
+  return { ...result, deleted: result.deleted.filter((id) => !fresh.has(id)), kept: [...cut], at_t_us: part === 'start' ? survivor.t_start_us : survivor.t_end_us }
+}
+
+interface TransitionOverlap { track: Uuid; from: Uuid; fromStart: number; fromEnd: number; to: Uuid; toStart: number; toEnd: number }
+
+/** Every transition's two layers as they stand before the cut: the overlap a
+ *  transition plays over is `[toStart, fromEnd]`. */
+function transitionOverlaps(c: Composition): TransitionOverlap[] {
+  return c.transitions.map((tr) => {
+    const from = locateLayerIn(c, tr.from_layer)!
+    const to = locateLayerIn(c, tr.to_layer)!.layer
+    return { track: from.track.id, from: tr.from_layer, fromStart: from.layer.t_start_us, fromEnd: from.layer.t_end_us, to: tr.to_layer, toStart: to.t_start_us, toEnd: to.t_end_us }
+  })
+}
+
+/** A cut strictly inside a transition's overlap leaves the transition a
+ *  duration its layers no longer overlap by. Split refuses there: commit drops
+ *  the transition and the two layers it authorized now overlap. This edit
+ *  refuses the same way, before the ripple's sweep re-measures the transition
+ *  on the moved pair and keeps it over a sliver of the outgoing clip. A cut at
+ *  either end of the overlap leaves the transition whole on one side: it stays
+ *  with a kept part or goes with a deleted one. */
+function refuseCutInsideTransition(overlaps: readonly TransitionOverlap[], cut: ReadonlySet<Uuid>, at: number): void {
+  for (const o of overlaps) {
+    if (!(cut.has(o.from) || cut.has(o.to)) || at <= o.toStart || at >= o.fromEnd) continue
+    throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'LayerOverlap', track: o.track, a: o.from, a_start: o.fromStart, a_end: o.fromEnd, b: o.to, b_start: o.toStart, b_end: o.toEnd } })
+  }
 }
 
 /**

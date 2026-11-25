@@ -628,7 +628,8 @@ undo. Both are rebindable in Settings → Keyboard and sit in the Edit menu unde
   target is cut.
 - **The surviving part is the same clip**: it keeps its id, so its transitions,
   anchored markers and selection stay with it. An outgoing transition survives a
-  deleted start, which a plain split of that clip refuses.
+  deleted start, which a plain split of that clip refuses. A cut inside a
+  transition's overlap is refused, as Split refuses it.
 - **The playhead** goes to the cut after *Delete start*, where what followed now
   begins; after *Delete end* it is already there.
 - **No effect** with the playhead on a clip's edge or over nothing. The ripple's
