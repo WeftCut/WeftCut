@@ -88,7 +88,7 @@ describe('applySplitLayer', () => {
     root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
     root(p).tracks[1].layers = [color('b', 0, 1_000_000)]
     const gid = applyLinksCreate(p, gen, ['a', 'b'], false)
-    const halves = applySplitLinked(p, gen, 'a', 400_000, false, 'right')
+    const halves = applySplitLinked(p, gen, 'a', 400_000, false, 'right', 'partition')
     expect(halves.map((h) => h.right)).toEqual(['a', 'b'])
     for (const [track, id] of [[0, 'a'], [1, 'b']] as const) {
       const [left, right] = root(p).tracks[track].layers
@@ -97,6 +97,15 @@ describe('applySplitLayer', () => {
     }
     expect(root(p).links.find((g) => g.id === gid)!.members).toEqual(['a', 'b'])
     expect(root(p).links.find((g) => g.id !== gid)!.members).toEqual(halves.map((h) => h.left).sort())
+  })
+  it('link whole: every half of the cut joins the one link, under its id', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
+    root(p).tracks[1].layers = [color('b', 0, 1_000_000)]
+    const gid = applyLinksCreate(p, gen, ['a', 'b'], false)
+    const halves = applySplitLinked(p, gen, 'a', 400_000, false, 'right', 'whole')
+    expect(root(p).links).toEqual([{ id: gid, members: halves.flatMap((h) => [h.left, h.right]).sort() }])
   })
   it('escape_link splits only the target, preserving the original link and leaving the right half unlinked', () => {
     const gen = seededGen()

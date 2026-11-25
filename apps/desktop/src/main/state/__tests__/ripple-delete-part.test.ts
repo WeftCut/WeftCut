@@ -98,6 +98,34 @@ describe('ripple_delete_part removes one side of the cut and closes it', () => {
     expect(spanOf(a.snapshot(), v)).toEqual([0, 2 * S])
   })
 
+  it('keeps a linked member outside the deleted part linked to the clip, on either side of the cut', () => {
+    const { a, tA, tB } = setup()
+    const clip = color(a, tA, 2 * S, 10 * S)
+    const before = color(a, tB, 0, S)
+    const link = idOf(a.dispatch('links_create', { layers: [clip, before] }))
+    val(deletePart(a, [clip], 5 * S, 'start'))
+    expect(spanOf(a.snapshot(), clip)).toEqual([2 * S, 7 * S])
+    expect(spanOf(a.snapshot(), before)).toEqual([0, S])
+    expect(root(a.snapshot()).links).toEqual([{ id: link, members: [clip, before].sort() }])
+
+    const after = color(a, tB, 9 * S, 10 * S)
+    val(a.dispatch('links_add_members', { link, layers: [after] }))
+    val(deletePart(a, [clip], 4 * S, 'end'))
+    expect(spanOf(a.snapshot(), after)).toEqual([6 * S, 7 * S])
+    expect(root(a.snapshot()).links).toEqual([{ id: link, members: [clip, before, after].sort() }])
+  })
+
+  it('a linked pair keeps its title linked when the cut leaves the title on the deleted side but outside the part', () => {
+    const { a, tA, tB } = setup()
+    const v = video(a, tA, 0, 4 * S)
+    const au = audio(a, tA, 0, 4 * S)
+    const title = color(a, tB, 5 * S, 6 * S)
+    const link = idOf(a.dispatch('links_create', { layers: [v, au, title] }))
+    val(deletePart(a, [v], 2 * S, 'end'))
+    expect(spanOf(a.snapshot(), title)).toEqual([3 * S, 4 * S])
+    expect(root(a.snapshot()).links).toEqual([{ id: link, members: [v, au, title].sort() }])
+  })
+
   it('arrives from the renderer channel with the renderer’s argument names', () => {
     const { a, tA } = setup()
     const clip = color(a, tA, 0, 4 * S)
@@ -169,6 +197,22 @@ describe('ripple_delete_part keeps the surviving part the same clip', () => {
   })
 })
 
+describe('ripple_delete_part names in its history row only layers a snapshot holds', () => {
+  it('the cut-off pieces never existed outside the edit, so the row leaves them out', () => {
+    const { a, tA, tB } = setup()
+    const v = video(a, tA, 0, 4 * S)
+    const au = audio(a, tA, 0, 4 * S)
+    const title = color(a, tB, 0, S)
+    idOf(a.dispatch('links_create', { layers: [v, au, title] }))
+    const before = new Set(layersOf(a.snapshot()).map((l) => l.id))
+    val(deletePart(a, [v], 2 * S, 'start'))
+    const after = new Set(layersOf(a.snapshot()).map((l) => l.id))
+    const named = a.historyView(1).ops[0]!.affected.map((e) => e.id)
+    expect(named).toEqual(expect.arrayContaining([v, au, title]))
+    for (const id of named) expect(before.has(id) || after.has(id), id).toBe(true)
+  })
+})
+
 describe('ripple_delete_part refuses without recording', () => {
   const expectUntouched = (a: ActorHandle, r: ReturnType<ActorHandle['dispatch']>, error: string, before: Project, len: number) => {
     expect(r.ok).toBe(false)
@@ -194,6 +238,52 @@ describe('ripple_delete_part refuses without recording', () => {
     const before = a.snapshot()
     const len = a.historyStatus().len
     expectUntouched(a, deletePart(a, [clip], 3 * S, 'start'), 'RippleInsideHole', before, len)
+  })
+
+  // A cut strictly inside the overlap leaves the transition a duration its
+  // layers no longer overlap by; Split refuses there, and so does this edit,
+  // whichever of the two layers it cuts.
+  const crossfade = () => {
+    const { a, tA } = setup()
+    const out = color(a, tA, 0, 4 * S)
+    const next = color(a, tA, 4 * S, 8 * S)
+    idOf(a.dispatch('add_transition', { from: out, to: next, duration_us: 2 * S, placement: 'overlap' }))
+    const [start, end] = [spanOf(a.snapshot(), next)![0], spanOf(a.snapshot(), out)![1]]
+    expect(end - start).toBe(2 * S)
+    return { a, out, next, inside: start + S }
+  }
+
+  it('a cut inside a transition is LayerOverlap, as it is for Split, for both clips or either one', () => {
+    for (const part of ['start', 'end'] as const) {
+      for (const pick of [(o: string, n: string) => [o, n], (o: string) => [o], (_o: string, n: string) => [n]]) {
+        const { a, out, next, inside } = crossfade()
+        for (const id of pick(out, next)) expect(a.dispatch('split_layer', { layer: id, at_t_us: inside }).ok).toBe(false)
+        const before = a.snapshot()
+        const len = a.historyStatus().len
+        const r = deletePart(a, pick(out, next), inside, part)
+        expectUntouched(a, r, 'ValidationFailed', before, len)
+        if (!r.ok && r.error.error === 'ValidationFailed') expect(r.error.detail.rule).toBe('LayerOverlap')
+      }
+    }
+  })
+
+  it('a linked member only partly inside the deleted part stays, and the ripple refuses over it', () => {
+    // A partner reaching past the clip's far edge (end) or back before its
+    // start (start) is not part of what the key deletes; the hole would close
+    // over the rest of it, which a split and a ripple delete refuse too.
+    const { a, tA, tB } = setup()
+    const clip = color(a, tA, 2 * S, 10 * S)
+    const tail = color(a, tB, 8 * S, 14 * S)
+    idOf(a.dispatch('links_create', { layers: [clip, tail] }))
+    let before = a.snapshot()
+    let len = a.historyStatus().len
+    expectUntouched(a, deletePart(a, [clip], 5 * S, 'end'), 'RippleInsideHole', before, len)
+
+    const head = color(a, tB, S, 3 * S)
+    val(a.dispatch('links_add_members', { link: root(a.snapshot()).links[0]!.id, layers: [head] }))
+    before = a.snapshot()
+    len = a.historyStatus().len
+    expectUntouched(a, deletePart(a, [clip], 5 * S, 'start'), 'RippleLinkStraddles', before, len)
   })
 
   it('names a bad part or an empty set as InvalidArgument', () => {
