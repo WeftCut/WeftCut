@@ -4,10 +4,11 @@
 
 import type { TFunction } from "i18next";
 import { open as openDialog } from "@/bridge/dialog";
+import { invoke } from "@/bridge/ipc";
 import { projectOpen } from "../ipc";
 import { notify, unpackProject } from "../pack/packJobs";
 import { describeOpenError } from "./openError";
-import { LEGACY_PROJECT_FILE, PACK_EXTENSION, PROJECT_EXTENSION } from "../../shared/projectFile";
+import { LEGACY_PROJECT_FILE, PACK_EXTENSION, PROJECT_EXTENSION, PROJECT_FILE } from "../../shared/projectFile";
 
 /// Asks for a project file or a pack and opens it. A project file opens in
 /// place and `opened` runs; an unpacked pack opens through main, which tells
@@ -25,6 +26,10 @@ export async function openProject(t: TFunction, opened: () => void): Promise<str
   });
   if (typeof picked !== "string") return null;
   if (picked.toLowerCase().endsWith(`.${PACK_EXTENSION}`)) return unpackProject(t, picked);
+  // The project already open stays as it is: an open of its own folder
+  // reloads it, which drops its undo history and checkpoints.
+  const open = (await invoke<{ dir: string } | null>("project_open_state"))?.dir;
+  if (open !== undefined && [`${open}/${PROJECT_FILE}`, `${open}\\${PROJECT_FILE}`].includes(picked)) return null;
   try {
     await projectOpen(picked);
   } catch (err) {

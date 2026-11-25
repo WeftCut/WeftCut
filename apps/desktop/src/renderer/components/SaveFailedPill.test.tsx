@@ -9,7 +9,7 @@ let revision = 0;
 const fail = (code: string | null, last_saved_at: string | null = null) =>
   act(() => receiveSaveStatus({
     state: "failing", revision: ++revision, since: "2026-01-02T03:04:05.000Z", last_saved_at,
-    code, path: "/home/u/Projects/Demo/project.json", dir: "/home/u/Projects/Demo",
+    code, path: "/home/u/Projects/Demo/project.wcpr", dir: "/home/u/Projects/Demo",
   }));
 const recover = () => act(() => receiveSaveStatus({ state: "ok", revision: ++revision }));
 const actions = (over: Partial<SaveFailureActions> = {}): SaveFailureActions => ({

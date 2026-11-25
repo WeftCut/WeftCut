@@ -34,7 +34,8 @@ A pack (ADR 0178) is a file, so the start screen grew a second Open button.
   menu. A `.wcpr` opens in place; a `.wcpk` is read, then the user places the
   new folder (ADR 0178). A second filter takes a 0.8 `project.json`, so a
   project missing from Recent can still be picked. From the editor the open
-  replaces the project as an agent's open does.
+  replaces the project and remounts the editor, as an agent's open does; the
+  open project's own file leaves it as it is, undo history included.
 - **A 0.8 folder is renamed on open.** The open reads `project.json` and,
   once the project validates and its pre-upgrade bytes are kept, renames it
   to `project.wcpr`. A failed rename refuses the open with nothing swapped.

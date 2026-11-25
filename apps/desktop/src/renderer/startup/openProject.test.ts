@@ -63,8 +63,16 @@ describe("a project file", () => {
 
   it("says why it did not open, and the caller stays where it is", async () => {
     bridge.open.mockResolvedValueOnce("/home/u/notes/todo.json");
-    bridge.invoke.mockRejectedValue(ipcError(new WorkspaceFailure({ error: "NotProjectFolder" })));
+    bridge.invoke.mockImplementation(async (cmd: string) => { if (cmd === "project_open") throw ipcError(new WorkspaceFailure({ error: "NotProjectFolder" })); return null });
     await expect(openProject(t, opened)).resolves.toBe(t("startup.not_project_folder"));
+    expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("leaves the project already open as it is when its own file is picked", async () => {
+    bridge.open.mockResolvedValueOnce("/home/u/Projects/Example/project.wcpr");
+    bridge.invoke.mockImplementation(async (cmd: string) => cmd === "project_open_state" ? { dir: "/home/u/Projects/Example" } : undefined);
+    await expect(openProject(t, opened)).resolves.toBeNull();
+    expect(bridge.invoke).not.toHaveBeenCalledWith("project_open", expect.anything());
     expect(opened).not.toHaveBeenCalled();
   });
 });
@@ -104,7 +112,7 @@ describe("a pack", () => {
 describe("from the editor", () => {
   it("leaves a notice saying why it did not open", async () => {
     bridge.open.mockResolvedValueOnce("/home/u/Projects/Example/project.wcpr");
-    bridge.invoke.mockRejectedValue(ipcError(new WorkspaceFailure({ error: "NotProjectFolder" })));
+    bridge.invoke.mockImplementation(async (cmd: string) => { if (cmd === "project_open") throw ipcError(new WorkspaceFailure({ error: "NotProjectFolder" })); return null });
     await openProjectFromEditor(t, opened);
     expect(useComputeJobNoticeStore.getState().notice).toMatchObject({
       outcome: "error", title: t("open_project.failed_title"), body: t("startup.not_project_folder"),
