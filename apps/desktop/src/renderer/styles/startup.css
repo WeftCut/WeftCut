@@ -528,7 +528,7 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
 
 .startup-actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: calc(12 * var(--ui-px));
 }
 
