@@ -111,7 +111,7 @@ import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
 import { notifyCommandRegistry, useCommandProvider } from "./commands/registry";
-import { buildAppCommands } from "./commands/appCommands";
+import { buildAppCommands, openProjectAllowed } from "./commands/appCommands";
 import { exportReviewCommands, exportReviewShortcuts } from "./commands/exportReview";
 import { splitAtPlayhead } from "./commands/splitAtPlayhead";
 import { deleteEndFromPlayhead, deleteStartToPlayhead } from "./commands/deletePartAtPlayhead";
@@ -143,6 +143,8 @@ import { VoiceoverDialog } from "./speech/VoiceoverDialog";
 import { PortabilityDialog } from "./portability/PortabilityDialog";
 import { PackDialog } from "./pack/PackDialog";
 import { openProjectFromEditor } from "./startup/openProject";
+import { useFileOpenRequests } from "./startup/fileOpenRequests";
+import { notify } from "./pack/packJobs";
 import { TranscriptionInputDialog } from "./speech/TranscriptionInputDialog";
 import { setTool } from "./state/toolStore";
 import { resetPreviewView } from "./state/previewViewStore";
@@ -555,6 +557,13 @@ export function App({ onCloseProject, onWorkspaceReady, onProjectReplaced }: App
     : exportInProgress || exportState?.kind === "error" && !!exportState.onRetry;
   const backgroundExportActive = exportInProgress && exportState?.background === true;
   useEffect(notifyCommandRegistry, [exportEditLocked]);
+  // A file the OS handed the app opens as File › Open's pick does. Refused at
+  // once, not held, while Open is unavailable: a project replaced minutes
+  // after the double-click, when the running task ends, would surprise.
+  useFileOpenRequests((file) => {
+    if (openProjectAllowed(busy)) void openProjectFromEditor(t, onProjectReplaced, file);
+    else notify({ id: "open-project", outcome: "error", title: t("open_project.failed_title"), body: t("open_project.busy") });
+  }, true);
 
   // ---- Menu-bar action handlers ----
 

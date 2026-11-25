@@ -303,6 +303,19 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.stop()
   })
 
+  it("leaves the project open as it is when the user's open names any spelling of its file", async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    const dir = await host.handleInvoke('project_new_workspace', publicationProject) as string
+    const session = host.publication().version.session
+    expect(await host.handleInvoke('project_open', { path: `${dir}/./${PROJECT_FILE}`, keep_if_open: true })).toEqual({ already_open: true })
+    expect(host.publication().version.session, 'the open project was reloaded').toBe(session)
+    // Without the flag the same open is a reload from disk.
+    expect(await host.handleInvoke('project_open', { path: `${dir}/${PROJECT_FILE}` })).toEqual({ already_open: false })
+    expect(host.publication().version.session).toBe(session + 1)
+    host.stop()
+  })
+
   it('does not invent a session on failed replacement or flush, but reports an actual swap despite later failure', async () => {
     const { deps } = makeInMemoryDeps()
     const host = createTsActorHost(deps)

@@ -26,6 +26,7 @@ import { wireAppSettingsStream } from './settings/appSettingsStore';
 import { applyLayoutTheme } from './settings/layoutTheme';
 import { SplashScreen } from "./startup/SplashScreen";
 import { StartupScreen } from "./startup/StartupScreen";
+import { fileOpenPending } from "./startup/fileOpenRequests";
 import {
 startRendererInitialization,
 type StartupProgress,
@@ -226,6 +227,12 @@ function Root() {
               if (!cancelled) setStage(current => current === "editor" ? current : "startup");
             }
           } else if (!cancelled) setStage(current => current === "editor" ? current : "startup");
+          return;
+        }
+        // A file the app was opened on (ADR 0181) comes before the last
+        // project; the start screen takes it and opens it.
+        if (await fileOpenPending()) {
+          if (!cancelled) setStage(current => current === "editor" ? current : "startup");
           return;
         }
         const enabled = await recentsGetReopenOnLaunch();

@@ -211,6 +211,11 @@ const api: WeftcutApi = {
     resume: (): Promise<UpdateResume> => ipcRenderer.invoke('updates:resume'),
   },
 
+  fileOpen: {
+    pending: (): Promise<boolean> => ipcRenderer.invoke('fileOpen:pending'),
+    take: (): Promise<string | null> => ipcRenderer.invoke('fileOpen:take'),
+  },
+
   dev: {
     motifColdStart: (dir: string): Promise<MotifColdStartResult> => ipcRenderer.invoke('dev:motifColdStart', dir),
   },

@@ -30,6 +30,8 @@ import { loadAllKeys, setKey, onKeyringChecked } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates, macSelfUpdateBlocked } from './updates.js'
 import { createUpdateResume } from './updateResume.js'
+import { openRequests } from './fileAssociation/openRequests.js'
+import { FILE_OPEN_REQUEST_EVENT } from '../shared/fileOpen.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { nodeAtomicWriteIo, renameWithRetry, writeFileAtomic } from './atomicWrite.js'
 import { VLM_ENDPOINT_KEY_TAG, type VlmDescribeSettings } from '../shared/vlm-config.js'
@@ -165,6 +167,13 @@ function bringMainWindowForward(): void {
   w.focus()
 }
 app.on('second-instance', bringMainWindowForward)
+// A file the OS asks to open waits in the inbox until the window takes it
+// (ADR 0181); before the window exists there is no one to tell, and it takes
+// the request once it starts.
+openRequests.subscribe(() => {
+  bringMainWindowForward()
+  emitToRenderer(FILE_OPEN_REQUEST_EVENT, null)
+})
 // The MCP host is started after `backend.init()`, but the closures that reach
 // it (the TS actor host's resource-list relay) are built BEFORE the host
 // exists. Hold it module-scoped and set it right after `startMcpHost` resolves.
@@ -1507,6 +1516,13 @@ app.whenReady().then(async () => {
       version: app.getVersion(),
     }),
   })
+  // An AppImage registers its own file types; the deb, NSIS and the macOS
+  // bundle are registered by installing them (ADR 0181).
+  if (app.isPackaged && process.platform === 'linux') {
+    const { registerRunningAppImage } = await import('./fileAssociation/appImageRegistration.js')
+    void registerRunningAppImage(process.env, app.getPath('home'), app.getPath('userData'))
+      ?.catch((error: unknown) => console.warn('[file-association] AppImage registration failed', error))
+  }
   // Refresh <userData>/skills/ from the bundle so the folder the Settings panel
   // points the user at always matches this app version. Unlike the binary
   // above it is not used in place: it exists to be copied into an agent
@@ -1634,6 +1650,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('updates:restart', () => updates.restart())
   ipcMain.handle('updates:download', () => updates.download())
   ipcMain.handle('updates:resume', () => resumeAfterUpdate)
+  // Only the editor window takes a file the OS asked to open.
+  ipcMain.handle('fileOpen:pending', (e) => {
+    if (e.sender !== mainWindow?.webContents) throw new Error('A file to open is for the editor window')
+    return openRequests.pending()
+  })
+  ipcMain.handle('fileOpen:take', (e) => {
+    if (e.sender !== mainWindow?.webContents) throw new Error('A file to open is for the editor window')
+    return openRequests.take()
+  })
   app.on('will-quit', event => updates.handOffQuit(event))
   app.once('quit', (_event, exitCode) => updates.installOnQuit(exitCode))
   app.once('will-quit', () => updates.stop())

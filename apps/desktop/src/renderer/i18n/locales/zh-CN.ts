@@ -2731,6 +2731,7 @@ const zhCN: Resources = {
     filter: "WeftCut 项目或打包文件",
     legacy_filter: "WeftCut 0.8 项目（{{file}}）",
     failed_title: "无法打开项目",
+    busy: "另一项任务仍在进行，完成后再打开这个文件。",
   },
   pack: {
     title: "打包项目",

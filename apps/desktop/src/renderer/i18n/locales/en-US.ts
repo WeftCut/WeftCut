@@ -3014,6 +3014,8 @@ const enUS = {
     filter: "WeftCut project or pack",
     legacy_filter: "WeftCut 0.8 project ({{file}})",
     failed_title: "Couldn't open the project",
+    // A file opened from the desktop while the editor is busy.
+    busy: "Another task is still running. Open the file again when it finishes.",
   },
   // Pack project and unpack (pack/): the project in one file and back. Percent
   // and bytes only, never a remaining-time estimate.
