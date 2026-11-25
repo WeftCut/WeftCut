@@ -664,7 +664,7 @@ function PreviewSnapSection({
 }
 
 /// Per-project toggle (`Project.settings.prefer_proxies`) — it travels with
-/// the .vproj rather than the app settings. The value is already hydrated and
+/// the project file rather than the app settings. The value is already hydrated and
 /// kept in sync by `proxyPreferenceStore` (PixiPreview reads it live per
 /// `ensureClip`), so this reads the store directly instead of fetching on
 /// mount, and writes through `setPreferProxies` instead of the generic

@@ -6,6 +6,7 @@ import {
   cleanIpcDetail,
   describeCreateError,
   describeOpenError,
+  describeSaveAsError,
   isDeadRecentError,
   parseWorkspaceError,
 } from "./openError";
@@ -188,6 +189,24 @@ describe("describeCreateError", () => {
     expect(
       describeCreateError(new Error("EPERM: operation not permitted"), PICKED, t),
     ).toBe('new_project.create_failed {"detail":"EPERM: operation not permitted"}');
+  });
+});
+
+describe("describeSaveAsError", () => {
+  it("says Save As makes a new folder when the target is already there", () => {
+    expect(
+      describeSaveAsError(overIpc(new WorkspaceFailure({ error: "ProjectFolderExists" })), PICKED, t),
+    ).toBe("dialogs.save_as_folder_exists");
+  });
+
+  it("falls back to the save-failed line, minus the IPC framing", () => {
+    expect(
+      describeSaveAsError(
+        new Error("Error invoking remote method 'backend:invoke': Error: EACCES: permission denied"),
+        PICKED,
+        t,
+      ),
+    ).toBe('dialogs.save_as_failed {"detail":"EACCES: permission denied"}');
   });
 });
 

@@ -5,6 +5,7 @@ import { transportPlay, transportPause, usePlaybackStore } from "./state/playbac
 import { save as saveDialog } from "@/bridge/dialog";
 import { listen } from "@/bridge/events";
 import { invoke } from "@/bridge/ipc";
+import { join as pathJoin } from "@/bridge/path";
 import {
   sharedBakedKeyIndex,
   sharedMotifFrameCache,
@@ -86,6 +87,8 @@ import { noticeLogMessage, useAppNotices, type NoticeSettingsPage } from "./noti
 import type { SaveFailureActions } from "./components/SaveFailedPill";
 import { useDerivativeJobEvents } from "./state/derivativeJobsStore";
 import { open as shellOpen } from "@/bridge/shell";
+import { saveAsDialogOptions } from "./app/saveAsDialog";
+import { describeSaveAsError } from "./startup/openError";
 import { PickOverlayHost } from "./colorpick/PickOverlayHost";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
 import { type PreviewSurfaceHandle } from "./preview/PreviewSurface";
@@ -488,7 +491,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   useWindowTitle(summary?.name);
 
   const run = useCallback(
-    async (action: () => Promise<unknown>) => {
+    async (action: () => Promise<unknown>, describe: (e: unknown) => string = String) => {
       if (busy) return;
       setBusy(true);
       setError(null);
@@ -496,7 +499,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         await action();
         await settle();
       } catch (e) {
-        const msg = String(e);
+        const msg = describe(e);
         setError(msg);
         // The user-facing error path is the status bar, not inline chrome. Push
         // every caught UI error into the log so the log line's unseen-error
@@ -602,18 +605,16 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     });
   }, [busy, onCloseProject, onWorkspaceReady]);
 
+  const projectName = summary?.name;
   const saveProject = useCallback(async () => {
-    const path = await saveDialog({
-      title: t("dialogs.save_title"),
-      defaultPath: t("dialogs.save_default_name"),
-      filters: [
-        { name: t("dialogs.project_filter"), extensions: ["vproj"] },
-      ],
-    });
+    const openDir = (await invoke<{ dir: string } | null>("project_open_state"))?.dir ?? null;
+    const path = await saveDialog(await saveAsDialogOptions({
+      t, name: projectName, openDir, join: pathJoin,
+    }));
     if (typeof path === "string") {
-      await run(() => projectSaveAs(path));
+      await run(() => projectSaveAs(path), (e) => describeSaveAsError(e, path, t));
     }
-  }, [run, t]);
+  }, [run, t, projectName]);
 
   // The Save failed pill's actions. Retry is the explicit save itself, not `run`: the
   // popover shows its outcome in place.
