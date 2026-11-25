@@ -94,7 +94,7 @@ export function CheckpointSection({
       {/* Not decoration. Checkpoints are absent from `serialize.ts` /
           `persistence.ts` and `replace_state` clears them
           (docs/features.md:39), so a user who reads these as durable saves
-          loses work. Making them durable needs `.vproj` migration — issue #14,
+          loses work. Making them durable needs a project-file migration — issue #14,
           out of scope here. */}
       <p className="checkpoint-session-note">
         {t("history_panel.checkpoints_note")}

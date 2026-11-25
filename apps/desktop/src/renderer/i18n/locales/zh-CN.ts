@@ -1019,9 +1019,10 @@ const zhCN: Resources = {
     close: "关闭",
   },
   dialogs: {
-    save_title: "保存 WeftCut 项目",
-    project_filter: "WeftCut 项目",
-    save_default_name: "未命名.vproj",
+    save_title: "项目另存为",
+    save_as_default_name: "{{name}} 副本",
+    save_as_folder_exists: "另存为会新建一个项目文件夹，但该位置已有同名的文件夹或文件。请换一个名称，或换一个位置。",
+    save_as_failed: "无法保存项目：{{detail}}",
     import_title: "导入素材",
     media_filter: "媒体文件",
   },

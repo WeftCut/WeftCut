@@ -481,7 +481,11 @@ Caching, prewarming and transport are described in [`motifs.md`](motifs.md).
 
 ## Diagnostics
 
-**Dropped/late indicator** (transport bar, `underrunTracker.ts`). It counts the
+**Dropped/late indicator** (transport bar, `underrunTracker.ts`). A frame is
+dropped when the ring had no fresh frame for it. A frame is late when the gap
+between display frames (rAF timestamps, not when the composite ran) was long
+enough to show a comp frame late or skip it; the display interval is learned
+from the frame cadence. It counts the
 current episode, dims after 1.5 s with no new problem, and clears after 3 s
 of quiet, including while paused. Clearing is confirmed on the next composite,
 and any new problem cancels it. Decay runs on the composite tick; there is no

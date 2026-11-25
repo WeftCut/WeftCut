@@ -1149,9 +1149,11 @@ const enUS = {
     close: "Close",
   },
   dialogs: {
-    save_title: "Save WeftCut project",
-    project_filter: "WeftCut project",
-    save_default_name: "untitled.vproj",
+    save_title: "Save project as",
+    save_as_default_name: "{{name}} copy",
+    save_as_folder_exists:
+      "Save As makes a new project folder, and something with that name is already there. Pick a different name, or a different location.",
+    save_as_failed: "Couldn't save the project: {{detail}}",
     import_title: "Import media",
     media_filter: "Media files",
   },

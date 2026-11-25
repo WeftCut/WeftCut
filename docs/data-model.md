@@ -778,7 +778,9 @@ full, no permission, file in use, folder missing, read-only drive, else the
 error code), the last successful save and the project folder, with Retry now,
 Save As… and Open folder ([status-log.md § Bar](status-log.md#bar)).
 Save As works out of a failing folder: it writes the whole project to the new
-one, so the old folder's failed flush does not stop it. It copies the project's
+one, so the old folder's failed flush does not stop it. Like New project, it
+refuses a target that already exists (`ProjectFolderExists`), the open folder
+included, before it writes anything. It copies the project's
 content first (`state/projectContent.ts`: `Media/`, `Fonts/`, `Styles/`,
 `TASTE.md`, `export.json`, `view.json`, `.gitignore`; Motifs through their own copy), after
 pending font copies have finished, cloning each file where the

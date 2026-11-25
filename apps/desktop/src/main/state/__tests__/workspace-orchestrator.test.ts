@@ -326,6 +326,40 @@ describe('saveProjectAs', () => {
     expect(fs.files.has(`/out/${PROJECT_FILE}`)).toBe(false)
     expect(d.calls).toEqual([])
   })
+
+  describe('refuses a target that already exists, as New project does', () => {
+    /** The open project at `/ws` and whatever `seed` puts on disk; records
+     *  every write, folder made, Motif copy and project-content access. */
+    function occupied(seed: (fs: ReturnType<typeof memFs>) => void) {
+      const fs = memFs({ [`/ws/${PROJECT_FILE}`]: '{"open":"project"}' })
+      fs.dirs.add('/ws')
+      seed(fs)
+      const before = new Map(fs.files)
+      const touched: string[] = []
+      const writeFile = fs.writeFile, mkdirp = fs.mkdirp
+      fs.writeFile = (p, t) => { touched.push(`write:${p}`); writeFile(p, t) }
+      fs.mkdirp = (dir) => { touched.push(`mkdirp:${dir}`); mkdirp(dir) }
+      const copyMotifs = vi.fn(() => { touched.push('copyMotifs') })
+      const contentFs = new Proxy({}, { get: (_target, method) => { touched.push(`content:${String(method)}`); return vi.fn() } }) as NonNullable<OrchestratorDeps['contentFs']>
+      const d = deps({ fs, copyMotifs, contentFs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
+      return { d, fs, before, touched }
+    }
+
+    it.each([
+      ['another project', '/other', (fs: ReturnType<typeof memFs>) => { fs.dirs.add('/other'); fs.files.set(`/other/${PROJECT_FILE}`, '{"other":"project"}'); fs.files.set('/other/Media/clip.mp4', 'bytes') }],
+      ['a folder of other files', '/other', (fs: ReturnType<typeof memFs>) => { fs.dirs.add('/other'); fs.files.set('/other/notes.txt', 'mine') }],
+      ['an empty folder', '/other', (fs: ReturnType<typeof memFs>) => { fs.dirs.add('/other') }],
+      ['a file', '/other', (fs: ReturnType<typeof memFs>) => { fs.files.set('/other', 'a file') }],
+      ['the open folder itself', '/ws', () => {}],
+    ])('%s: nothing is written, copied or committed', async (_what, target, seed) => {
+      const { d, fs, before, touched } = occupied(seed)
+      await expect(saveProjectAs(d, target, '/ws')).rejects.toThrow(new WorkspaceFailure({ error: 'ProjectFolderExists' }))
+      expect(touched).toEqual([])
+      expect(fs.files).toEqual(before)
+      expect(d.calls).toEqual([])
+      expect(d.actor.dispatch).not.toHaveBeenCalled()
+    })
+  })
 })
 
 describe('newWorkspace', () => {
@@ -370,24 +404,23 @@ function atomicMemFs(io: MemAtomicIo): OrchestratorFs & { files: Map<string, str
 
 describe('project.wcpr writes go through the atomic replacement', () => {
   const args = { parentFolder: '/parent', name: 'Fresh', width: 1280, height: 720, fpsNum: 24, fpsDen: 1 }
-  const GOOD = '{"previous":"good"}'
 
   it.each(['write', 'fsync', 'rename'] as const)(
-    'save-as over an existing project failing at %s keeps its project.wcpr and commits nothing',
+    'save-as failing at %s leaves no project file in the new folder and commits nothing',
     async (step) => {
-      const io = memAtomicIo(new Map([[`/out/${PROJECT_FILE}`, GOOD]]))
+      const io = memAtomicIo()
       const d = deps({ fs: atomicMemFs(io) })
       const failure = errno('ENOSPC')
       io.fail(step, failure)
       await expect(saveProjectAs(d, '/out')).rejects.toBe(failure)
-      expect(io.files.get(`/out/${PROJECT_FILE}`)).toBe(GOOD)
+      expect(io.files.has(`/out/${PROJECT_FILE}`)).toBe(false)
       expect(io.files.has(`/out/${PROJECT_FILE}${ATOMIC_TEMP_SUFFIX}`)).toBe(false)
       expect(d.calls).toEqual([])
     },
   )
 
-  it('save-as replaces an existing project.wcpr whole', async () => {
-    const io = memAtomicIo(new Map([[`/out/${PROJECT_FILE}`, GOOD]]))
+  it('save-as puts the project file in place by renaming a complete temp file', async () => {
+    const io = memAtomicIo()
     const d = deps({ fs: atomicMemFs(io) })
     await saveProjectAs(d, '/out')
     expect(JSON.parse(io.files.get(`/out/${PROJECT_FILE}`)!).metadata.name).toBe('snap')
@@ -454,12 +487,13 @@ describe('round-trip: new → save → open is state-identical', () => {
     let created: any, reopened: any
     const dNew = deps({ fs }); dNew.actor.replaceState = vi.fn((p) => { created = p })
     const out = await newWorkspace(dNew, { parentFolder: '/p', name: 'RT', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
-    // save the created project to its own folder (snapshot returns it)
+    // save the created project as a new folder (snapshot returns it)
     const dSave = deps({ fs }); dSave.actor.snapshot = vi.fn(() => created)
-    await saveProjectAs(dSave, out)
+    const copy = '/p/RT copy'
+    await saveProjectAs(dSave, copy, out)
     // reopen
     const dOpen = deps({ fs }); dOpen.actor.replaceState = vi.fn((p) => { reopened = p })
-    await openProject(dOpen, out)
+    await openProject(dOpen, copy)
     expect(JSON.stringify(canonicalize(serializeProject(reopened))))
       .toBe(JSON.stringify(canonicalize(serializeProject(created))))
   })

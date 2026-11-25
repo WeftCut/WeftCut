@@ -29,6 +29,7 @@ import { sessionView } from '../mcp/server'
 import { autosaveMaxWaitMs } from './autosave'
 import { rootComposition } from './model'
 import { errno } from './__tests__/fixtures/memAtomicIo'
+import { WorkspaceFailure } from '../../shared/workspaceErrors'
 import type { PortabilityReport } from '../../shared/portability'
 import { settleQuitSave } from '../quitSave'
 import { SAVE_STATUS_CHANNEL, SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
@@ -1315,6 +1316,28 @@ describe('createTsActorHost — persistence-route integration', () => {
         expect(saved.compositions[saved.root_id].tracks).toHaveLength(tracks)
         expect(t.pushes().map((p) => p.state)).toEqual(['failing', 'ok'])
         expect(t.saveRows().map((r) => r.level)).toEqual(['warn'])
+      } finally { t.done() }
+    })
+
+    it.each(['the open folder', 'another project'] as const)('Save As into %s is refused and leaves the open project, its edits and the target as they were', async (target) => {
+      const t = failingHost()
+      try {
+        const other = await t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Other' }) as string
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        const into = target === 'the open folder' ? dir : other
+        const occupant = t.vfs[`${other}/${PROJECT_FILE}`]
+        t.failing.add(`${dir}/${PROJECT_FILE}`)
+        await t.host.handleInvoke('add_track', { kind: 'Video', name: 'Unsaved' })
+        await vi.advanceTimersByTimeAsync(t.maxWaitMs() * 2)
+        const before = { opened: t.host.openedProject(), publication: t.host.publication().version, saveState: t.pushes().map((p) => p.state) }
+
+        await expect(t.host.handleInvoke('project_save_as', { path: into }))
+          .rejects.toThrow(new WorkspaceFailure({ error: 'ProjectFolderExists' }))
+        expect(t.host.openedProject()).toEqual(before.opened)
+        expect(t.host.publication().version).toEqual(before.publication)
+        expect(t.host.hasUnsavedEdits()).toBe(true)
+        expect(t.pushes().map((p) => p.state)).toEqual(before.saveState)
+        expect(t.vfs[`${other}/${PROJECT_FILE}`]).toBe(occupant)
       } finally { t.done() }
     })
 
