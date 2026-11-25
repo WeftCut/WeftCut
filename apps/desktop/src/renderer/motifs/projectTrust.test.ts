@@ -26,8 +26,10 @@ import {
   useProjectTrust,
   useProjectTrustPrompt,
 } from "./projectTrust";
+import { useLaunchNotesShowing } from "../releaseNotes/launchNotesShowing";
 
 afterEach(() => {
+  useLaunchNotesShowing.setState(false, true);
   bridge.invoke.mockReset();
   bridge.listeners.clear();
   useProjectTrust.setState({ summary: null, open: false });
@@ -53,6 +55,16 @@ describe("the open-time prompt", () => {
     renderHook(() => useProjectTrustPrompt());
     await waitFor(() => expect(useProjectTrust.getState().open).toBe(true));
     expect(bridge.invoke).toHaveBeenCalledWith("project_trust_summary", { summaries: false });
+  });
+
+  it("waits for What's New to close instead of opening over it", async () => {
+    useLaunchNotesShowing.setState(true, true);
+    backend(state());
+    renderHook(() => useProjectTrustPrompt());
+    await waitFor(() => expect(useProjectTrust.getState().summary).not.toBeNull());
+    expect(useProjectTrust.getState().open).toBe(false);
+    act(() => useLaunchNotesShowing.setState(false, true));
+    expect(useProjectTrust.getState().open).toBe(true);
   });
 
   it("stays closed on a dismissed or trusted project", async () => {

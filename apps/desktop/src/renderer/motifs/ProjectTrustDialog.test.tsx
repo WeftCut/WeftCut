@@ -81,6 +81,11 @@ describe("the project trust dialog", () => {
     ]);
   });
 
+  it("lists a Motif by its name when it has one", async () => {
+    await open([state([{ ...motif("lower-third-2", SEEN), name: "Lower Third" }])]);
+    expect(rows()).toEqual(["Lower Third2 files · 2.0 KB"]);
+  });
+
   it("trusts exactly the revisions it showed, and closes without dismissing", async () => {
     const onClose = await open([state([motif("one", SEEN), motif("two", OTHER)])]);
     fireEvent.click(within(dialog()).getByRole("button", { name: "Trust this project" }));

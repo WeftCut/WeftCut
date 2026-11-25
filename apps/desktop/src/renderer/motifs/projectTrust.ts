@@ -8,6 +8,7 @@ import { listen } from "@/bridge/events";
 import i18n from "../i18n";
 import { notifyCommandRegistry } from "../commands/registry";
 import { logMutationFailure } from "../errors/tryMutate";
+import { useLaunchNotesShowing } from "../releaseNotes/launchNotesShowing";
 import {
   MOTIFS_CHANGED_EVENT,
   projectTrustSummary,
@@ -68,10 +69,19 @@ export function useProjectTrustPrompt(): void {
     // Decided on the first state that lands, whichever read brings it: a
     // change during the first read supersedes it, and must not skip the ask.
     let decided = false;
+    let waiting: (() => void) | undefined;
     const decide = (summary: ProjectTrustSummary | null) => {
       if (cancelled || decided || !summary) return;
       decided = true;
-      if (summary.prompt) openProjectTrustDialog();
+      if (!summary.prompt) return;
+      // What's New may be up at launch: ask once it closes, never over it.
+      if (!useLaunchNotesShowing.getState()) { openProjectTrustDialog(); return; }
+      waiting = useLaunchNotesShowing.subscribe((showing) => {
+        if (showing) return;
+        waiting?.();
+        waiting = undefined;
+        if (!cancelled) openProjectTrustDialog();
+      });
     };
     void refreshProjectTrust().then(decide);
     let stop: (() => void) | undefined;
@@ -82,6 +92,7 @@ export function useProjectTrustPrompt(): void {
     return () => {
       cancelled = true;
       stop?.();
+      waiting?.();
       resetProjectTrust();
     };
   }, []);

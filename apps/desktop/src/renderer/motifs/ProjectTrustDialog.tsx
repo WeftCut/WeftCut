@@ -202,7 +202,7 @@ function TrustRow({ motif }: { motif: ProjectTrustMotif }) {
   return (
     <li className="portability-row">
       <span className="portability-row-text">
-        <span className="portability-row-name">{motif.motif_id}</span>
+        <span className="portability-row-name">{motif.name ?? motif.motif_id}</span>
         {facts.length > 0 && <span className="portability-row-detail">{facts.join(" · ")}</span>}
       </span>
     </li>

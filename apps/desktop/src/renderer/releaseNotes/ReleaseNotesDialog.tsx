@@ -6,6 +6,8 @@ import { openExternal, RELEASES_URL } from "../app/links";
 import { Button } from "@/components/ui/button";
 import { setAppSettings, useAppSettingsLoaded, useAppSettingsStore } from "../settings/appSettingsStore";
 import { launchReleaseNotes, parseReleaseNotes, type Block, type Inline, type ListItem } from "./releaseNotes";
+import { useLaunchNotesShowing } from "./launchNotesShowing";
+import { useProjectTrust } from "../motifs/projectTrust";
 
 interface ReleaseNotesDialogProps {
   version: string;
@@ -64,9 +66,15 @@ export function LaunchReleaseNotes() {
     return () => { alive = false; };
   }, []);
 
-  if (!loaded || appVersion === null || closed) return null;
-  const notes = launchReleaseNotes(appVersion, seen);
-  if (notes === null) return null;
+  const trustOpen = useProjectTrust((s) => s.open);
+  const notes = !loaded || appVersion === null || closed ? null : launchReleaseNotes(appVersion, seen);
+  const showing = notes !== null && !trustOpen;
+  useEffect(() => {
+    useLaunchNotesShowing.setState(showing, true);
+    return () => useLaunchNotesShowing.setState(false, true);
+  }, [showing]);
+
+  if (!showing) return null;
   return (
     <ReleaseNotesDialog
       version={notes.version}
