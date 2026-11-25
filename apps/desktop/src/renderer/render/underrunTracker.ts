@@ -15,7 +15,7 @@
 // Both drive one edge-triggered "active" flag safe to write straight
 // into React state. This module owns neither the loop nor the ring:
 // `Compositor` hands it the frame-selection verdict once per composite
-// sweep, and the tick interval falls out of that same call's clock read.
+// sweep, and the playback engine hands it each display frame's interval.
 
 /// Slack added to the selected frame's presentation window before it
 /// counts as stale. Absorbs ±1 µs rational-rounding jitter between the
@@ -83,9 +83,9 @@ export interface UnderrunSnapshot {
   /// totals; `onChange` reports the current indicator episode, cleared after
   /// three seconds without an observed problem (including while paused).
   droppedFrames: number;
-  /// Comp frames whose composite tick arrived more than one comp-frame
-  /// budget after the previous one. Same lifecycle as `droppedFrames`;
-  /// a stalled loop scores here and not there.
+  /// Comp frames composited after a display-frame gap long enough to show a
+  /// comp frame late or skip it (`lateFrameThresholdMs`). Same lifecycle as
+  /// `droppedFrames`; a stalled loop scores here and not there.
   lateFrames: number;
 }
 
@@ -118,29 +118,34 @@ const INDICATOR_QUIET_MS = 3_000;
 const DEFAULT_GRACE_MAX_MS = 1_000;
 const DEFAULT_MIN_EMIT_INTERVAL_MS = 250;
 
-/// Slack added to the comp-frame budget before a composite tick counts as
-/// late. **Additive, and bounded on both sides** — do the arithmetic
-/// before changing it:
-///   - Upper: the measured judder cell (30 fps comp, budget 33.3 ms) has
-///     a tick p99 of 38.8 ms and must trip, so slack < 5.5 ms. A
-///     multiplicative 1.25× budget (41.7 ms) would silently miss it.
-///   - Lower: rAF lands at 14–19 ms on a 60 Hz display, so at a 60 fps
-///     comp (16.7 ms budget) the slack must absorb ~2.4 ms of healthy
-///     overshoot or every tick reads late.
-/// 4 ms sits inside both. The healthy reference cell (tick p95 17.4 ms at
-/// a 30 fps comp) is nowhere near the resulting 37.3 ms threshold.
-const TICK_SLACK_MS = 4;
-
-/// Floor under the comp-frame budget. The composite loop is rAF-driven,
-/// so it can never tick faster than the display refresh; without this a
-/// composition authored above 60 fps would report EVERY tick late on an
-/// ordinary display. Errs toward under-reporting, which is the right
-/// direction for a user-facing indicator.
-const MIN_TICK_BUDGET_MS = 1_000 / 60;
-
 /// Budget assumed until `bindFrameBudgetMs` learns the composition's fps
 /// — matches `Compositor`'s own 30 fps default.
-const DEFAULT_TICK_BUDGET_MS = 1_000 / 30;
+const DEFAULT_FRAME_BUDGET_MS = 1_000 / 30;
+
+/// Display interval assumed until the cadence estimate has samples.
+const FALLBACK_DISPLAY_INTERVAL_MS = 1_000 / 60;
+/// Frame intervals the display-interval estimate is the median of (~2 s at
+/// 60 Hz). A median, so the late frames being judged can't drag it.
+const CADENCE_WINDOW = 120;
+const CADENCE_MIN_SAMPLES = 8;
+/// The display rate does not change frame to frame; re-sorting the window
+/// on every frame would be pure cost on the composite path.
+const CADENCE_REFRESH_EVERY = 30;
+/// Margin when counting the refreshes that fit in one comp frame. Absorbs
+/// the estimate's error where the comp frame is a whole number of
+/// refreshes: 30 fps on a 59.94 Hz panel is 1.998 refreshes, which is two.
+const REFRESH_COUNT_MARGIN = 0.1;
+
+/// Frame interval past which a display frame counts as late. Only a gap
+/// longer than one comp frame can show a comp frame late or skip it, and
+/// gaps are whole display refreshes, so the threshold sits half a refresh
+/// above the most refreshes that fit in one comp frame. Never below one
+/// refresh: a composition faster than the display is late only when the
+/// display misses a refresh.
+export function lateFrameThresholdMs(budgetMs: number, displayIntervalMs: number): number {
+  const refreshes = Math.max(1, Math.floor(budgetMs / displayIntervalMs + REFRESH_COUNT_MARGIN));
+  return (refreshes + 0.5) * displayIntervalMs;
+}
 
 export class UnderrunTracker {
   private readonly onChange: ((s: UnderrunSnapshot) => void) | undefined;
@@ -157,7 +162,7 @@ export class UnderrunTracker {
   private quietUntilMs = 0;
   private pendingClear: UnderrunSessionSummary | null = null;
   private activeUntilMs = 0;
-  private tickBudgetMs = DEFAULT_TICK_BUDGET_MS;
+  private frameBudgetMs = DEFAULT_FRAME_BUDGET_MS;
   /// Comp time of the last frame counted as dropped, so a frame judged
   /// late on several rAF ticks (rAF runs faster than the comp grid)
   /// counts once.
@@ -165,13 +170,14 @@ export class UnderrunTracker {
   /// The `lastDropFrameUs` twin for late ticks — same per-comp-frame
   /// dedupe, kept separate so one cause can't swallow the other's count.
   private lastLateFrameUs: number | null = null;
-  /// Stamp of the previous composite tick. Written by BOTH `judgeSweep`
-  /// and `tickDecay`: `tickDecay` runs on every composite while
-  /// `judgeSweep` is skipped during a scrub, so if only `judgeSweep`
-  /// stamped it, the whole scrub would resurface as one enormous late
-  /// tick the moment judging resumed. Null = no previous tick to
-  /// difference against (first tick of a play session).
-  private lastTickMs: number | null = null;
+  /// Interval of the display frame being composited (`noteFrame`). Taken by
+  /// the sweep that judges it and dropped by `tickDecay`, so a composite
+  /// outside the frame loop (repaint, seek) never judges a stale one.
+  private pendingFrameMs: number | null = null;
+  private readonly cadence: number[] = [];
+  private cadenceWriteIdx = 0;
+  private cadenceSamples = 0;
+  private displayIntervalMs = FALLBACK_DISPLAY_INTERVAL_MS;
   /// In-play seek grace: true while underruns of either cause are
   /// suppressed. Cleared by the first sweep that is both all-fresh and
   /// on time (pipeline re-primed) or by `graceDeadlineMs` (so genuinely
@@ -199,8 +205,28 @@ export class UnderrunTracker {
   /// Teach the tracker the composition's frame budget. Called by
   /// `Compositor` wherever it recomputes `fpsNum`/`fpsDen`.
   bindFrameBudgetMs(ms: number): void {
-    if (!Number.isFinite(ms)) return;
-    this.tickBudgetMs = Math.max(ms, MIN_TICK_BUDGET_MS);
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    this.frameBudgetMs = ms;
+  }
+
+  /// One display frame of the composite loop, before its composite runs.
+  /// `intervalMs` is the gap between this frame's and the previous frame's
+  /// begin times (rAF timestamps), not between the composites themselves:
+  /// work that delays a callback but still meets the refresh is not late.
+  noteFrame(intervalMs: number): void {
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+      this.pendingFrameMs = null;
+      return;
+    }
+    this.pendingFrameMs = intervalMs;
+    this.cadence[this.cadenceWriteIdx] = intervalMs;
+    this.cadenceWriteIdx = (this.cadenceWriteIdx + 1) % CADENCE_WINDOW;
+    this.cadenceSamples += 1;
+    if (this.cadenceSamples === CADENCE_MIN_SAMPLES ||
+      (this.cadenceSamples > CADENCE_MIN_SAMPLES && this.cadenceSamples % CADENCE_REFRESH_EVERY === 0)) {
+      const sorted = [...this.cadence].sort((a, b) => a - b);
+      this.displayIntervalMs = sorted[Math.floor(sorted.length / 2)]!;
+    }
   }
 
   /// New play session (master clock released): reset counters so the
@@ -220,9 +246,6 @@ export class UnderrunTracker {
     // open with — clearing it here (the old behavior) let that rebuild
     // score dropped+late frames the grace was armed against.
     const keepGrace = this.graceArmed && this.now() < this.graceDeadlineMs;
-    // Drop the stamp, not just the counts: the pause before this play
-    // would otherwise difference into one session-opening late tick.
-    this.lastTickMs = null;
     this.active = false;
     this.activeUntilMs = 0;
     this.graceArmed = keepGrace;
@@ -241,16 +264,15 @@ export class UnderrunTracker {
 
   /// One verdict per composite sweep while the master clock is running.
   /// `anyLate` = at least one visible VideoClip painted from a stale ring;
-  /// `frameUs` is the snapped comp time that was judged. The late-tick
-  /// half takes no argument — it differences this call's own clock read,
-  /// which already existed, so the whole classifier adds no `now()` here.
+  /// `frameUs` is the snapped comp time that was judged. The late half
+  /// judges the interval `noteFrame` left for this composite, if any.
   judgeSweep(anyLate: boolean, frameUs: number): void {
     const nowMs = this.now();
-    const prevTickMs = this.lastTickMs;
-    this.lastTickMs = nowMs;
+    const frameMs = this.pendingFrameMs;
+    this.pendingFrameMs = null;
     const tickLate =
-      prevTickMs !== null &&
-      nowMs - prevTickMs > this.tickBudgetMs + TICK_SLACK_MS;
+      frameMs !== null &&
+      frameMs > lateFrameThresholdMs(this.frameBudgetMs, this.displayIntervalMs);
     if (this.graceArmed) {
       if (!anyLate && !tickLate) {
         this.graceArmed = false; // pipeline re-primed; judge normally again
@@ -286,12 +308,10 @@ export class UnderrunTracker {
 
   /// Hold-off decay; called every composite (playing or not) so the
   /// indicator dims after the last underrun even once judging stops. Also
-  /// the tick clock's second writer, which is why its `now()` read is
-  /// unconditional rather than tucked behind `active` — see `lastTickMs`.
-  /// That one read is the classifier's entire per-composite cost.
+  /// drops a frame interval no sweep judged (paused, scrubbing, hidden).
   tickDecay(): void {
     const nowMs = this.now();
-    this.lastTickMs = nowMs;
+    this.pendingFrameMs = null;
     let changed = false;
     if (this.active && nowMs >= this.activeUntilMs) {
       this.active = false;

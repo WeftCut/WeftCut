@@ -93,6 +93,10 @@ export class PlaybackEngine {
       const anchor = stageNow();
       this.compositor.setAnchorTime(tUs);
       stageAdd(STAGE.Anchor, anchor);
+      // Inside a listener, `elapsedMS` is this rAF timestamp minus the
+      // previous one, before Pixi's max-elapsed clamp. `start()` resets
+      // `lastTime`, so a stopped ticker never reads as one long frame.
+      this.compositor.noteFrameInterval(this.ticker.elapsedMS);
       this.compositor.compositeFrame(tUs);
     } catch (error) {
       console.error("[weftcut/pixi] presentation tick failed:", error);

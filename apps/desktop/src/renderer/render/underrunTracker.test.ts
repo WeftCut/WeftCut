@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   judgeFrameSelection,
+  lateFrameThresholdMs,
   UnderrunTracker,
   type UnderrunSnapshot,
 } from "./underrunTracker";
@@ -105,9 +106,9 @@ describe("judgeFrameSelection", () => {
   });
 });
 
-/// Tracker with a hand-cranked clock. All timing behavior (hold decay,
-/// grace deadline, emit throttle, late-tick threshold) is asserted against
-/// this fake now().
+/// Tracker with a hand-cranked clock. Hold decay, grace deadline and emit
+/// throttle run on this fake now(); `frame` is one display frame of the
+/// composite loop, advancing the clock by the same interval it reports.
 function makeTracker(opts: { holdMs?: number; graceMaxMs?: number; minEmitIntervalMs?: number } = {}) {
   let nowMs = 0;
   const emissions: UnderrunSnapshot[] = [];
@@ -124,16 +125,20 @@ function makeTracker(opts: { holdMs?: number; graceMaxMs?: number; minEmitInterv
     advance: (ms: number) => {
       nowMs += ms;
     },
+    frame: (intervalMs: number) => {
+      nowMs += intervalMs;
+      tracker.noteFrame(intervalMs);
+    },
   };
 }
 
 describe("UnderrunTracker", () => {
   it("clears the indicator after three quiet seconds but preserves diagnostic totals", () => {
-    const { tracker, emissions, advance } = makeTracker();
+    const { tracker, emissions, advance, frame } = makeTracker();
     tracker.beginPlay();
     tracker.judgeSweep(true, 0);
-    advance(100);
-    tracker.judgeSweep(true, FRAME_US); // also one late tick
+    frame(100);
+    tracker.judgeSweep(true, FRAME_US); // also one late frame
     advance(2_999);
     tracker.tickDecay();
     expect(emissions.at(-1)).toEqual({ active: false, droppedFrames: 2, lateFrames: 1 });
@@ -177,14 +182,15 @@ describe("UnderrunTracker", () => {
 
   it.each(['drop', 'late tick', 'same stale frame'])(
     'cancels a pending clear when the next sweep reports %s', (cause) => {
-      const { tracker, emissions, advance } = makeTracker();
+      const { tracker, emissions, advance, frame } = makeTracker();
       tracker.beginPlay();
       tracker.judgeSweep(true, 0);
       advance(3_000);
       tracker.tickDecay(); // take a candidate reading, do not clear yet
       expect(emissions.at(-1)!.droppedFrames).toBe(1);
       const before = emissions.length;
-      advance(cause === 'late tick' ? 50 : 16);
+      if (cause === 'late tick') frame(100);
+      else advance(16);
       tracker.judgeSweep(cause !== 'late tick', cause === 'same stale frame' ? 0 : FRAME_US);
       tracker.tickDecay();
       const expected = { active: true, droppedFrames: cause === 'drop' ? 2 : 1,
@@ -355,10 +361,10 @@ describe("UnderrunTracker", () => {
   });
 
   it("reports the session summary exactly once", () => {
-    const { tracker, advance } = makeTracker();
+    const { tracker, frame } = makeTracker();
     tracker.beginPlay();
     tracker.judgeSweep(true, 0);
-    advance(100); // one stalled tick, so both counts are exercised
+    frame(100); // one stalled frame, so both counts are exercised
     tracker.judgeSweep(true, FRAME_US);
     expect(tracker.takeSessionSummary()).toEqual({
       droppedFrames: 2,
@@ -390,115 +396,132 @@ describe("UnderrunTracker", () => {
   });
 });
 
-/// The late-tick half: judder a full ring hides. Every sweep below passes
+/// Display and composition rates as frame intervals, in ms.
+const ms = (perSecond: number) => 1_000 / perSecond;
+
+/// Whole-refresh gaps up to `limitMs`, starting at one refresh.
+function refreshGaps(displayMs: number, limitMs: number): number[] {
+  const gaps = [displayMs];
+  for (let n = 2; n * displayMs <= limitMs; n += 1) gaps.push(n * displayMs);
+  return gaps;
+}
+
+describe("lateFrameThresholdMs", () => {
+  it.each([
+    [60, 60], [30, 60], [24, 60], [60, 144], [60, 120], [120, 60], [60, 75], [25, 50],
+  ])("at %s fps on %s Hz, a gap within one comp frame passes and the next refresh trips", (fps, hz) => {
+    const budget = ms(fps);
+    const display = ms(hz);
+    const threshold = lateFrameThresholdMs(budget, display);
+    // Gaps no longer than a comp frame can't skip one; one refresh is
+    // always healthy, even for a composition faster than the display.
+    const healthy = refreshGaps(display, Math.max(budget, display));
+    for (const gap of healthy) expect(gap, `${gap} ms`).toBeLessThan(threshold);
+    const firstLate = (healthy.length + 1) * display;
+    expect(firstLate).toBeGreaterThan(threshold);
+    // A healthy refresh landing slightly long is still healthy.
+    expect(display * 1.05).toBeLessThan(threshold);
+  });
+
+  it("does not count one missed refresh at 30 fps on a 59.94 Hz panel", () => {
+    // Two refreshes are 33.37 ms against a 33.33 ms comp frame: no comp
+    // frame can be skipped, the panel is just slightly slower than 60 Hz.
+    const display = ms(59.94);
+    expect(2 * display).toBeLessThan(lateFrameThresholdMs(ms(30), display));
+  });
+});
+
+/// The late half: judder a full ring hides. Every sweep below passes
 /// `anyLate: false` unless it is specifically testing the interaction, so
-/// a count here can only have come from the tick interval.
-describe("UnderrunTracker late ticks", () => {
-  it("trips at the measured judder interval, not the healthy one", () => {
-    // The two intervals are the measured playback-perf cells `TICK_SLACK_MS`
-    // is sized against — see its doc for where they come from.
-    const { tracker, advance } = makeTracker();
-    tracker.beginPlay();
-    tracker.judgeSweep(false, 0);
-    advance(17.4);
-    tracker.judgeSweep(false, FRAME_US);
-    expect(tracker.snapshot().lateFrames).toBe(0);
-    advance(38.8);
-    tracker.judgeSweep(false, 2 * FRAME_US);
-    expect(tracker.snapshot()).toEqual({
-      active: true,
-      droppedFrames: 0,
-      lateFrames: 1,
-    });
-  });
+/// a count here can only have come from a frame interval.
+describe("UnderrunTracker late frames", () => {
+  /// Feed enough frames at `hz` for the tracker to learn the display rate.
+  function settle(frame: (intervalMs: number) => void, tracker: UnderrunTracker, hz: number) {
+    for (let i = 0; i < 30; i += 1) {
+      frame(ms(hz));
+      tracker.tickDecay();
+    }
+  }
 
-  it("tolerates 60 Hz rAF jitter at a 60 fps composition", () => {
-    const { tracker, advance } = makeTracker();
-    tracker.bindFrameBudgetMs(1_000 / 60);
+  it("judges the display-frame interval, not the wall time between composites", () => {
+    const { tracker, advance, frame } = makeTracker();
+    tracker.bindFrameBudgetMs(ms(60));
     tracker.beginPlay();
-    tracker.judgeSweep(false, 0);
-    [14, 19, 17, 18].forEach((gapMs, i) => {
-      advance(gapMs);
-      tracker.judgeSweep(false, (i + 1) * FRAME_US);
-    });
+    for (let i = 0; i < 20; i += 1) {
+      advance(8); // this composite ran late, but its frame met the refresh
+      frame(ms(60));
+      tracker.judgeSweep(false, i * FRAME_US);
+    }
     expect(tracker.snapshot().lateFrames).toBe(0);
-  });
-
-  it("follows the bound composition frame budget", () => {
-    const { tracker, advance } = makeTracker();
-    tracker.bindFrameBudgetMs(1_000 / 24); // 41.7 ms budget → 45.7 threshold
-    tracker.beginPlay();
-    tracker.judgeSweep(false, 0);
-    advance(38.8); // late for a 30 fps comp, on time for a 24 fps one
-    tracker.judgeSweep(false, FRAME_US);
-    expect(tracker.snapshot().lateFrames).toBe(0);
-    advance(50);
-    tracker.judgeSweep(false, 2 * FRAME_US);
+    frame(2 * ms(60)); // a missed refresh
+    tracker.judgeSweep(false, 20 * FRAME_US);
     expect(tracker.snapshot().lateFrames).toBe(1);
   });
 
-  it("floors the budget at the rAF rate for above-refresh compositions", () => {
-    const { tracker, advance } = makeTracker();
-    tracker.bindFrameBudgetMs(1_000 / 120);
+  it("learns the display interval from the frame cadence", () => {
+    const { tracker, frame } = makeTracker();
+    tracker.bindFrameBudgetMs(ms(60));
+    const twoMissed = 3 * ms(144); // can skip a 60 fps comp frame
+    // Before any cadence the 60 Hz fallback reads this gap as healthy.
+    expect(twoMissed).toBeLessThan(lateFrameThresholdMs(ms(60), ms(60)));
+    settle(frame, tracker, 144);
     tracker.beginPlay();
+    frame(2 * ms(144)); // one missed refresh: shorter than a comp frame
     tracker.judgeSweep(false, 0);
-    advance(19); // ordinary 60 Hz jitter — the loop can't beat the display
+    expect(tracker.snapshot().lateFrames).toBe(0);
+    frame(twoMissed);
     tracker.judgeSweep(false, FRAME_US);
-    expect(tracker.snapshot().lateFrames).toBe(0);
+    expect(tracker.snapshot().lateFrames).toBe(1);
   });
 
-  it("never counts the first tick of a play session", () => {
-    const { tracker, advance } = makeTracker();
-    advance(10_000); // idle since app start; nothing to difference against
+  it("keeps the learned display interval through a run of long frames", () => {
+    const { tracker, frame } = makeTracker();
+    tracker.bindFrameBudgetMs(ms(60));
+    settle(frame, tracker, 60);
     tracker.beginPlay();
-    tracker.judgeSweep(false, 0);
-    expect(tracker.snapshot().lateFrames).toBe(0);
-  });
-
-  it("does not synthesise a late tick across a pause", () => {
-    const { tracker, advance } = makeTracker();
-    tracker.beginPlay();
-    tracker.judgeSweep(false, 0);
-    advance(30_000); // paused, no composites
-    tracker.beginPlay();
-    tracker.judgeSweep(false, FRAME_US);
-    expect(tracker.snapshot().lateFrames).toBe(0);
-  });
-
-  it("does not synthesise a late tick across a scrub", () => {
-    // Compositor skips judgeSweep while scrubbing but still calls
-    // tickDecay every composite — that is what carries the stamp.
-    const { tracker, advance } = makeTracker();
-    tracker.beginPlay();
-    tracker.judgeSweep(false, 0);
-    for (let i = 0; i < 10; i += 1) {
-      advance(16);
-      tracker.tickDecay();
+    for (let i = 0; i < 40; i += 1) {
+      frame(i % 3 === 0 ? 100 : ms(60)); // a third of the frames stall
+      tracker.judgeSweep(false, i * FRAME_US);
     }
-    advance(16);
-    tracker.judgeSweep(false, FRAME_US);
-    expect(tracker.snapshot().lateFrames).toBe(0);
+    const lateBefore = tracker.snapshot().lateFrames;
+    expect(lateBefore).toBe(14);
+    frame(2 * ms(60));
+    tracker.judgeSweep(false, 40 * FRAME_US);
+    expect(tracker.snapshot().lateFrames).toBe(lateBefore + 1);
+  });
+
+  it("judges each frame interval once, and never one left from an unjudged frame", () => {
+    const { tracker, frame } = makeTracker();
+    tracker.beginPlay();
+    frame(100);
+    tracker.judgeSweep(false, 0);
+    tracker.judgeSweep(false, FRAME_US); // a repaint composite in the same frame
+    expect(tracker.snapshot().lateFrames).toBe(1);
+    frame(100);
+    tracker.tickDecay(); // paused or scrubbing: the frame is not judged
+    tracker.judgeSweep(false, 2 * FRAME_US); // a later seek composite
+    expect(tracker.snapshot().lateFrames).toBe(1);
   });
 
   it("counts one late frame per snapped comp frame", () => {
-    const { tracker, advance } = makeTracker();
+    const { tracker, frame } = makeTracker();
     tracker.beginPlay();
+    frame(100);
     tracker.judgeSweep(false, 0);
-    advance(50);
-    tracker.judgeSweep(false, FRAME_US);
-    advance(50);
-    tracker.judgeSweep(false, FRAME_US); // same comp frame, second rAF tick
+    frame(100);
+    tracker.judgeSweep(false, 0); // same comp frame, next display frame
     expect(tracker.snapshot().lateFrames).toBe(1);
-    advance(50);
-    tracker.judgeSweep(false, 2 * FRAME_US);
+    frame(100);
+    tracker.judgeSweep(false, FRAME_US);
     expect(tracker.snapshot().lateFrames).toBe(2);
   });
 
   it("keeps the two causes on separate counters", () => {
-    const { tracker, advance } = makeTracker();
+    const { tracker, frame } = makeTracker();
     tracker.beginPlay();
-    tracker.judgeSweep(true, 0); // decoder behind, tick on time
-    advance(50);
+    frame(ms(60));
+    tracker.judgeSweep(true, 0); // decoder behind, frame on time
+    frame(100);
     tracker.judgeSweep(false, FRAME_US); // ring fresh, loop stalled
     expect(tracker.snapshot()).toEqual({
       active: true,
@@ -507,13 +530,12 @@ describe("UnderrunTracker late ticks", () => {
     });
   });
 
-  it("suppresses late ticks during the post-seek grace window", () => {
-    const { tracker, advance } = makeTracker({ graceMaxMs: 1_000 });
+  it("suppresses late frames during the post-seek grace window", () => {
+    const { tracker, frame } = makeTracker({ graceMaxMs: 1_000 });
     tracker.beginPlay();
-    tracker.judgeSweep(false, 0);
     tracker.noteSeekWhilePlaying();
-    advance(100); // the ring rebuild stalls the loop
-    tracker.judgeSweep(false, FRAME_US);
+    frame(100); // the ring rebuild stalls the loop
+    tracker.judgeSweep(false, 0);
     expect(tracker.snapshot()).toEqual({
       active: false,
       droppedFrames: 0,
@@ -521,36 +543,34 @@ describe("UnderrunTracker late ticks", () => {
     });
   });
 
-  it("clears grace once a tick lands on time again", () => {
-    const { tracker, advance } = makeTracker();
+  it("clears grace once a frame lands on time again", () => {
+    const { tracker, frame } = makeTracker();
     tracker.beginPlay();
-    tracker.judgeSweep(false, 0);
     tracker.noteSeekWhilePlaying();
-    advance(100);
-    tracker.judgeSweep(false, FRAME_US); // still stalled → suppressed
-    advance(16);
-    tracker.judgeSweep(false, 2 * FRAME_US); // on time → re-primed
-    advance(50);
-    tracker.judgeSweep(false, 3 * FRAME_US);
+    frame(100);
+    tracker.judgeSweep(false, 0); // still stalled → suppressed
+    frame(ms(60));
+    tracker.judgeSweep(false, FRAME_US); // on time → re-primed
+    frame(100);
+    tracker.judgeSweep(false, 2 * FRAME_US);
     expect(tracker.snapshot().lateFrames).toBe(1);
   });
 
-  it("expires grace after graceMaxMs even while ticks stay late", () => {
-    const { tracker, advance } = makeTracker({ graceMaxMs: 1_000 });
+  it("expires grace after graceMaxMs even while frames stay late", () => {
+    const { tracker, advance, frame } = makeTracker({ graceMaxMs: 1_000 });
     tracker.beginPlay();
-    tracker.judgeSweep(false, 0);
     tracker.noteSeekWhilePlaying();
-    advance(1_001);
-    tracker.judgeSweep(false, FRAME_US);
+    advance(1_000);
+    frame(100);
+    tracker.judgeSweep(false, 0);
     expect(tracker.snapshot().lateFrames).toBe(1);
   });
 
-  it("decays active after a late tick; the count survives", () => {
-    const { tracker, advance } = makeTracker({ holdMs: 1_500 });
+  it("decays active after a late frame; the count survives", () => {
+    const { tracker, advance, frame } = makeTracker({ holdMs: 1_500 });
     tracker.beginPlay();
+    frame(100);
     tracker.judgeSweep(false, 0);
-    advance(50);
-    tracker.judgeSweep(false, FRAME_US);
     expect(tracker.snapshot().active).toBe(true);
     advance(1_501);
     tracker.tickDecay();
