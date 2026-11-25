@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { renderLogMessage } from "./renderMessage";
@@ -90,13 +90,9 @@ export function StatusBar({
           aria-label={logLabel}
           title={t(logsOpen ? "status_bar.close_log" : "status_bar.open_log")}
         >
-          {unseenErrors > 0 ? (
-            <span className="status-bar-errors" data-testid="status-bar-errors" aria-hidden="true">
-              {unseenErrors}
-            </span>
-          ) : latest ? (
-            <LevelDot level={latest.level} />
-          ) : null}
+          {(latest || unseenErrors > 0) && (
+            <LevelIndicator level={latest?.level} unseenErrors={unseenErrors} />
+          )}
           {latest && (
             <>
               <span className="status-bar-time">{formatTime(latest.ts)}</span>
@@ -136,12 +132,30 @@ export function StatusBar({
   );
 }
 
-function LevelDot({ level }: { level: LogLevel }) {
+/// Above it the count reads "99+": wider would reach past the slot's margins.
+export const UNSEEN_ERRORS_SHOWN_MAX = 99;
+
+/// The level dot and the unseen-error count share one fixed slot, so the line
+/// after it holds still when one turns into the other. The count's text stays
+/// through its fade-out: the state flips at once, CSS runs the sequence.
+function LevelIndicator({ level, unseenErrors }: { level: LogLevel | undefined; unseenErrors: number }) {
+  const [count, setCount] = useState(unseenErrors);
+  if (unseenErrors > 0 && unseenErrors !== count) setCount(unseenErrors);
+  const shown = count > UNSEEN_ERRORS_SHOWN_MAX ? `${UNSEEN_ERRORS_SHOWN_MAX}+` : count > 0 ? String(count) : "";
   return (
     <span
-      className={`status-bar-level-dot level-${level}`}
+      className="status-bar-indicator"
+      data-testid="status-bar-indicator"
+      data-state={unseenErrors > 0 ? "count" : "dot"}
+      data-level={level}
+      style={{ "--count-chars": shown.length } as CSSProperties}
       aria-hidden="true"
-    />
+    >
+      <span className="status-bar-indicator-mark" />
+      <span className="status-bar-errors" data-testid="status-bar-errors">
+        {shown}
+      </span>
+    </span>
   );
 }
 

@@ -131,52 +131,79 @@
   color: var(--foreground);
 }
 
-.status-bar-level-dot {
-  width: calc(8 * var(--ui-px));
-  height: calc(8 * var(--ui-px));
-  border-radius: 50%;
+/* The level dot and the unseen-error count share this slot (see LevelIndicator):
+   a dot that grows into the count's pill, so the line after it never moves.
+   The slot is a one-digit pill wide; a wider count spreads into the button's
+   padding and gap, which "99+" still fits. Turning into a count, the mark
+   grows and turns red, then the number fades in; back to a dot, the number
+   fades out first. Each state's rules time the way into it. */
+.status-bar-indicator {
+  position: relative;
   flex-shrink: 0;
-}
-
-.status-bar-level-dot.level-trace,
-.status-bar-level-dot.level-debug {
-  background: var(--color-slate-600);
-}
-
-.status-bar-level-dot.level-info {
-  background: var(--color-blue-400);
-}
-
-.status-bar-level-dot.level-warn {
-  background: var(--color-amber-400);
-}
-
-.status-bar-level-dot.level-error {
-  background: var(--destructive);
-}
-
-/* Errors since the log was last opened, in the level dot's place. It pulses
-   once when it appears. */
-.status-bar-errors {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  min-width: calc(16 * var(--ui-px));
+  width: calc(16 * var(--ui-px));
   height: calc(16 * var(--ui-px));
-  padding: 0 calc(4 * var(--ui-px));
-  border-radius: 999px;
-  background: var(--color-red-300);
-  color: var(--card);
   font-size: var(--font-size-micro);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  animation: status-bar-error-pulse 1.5s ease-in-out 1;
 }
 
-@keyframes status-bar-error-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
-  50% { box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.35); }
+.status-bar-indicator-mark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(8 * var(--ui-px));
+  height: calc(8 * var(--ui-px));
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  transition-property: width, height, background-color;
+  transition-duration: 180ms;
+  transition-timing-function: ease-in-out;
+  transition-delay: 120ms;
+}
+
+.status-bar-indicator[data-level="trace"] .status-bar-indicator-mark,
+.status-bar-indicator[data-level="debug"] .status-bar-indicator-mark {
+  background: var(--color-slate-600);
+}
+
+.status-bar-indicator[data-level="info"] .status-bar-indicator-mark {
+  background: var(--color-blue-400);
+}
+
+.status-bar-indicator[data-level="warn"] .status-bar-indicator-mark {
+  background: var(--color-amber-400);
+}
+
+.status-bar-indicator[data-level="error"] .status-bar-indicator-mark {
+  background: var(--destructive);
+}
+
+.status-bar-indicator[data-state="count"] .status-bar-indicator-mark {
+  width: max(calc(16 * var(--ui-px)), calc(var(--count-chars) * 1ch + 8 * var(--ui-px)));
+  height: calc(16 * var(--ui-px));
+  background: var(--color-red-300);
+  transition-timing-function: ease-out;
+  transition-delay: 0ms;
+}
+
+/* The count: errors since the log was last opened. */
+.status-bar-errors {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--card);
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 140ms ease-in, visibility 0s linear 140ms;
+}
+
+.status-bar-indicator[data-state="count"] .status-bar-errors {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 140ms ease-out 160ms, visibility 0s linear 160ms;
 }
 
 /* A trigger on the right: the work pill and the bell. */
@@ -270,6 +297,13 @@
   .work-pill-ring.is-indeterminate svg,
   .status-bar-spinner {
     animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-bar-indicator[data-state] .status-bar-indicator-mark,
+  .status-bar-indicator[data-state] .status-bar-errors {
+    transition: none;
   }
 }
 
