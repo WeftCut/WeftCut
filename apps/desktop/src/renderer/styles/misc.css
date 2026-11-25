@@ -287,7 +287,7 @@
 
 .release-notes code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.95em;
+  font-size: var(--font-size-caption);
   padding: 0 calc(3 * var(--ui-px));
   border-radius: calc(3 * var(--ui-px));
   background: var(--muted);
