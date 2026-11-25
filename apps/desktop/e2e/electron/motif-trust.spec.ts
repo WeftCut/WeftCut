@@ -217,7 +217,7 @@ test('a received project runs no Motif code until the user trusts it, and asks o
 
     // The dialog names what waits, and hands an agent a read-only check.
     await dialog.getByText('Show 1 Motif', { exact: true }).click()
-    await expect(dialog.getByText(id, { exact: true })).toBeVisible()
+    await expect(dialog.getByText('Received fill', { exact: true })).toBeVisible()
     // Clipboard access is gated on document focus.
     await (await app.browserWindow(page)).evaluate(window => window.focus())
     await page.bringToFront()
