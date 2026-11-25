@@ -1834,6 +1834,20 @@ export async function rippleDeleteGap(args: {
   return invoke<void>("ripple_delete_gap", args);
 }
 
+/// Delete start to playhead / Delete end from playhead
+/// (docs/features.md#delete-start-or-end): cut `layerIds` at `atTUs` and
+/// ripple-delete the `part` on one side of the cut, as ONE undo step. Link
+/// fan-out is Split's, escaped under the link override. Answers where the cut
+/// sits once the hole is closed, on the composition's own clock.
+export async function rippleDeletePart(args: {
+  layerIds: string[];
+  atTUs: number;
+  part: "start" | "end";
+  escapeLink: boolean;
+}): Promise<{ at_t_us: number }> {
+  return invoke<{ at_t_us: number }>("ripple_delete_part", args);
+}
+
 // ============================================================
 // Transitions (spec § Command surface — three recorded, undoable ops)
 // ============================================================

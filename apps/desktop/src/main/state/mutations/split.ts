@@ -20,9 +20,19 @@ function splitTrackHalf<T>(a: Animated<T>, splitOffset: number, right: boolean):
   if (a.mode === 'Keyframed' && (a.value as Keyframe<T>[]).length === 0 && boundary !== null) collapseToStatic(a, boundary)
 }
 
-/** Single-layer split (link-unaware). Returns {left,right};
- *  left reuses the original id, right gets a fresh one and is inserted at li+1. */
-function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number): { left: Uuid; right: Uuid } {
+/** Which half of a cut keeps the layer's id; the other half draws a fresh one.
+ *  Everything that names a layer by id — the transitions it takes part in, the
+ *  markers anchored to it, the selection — stays with the half that keeps it, so
+ *  an edit that cuts and then deletes one half keeps the id on the half that
+ *  survives (`applyRippleDeletePart`). A plain split keeps it on the left. */
+export type SplitKeep = 'left' | 'right'
+
+/** The two halves one layer was cut into. */
+export interface SplitHalves { left: Uuid; right: Uuid }
+
+/** Single-layer split (link-unaware). The `keep` half reuses the original id,
+ *  the other gets a fresh one; the right half is inserted at li+1. */
+function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, keep: SplitKeep): SplitHalves {
   const { comp: c, track, layer: original, layerIndex: li } = requireLayer(p, id)
   // The cut resolves on the frame grid, so a linked A/V split cuts both members
   // at the same instant.
@@ -30,7 +40,7 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   if (atTUs <= original.t_start_us || atTUs >= original.t_end_us) throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: atTUs })
   const splitOffset = atTUs - original.t_start_us
 
-  // RIGHT half — fresh id, [atTUs, original.t_end]. A source window (media or a
+  // RIGHT half — [atTUs, original.t_end]. A source window (media or a
   // Group's composition) is divided at the same offset: at speed 1 the source
   // and the timeline advance together.
   const right = cloneLayer(original)
@@ -46,7 +56,7 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   forEachAnimatedRgba(right.params, (a) => 'time_map' in original.params ? shiftKeyframes(a, -splitOffset) : splitTrackHalf(a, splitOffset, true))
   for (const effect of right.effects) for (const track of Object.values(effect.params)) shiftKeyframes(track, -splitOffset)
 
-  // LEFT half — reuses original id, [original.t_start, atTUs].
+  // LEFT half — [original.t_start, atTUs].
   const left = cloneLayer(original)
   left.t_end_us = atTUs
   if (hasSourceWindow(left.params) || left.params.kind === 'Motif' || left.params.kind === 'ImageOverlay')
@@ -55,13 +65,23 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   forEachAnimatedF64(left.params, (a) => { if(a!==leftProgress && !('time_map' in original.params)) splitTrackHalf(a, splitOffset, false) })
   forEachAnimatedRgba(left.params, (a) => { if (!('time_map' in original.params)) splitTrackHalf(a, splitOffset, false) })
 
+  if (keep === 'right') { left.id = right.id; right.id = id }
   track.layers[li] = left
   track.layers.splice(li + 1, 0, right)
-  return { left: id, right: right.id }
+  return { left: left.id, right: right.id }
 }
 
-/** Split with link spanning fan-out, partitioning the link at the cut. */
-export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean): { left: Uuid; right: Uuid } {
+/** Split with link spanning fan-out, partitioning the link at the cut. The
+ *  target's halves; `applySplitLinked` has every member's. */
+export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean): SplitHalves {
+  return applySplitLinked(p, idGen, id, atTUsRaw, escapeLink, 'left')[0]
+}
+
+/** Split with link spanning fan-out, partitioning the link at the cut. Returns
+ *  the halves of every layer the cut went through, the target's first. The side
+ *  holding the original ids keeps the link's id; the other side's members, when
+ *  two or more, form a new link. */
+export function applySplitLinked(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean, keep: SplitKeep): SplitHalves[] {
   // Pre-flight on the target.
   const target = requireLayer(p, id)
   const c = target.comp
@@ -82,36 +102,33 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
 
   const link = c.links.find((g) => g.members.includes(id))
 
-  // Split target FIRST (id-allocation order: target right-half id comes first).
-  const targetHalves = splitSingleLayer(p, idGen, id, atTUs)
-  const rightByLeft = new Map<Uuid, Uuid>([[id, targetHalves.right]])
+  // Split target FIRST (id-allocation order: the target's fresh half id comes first).
+  const halvesOf = new Map<Uuid, SplitHalves>([[id, splitSingleLayer(p, idGen, id, atTUs, keep)]])
 
-  // Allocate all layer halves before allocating the new right-side link.
-  for (const sid of spanning) {
-    const { right: rightId } = splitSingleLayer(p, idGen, sid, atTUs)
-    rightByLeft.set(sid, rightId)
-  }
-  // Link override keeps the original membership and leaves the new half free;
+  // Allocate all layer halves before allocating the new link.
+  for (const sid of spanning) halvesOf.set(sid, splitSingleLayer(p, idGen, sid, atTUs, keep))
+  // Link override keeps the original membership and leaves the fresh half free;
   // unsplit siblings must not bridge the cut back to that half.
   if (link && !escapeLink) {
     const left: Uuid[] = []
     const right: Uuid[] = []
     for (const member of link.members) {
-      const half = rightByLeft.get(member)
-      if (half !== undefined) {
-        left.push(member)
-        right.push(half)
+      const halves = halvesOf.get(member)
+      if (halves !== undefined) {
+        left.push(halves.left)
+        right.push(halves.right)
       } else {
         const loc = locateLayerIn(c, member)
         if (loc) (loc.layer.t_start_us >= atTUs ? right : left).push(member)
       }
     }
-    if (left.length >= 2) link.members = left.sort()
+    const [kept, fresh] = keep === 'left' ? [left, right] : [right, left]
+    if (kept.length >= 2) link.members = kept.sort()
     else c.links.splice(c.links.indexOf(link), 1)
-    if (right.length >= 2) c.links.push({ id: idGen(), members: right.sort() })
+    if (fresh.length >= 2) c.links.push({ id: idGen(), members: fresh.sort() })
   }
 
-  return targetHalves
+  return [...halvesOf.values()]
 }
 
 /** User-authored batch: validate every cut before splitting; snap, sort and

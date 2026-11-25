@@ -22,6 +22,8 @@ export type ActionId =
   | "copySelected"
   | "pasteAtPlayhead"
   | "splitAtPlayhead"
+  | "deleteStartToPlayhead"
+  | "deleteEndFromPlayhead"
   | "importMedia"
   | "export"
   | "selectTool"
@@ -183,6 +185,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // this key. `scope` matches `deleteSelected` — with the media pool focused,
   // Ctrl+B is not an edit to the timeline.
   splitAtPlayhead: { defaultKeys: ["Mod+B"],               labelKey: "actions.split_at_playhead", fireWhenEditing: false, scope: TIMELINE_SELECTION },
+  // A split at the playhead plus a ripple delete of one side, for trimming a
+  // rough cut by ear (docs/features.md#delete-start-or-end). `Q` / `W` are
+  // Premiere's keys for the same edit, and bare letters for the tool keys'
+  // reason: a cleanup pass presses them at most cuts. Bare keys stay dead in a
+  // text field; `scope` matches Split's.
+  deleteStartToPlayhead: { defaultKeys: ["Q"],             labelKey: "actions.delete_start_to_playhead", scope: TIMELINE_SELECTION },
+  deleteEndFromPlayhead: { defaultKeys: ["W"],             labelKey: "actions.delete_end_from_playhead", scope: TIMELINE_SELECTION },
   importMedia:     { defaultKeys: ["Mod+I"],               labelKey: "actions.import_media" },
   export:          { defaultKeys: ["Mod+E"],               labelKey: "actions.export" },
   // Modal timeline tools, one key per tool (`toolStore.ts`): `V` arms

@@ -111,6 +111,7 @@ import { notifyCommandRegistry, useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
 import { exportReviewCommands, exportReviewShortcuts } from "./commands/exportReview";
 import { splitAtPlayhead } from "./commands/splitAtPlayhead";
+import { deleteEndFromPlayhead, deleteStartToPlayhead } from "./commands/deletePartAtPlayhead";
 import { applyTransitionAtPlayhead } from "./timeline/applyTransition";
 import {
   markersVisible,
@@ -821,6 +822,8 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     // commits through IPC), so App only lends it a HandlerMap slot — the
     // command bridge awaits the published state before resolving.
     splitAtPlayhead,
+    deleteStartToPlayhead,
+    deleteEndFromPlayhead,
     importMedia: importMediaFiles,
     export: () => setExportDialogOpen(true),
     // One key per tool, all idempotent (`toolStore.ts`). `Esc` → Selection is

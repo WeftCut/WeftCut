@@ -32,7 +32,7 @@ const handlers: HandlerMap = {
   save: noop, saveAs: noop, closeProject: noop, undo: noop, redo: noop,
   togglePlay: noop, deleteSelected: noop, rippleDeleteSelected: noop,
   copySelected: noop, pasteAtPlayhead: noop,
-  splitAtPlayhead: noop,
+  splitAtPlayhead: noop, deleteStartToPlayhead: noop, deleteEndFromPlayhead: noop,
   importMedia: noop, export: noop,
   selectTool: noop, toggleBladeMode: noop, selectTextTool: noop, selectHandTool: noop, toggleLog: noop, focusLogSearch: noop,
   toggleDisplayMode: noop,

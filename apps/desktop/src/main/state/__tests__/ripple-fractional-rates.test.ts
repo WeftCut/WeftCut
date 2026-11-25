@@ -149,6 +149,23 @@ for (const [num, den] of RATES) {
         expectRelationsKept(before, after, kept)
         expect(at(after, pairs[CUT_CLIP + 1].v).t_start_us).toBe(playhead)
       })
+
+      it(`deletes the start or the end of a clip at frame ${cutFrame} in one edit, the cut clip keeping its pair`, () => {
+        for (const part of ['start', 'end'] as const) {
+          const { a, pairs, frame } = talkingHead(num, den)
+          const clip = pairs[CUT_CLIP]
+          const clipStart = frame(CUT_CLIP * CLIP_FRAMES)
+          const playhead = frame(CUT_CLIP * CLIP_FRAMES + cutFrame)
+          const before = a.snapshot()
+          const r = a.dispatch('ripple_delete_part', { layers: [clip.v], at_t_us: playhead, part })
+          if (!r.ok) throw new Error(`${part}: ${JSON.stringify(r.error)}`)
+          const after = a.snapshot()
+          expectFlush(after)
+          expectRelationsKept(before, after, pairs)
+          expect(r.value, part).toEqual({ at_t_us: part === 'start' ? clipStart : playhead })
+          expect(at(after, pairs[CUT_CLIP + 1].v).t_start_us, part).toBe(part === 'start' ? at(after, clip.v).t_end_us : playhead)
+        }
+      })
     }
   })
 }

@@ -14,13 +14,25 @@
 import type { Composition, Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { planRipple, planRippleGap, type RippleMove, type RippleView } from '../../../renderer/ripple/plan'
+import type { IdGen } from '../ids'
 import { applyDeleteLayer } from './delete'
 import { applyDurationAutofit, insertSorted, locateLayerIn, requireSameComposition, requireTrack } from './helpers'
-import { frameGrid, gridIndex, timeUsAtGridIndex } from '../snap'
+import { linkSiblingsOverlapping } from './links'
+import { applySplitLinked } from './split'
+import { frameGrid, gridIndex, snapOnGrid, timeUsAtGridIndex } from '../snap'
 
 /** What the ripple touched: the layers it removed, the ones it re-timed, and the
  *  lanes emptying left behind. The actor names all three in its history refs. */
 export interface RippleDeleteResult { deleted: Uuid[]; moved: Uuid[]; prunedTracks: Uuid[] }
+
+/** The part of a clip a cut leaves behind it (`start`) or ahead of it (`end`). */
+export type ClipPart = 'start' | 'end'
+
+/** What deleting a part touched: the layers the cut shortened (`kept`), what the
+ *  ripple removed and re-timed, and where the cut sits once the hole is closed —
+ *  the start of what was after it (`start`), or the cut itself, which nothing
+ *  moved (`end`). */
+export interface RippleDeletePartResult extends RippleDeleteResult { kept: Uuid[]; at_t_us: number }
 
 /** What closing a gap touched: the lane it sat on and the layers the closing
  *  re-timed. Nothing is deleted and no lane can empty. */
@@ -70,6 +82,44 @@ export function applyRippleDeleteLayers(p: Project, ids: readonly Uuid[]): Rippl
 
   const moved = applySweep(c, plan.moves)
   return { deleted, moved, prunedTracks }
+}
+
+/**
+ * Cut every layer in `ids` at `atTUsRaw` and ripple-delete the `part` on the
+ * deleted side of the cut, in one edit (docs/features.md#delete-start-or-end).
+ *
+ * The cut is Split's, link fan-out and partition included, so a linked A/V
+ * pair loses the same part of both members; every piece of the deleted side
+ * plus the link partners lying inside it (`linkSiblingsOverlapping`) goes to
+ * ONE `applyRippleDeleteLayers`, so the holes merge as they would for a ripple
+ * delete of the selection. The SURVIVING half of every cut layer keeps its id,
+ * so its transitions, anchored markers and selection stay with it; with the id
+ * on the deleted half, an outgoing transition would ride the deleted start and
+ * leave the survivor overlapping the next clip with nothing authorizing it.
+ *
+ * A target an earlier target's fan-out already cut is skipped; one the cut
+ * does not fall strictly inside is `SplitOutsideLayer`. Every refusal throws
+ * inside the recipe, so the draft is discarded and nothing records.
+ */
+export function applyRippleDeletePart(p: Project, idGen: IdGen, ids: readonly Uuid[], atTUsRaw: number, part: ClipPart, escapeLink: boolean): RippleDeletePartResult {
+  const c = requireSameComposition(p, ids) // InvalidArgument / LayerNotFound / CrossCompositionSet
+  const at = snapOnGrid(atTUsRaw, frameGrid(c.fps))
+  const targets = [...new Set(ids)]
+  const keep = part === 'start' ? 'right' : 'left'
+  const cut = new Set<Uuid>()
+  const pieces: Uuid[] = []
+  for (const id of targets) {
+    if (cut.has(id)) continue
+    for (const halves of applySplitLinked(p, idGen, id, at, escapeLink, keep)) {
+      cut.add(keep === 'left' ? halves.left : halves.right)
+      pieces.push(keep === 'left' ? halves.right : halves.left)
+    }
+  }
+  const doomed = new Set(pieces)
+  for (const piece of pieces) for (const sid of linkSiblingsOverlapping(c, piece)) doomed.add(sid)
+  const result = applyRippleDeleteLayers(p, [...doomed])
+  const survivor = locateLayerIn(c, targets[0])!.layer
+  return { ...result, kept: [...cut], at_t_us: part === 'start' ? survivor.t_start_us : survivor.t_end_us }
 }
 
 /**

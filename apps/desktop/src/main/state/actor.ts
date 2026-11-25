@@ -31,10 +31,10 @@ import { applyRestackLayer, applyRestackLayerAgainstTrack, type RestackPosition 
 import { applyTrimLayer } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { withTrackCleanup } from './mutations/trackCleanup'
-import { applyRippleDeleteGap, applyRippleDeleteLayers, type RippleDeleteResult, type RippleGapResult } from './mutations/ripple'
+import { applyRippleDeleteGap, applyRippleDeleteLayers, applyRippleDeletePart, type RippleDeletePartResult, type RippleDeleteResult, type RippleGapResult } from './mutations/ripple'
 import { applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer, applySplitLayerBatch, parseDiscardSegments } from './mutations/split'
-import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, linkSiblingsExcluding } from './mutations/links'
+import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, linkSiblingsOverlapping } from './mutations/links'
 import { serveProjectResource } from './resource-views'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
 import { applyMoveLayersToComposition } from './mutations/moveToComposition'
@@ -1230,6 +1230,25 @@ export function createActor(opts: ActorOptions): ActorHandle {
             (d) => applyRippleDeleteGap(d, track, s, e))
           return { ok: true, value: null }
         }
+        // ripple_delete_part — Delete start to playhead / Delete end from
+        // playhead (docs/features.md#delete-start-or-end): cut `layers` at
+        // `at_t_us` and ripple-delete the `part` on one side of the cut, as one
+        // undo. Answers where the cut sits afterwards, which is where the
+        // renderer parks the playhead. The split's ids are drawn before the
+        // ripple can refuse, so a refused edit spends them and records nothing,
+        // as `split_layer_multi`'s ripple does.
+        case 'ripple_delete_part': {
+          const layers = [...new Set((a.layers as Uuid[]) ?? [])]
+          if (layers.length === 0) return { ok: false, error: { error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' } }
+          const part = a.part
+          if (part !== 'start' && part !== 'end') return { ok: false, error: { error: 'InvalidArgument', field: 'part', detail: `part must be "start" or "end", got ${JSON.stringify(part)}` } }
+          const at = parseNum(a.at_t_us, 'at_t_us')
+          const escapeLink = (a.escape_link as boolean | undefined) ?? false
+          const r = commit(part === 'start' ? HISTORY_SUMMARY.layerDeleteStart : HISTORY_SUMMARY.layerDeleteEnd,
+            (r: RippleDeletePartResult) => layerRefs([...new Set([...r.kept, ...r.deleted, ...r.moved])]), { kind: 'Coarse' },
+            (d) => applyRippleDeletePart(d, idGen, layers, at, part, escapeLink))
+          return { ok: true, value: { at_t_us: r.at_t_us } }
+        }
         // paste_layers — the whole-link duplicate. The landing is named either
         // absolutely (`t_start_us`, where the SEED's clone starts, measured
         // against the seed on the pre-mutation snapshot so a drop position and an
@@ -1309,14 +1328,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // dropped or discarded take takes its paired audio along. Those pieces
         // exist only because the split in this very commit cut them; keeping
         // the audio a rejected take cut off is a half-result nobody asked for.
-        // Overlap and not exact co-span, so a slipped-sync partner still
-        // travels; overlap and not "every member", so a manual bundle member
-        // sitting wholly inside a KEPT segment stays. Overlap by MORE than half
-        // a frame (or by most of the piece), not any overlap at all: members on
-        // different grids are cut up to half a frame apart, and a kept
-        // neighbour's piece lapping into a hole by that drift is not part of it
-        // (`remove_pauses` cuts an Audio target whose picture rides the frame
-        // grid). `delete_layers` itself is still local — this is the
+        // Which members count is `linkSiblingsOverlapping`'s rule.
+        // `delete_layers` itself is still local — this is the
         // shot-apply's own reach, not a link rule
         // (docs/features.md § Links). A partner on a locked track fails the
         // whole op through applyDeleteLayer's own checkTrackLock and the commit
@@ -1395,16 +1408,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
               // Read the link BEFORE this segment's own delete: a link
               // auto-dissolves below two members, so a two-member pair would
               // have no siblings left to read afterwards.
-              // A partner is a sibling that shares any of the segment's span:
-              // every edge is on the frame grid, so a sibling that merely abuts
-              // the segment overlaps by 0 and one that shares it by a frame or
-              // more.
-              const partners = linkSiblingsExcluding(loc!.comp, id).filter((sid) => {
-                if (targets.has(sid)) return false // never another segment of the target
-                const s = locateLayer(d, sid)?.layer
-                if (s === undefined) return false
-                return Math.min(s.t_end_us, seg.t_end_us) > Math.max(s.t_start_us, seg.t_start_us)
-              })
+              const partners = linkSiblingsOverlapping(loc!.comp, id).filter((sid) => !targets.has(sid)) // never another segment of the target
               if (ripple) { doomed.add(id); for (const sid of partners) doomed.add(sid); continue }
               applyDeleteLayer(d, id)
               // Defensive re-locate: no partner should overlap two rejected

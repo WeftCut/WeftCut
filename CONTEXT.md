@@ -339,6 +339,13 @@ footprint on its own track; later layers on every track move left by the holes
 ahead of them. See [features.md](docs/features.md#ripple-delete).
 _Avoid_: ripple trim, implicit ripple
 
+**Delete start / Delete end**:
+Ripple delete of the part of a clip before or after the playhead (*Delete start
+to playhead* / 删除开头至播放头, `Q`; *Delete end from playhead* / 删除播放头至结尾,
+`W`): a split there and a ripple delete of one side, one undo. The part left is
+the same clip. See [features.md](docs/features.md#delete-start-or-end).
+_Avoid_: ripple trim, trim to playhead (a trim leaves the hole open)
+
 **Gap**:
 The empty span on one track between two layer boundaries (or time 0 and a
 layer). Trailing space is not a gap. Selectable; its `Delete` closes it via

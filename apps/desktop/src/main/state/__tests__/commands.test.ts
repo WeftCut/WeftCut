@@ -38,6 +38,9 @@ describe('PRODUCTION_OPS', () => {
       // A selected gap closing: the same sweep with nothing deleted
       // (docs/features.md#ripple-delete).
       'ripple_delete_gap',
+      // Delete start / end at the playhead: a split and a ripple delete as one
+      // edit (docs/features.md#delete-start-or-end).
+      'ripple_delete_part',
       'fit_composition_to_layers', 'groups_add_members', 'groups_create', 'groups_rename', 'groups_ungroup',
       'links_create', 'links_dissolve', 'move_effect',
       'move_layer', 'move_layers', 'move_layers_to_new_track',
