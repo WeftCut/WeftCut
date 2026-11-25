@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject, type Layer, type LayerParams, type Marker, type Project } from '../model'
-import { applySplitLayer } from './split'
+import { applySplitLayer, applySplitLinked } from './split'
 import { videoClipParams } from './media'
 import { markerHibernating } from '../summary'
 import { applyLinksCreate } from './links'
@@ -81,6 +81,22 @@ describe('applySplitLayer', () => {
     const rightLink = root(p).links.find((g) => g.id !== gid)!
     expect(rightLink.members).toEqual([r.right, root(p).tracks[1].layers[1].id].sort())
     expect(root(p).tracks[1].layers.length).toBe(2) // b was spanning → split too
+  })
+  it('keep right: every cut member keeps its id on the right half, and the right side keeps the link', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
+    root(p).tracks[1].layers = [color('b', 0, 1_000_000)]
+    const gid = applyLinksCreate(p, gen, ['a', 'b'], false)
+    const halves = applySplitLinked(p, gen, 'a', 400_000, false, 'right')
+    expect(halves.map((h) => h.right)).toEqual(['a', 'b'])
+    for (const [track, id] of [[0, 'a'], [1, 'b']] as const) {
+      const [left, right] = root(p).tracks[track].layers
+      expect([right.id, right.t_start_us]).toEqual([id, 400_000])
+      expect(left.id).toBe(halves.find((h) => h.right === id)!.left)
+    }
+    expect(root(p).links.find((g) => g.id === gid)!.members).toEqual(['a', 'b'])
+    expect(root(p).links.find((g) => g.id !== gid)!.members).toEqual(halves.map((h) => h.left).sort())
   })
   it('escape_link splits only the target, preserving the original link and leaving the right half unlinked', () => {
     const gen = seededGen()

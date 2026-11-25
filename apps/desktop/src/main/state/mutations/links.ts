@@ -30,6 +30,21 @@ export function linkSiblingsExcluding(c: Composition, id: Uuid): Uuid[] {
   return [...link.members].filter((m) => m !== id).sort()
 }
 
+/** The other members of `id`'s link that share some of its span — what deleting
+ *  a piece a cut just made takes along, so a rejected part of a clip takes its
+ *  linked audio with it. Overlap, not exact co-span, so a slipped-sync partner
+ *  still travels; overlap and not every member, so one wholly outside the piece
+ *  stays. Every edge sits on the frame grid, so a member that merely abuts the
+ *  piece overlaps by 0 and one that shares it by a frame or more. */
+export function linkSiblingsOverlapping(c: Composition, id: Uuid): Uuid[] {
+  const self = locateLayerIn(c, id)?.layer
+  if (self === undefined) return []
+  return linkSiblingsExcluding(c, id).filter((sid) => {
+    const s = locateLayerIn(c, sid)?.layer
+    return s !== undefined && Math.min(s.t_end_us, self.t_end_us) > Math.max(s.t_start_us, self.t_start_us)
+  })
+}
+
 /** The Audio layer a VideoClip plays its sound through: the member of its link
  *  that shares its media, else the link's SOLE Audio member, else none. Pause
  *  operations and linked audio transitions both resolve the partner here.

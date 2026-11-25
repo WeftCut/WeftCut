@@ -84,6 +84,10 @@ export const EDIT_MENU: MenuSection = {
     // moment: remove the clip, or remove it and close the gap.
     "deleteSelected",
     "rippleDeleteSelected",
+    // A part of the clip under the playhead, closing the hole — ripple delete
+    // reached by time instead of by selection, so it sits under it.
+    "deleteStartToPlayhead",
+    "deleteEndFromPlayhead",
     "---",
     // Z-order rearrangement, and the only route to a new lane that needs no
     // pointer. Its home is Edit rather than a clip-scoped or top-level section:

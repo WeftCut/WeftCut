@@ -1004,6 +1004,8 @@ const enUS = {
     copy_selected: "Copy selected clip",
     paste_at_playhead: "Paste clip at playhead",
     split_at_playhead: "Split at playhead",
+    delete_start_to_playhead: "Delete start to playhead",
+    delete_end_from_playhead: "Delete end from playhead",
     toggle_log: "Toggle activity log",
     focus_log_search: "Focus activity-log search",
     toggle_display_mode: "Toggle A/B Roll / All Tracks",
@@ -1904,25 +1906,23 @@ const enUS = {
       "“{{from}}” and “{{to}}” are in the same link — moving one drags the other, so the overlap can't open. Unlink them first.",
     transition_layers_not_adjacent:
       "“{{from}}” and “{{to}}” must touch to add a transition.",
-    // Ripple delete's four. Every one opens with the same four words, because
-    // these lines are read in two places — the status bar after the fact, and a
-    // greyed row's tooltip before it — and the shared opening is what makes the
-    // tooltip legible as "this is why the ripple is off" rather than as a
-    // sentence about a clip.
-    ripple_inside_hole:
-      "Ripple delete blocked: {{layer}} starts inside the span being closed — add it to the selection, or delete without ripple.",
-    ripple_collision:
-      "Ripple delete blocked: {{moving}} would land on {{blocking}}.",
-    ripple_link_straddles:
-      "Ripple delete blocked: link {{link}} has members on both sides of the cut.",
-    ripple_locked_layer:
-      "Ripple delete blocked: {{layer}} is locked and would have to move.",
-    // The gap's own refusal (docs/features.md#ripple-delete): the span the
-    // renderer selected is no longer a gap by the time the actor reads it — a
-    // clip moved into it, or an edge moved. Same four-word opening as the
-    // ripple's, since it greys the same row and lands on the same status bar.
+    // Ripple delete's four, and the gap's own refusal below. Every one opens
+    // with the same words, because these lines are read in two places — the
+    // status bar after the fact, and a greyed row's tooltip before it — and the
+    // shared opening is what makes the tooltip legible as "this is why the
+    // ripple is off". Each says only what to do, to which clip.
+    ripple_inside_hole: "Can't close the gap: delete or move {{layer}} first.",
+    ripple_collision: "Can't close the gap: move {{blocking}} out of the way first.",
+    ripple_link_straddles: "Can't close the gap: unlink {{link}} first.",
+    ripple_locked_layer: "Can't close the gap: unlock {{layer}} first.",
+    // The span the renderer selected is no longer a gap by the time the actor
+    // reads it (docs/features.md#ripple-delete): a clip moved into it, or an
+    // edge moved.
     gap_not_found:
-      "Ripple delete blocked: the selected gap on {{track}} is no longer there.",
+      "Can't close the gap: the selected gap on {{track}} is no longer there.",
+    // How the lines above name a clip (`placedLayer` in
+    // `errors/formatCommandError.ts`).
+    placed_layer: "“{{layer}}” on {{track}} at {{at}}",
     fps_locked_by_content:
       "Frame rate stays {{current}} fps — the timeline still holds {{layers}} clip(s).",
     fps_locked_by_content_history:
@@ -3356,6 +3356,8 @@ const enUS = {
       delete_multi: "Deleted clips",
       ripple_delete: "Ripple deleted clips",
       split_and_ripple: "Split clip and closed the gaps",
+      delete_start: "Deleted clip start",
+      delete_end: "Deleted clip end",
       update: "Updated clip",
       update_params: "Updated clip params",
       keyframe_param: "Keyframed clip param",

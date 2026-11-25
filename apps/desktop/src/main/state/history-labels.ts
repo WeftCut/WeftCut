@@ -46,6 +46,11 @@ export const HISTORY_SUMMARY = {
   // pause cut's entry. Its own label because "split by shots" would name a
   // detector the edit never ran.
   layerSplitAndRipple: { key: 'history.layer.split_and_ripple', text: 'Split clip and closed the gaps' },
+  // Delete start to playhead / Delete end from playhead
+  // (docs/features.md#delete-start-or-end): a split and a ripple delete in one
+  // entry, named for the part that went.
+  layerDeleteStart: { key: 'history.layer.delete_start', text: 'Deleted clip start' },
+  layerDeleteEnd: { key: 'history.layer.delete_end', text: 'Deleted clip end' },
   // A selected gap closed (docs/features.md#ripple-delete). Its own group
   // rather than a `layer.*` key: the subject of the edit is the gap, and no
   // layer was deleted.

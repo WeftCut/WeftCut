@@ -905,6 +905,8 @@ const zhCN: Resources = {
     copy_selected: "复制选中的片段",
     paste_at_playhead: "在播放头粘贴片段",
     split_at_playhead: "在播放头切割",
+    delete_start_to_playhead: "删除开头至播放头",
+    delete_end_from_playhead: "删除播放头至结尾",
     toggle_log: "切换活动日志",
     focus_log_search: "聚焦活动日志搜索",
     toggle_display_mode: "切换 A/B Roll / 全轨显示",
@@ -1701,18 +1703,18 @@ const zhCN: Resources = {
     transition_participants_share_link:
       "“{{from}}”与“{{to}}”已链接——移动其中一个会带动另一个，重叠无法打开。请先取消链接。",
     transition_layers_not_adjacent: "“{{from}}”与“{{to}}”必须相邻才能添加转场。",
-    // 波纹删除的四条。全部以同样四个字开头：这些句子要在两个地方读到——事后的
-    // 状态栏，以及事前变灰那一行的悬停提示——统一的开头才让提示读起来是"波纹
-    // 删除为什么关着"，而不是一句关于某个片段的话。
-    ripple_inside_hole:
-      "波纹删除受阻：“{{layer}}”起点落在要闭合的区间内——把它一并选中，或改用普通删除。",
-    ripple_collision: "波纹删除受阻：“{{moving}}”会落到“{{blocking}}”上。",
-    ripple_link_straddles: "波纹删除受阻：链接 {{link}} 在切口两侧都有成员。",
-    ripple_locked_layer: "波纹删除受阻：“{{layer}}”已锁定，但它必须移动。",
-    // 间隙自己的拒绝（docs/features.md#ripple-delete）：渲染端选中的区间，到达通道时已经不是间隙——
-    // 有片段移进来了，或边界变了。开头和波纹删除的四条一样，因为它变灰的是同一行、
-    // 落到的是同一个状态栏。
-    gap_not_found: "波纹删除受阻：{{track}} 上选中的间隙已不存在。",
+    // 波纹删除的四条，加上下面间隙自己的拒绝。全部以同样的开头：这些句子要在两个
+    // 地方读到——事后的状态栏，以及事前变灰那一行的悬停提示——统一的开头才让提示
+    // 读起来是"为什么闭合不了"。每条只说对哪个片段做什么。
+    ripple_inside_hole: "无法闭合间隙：先删掉或移开 {{layer}}。",
+    ripple_collision: "无法闭合间隙：先移开 {{blocking}}。",
+    ripple_link_straddles: "无法闭合间隙：先取消 {{link}} 的链接。",
+    ripple_locked_layer: "无法闭合间隙：先解锁 {{layer}}。",
+    // 渲染端选中的区间，到达通道时已经不是间隙（docs/features.md#ripple-delete）：
+    // 有片段移进来了，或边界变了。
+    gap_not_found: "无法闭合间隙：{{track}} 上选中的间隙已不存在。",
+    // 上面几句怎样称呼一个片段（errors/formatCommandError.ts 的 `placedLayer`）。
+    placed_layer: "{{track}} 上 {{at}} 处的“{{layer}}”",
     fps_locked_by_content:
       "帧率保持 {{current}} fps——时间线上仍有 {{layers}} 个片段。",
     fps_locked_by_content_history:
@@ -3035,6 +3037,8 @@ const zhCN: Resources = {
       delete_multi: "批量删除片段",
       ripple_delete: "波纹删除片段",
       split_and_ripple: "分割片段并闭合间隙",
+      delete_start: "删除片段开头",
+      delete_end: "删除片段结尾",
       update: "修改片段",
       update_params: "修改片段参数",
       keyframe_param: "设置关键帧",

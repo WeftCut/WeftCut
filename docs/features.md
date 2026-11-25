@@ -251,8 +251,10 @@ a *Group*, not a link ([CONTEXT.md](../CONTEXT.md#links-and-groups),
   get a new link, a non-spanning member joins its temporal side, and a side left
   with one member is unlinked. Under Link override (or `escape_link`) only the
   target splits; its left half stays linked and its right half is free.
-  `split_layer` takes a `t_cut_us` array and applies every cut in one commit. The
-  shot-apply discard (§ Shot review) is the one place a delete travels a link.
+  `split_layer` takes a `t_cut_us` array and applies every cut in one commit. A
+  delete travels a link only where it removes a piece its own cut just made: the
+  shot-apply discard (§ Shot review) and
+  [Delete start or end](#delete-start-or-end).
 - **Duplicate** (`paste_layers`) clones every member handed to it and links the
   clones to each other, never to their sources, as one undo step. Other clones
   keep their offset from the seed and snap on their own lattice; only the seed
@@ -609,6 +611,32 @@ deleted clip would land on the previous one).
 Code: `renderer/ripple/plan.ts` (planner), `renderer/ripple/gap.ts` (what a gap
 is, for click, selection store and planner), `main/state/mutations/ripple.ts`,
 `renderer/timeline/rippleEligibility.ts`, `renderer/errors/formatCommandError.ts`.
+
+## Delete start or end
+
+*Delete start to playhead* (`Q`) and *Delete end from playhead* (`W`) remove the
+part of a clip before or after the playhead and close the hole: a split at the
+playhead and a [ripple delete](#ripple-delete) of one side, as one commit and one
+undo. Both are rebindable in Settings → Keyboard and sit in the Edit menu under
+*Ripple delete*, and in the palette.
+
+- **Targets are [Split at the playhead](#split-at-the-playhead)'s**: the
+  selection if it straddles the playhead, else every straddling clip the user can
+  see and edit. All of them go in the one commit, and their holes close together.
+- **Linked members are cut together**, as Split cuts them; a linked member lying
+  wholly inside the deleted part goes with it. Under Link override only the
+  target is cut.
+- **The surviving part is the same clip**: it keeps its id, so its transitions,
+  anchored markers and selection stay with it. An outgoing transition survives a
+  deleted start, which a plain split of that clip refuses.
+- **The playhead** goes to the cut after *Delete start*, where what followed now
+  begins; after *Delete end* it is already there.
+- **No effect** with the playhead on a clip's edge or over nothing. The ripple's
+  refusals apply unchanged, and a refused edit leaves the clip unsplit.
+
+History rows: *Deleted clip start* / *Deleted clip end*. Code:
+`renderer/commands/deletePartAtPlayhead.ts`, `applyRippleDeletePart` in
+`main/state/mutations/ripple.ts`.
 
 ## Track placement
 

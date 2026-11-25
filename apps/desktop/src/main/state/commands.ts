@@ -161,6 +161,10 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // edges of the span the renderer highlighted, so the actor closes that and
   // refuses anything else.
   ripple_delete_gap: (a) => ({ op: 'ripple_delete_gap', args: { track: a.trackId, s: a.startUs, e: a.endUs } }),
+  // Delete start to playhead / Delete end from playhead
+  // (docs/features.md#delete-start-or-end): the layers the renderer resolved
+  // the way Split at playhead does, the cut, and which side goes.
+  ripple_delete_part: (a) => ({ op: 'ripple_delete_part', args: { layers: a.layerIds, at_t_us: a.atTUs, part: a.part, escape_link: a.escapeLink ?? false } }),
   remove_media: (a) => ({ op: 'remove_media', args: { media: a.mediaId, force: a.force ?? false } }),
   // The whole-link duplicate: a set in (the first id is the seed the drop
   // position refers to), one undo entry out. `targetTrackId` re-lanes the seed's
@@ -264,7 +268,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
   // Remaining mechanical + meta channels
-  'move_layer', 'move_layers', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap', 'remove_media', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
+  'move_layer', 'move_layers', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap', 'ripple_delete_part', 'remove_media', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
   'links_create', 'links_dissolve',
   'groups_create', 'groups_add_members', 'move_layers_to_composition', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',

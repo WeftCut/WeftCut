@@ -6,7 +6,7 @@ import type { LinkSummary, TrackSummary } from "../ipc";
  * contains `atUs`. A sibling the cut misses, or any sibling under the link
  * override, is left whole.
  *
- * LANDMINE: a twin of the spanning rule in `applySplitLayer`
+ * LANDMINE: a twin of the spanning rule in `applySplitLinked`
  * (main/state/mutations/split.ts). If the two drift, the blade mark shows a
  * cut the click does not make.
  */
