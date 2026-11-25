@@ -28,7 +28,7 @@ vi.mock("./conformSource", () => ({
 function node() {
   return {
     gain: { value: 1, cancelScheduledValues: vi.fn(), setValueAtTime: vi.fn(),
-      linearRampToValueAtTime: vi.fn(), setValueCurveAtTime: vi.fn() },
+      linearRampToValueAtTime: vi.fn() },
     connect: vi.fn(), disconnect: vi.fn(), start: vi.fn(), stop: vi.fn(),
     onended: null, buffer: null,
   };

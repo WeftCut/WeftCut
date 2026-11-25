@@ -11,8 +11,8 @@
 //
 // The gain/pan envelopes are the sampled-envelope contract
 // (`envelope.ts` ↔ Rust `audio::envelope`): identical control points,
-// identical linear interpolation — `setValueCurveAtTime` here, per-sample
-// lerp in the export mixer.
+// identical linear interpolation — linear ramps between the control points
+// here, per-sample lerp in the export mixer.
 //
 // Clock: chunks are scheduled against the engine's `ClockAnchor`, and an
 // anchor identity change triggers a micro-faded reschedule (see `lastAnchor`).
@@ -26,7 +26,7 @@ import {
   sampleGain,
   samplePan,
 } from "./envelope";
-import { buildPanGraph, constantPanGains, panCurves, type PanGraph } from "./panGraph";
+import { buildPanGraph, constantPanGains, panGainsAt, type PanGraph } from "./panGraph";
 import { ConformSource } from "./conformSource";
 import { audioErrorDetail } from "./audioError";
 import { acquireRenderResources } from '../resourceClient';
@@ -279,8 +279,8 @@ export class AudioMixer {
   }
 
   /// Layer summary changed (trim, move, gain/pan/fade edit, mute). Re-derive
-  /// envelopes and reschedule — `setValueCurveAtTime` forbids overlapping
-  /// automation, so a fresh schedule is the only correct move.
+  /// envelopes and reschedule — the events already scheduled carry the old
+  /// envelope, so a fresh schedule is the only correct move.
   updateView(
     view: AudioView,
     layerTStartUs: number,
@@ -416,14 +416,11 @@ export class AudioMixer {
     const ctx = this.graph.ctx;
 
     // The Range read is async — by resolve time the planned `when` may
-    // already be in the past. Starting the buffer at a past time would
-    // play it shifted (overlapping the next chunk's start), and Chromium
-    // CLAMPS a past-start setValueCurveAtTime to currentTime, sliding the
-    // curve into the next one ("overlaps" NotSupportedError). Recompute
-    // lateness now and skip INTO the buffer instead, keeping both the
-    // audio and its curves ending exactly on the chunk's grid end. One
-    // render quantum (128 frames) of cushion absorbs the µs between this
-    // computation and the start() call.
+    // already be in the past, and a buffer started at a past time plays at
+    // once, shifted into the next chunk. Recompute lateness now and skip INTO
+    // the buffer instead, so the audio ends on the chunk's grid end. The
+    // 128-frame cushion covers the time to the start() call unless the
+    // context renders a device callback in between.
     let startAt = when;
     let offsetFrames = bufferOffsetFrames;
     const ctxNow = ctx.currentTime;
@@ -451,71 +448,51 @@ export class AudioMixer {
     slot.node = node;
     node.start(startAt, offsetFrames / SAMPLE_RATE);
 
-    this.applyCurves(srcStartFrame, frames, startAt, offsetFrames);
+    this.applyEnvelopes(srcStartFrame, frames, startAt, offsetFrames);
   }
 
-  /// Schedule the envelope curve windows covering this chunk's playback
-  /// interval. Chunks are contiguous and non-overlapping on both axes, so
-  /// per-chunk curves never violate setValueCurveAtTime's no-overlap rule.
-  private applyCurves(
+  /// Schedule this chunk's share of the gain and pan envelopes as their own
+  /// control points: each param is set at the chunk's start, then ramps
+  /// linearly to every grid point inside the chunk and to its end. That is
+  /// the envelope's own interpolation, and a chunk needs nothing from its
+  /// neighbours, whatever order their reads land in.
+  ///
+  /// LANDMINE: no setValueCurveAtTime. The context renders a device callback
+  /// (several render quanta) at a time, so it can pass this chunk's start
+  /// between `currentTime` being read and the call. Chromium then moves a
+  /// curve's start to the current time but keeps its duration; the curve runs
+  /// into the next chunk's, which is refused (NotSupportedError), and the
+  /// gain stays frozen for the rest of the play. A point event in the past is
+  /// moved the same way, but every later point keeps its own time: only the
+  /// stretch before the first grid point is off.
+  private applyEnvelopes(
     srcStartFrame: number,
     frames: number,
     when: number,
     bufferOffsetFrames: number,
   ): void {
-    const playedFrames = frames - bufferOffsetFrames;
-    if (playedFrames <= 0) return;
-    const localStartUs = framesToUs(
-      srcStartFrame + bufferOffsetFrames - this.srcInFrame,
-    );
-    const localEndUs = framesToUs(srcStartFrame + frames - this.srcInFrame);
-    const durationS = playedFrames / SAMPLE_RATE;
+    if (frames - bufferOffsetFrames <= 0) return;
+    const startUs = framesToUs(srcStartFrame + bufferOffsetFrames - this.srcInFrame);
+    const endUs = framesToUs(srcStartFrame + frames - this.srcInFrame);
+    const ctxTimeAt = (tUs: number): number => when + (tUs - startUs) / 1_000_000;
 
-    const cut = (env: Envelope): Float32Array | null => {
-      if (env.values.length === 1) return null;
-      const n = Math.max(
-        2,
-        Math.ceil((localEndUs - localStartUs) / 10_000) + 1,
-      );
-      const curve = new Float32Array(n);
-      for (let i = 0; i < n; i++) {
-        const t = localStartUs + ((localEndUs - localStartUs) * i) / (n - 1);
-        curve[i] = evalEnvelope(env, t);
-      }
-      return curve;
-    };
-
-    // One sample shorter than the chunk: consecutive curves whose end and
-    // start times are bit-identical trip Chromium's setValueCurveAtTime
-    // overlap check. The param holds the curve's last value through the
-    // 1-sample gap, and the next curve starts at that same value, so the
-    // hold is inaudible.
-    const curveDurationS = Math.max(durationS - 1 / SAMPLE_RATE, 1 / SAMPLE_RATE);
-    try {
-      const gainCurve = cut(this.gainEnv);
-      if (gainCurve) {
-        this.gainNode.gain.setValueCurveAtTime(gainCurve, when, curveDurationS);
-      }
-      if (this.panGraph && this.panEnv.values.length > 1) {
-        const curves = panCurves(
-          this.panEnv,
-          this.panChannels,
-          localStartUs,
-          localEndUs,
-        );
-        curves.forEach((curve, i) => {
-          if (curve) {
-            this.panGraph!.gains[i]!.gain.setValueCurveAtTime(curve, when, curveDurationS);
-          }
+    if (this.gainEnv.values.length > 1) {
+      const param = this.gainNode.gain;
+      chunkPoints(this.gainEnv.stepUs, startUs, endUs).forEach((tUs, i) => {
+        const value = evalEnvelope(this.gainEnv, tUs);
+        if (i === 0) param.setValueAtTime(value, ctxTimeAt(tUs));
+        else param.linearRampToValueAtTime(value, ctxTimeAt(tUs));
+      });
+    }
+    if (this.panGraph && this.panEnv.values.length > 1) {
+      const gains = this.panGraph.gains;
+      chunkPoints(this.panEnv.stepUs, startUs, endUs).forEach((tUs, i) => {
+        panGainsAt(this.panEnv, this.panChannels, tUs).forEach((value, g) => {
+          const param = gains[g]!.gain;
+          if (i === 0) param.setValueAtTime(value, ctxTimeAt(tUs));
+          else param.linearRampToValueAtTime(value, ctxTimeAt(tUs));
         });
-      }
-    } catch (e) {
-      // Overlap rejection here means a scheduling bug upstream — surface
-      // it loudly in dev consoles rather than failing silent.
-      const detail = audioErrorDetail(e);
-      console.warn(
-        `[weftcut/audio] envelope curve scheduling failed for layer ${this.layerId}: ${detail}`,
-      );
+      });
     }
   }
 
@@ -585,4 +562,13 @@ export class AudioMixer {
     this.source = null;
     this.releaseResources?.(); this.releaseResources = null;
   }
+}
+
+/// Layer-local times a chunk's automation passes through: its start, every
+/// envelope grid point strictly inside it, and its end.
+function chunkPoints(stepUs: number, startUs: number, endUs: number): number[] {
+  const points = [startUs];
+  for (let k = Math.floor(startUs / stepUs) + 1; k * stepUs < endUs; k++) points.push(k * stepUs);
+  points.push(endUs);
+  return points;
 }

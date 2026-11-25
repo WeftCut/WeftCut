@@ -95,8 +95,7 @@ export function samplePan(pan: AnimTrack<number>, spanUs: number): Envelope {
 }
 
 /// Linear interp between grid points — mirrors `Envelope::eval`. The preview
-/// scheduler uses this to cut per-chunk curve windows for
-/// `setValueCurveAtTime` (which lerps between array entries natively).
+/// scheduler ramps between the values it gives at the grid points.
 export function evalEnvelope(e: Envelope, tUs: number): number {
   if (e.values.length === 0) return 1;
   if (e.values.length === 1) return e.values[0]!;

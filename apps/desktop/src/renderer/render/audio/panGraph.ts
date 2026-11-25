@@ -3,8 +3,9 @@
 // native Web Audio graph that APPLIES it: a ChannelSplitter → per-coefficient
 // GainNode → ChannelMerger matrix, the same 2×2 mix StereoPannerNode does
 // internally, but with coefficients we control so preview and export run one
-// law. Coefficient curves are sampled on the 10 ms grid and lerped by
-// setValueCurveAtTime (the X parity contract; twin of envelope.rs::pan_coeffs_at).
+// law. The mixer ramps each gain linearly between the coefficients at the
+// envelope's grid points (the X parity contract; twin of
+// envelope.rs::pan_coeffs_at).
 import { panCoeff } from "../../eval";
 import { type Envelope, envelopeSegment } from "./envelope";
 
@@ -30,35 +31,16 @@ export function panCoeffsAt(env: Envelope, channels: number, tUs: number): numbe
   return a.map((av, k) => av + (b[k]! - av) * u);
 }
 
-/// Coefficient values for the static fast path. Stereo → [a,b,c,d]; mono →
-/// [a,c] (the two gains the mono graph wires).
-export function constantPanGains(env: Envelope, channels: number): number[] {
-  const c = panCoeffsAt(env, channels, 0);
+/// The value of each of the graph's gains at layer-local `tUs`. Stereo →
+/// [a,b,c,d]; mono → [a,c] (the two gains the mono graph wires).
+export function panGainsAt(env: Envelope, channels: number, tUs: number): number[] {
+  const c = panCoeffsAt(env, channels, tUs);
   return channels <= 1 ? [c[0]!, c[2]!] : c;
 }
 
-/// One curve per gain across [localStartUs, localEndUs], or null for a constant
-/// envelope. Mirrors AudioMixer's gain `cut()` resolution (≈ one point / 10 ms).
-export function panCurves(
-  env: Envelope,
-  channels: number,
-  localStartUs: number,
-  localEndUs: number,
-): (Float32Array | null)[] {
-  const slots = channels <= 1 ? 2 : 4;
-  if (env.values.length === 1) return Array(slots).fill(null);
-  const n = Math.max(2, Math.ceil((localEndUs - localStartUs) / 10_000) + 1);
-  const curves = Array.from({ length: slots }, () => new Float32Array(n));
-  // Map output slot index → coefficient index: stereo identity, mono [a,c]=[0,2].
-  const coeffIdx = channels <= 1 ? [0, 2] : [0, 1, 2, 3];
-  for (let i = 0; i < n; i++) {
-    const t = localStartUs + ((localEndUs - localStartUs) * i) / (n - 1);
-    // X parity: lerp the COEFFICIENTS (panCoeffsAt) — NOT the pan value then
-    // cos/sin — so the preview curve matches export's per-sample pan_coeffs_at.
-    const coeffs = panCoeffsAt(env, channels, t);
-    for (let s = 0; s < slots; s++) curves[s]![i] = coeffs[coeffIdx[s]!]!;
-  }
-  return curves;
+/// Gain values for the static fast path.
+export function constantPanGains(env: Envelope, channels: number): number[] {
+  return panGainsAt(env, channels, 0);
 }
 
 /// Build the matrix graph for `channels` (1 or 2). Caller connects its source to

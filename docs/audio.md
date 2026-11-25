@@ -91,9 +91,12 @@ Control points sit every 10 ms from the layer start, plus one at the layer
 end. Layer edges sit on frames, so the last segment usually runs shorter than
 10 ms; it is interpolated over its real length, which keeps a fade or a
 one-frame crossfade reaching its end value at the layer's last sample. Both
-renderers linearly interpolate the same control points: Web Audio via
-`setValueCurveAtTime` (gain node and the four pan-matrix gains), Rust per
-sample. Static properties travel as scalars. A `Hold` keyframe becomes a
+renderers linearly interpolate the same control points: Web Audio by a
+`setValueAtTime` at each chunk's start and a `linearRampToValueAtTime` to each
+control point (gain node and the four pan-matrix gains), Rust per sample.
+Point events, not `setValueCurveAtTime`: a curve whose start the context has
+passed is moved to the current time with its duration kept, runs into the next
+chunk's and gets that one refused. Static properties travel as scalars. A `Hold` keyframe becomes a
 ≤10 ms ramp. `db_to_linear`, `fade_multiplier`, `pan_coeffs` (equal-power),
 the equal-power audio crossfade gains (ADR 0177) and `role_audible` are
 single-sourced in the leaf; the 10 ms sampling loop is parallel Rust/TS code

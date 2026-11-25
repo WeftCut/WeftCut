@@ -44,17 +44,17 @@ vi.mock("./conformSource", () => ({
 }));
 
 import { AudioMixer } from "./AudioMixer";
+import { evalEnvelope, sampleGain } from "./envelope";
 
 class FakeAudioParam {
   value = 1;
   cancelScheduledValues = vi.fn();
   setValueAtTime = vi.fn();
   linearRampToValueAtTime = vi.fn();
-  setValueCurveAtTime = vi.fn();
 }
 
 class FakeNode {
-  gain = new FakeAudioParam();
+  constructor(readonly gain: FakeAudioParam | StrictAudioParam = new FakeAudioParam()) {}
   connected = false;
   /// Both directions are recorded so a re-pointed connection is observable
   /// from either end without reading the mixer's private fields.
@@ -78,6 +78,40 @@ class FakeNode {
   });
 }
 
+/// The automation rules of Chromium's AudioParam, as far as a schedule meets
+/// them: a time before the context's current time is moved to it, and
+/// cancelling drops every event at or after the time. `valueAt` reads the
+/// resulting timeline. It has no `setValueCurveAtTime`, which the mixer must
+/// not use (see `AudioMixer.applyEnvelopes`).
+class StrictAudioParam {
+  value = 1;
+  private events: { kind: "set" | "ramp"; time: number; value: number }[] = [];
+  constructor(private readonly ctx: { currentTime: number }) {}
+
+  setValueAtTime(value: number, time: number): void {
+    this.events.push({ kind: "set", time: Math.max(time, this.ctx.currentTime), value });
+  }
+  linearRampToValueAtTime(value: number, time: number): void {
+    this.events.push({ kind: "ramp", time: Math.max(time, this.ctx.currentTime), value });
+  }
+  cancelScheduledValues(time: number): void {
+    this.events = this.events.filter((e) => e.time < time);
+  }
+
+  valueAt(time: number): number {
+    const ordered = this.events.map((e, seq) => ({ e, seq })).sort((a, b) => a.e.time - b.e.time || a.seq - b.seq).map((x) => x.e);
+    let value = this.value;
+    let from = -Infinity;
+    for (const e of ordered) {
+      if (e.time > time) {
+        return e.kind === "ramp" && Number.isFinite(from) ? value + (e.value - value) * ((time - from) / (e.time - from)) : value;
+      }
+      value = e.value; from = e.time;
+    }
+    return value;
+  }
+}
+
 class FakeBuffer {
   copyToChannel = vi.fn();
 }
@@ -97,11 +131,15 @@ class FakeBufferSource extends FakeNode {
 
 class FakeAudioContext {
   currentTime = 10;
+  /// Context time a source start lets pass: the audio thread renders a
+  /// device callback between the mixer reading `currentTime` and its next
+  /// call. Gain params obey Chromium's automation rules when it is set.
+  startAdvanceS = 0;
   readonly sources: FakeBufferSource[] = [];
   readonly gains: FakeNode[] = [];
 
   createGain = (): FakeNode => {
-    const gain = new FakeNode();
+    const gain = new FakeNode(this.startAdvanceS > 0 ? new StrictAudioParam(this) : new FakeAudioParam());
     this.gains.push(gain);
     return gain;
   };
@@ -110,6 +148,8 @@ class FakeAudioContext {
   createBuffer = (): FakeBuffer => new FakeBuffer();
   createBufferSource = (): FakeBufferSource => {
     const source = new FakeBufferSource();
+    const start = source.start;
+    source.start = vi.fn(() => { start(); this.currentTime += this.startAdvanceS; });
     this.sources.push(source);
     return source;
   };
@@ -132,7 +172,7 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 12; i++) await Promise.resolve();
 }
 
-function createMixer(): {
+function createMixer(opts: { view?: AudioView; layerTEndUs?: number; startAdvanceS?: number } = {}): {
   ctx: FakeAudioContext;
   mixer: AudioMixer;
   /// The stand-in Role bus for `role`, created on first ask so a test can name
@@ -140,6 +180,7 @@ function createMixer(): {
   roleBus: (role: AudioRole) => FakeNode;
 } {
   const ctx = new FakeAudioContext();
+  ctx.startAdvanceS = opts.startAdvanceS ?? 0;
   const buses = new Map<AudioRole, FakeNode>();
   const roleBus = (role: AudioRole): FakeNode => {
     const existing = buses.get(role);
@@ -158,9 +199,9 @@ function createMixer(): {
     {
       layerId: "layer",
       conformUrl: "weftcut-media://audio.conform",
-      view,
+      view: opts.view ?? view,
       layerTStartUs: 0,
-      layerTEndUs: 1_000_000,
+      layerTEndUs: opts.layerTEndUs ?? 1_000_000,
     },
     graph,
   );
@@ -252,4 +293,57 @@ describe("AudioMixer seek scheduling", () => {
       expect(conform.pending).toHaveLength(2);
     },
   );
+});
+
+describe("AudioMixer envelope automation", () => {
+  // A 2 s layer fading in across both of its 1 s chunks, played from 0.4 s:
+  // the first chunk starts inside its span, on the context's current time.
+  const fading: AudioView = { ...view, src_out_us: 2_000_000, fade_in_us: 2_000_000 };
+  const anchor = { compUs: 400_000, ctxTime: 10.01 };
+  const callbackS = 256 / 48_000;
+
+  it.each([["in order", [0, 1]], ["the later chunk first", [1, 0]]] as const)(
+    "follows the layer's envelope at every control point when the context moves on between reading its time and scheduling (reads land %s)",
+    async (_label, order) => {
+      const envelope = sampleGain(fading.gain_db, fading.fade_in_us, fading.fade_out_us, 2_000_000);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { ctx, mixer } = createMixer({ view: fading, layerTEndUs: 2_000_000, startAdvanceS: callbackS });
+      await flush();
+      mixer.tick(400_000, true, 2_000_000, anchor);
+      expect(conform.pending).toHaveLength(2);
+      for (const i of order) { conform.pending[i]!.resolve(); await flush(); }
+
+      expect(warn).not.toHaveBeenCalled();
+      const gain = ctx.gains[0]!.gain as StrictAudioParam;
+      // From the first control point after the play's start, which a late
+      // first event reaches only at the context's time.
+      for (let tUs = 420_000; tUs < 2_000_000; tUs += envelope.stepUs) {
+        const at = anchor.ctxTime + (tUs - anchor.compUs) / 1_000_000;
+        expect(gain.valueAt(at), `gain at ${tUs} us`).toBeCloseTo(evalEnvelope(envelope, tUs), 6);
+      }
+    },
+  );
+
+  it("reaches the envelope's last control point on a layer that ends off the 10 ms grid", async () => {
+    // A frame edge at 30 fps: the last segment is shorter than a step.
+    const spanUs = 1_966_667;
+    const fadingOut: AudioView = { ...view, src_out_us: spanUs, fade_out_us: 500_000 };
+    const envelope = sampleGain(fadingOut.gain_db, fadingOut.fade_in_us, fadingOut.fade_out_us, spanUs);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { ctx, mixer } = createMixer({ view: fadingOut, layerTEndUs: spanUs, startAdvanceS: callbackS });
+    await flush();
+    mixer.tick(400_000, true, spanUs, anchor);
+    for (const read of [...conform.pending]) { read.resolve(); await flush(); }
+
+    expect(warn).not.toHaveBeenCalled();
+    const gain = ctx.gains[0]!.gain as StrictAudioParam;
+    const points = [];
+    for (let tUs = 420_000; tUs < spanUs; tUs += envelope.stepUs) points.push(tUs);
+    points.push(spanUs);
+    for (const tUs of points) {
+      const at = anchor.ctxTime + (tUs - anchor.compUs) / 1_000_000;
+      expect(gain.valueAt(at), `gain at ${tUs} us`).toBeCloseTo(evalEnvelope(envelope, tUs), 4);
+    }
+    expect(evalEnvelope(envelope, spanUs)).toBeCloseTo(0, 6);
+  });
 });
