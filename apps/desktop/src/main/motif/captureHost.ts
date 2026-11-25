@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, type Session } from 'electron'
 import { MotifFrameSkippedError, OffscreenFrames, type MotifOsrFrame } from './offscreenFrames.js'
 import type { MotifMarkerReader } from './native.js'
 import { BITMAP_CANVAS_RUNTIME_SOURCE } from './bitmapCanvasRuntime.js'
@@ -17,6 +17,8 @@ export type CapturePhase = 'loadMs' | 'readyMs' | 'setupMs' | 'renderMs' | 'outp
 export interface CaptureHostEnv {
   /// The clock-takeover runtime, injected into every document of the window.
   runtime: string
+  /// The capture partition (./captureSession.ts).
+  session: Session
   /// Read only on a texture host.
   markerReader: Pick<MotifMarkerReader, 'read'> | null
   tuning: Pick<MotifTuning, 'framesInFlight' | 'captureFrameRate' | 'stallNudgeMs'>
@@ -138,11 +140,13 @@ export class CaptureHost implements PooledHost {
       width, height: surfaceHeight, useContentSize: true,
       // The capture host renders untrusted, user-authored Motif content, so it runs
       // at the same isolation baseline as every other window: OS sandbox on, no Node,
-      // context isolation, web security. The complementary egress half (no network /
-      // no remote code) is the per-document CSP served by `motif://`; see docs/security.md.
+      // context isolation, web security. Its session refuses the network and every
+      // permission in the browser process (env.session), under the per-document
+      // CSP served by `motif://`; see docs/security.md.
       transparent: true,
       webPreferences: {
         offscreen: texture ? { useSharedTexture: true } : true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true,
+        session: env.session,
         // A frame may otherwise draw before its images decode, and the frame id
         // proves only the commit, not that its images are in it.
         additionalArguments: ['--disable-checker-imaging'],

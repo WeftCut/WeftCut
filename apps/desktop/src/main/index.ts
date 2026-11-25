@@ -35,7 +35,8 @@ import { nodeAtomicWriteIo, renameWithRetry, writeFileAtomic } from './atomicWri
 import { VLM_ENDPOINT_KEY_TAG, type VlmDescribeSettings } from '../shared/vlm-config.js'
 import { PLAYHEAD_READ_EVENT, PLAYHEAD_REPORT } from '../shared/editorPlayhead.js'
 import { stdioEntry } from '../shared/agentHosts.js'
-import { registerMotifProtocol } from './motif/protocol.js'
+import { motifProtocolHandler, registerMotifProtocol } from './motif/protocol.js'
+import { installMotifCaptureSession } from './motif/captureSession.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
 import { MotifCapturer } from './motif/capture.js'
 import { loadMotifNative, type MotifMarkerReader, type MotifTextureReader } from './motif/native.js'
@@ -879,6 +880,8 @@ app.whenReady().then(async () => {
   // What every `motif://` host serves; its project follows the open workspace
   // (`setMotifProject`).
   const motifResolver = new MotifResolver(motifStore, motifBuiltins, motifTrust)
+  // One `motif:` handler for the editor's session and the capture hosts' own.
+  const motifHandler = motifProtocolHandler(motifResolver)
   motifResolver.onRevisionSeen((_id, revision, cause, base) => motifTrust.seen(revision, cause, base))
   let motifProjectDir: string | null = null
   /** A project Motif's folder changed on disk: a new revision of one the
@@ -1662,7 +1665,10 @@ app.whenReady().then(async () => {
   // The renderer registers the clock-takeover runtime once at boot
   // (`motif_register_runtime` below).
   let motifRuntime: string | null = null
-  const capturer = new MotifCapturer({ tuning: motifTuning, store: motifResolver, runtimeSource: () => motifRuntime, markerReader, textureReader })
+  const capturer = new MotifCapturer({
+    tuning: motifTuning, store: motifResolver, runtimeSource: () => motifRuntime,
+    session: installMotifCaptureSession(motifHandler), markerReader, textureReader,
+  })
   if (motifCaptureClosed) capturer.shutdown()
   motifCapturer = capturer
   const motifCapture = new MotifCaptureService({
@@ -2898,7 +2904,7 @@ app.whenReady().then(async () => {
     })),
   )
 
-  registerMotifProtocol(motifResolver)
+  registerMotifProtocol(motifHandler)
 
   protocol.handle('weftcut-media', async (request) => {
     // URL form: weftcut-media://localhost/<encodeURIComponent(absPath)>

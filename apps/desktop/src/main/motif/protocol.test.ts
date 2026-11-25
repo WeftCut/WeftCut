@@ -18,7 +18,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { CAPTURE_HOST_CSP, MOTIF_CSP, MOTIF_PARAMS_CSP, cspForMotifFile, registerMotifProtocol } from './protocol'
+import { CAPTURE_HOST_CSP, MOTIF_CSP, MOTIF_PARAMS_CSP, cspForMotifFile, motifProtocolHandler, registerMotifProtocol } from './protocol'
 import { CAPTURE_HOST_FILE } from '../../shared/motifs/frameMarker'
 import { composeMotifHtml } from '../../shared/motifs/catalog'
 import { builtinMotifs } from './authoring'
@@ -39,7 +39,7 @@ beforeEach(() => {
   untrusted = new Set()
   resolver = new MotifResolver(new UserMotifStore(path.join(root, 'library')), builtinMotifs(BUILTIN_DIR), { trusted: revision => !untrusted.has(revision) })
   resolver.setProject(new ProjectMotifStore(path.join(root, 'Film')))
-  registerMotifProtocol(resolver)
+  registerMotifProtocol(motifProtocolHandler(resolver))
 })
 afterEach(() => {
   rmSync(root, { recursive: true, force: true })
