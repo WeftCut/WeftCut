@@ -978,6 +978,12 @@ File > Pack project and opened into a new folder by Open project. Machine-local
 entries stay out. See ADR 0178.
 _Avoid_: export (that renders video), archive, bundle
 
+**File-open request**:
+A project file or pack the OS asks WeftCut to open: a double-click, an Open
+With, a file on the command line. It opens as the same file picked in Open
+project does, on the start screen or in the editor. See ADR 0181.
+_Avoid_: deep link (that is a URL scheme), launch argument
+
 **Portability check**:
 The list of what the open project still needs from outside its folder for a
 copy to play the same elsewhere (File > Check portability,

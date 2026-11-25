@@ -115,6 +115,22 @@ extraResources:
 win:
   target: [nsis]
   icon: build/icon.png
+  # The file types the app opens on a double-click (ADR 0181), a copy of
+  # src/main/fileAssociation/fileTypes.ts held to it by fileTypes.test.ts.
+  # NSIS writes `name` as the ProgID and `description` as Explorer's Type, and
+  # takes both away on uninstall; the deb writes `mimeType` into its MIME
+  # package and its desktop entry. No icon: Windows draws the exe's, Linux a
+  # generic document. macOS declares the same types in mac.extendInfo, where a
+  # bundle can export a UTI, which `fileAssociations` cannot.
+  fileAssociations: &fileAssociations
+    - ext: wcpr
+      name: WeftCut.Project
+      description: WeftCut Project
+      mimeType: application/x-weftcut-project
+    - ext: wcpk
+      name: WeftCut.Pack
+      description: WeftCut Pack
+      mimeType: application/x-weftcut-pack
   extraResources:
     # LGPL ffmpeg runtime for @weftcut/native-decode (dynamic linking + separate
     # files satisfies LGPL §6; LICENSE + manifest.json carry the notice + exact
@@ -137,6 +153,9 @@ linux:
   target: [AppImage, deb]
   icon: build/icon.png
   category: AudioVideo
+  # The deb only: an AppImage has no install step and registers itself at
+  # startup (src/main/fileAssociation/appImageRegistration.ts).
+  fileAssociations: *fileAssociations
   extraResources:
     # LGPL §6 obligations for @weftcut/native-decode's ffmpeg runtime. The .so
     # themselves ride co-located beside the .node (files + asarUnpack above) so
@@ -187,6 +206,36 @@ mac:
   # Electron 44 dropped macOS 12; the bundled runtime will not start below 13,
   # so the DMG declares the same floor instead of failing at launch.
   minimumSystemVersion: "13.0"
+  # The file types the app opens on a double-click (ADR 0181; fileTypes.ts,
+  # held by fileTypes.test.ts). The bundle exports their UTIs and owns them, so
+  # Finder opens them here without asking; the document icon is drawn by macOS
+  # from the app icon.
+  extendInfo:
+    CFBundleDocumentTypes:
+      - CFBundleTypeName: WeftCut Project
+        CFBundleTypeRole: Editor
+        LSHandlerRank: Owner
+        LSItemContentTypes: [dev.weftcut.project]
+        CFBundleTypeIconSystemGenerated: 1
+      - CFBundleTypeName: WeftCut Pack
+        CFBundleTypeRole: Editor
+        LSHandlerRank: Owner
+        LSItemContentTypes: [dev.weftcut.pack]
+        CFBundleTypeIconSystemGenerated: 1
+    UTExportedTypeDeclarations:
+      # JSON underneath, so Quick Look shows its text.
+      - UTTypeIdentifier: dev.weftcut.project
+        UTTypeDescription: WeftCut Project
+        UTTypeConformsTo: [public.json]
+        UTTypeTagSpecification:
+          public.filename-extension: [wcpr]
+          public.mime-type: [application/x-weftcut-project]
+      - UTTypeIdentifier: dev.weftcut.pack
+        UTTypeDescription: WeftCut Pack
+        UTTypeConformsTo: [public.data]
+        UTTypeTagSpecification:
+          public.filename-extension: [wcpk]
+          public.mime-type: [application/x-weftcut-pack]
   # Local/PR packages need a fresh ad-hoc seal after Electron's bundle is
   # rewritten; identity: null would leave a broken seal. Release packaging
   # overrides these fields in scripts/package-macos-release.mjs.

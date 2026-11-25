@@ -210,6 +210,10 @@ The toast activator CLSID next to it is stable too: notifications already in
 the notification center call it. The installer drops it from the Start Menu
 shortcut on every update, and the app stamps it back at launch (ADR 0163).
 
+The names the owned file types register under (ProgID, UTI, MIME type, in
+`src/main/fileAssociation/fileTypes.ts`) are identities as well: a renamed one
+leaves the old registration on every machine that installed it (ADR 0181).
+
 ## Manual release check
 
 Unit tests and manifest checks do not cover the installed-app path. When the
@@ -219,3 +223,6 @@ download and exit install, including network failure/retry and an export
 running during download; confirm the project reopens and the new version
 reports. On macOS also run update-and-restart (it must reopen) and a copy
 started from the mounted DMG (it must report its location).
+
+When the file association changes, double-click a `.wcpr` and a `.wcpk` on
+each installed package, once with the app closed and once with it open.
