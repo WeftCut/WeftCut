@@ -2,7 +2,7 @@
 // § Project Motifs). Each test is one acceptance line of the cutover:
 //   - a project copied to a profile whose library holds none of its Motifs
 //     plays and exports as it did where it was made, once that profile
-//     trusts them (motif-trust.spec.ts has trust itself);
+//     trusts the project (motif-trust.spec.ts has trust itself);
 //   - a library Motif replaced changes no project that copied it, and that
 //     project's row says an update is available;
 //   - an edit under Motifs/<id>/ re-renders that Motif's frames and no other's;
@@ -20,7 +20,7 @@ import { hashCacheKey } from '../../src/shared/motifs/cacheKey'
 import { driveExport, invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import {
   addLayer, connectMcp, createMotif, fillBody, fillPage, motifPage, projectRow, projectRows, reopen, rgb,
-  saveMotifToLibrary, seedLibraryMotif, settledSamples, trustMotif, type Sample,
+  saveMotifToLibrary, seedLibraryMotif, settledSamples, trustProject, type Sample,
 } from './helpers/motif'
 
 interface CaptureDiagnostics { lanes: { motifId: string; captures: number }[] }
@@ -81,10 +81,10 @@ test('a project copied to a profile whose library lacks its Motifs plays and exp
     const rows = await projectRows(running.page)
     expect(rows.map(row => row.id).sort()).toEqual(ids)
     // This machine trusts the built-in's bytes; the two made on the first
-    // profile wait for the user's Trust (ADR 0174), then render.
+    // profile wait for the user to trust the project (ADR 0182), then render.
     expect(rows.filter(row => row.status !== 'ok').map(row => [row.id, row.status]).sort(),
       'only the Motifs made elsewhere ask for trust').toEqual(ids.filter(id => id !== 'countdown').map(id => [id, 'untrusted']))
-    for (const row of rows.filter(row => row.status === 'untrusted')) await trustMotif(running.page, row.id)
+    await trustProject(running.page)
     expect((await projectRows(running.page)).filter(row => row.status !== 'ok'), 'every Motif renders from the copied folder').toEqual([])
     const played = await settledSamples(running.page, 500_000, points, columns, 'the copy shows both columns')
     expect(played).toEqual(made)

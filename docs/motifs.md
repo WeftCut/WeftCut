@@ -677,16 +677,36 @@ capture, covers and pins; nothing reads a store directly.
 - **Missing is visible.** A Motif whose folder is gone or invalid draws an
   error placeholder, is listed in `project://session`, and fails an export
   that uses it with `MotifUnavailable`.
-- **Trust.** A project Motif runs only when this machine trusts its revision
-  ([ADR 0174](adr/0174-a-motif-runs-only-when-trusted-on-this-machine.md)).
-  Placed from this library, made here, or edited here from a trusted revision
-  is trusted without asking; a revision found when a project opens, or brought
-  in from a ZIP or an outside folder, is not. An untrusted Motif is missing in
-  all but its files: the error placeholder, no cover, no preview, export
-  refused. Selecting its row in the Motifs panel shows the trust card: a
-  summary of its files read as text (count and size, scripts, Worker and
-  WebAssembly use, long minified lines, files too large to scan) and one
-  button, *Trust*. The property panel of a layer on it links to that card.
+- **Trust.** A project Motif runs only when this machine trusts its project's
+  folder or its revision
+  ([ADR 0182](adr/0182-a-projects-motifs-run-once-its-folder-is-trusted.md),
+  [ADR 0174](adr/0174-a-motif-runs-only-when-trusted-on-this-machine.md)).
+  Every revision under a trusted folder runs, edits made while WeftCut was
+  closed included; those get one info row in the status log at open. In a
+  folder not trusted, a Motif placed from this library, made here, or edited
+  here from a trusted revision is trusted without asking; a revision found
+  when the project opens, or brought in from a ZIP or an outside folder, is
+  not. An untrusted Motif is missing in all but its files: the error
+  placeholder, no cover, no preview, export refused. The trust record is this
+  machine's (`<dataRoot>/motifs/.trust.json`); the project holds nothing about
+  it. A moved or renamed folder is another project; Save As carries the trust
+  to the folder it makes.
+- **Trust dialog.** When a project opens holding an untrusted Motif, and its
+  folder is neither trusted nor put off here, one dialog asks *Run this
+  project's Motifs?*: the count, a collapsed list of the waiting Motifs (id,
+  files and size, and WebAssembly, Workers or minified code when present, read
+  as text by `main/motif/trustSummary.ts`), *Later* and *Trust this project*.
+  *Ask an agent to check first* copies a prompt that has an agent read those
+  Motifs with `read_motif` and run nothing. Trust names the revisions the
+  dialog shows; if the folder holds others by then, nothing is trusted and the
+  list shows the folder as it is now. Later is remembered for the folder: the
+  dialog does not open by itself there again. The same dialog opens from the
+  Motifs panel's *This project* group, from *File > Trust this project…* and
+  from the property panel of a layer on an untrusted Motif. On a trusted
+  project that menu item reads *Stop trusting this project* and acts at once:
+  the Motifs only the folder let run stop, and the dialog stays put off. It is
+  refused while an export runs, since it retires the capture hosts the
+  export's Motifs draw on.
 
 A package's revision hashes every byte of it. Each one is kept against the
 stamps of the package's files (size, times, file id), in
@@ -734,13 +754,16 @@ Authoring uses `create_motif`, `read_motif`, `update_motif_files`,
 `install_motif` only proposes saving one to the library: the user approves or
 rejects the proposal on its card in the Motifs panel (ADR 0046). An untrusted
 Motif is read with `read_motif` and refused `MotifUntrusted` where it would
-run; no tool trusts one (ADR 0174). Agents never drive the renderer directly.
+run; `project://session` says whether the project is trusted
+(`project.trusted`) and lists its untrusted Motifs. No tool trusts a project:
+the trust channels are the renderer's alone (ADR 0182). Agents never drive the
+renderer directly.
 
 ## Security
 
-Motif trust ([above](#project-motifs-and-the-library), ADR 0174) decides which
-project Motifs run at all; one this machine has not trusted never reaches the
-capture host. What runs is still treated as hostile, and the capture host is
+Motif trust ([above](#project-motifs-and-the-library), ADR 0174, ADR 0182)
+decides which project Motifs run at all; one this machine has not trusted, by
+its folder or its revision, never reaches the capture host. What runs is still treated as hostile, and the capture host is
 the boundary:
 a dedicated offscreen window, no preload and no Node on the `motif:` origin, and
 the render CSP (`main/motif/protocol.ts`):

@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { buildThreeMotifFiles } from '../../scripts/build-three-motif.mjs'
 import { launchApp, tmpDir, newProject, driveExport } from './helpers/driver'
-import { motifContentHash, trustMotif } from './helpers/motif'
+import { motifContentHash, trustProject } from './helpers/motif'
 
 const fixtures = fileURLToPath(new URL('../../fixtures/motif-codecs/', import.meta.url))
 
@@ -44,11 +44,11 @@ function compressedGlb(texture?: string): Buffer {
 const openProject = (page: Page, name: string) =>
   newProject(page, { parentFolder: tmpDir('motif-codec-project-'), name, canvas: { width: 320, height: 320, fpsNum: 30, fpsDen: 1 } })
 
-/** Imports the ZIP at `path` into the open project and trusts it, as the user
- *  does before a ZIP's code runs (ADR 0174); its id there. */
+/** Imports the ZIP at `path` into the open project and trusts the project, as
+ *  the user does before a ZIP's code runs (ADR 0182); its id there. */
 async function importZip(page: Page, path: string): Promise<string> {
   const id = await page.evaluate(async path => (await (window as any).api.backend.invoke('create_motif', { source: { kind: 'zip', path } })).motif_id as string, path)
-  await trustMotif(page, id)
+  await trustProject(page)
   return id
 }
 
@@ -91,8 +91,9 @@ test('Motif compressed models: Draco, ETC1S and UASTC render, seek and rebuild t
       const imported = await client.callTool({name:'create_motif',arguments:{source:{kind:'zip',path:zip}}})
       expect(imported.isError).toBeFalsy()
       const id = JSON.parse((imported.content as Array<{text:string}>)[0].text).motif_id as string
-      // A ZIP's code runs once the user trusts it (ADR 0174).
-      await trustMotif(page, id)
+      // A ZIP's code runs once the user trusts the project (ADR 0182); a
+      // trusted project's later imports run as they land.
+      await trustProject(page)
       const contentHash = await motifContentHash(page, id)
       const capture = async (tSec: number, scale = 1) => Buffer.from(await page.evaluate(async args => Array.from(
         await (window as any).api.backend.invoke('motif_capture_frame', args) as Uint8Array), {

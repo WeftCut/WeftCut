@@ -521,7 +521,7 @@ path nodes keep their stored `id` (`get_param_track` answers them as
 | `project://transitions` | a composition's transitions as transition records (`transition_id`, `from_layer_id`, `to_layer_id`) |
 | `project://settings` | editing preferences, `audio_roles` (role gain / mute / solo) and `metadata`; `modified_at` moves on every recorded edit and is restored by undo/redo/restore — compare for change, not order |
 | `project://taste` | the merged style (`extends` in `TASTE.md`, else `weftcut-default`) + overrides: roles, tokens, example `motifs` per role, `fonts` resolved against the project's `Fonts/` and installed families, provenance, diagnostics, revision. Pixel tokens are for a 1080-px frame. Read fresh every call; the app never writes `TASTE.md` |
-| `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder`, `motifs: {missing, invalid, untrusted}` (the open project's Motifs that cannot render, each with `motif_id` and `diagnostic`; an untrusted one also with the `revision` the user would trust, ADR 0174), `fonts: {missing: [{family, weight, italic, layer_ids}]}` (faces a layer asks for that resolve nowhere here, ADR 0176) |
+| `project://session` | active work session (or null), recent sessions, history lock, `project` (`{name, dir, trusted}`: `trusted` says whether the user trusts its folder here, so its Motifs run, ADR 0182), `recent_projects`, `default_parent_folder`, `motifs: {missing, invalid, untrusted}` (the open project's Motifs that cannot render, each with `motif_id` and `diagnostic`; an untrusted one also with its `revision`, ADR 0174), `fonts: {missing: [{family, weight, italic, layer_ids}]}` (faces a layer asks for that resolve nowhere here, ADR 0176) |
 | `project://portability` | what the open project needs from outside its folder for a copy (Save As, a pack, a sync) to play the same elsewhere: `portable`, `media: {outside, missing}`, `motifs: {missing, invalid, untracked}` (untracked = folders under `Motifs/` no layer places, left out of a copy, not counted by `portable`), `fonts: {excluded, missing}` (excluded = families the user keeps out of `Fonts/` in Settings > Project > Fonts; missing = families a layer asks for that `Fonts/` does not hold, installed here or nowhere; the read copies nothing), `style: {outside}` (the style `TASTE.md` extends when the folder lacks it). An untrusted Motif is not listed: its files are in the folder |
 | `project://tacks` | the opening's tacks, oldest first (see *Tacks*) |
 | `project://playhead` | where the user is in the editor, asked of the editor window at read time (see below) |
@@ -1094,15 +1094,17 @@ named in `project://session` (`motifs: {missing, invalid, untrusted}`), and
 `start_export` refuses `MotifUnavailable` with its `motif_ids` while a layer
 uses one.
 
-**A Motif runs only when trusted on this machine (ADR 0174).** A project
+**A Motif runs only when trusted on this machine (ADR 0174, ADR 0182).** Every
+Motif of a project whose folder the user trusts runs. In any other project, a
 Motif whose revision this machine has not trusted (one that came with a
 received project, a ZIP, or a folder from outside the project) is `untrusted`:
 it draws the error placeholder, has no cover, and `preview_motif`,
 `create_motif` `copy` and `install_motif` refuse `MotifUntrusted` with its `id`
 and `revision`. `read_motif` reads it and `export_motif` writes it out, since
-neither runs it. Only the user trusts it, in the app's Motifs panel; no tool
-can, so an agent says what it found with `read_motif` and leaves the decision
-to the user.
+neither runs it. Only the user trusts a project, in the app's project trust
+dialog; no tool can, so an agent says what it found with `read_motif` and
+leaves the decision to the user. `project://session` reports `project.trusted`
+and the untrusted Motifs.
 
 **Saving to the library waits for the user (ADR 0046).** `install_motif`
 freezes a project Motif's files as a proposal and answers `{state:
