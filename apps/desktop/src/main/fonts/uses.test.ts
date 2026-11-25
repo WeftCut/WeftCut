@@ -127,7 +127,7 @@ describe('missing uses', () => {
   it('never names a generic family, and stops the walk at one', async () => {
     const faces = [face('later', 'Later Sans')]
     const result = await uses(project([[text('a', 'sans-serif, Later Sans')]]), faces, { later: 'a' })
-    expect(result).toEqual({ collect: [], missing: [] })
+    expect(result).toEqual({ collect: [], missing: [], uncarried: [] })
   })
 
   it('walks a layer stored with weight 0 as Regular', async () => {
@@ -182,12 +182,12 @@ describe('Motif uses: the characters of its string props through each font slot'
     const result = await uses(project([[motif('card', { font_headline: "'Shipped Sans', Display", headline: 'abc' })]]), [...faces, installed], { ...coverage, shipped: 'abc' }, {
       motifManifest: () => manifest,
     })
-    expect(result).toEqual({ collect: ['display'], missing: [] })
+    expect([result.collect, result.missing]).toEqual([['display'], []])
   })
 
   it('asks nothing of a Motif whose manifest cannot be read: its stored strings may be colours, not text', async () => {
     const result = await uses(project([[motif('card', { font_headline: STACK, ink: '#D2261C', headline: 'Breaking' }, 'M')]]), faces, coverage)
-    expect(result).toEqual({ collect: [], missing: [] })
+    expect(result).toEqual({ collect: [], missing: [], uncarried: [] })
   })
 
   it('names a slot family before the first that draws, but not the package\'s own, a bundled one or a later one', async () => {
@@ -196,6 +196,52 @@ describe('Motif uses: the characters of its string props through each font slot'
       motif('card', { font_headline: 'Gone2, Liberation Sans, Gone3' }, 'M2'),
     ]]), [], {}, { motifManifest: () => manifest })
     expect(result.missing).toEqual([{ family: 'Gone2', weight: null, italic: null, layer_ids: ['M2'] }])
+  })
+})
+
+describe('uncarried: what a copy of the folder lacks', () => {
+  it('names a family a layer draws from an installed face Fonts/ lacks, with the layer\'s weight, italic and id; not missing here', async () => {
+    const faces = [face('a', 'Example'), face('b', 'Example', { weight: 700, italic: true })]
+    const result = await uses(project([[text('x', 'Example', { weight: 700, italic: true }, 'L1')]]), faces, { a: 'x', b: 'x' })
+    expect(result.missing).toEqual([])
+    expect(result.uncarried).toEqual([{ family: 'Example', weight: 700, italic: true, layer_ids: ['L1'] }])
+  })
+
+  it('names nothing once Fonts/ holds every face of the family', async () => {
+    const faces = [face('project', 'Example', { source: 'project' }), face('system', 'Example')]
+    const result = await uses(project([[text('x', 'Example')]]), faces, { project: 'x', system: 'x' })
+    expect(result.uncarried).toEqual([])
+  })
+
+  it('names a family Fonts/ holds only some faces of: it lacks what collect copies', async () => {
+    const faces = [face('project', 'Example', { source: 'project' }), face('system-regular', 'Example'), face('system-bold', 'Example', { weight: 700 })]
+    const result = await uses(project([[text('x', 'Example', {}, 'L1')]]), faces, { project: 'x', 'system-regular': 'x', 'system-bold': 'x' })
+    expect(result.collect).toEqual(['system-bold'])
+    expect(result.uncarried).toEqual([{ family: 'Example', weight: 400, italic: false, layer_ids: ['L1'] }])
+  })
+
+  it('never names an excluded family: the check lists it as excluded', async () => {
+    const faces = [face('a', 'Example')]
+    const result = await uses(project([[text('x', 'Example')]], ['example']), faces, { a: 'x' })
+    expect(result.uncarried).toEqual([])
+  })
+
+  it('holds every missing use, once, beside the families Fonts/ lacks', async () => {
+    const faces = [face('present', 'Present')]
+    const result = await uses(project([[text('x', 'Gone, Present', {}, 'L1')], [text('y', 'Gone', {}, 'L2')]]), faces, { present: 'x' })
+    expect(result.missing).toEqual([{ family: 'Gone', weight: 400, italic: false, layer_ids: ['L1', 'L2'] }])
+    expect(result.uncarried).toEqual([
+      { family: 'Gone', weight: 400, italic: false, layer_ids: ['L1', 'L2'] },
+      { family: 'Present', weight: 400, italic: false, layer_ids: ['L1'] },
+    ])
+  })
+
+  it('names a Motif\'s use with no weight or italic: its own CSS picks the face', async () => {
+    const manifest: Pick<Manifest, 'props_schema'> = {
+      props_schema: { font_headline: { type: 'string', default: 'Display' }, headline: { type: 'string', default: 'abc' } },
+    }
+    const result = await uses(project([[motif('card', {}, 'M1')]]), [face('display', 'Display')], { display: 'abc' }, { motifManifest: () => manifest })
+    expect(result.uncarried).toEqual([{ family: 'Display', weight: null, italic: null, layer_ids: ['M1'] }])
   })
 })
 

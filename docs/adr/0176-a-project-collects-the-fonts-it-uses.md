@@ -95,7 +95,12 @@ them as they stand, so it does parse font files a folder brings.
 - **Absence is never intent.** A collected face missing from `Fonts/`
   (deleted by hand, a partial copy, a sync that skipped it) is copied again
   where it is installed, with a log line pointing at the exclusion list;
-  elsewhere it is a missing font.
+  elsewhere it is a missing font. A change found in `Fonts/` while the
+  project is open copies nothing back, since a sync may still be writing;
+  the next open, edit to what the project draws, portability check
+  ([ADR 0178](0178-a-project-travels-as-its-folder-or-one-pack.md)), close,
+  Save As or pack does. Until then the MCP portability view, and the check
+  after a copy that failed, list the family as missing from the folder.
 - **A missing font is visible per layer**: a note under the layer's font in
   the properties panel, `fonts.missing` in `project://session` naming the
   layers, and one warn log line when a face is first found missing. A family

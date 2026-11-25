@@ -28,8 +28,14 @@ plays elsewhere. Two gaps remained:
   folder:
   - media outside the folder, or missing;
   - Motifs whose folder is gone or holds no package;
-  - fonts excluded from `Fonts/`, or resolving nowhere;
+  - fonts excluded from `Fonts/`, and fonts the project asks for that
+    `Fonts/` does not hold, whether installed here or nowhere;
   - the style `TASTE.md` extends, when the folder lacks it.
+
+  The check and the pack dialog first copy into `Fonts/` what the project
+  draws and the folder lacks, as a pack does, so a face deleted from it or
+  not yet copied is restored before the report; a copy that fails stays
+  listed. The MCP view only reads.
 
   It names folders under `Motifs/` that no layer places, which a copy leaves
   behind, and offers to move them to the trash. An untrusted Motif is not

@@ -279,12 +279,24 @@ function linkedAudioTransition(c: Composition, visual: Transition): Transition |
  *  its own, as the visual incoming layer's link sibling. Checks link lock and
  *  tail handle now, before any write, and returns the write. Counted in frames,
  *  not the visual's µs delta: at fractional rates the same frame count is a
- *  different µs distance at the partner's end. */
-function planAudioCarry(p: Project, c: Composition, visualFrom: Uuid, audio: Transition, endFrames: number): (() => void) | null {
+ *  different µs distance at the partner's end.
+ *
+ *  `borrowFrames` is the change of the visual borrow, `trimFrames` (≤ 0) the
+ *  deliberate tail trim past the visual sacred end (a negative `extended_us`).
+ *  A returned borrow gives back at most the audio's own: once the audio
+ *  transition was shortened on its own, the visual one returns more than the
+ *  audio still holds, and the rest would cut sound before the audio cut. A
+ *  remove passes -Infinity: the audio returns all it borrows. A trim moves
+ *  both sacred ends by the same frames. */
+function planAudioCarry(p: Project, c: Composition, visualFrom: Uuid, audio: Transition, borrowFrames: number, trimFrames = 0): (() => void) | null {
   const from = locateLayerIn(c, audio.from_layer)?.layer
-  if (!from || endFrames === 0) return null
+  if (!from) return null
   const { num, den } = c.fps
-  const deltaUs = timeUsAtFrame(frameIndexRound(from.t_end_us, num, den) + endFrames, num, den) - from.t_end_us
+  const endFrame = frameIndexRound(from.t_end_us, num, den)
+  const heldFrames = endFrame - frameIndexRound(from.t_end_us - audio.extended_us, num, den)
+  const frames = Math.max(borrowFrames, -heldFrames) + trimFrames
+  if (frames === 0) return null
+  const deltaUs = timeUsAtFrame(endFrame + frames, num, den) - from.t_end_us
   checkLinkLock(c, visualFrom, [from.id])
   if (deltaUs > 0) {
     const available = tailHandleUs(p, from)
@@ -476,7 +488,8 @@ export function applyAddTransition(
  *  Crossfade. An audio transition's own edit that would move its incoming layer
  *  refuses when that carries picture (AudioTransitionMovesPicture). A visual
  *  transition's linked audio transition follows: its outgoing end moves by the
- *  same frames (planAudioCarry), its incoming layer moves as a link sibling, and
+ *  same frames, returning no more than its own borrow (planAudioCarry), its
+ *  incoming layer moves as a link sibling, and
  *  its duration settles on the landed overlap (ADR 0177). */
 export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { duration_us?: number; kind?: Transition['kind']; extended_us?: number }): void {
   const { comp: c, transition: tr } = requireTransition(p, transitionId)
@@ -544,7 +557,7 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
         if (available < endDelta)
           throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: tr.from_layer, available_us: available })
       }
-      const carryAudio = linkedAudio && planAudioCarry(p, c, tr.from_layer, linkedAudio, sFrame + eTargetFrames - endFrame)
+      const carryAudio = linkedAudio && planAudioCarry(p, c, tr.from_layer, linkedAudio, Math.max(eTargetFrames, 0) - eFrames, Math.min(eTargetFrames, 0))
       if (endDelta > 0) extendLayerTEnd(fromLayerObj, endDelta)
       else if (endDelta < 0) shrinkLayerTEnd(fromLayerObj, -endDelta)
       if (carryAudio) carryAudio()
@@ -613,7 +626,8 @@ function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], tr
  *  (ADR 0177): the borrow is returned as above, and the incoming Audio layer,
  *  still overlapping by `duration_us − extended_us`, changes to a free lane
  *  (minting one when none is free). A visual transition's linked audio
- *  transition follows the restore as it follows an update. */
+ *  transition follows the restore: its outgoing layer returns all the audio
+ *  borrows, whatever the visual borrowed. */
 export function applyRemoveTransition(p: Project, transitionId: Uuid, idGen: IdGen): void {
   const { comp: c, transition: tr, index: idx } = requireTransition(p, transitionId)
   const moveUs = tr.duration_us - tr.extended_us // ≥ 0: validate holds e ≤ d
@@ -649,13 +663,10 @@ export function applyRemoveTransition(p: Project, transitionId: Uuid, idGen: IdG
     const shrunkFromEnd = fromLoc ? fromLoc.layer.t_end_us - tr.extended_us : null
     precheckRestoreCollision(c, moveSet, travel, tr.from_layer, shrunkFromEnd, linkedAudio)
   }
-  // The visual outgoing end returns its borrow, `extended_us` in whole frames.
-  let carryAudio: (() => void) | null = null
-  if (linkedAudio && fromLoc) {
-    const { num, den } = c.fps
-    const end = fromLoc.layer.t_end_us
-    carryAudio = planAudioCarry(p, c, tr.from_layer, linkedAudio, frameIndexRound(end - tr.extended_us, num, den) - frameIndexRound(end, num, den))
-  }
+  // The visual outgoing end returns its borrow; the audio returns all of its
+  // own, which an audio edit may have made shorter or longer, so both cuts
+  // come back.
+  const carryAudio = linkedAudio && fromLoc ? planAudioCarry(p, c, tr.from_layer, linkedAudio, -Infinity) : null
 
   c.transitions.splice(idx, 1)
   if (fromLoc) shrinkLayerTEnd(fromLoc.layer, tr.extended_us)

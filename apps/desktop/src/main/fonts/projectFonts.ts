@@ -1,8 +1,8 @@
 // The open project's `Fonts/` folder (ADR 0176): copies the system faces the
 // project draws with into it, keeps the exclusion list, and answers Settings >
-// Project > Fonts. What counts as a use is ./uses.ts; the face index is
-// ./catalog.ts. Free of Electron: the host (index.ts) hands in the file
-// system, the trash, the log and the events.
+// Project > Fonts and the portability check's fonts. What counts as a use is
+// ./uses.ts; the face index is ./catalog.ts. Free of Electron: the host
+// (index.ts) hands in the file system, the trash, the log and the events.
 
 import { randomUUID } from 'node:crypto'
 import { foldCase, portableFileName } from '../../shared/projectPath'
@@ -130,6 +130,7 @@ export class ProjectFontStore {
   #progress: { done: number; total: number } | null = null
   #closing = false
   #missing: MissingFontUse[] = []
+  #uncarried: MissingFontUse[] = []
   #reportedMissing = new Set<string>()
   /** Family keys Allow copying asked for: their copies log nothing. */
   #quiet = new Set<string>()
@@ -181,6 +182,7 @@ export class ProjectFontStore {
     this.#missed = false
     this.#useKey = null
     this.#missing = []
+    this.#uncarried = []
     this.#reportedMissing.clear()
     this.#quiet.clear()
     this.#excluding.clear()
@@ -202,33 +204,48 @@ export class ProjectFontStore {
     this.#kick()
   }
 
-  /** Finishes the batch under way and one more that copies, then refuses new
-   *  ones until `projectChanged`. While the system scan has not landed and the
-   *  project asks for a family it may find, waits for the scan and the batch it
-   *  allows. Never rejects. */
+  /** `collectNow`, then refuses new batches until `projectChanged`; the pill
+   *  shows the copies, and the wait for the system scan, as closing. Never
+   *  rejects. */
   async drain(): Promise<void> {
-    // Copies before the folder is let go or carried (Save As, a pack): the last
-    // edit's uses, and a collected face that left `Fonts/` while the project was
-    // open, which `rescan` does not copy back.
+    // Copies before the folder is let go or carried (Save As, a pack).
+    await this.#catchUp(true)
+  }
+
+  /** Copies what the project draws and `Fonts/` lacks now: the last edit's
+   *  uses, whose quiet window may not have ended, and a collected face that
+   *  left `Fonts/` while the project was open, which `rescan` does not copy
+   *  back. Finishes the batch under way and one more that copies; while the
+   *  system scan has not landed and the project asks for a family it may find,
+   *  waits for the scan and the batch it allows. The portability check runs it
+   *  first (ADR 0178). During a `drain` it only waits. Never rejects. */
+  async collectNow(): Promise<void> {
+    await this.#catchUp(false)
+  }
+
+  async #catchUp(closing: boolean): Promise<void> {
     this.#kick()
     const dir = this.#dir
     const published = this.#published
     const scan = dir !== null && published && !this.#deps.catalog.index().complete
       && asksCatalogFamily(published.project, published.manifest) ? this.#deps.systemScan?.() : undefined
-    this.#refusing = true
-    this.#closing = true
+    // Set after the kick above, before any await: the kick must pass, and no
+    // batch may start for an edit made while the folder is let go.
+    if (closing) { this.#refusing = true; this.#closing = true }
     try {
       if (scan) {
-        // The pill tells the wait before any copy has started.
-        this.#deps.progress({ done: 0, total: 0, closing: true })
+        // The pill tells a close's wait before any copy has started.
+        if (closing) this.#deps.progress({ done: 0, total: 0, closing: true })
         await scan.catch(() => {})
-        if (dir === this.#dir) this.#kick(true, true)
+        if (dir === this.#dir) this.#kick(true, closing)
       }
-      if (this.#progress) this.#emitProgress()
+      if (closing && this.#progress) this.#emitProgress()
       await this.#running
     } finally {
-      this.#closing = false
-      if (scan && !this.#progress) this.#deps.progress(null)
+      if (closing) {
+        this.#closing = false
+        if (scan && !this.#progress) this.#deps.progress(null)
+      }
     }
   }
 
@@ -237,17 +254,27 @@ export class ProjectFontStore {
     while (this.#running) await this.#running
   }
 
-  /** Families the open project asks for that resolve nowhere, as of the last
-   *  walk; empty until the system scan has landed. */
+  /** Families the open project asks for that resolve nowhere, on this
+   *  machine as on any other, as of the last walk; empty until the system
+   *  scan has landed. */
   missing(): MissingFontUse[] {
     return this.#missing
   }
 
+  /** Families the open project asks for that a copy of its folder lacks:
+   *  `missing`, and those drawn from this machine's installed fonts with a
+   *  face `Fonts/` does not hold (`FontUses.uncarried`), as of the last walk,
+   *  or of the walk after the last copy. Empty until the system scan has
+   *  landed. The portability check's missing fonts. */
+  uncarried(): MissingFontUse[] {
+    return this.#uncarried
+  }
+
   /** `Fonts/` changed on disk: index it again, tell, and walk the uses again
-   *  so `missing` follows the folder. Never copies: a face deleted by hand
-   *  comes back at the next open, change to what the project draws, or
-   *  `drain` (close, Save As, a pack), not while a sync may still be writing
-   *  the folder. */
+   *  so `missing` and `uncarried` follow the folder. Never copies: a face
+   *  deleted by hand comes back at the next open, change to what the project
+   *  draws, `collectNow` (the portability check) or `drain` (close, Save As, a
+   *  pack), not while a sync may still be writing the folder. */
   async rescan(): Promise<void> {
     if (this.#dir === null) return
     await this.#rescan(this.#generation)
@@ -375,8 +402,8 @@ export class ProjectFontStore {
     this.#deps.indexChanged()
   }
 
-  /** One reconcile: walk the uses, note what is missing, and with `copy`,
-   *  copy what is not in `Fonts/`. Never throws. */
+  /** One reconcile: walk the uses, note what is missing and what `Fonts/`
+   *  lacks, and with `copy`, copy what is not in `Fonts/`. Never throws. */
   async #batch(copy: boolean): Promise<void> {
     const generation = this.#generation
     const dir = this.#dir
@@ -394,16 +421,28 @@ export class ProjectFontStore {
       if (copy) quiet = new Set(this.#quiet)
       const published = this.#published
       if (!published || generation !== this.#generation) return
-      const index = this.#deps.catalog.index()
-      const uses = await fontUses({
-        project: published.project, faces: index.faces, motifManifest: published.manifest,
-        coverage: (sha) => this.#deps.catalog.faceCoverage(sha),
-      })
+      const walk = async () => {
+        const index = this.#deps.catalog.index()
+        const uses = await fontUses({
+          project: published.project, faces: index.faces, motifManifest: published.manifest,
+          coverage: (sha) => this.#deps.catalog.faceCoverage(sha),
+        })
+        return { index, uses }
+      }
+      const { index, uses } = await walk()
       if (generation !== this.#generation) return
       this.#noteMissing(index.complete ? uses.missing : [])
+      this.#uncarried = index.complete ? uses.uncarried : []
       const bySha = new Map(index.faces.map(f => [f.sha256, f]))
       const planned = uses.collect.map(sha => bySha.get(sha)).filter((f): f is FaceIndexEntry => !!f)
-      if (copy && planned.length > 0) await this.#copyAll(planned, fontsDir, generation, quiet)
+      if (!copy || planned.length === 0) return
+      if (!await this.#copyAll(planned, fontsDir, generation, quiet)) return
+      // `#copyAll` indexed `Fonts/` again: walk it, so a face that landed
+      // drops out of `uncarried` and one whose copy failed stays.
+      const after = await walk()
+      if (generation !== this.#generation) return
+      this.#uncarried = after.index.complete ? after.uses.uncarried : []
+      this.#deps.changed()
     } catch (error) {
       console.warn('[fonts] project font reconcile failed', error)
     } finally {
@@ -474,7 +513,9 @@ export class ProjectFontStore {
     return familyKeys(face).some(k => excluded.has(k))
   }
 
-  async #copyAll(planned: readonly FaceIndexEntry[], fontsDir: string, generation: number, quiet: ReadonlySet<string>): Promise<void> {
+  /** Resolves to whether a face landed in `Fonts/` and the folder was indexed
+   *  again. */
+  async #copyAll(planned: readonly FaceIndexEntry[], fontsDir: string, generation: number, quiet: ReadonlySet<string>): Promise<boolean> {
     const copied: FaceIndexEntry[] = []
     this.#progress = { done: 0, total: planned.length }
     this.#emitProgress()
@@ -495,13 +536,14 @@ export class ProjectFontStore {
       this.#progress = null
       this.#emitProgress()
     }
-    if (generation !== this.#generation || copied.length === 0) return
+    if (generation !== this.#generation || copied.length === 0) return false
     // Read before the rescan below remembers what was just copied.
     const remembered = new Set(this.#memory ?? [])
     await this.#rescan(generation)
     // A family excluded while the batch ran is being trashed: not a copy.
     this.#logCopies(copied.filter(face => !this.#excludedNow(face)), remembered, quiet)
     this.#deps.changed()
+    return true
   }
 
   /** Writes one face as `.part`, then renames it to a free portable name.

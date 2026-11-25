@@ -323,4 +323,27 @@ describe("AudioMixer envelope automation", () => {
       }
     },
   );
+
+  it("reaches the envelope's last control point on a layer that ends off the 10 ms grid", async () => {
+    // A frame edge at 30 fps: the last segment is shorter than a step.
+    const spanUs = 1_966_667;
+    const fadingOut: AudioView = { ...view, src_out_us: spanUs, fade_out_us: 500_000 };
+    const envelope = sampleGain(fadingOut.gain_db, fadingOut.fade_in_us, fadingOut.fade_out_us, spanUs);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { ctx, mixer } = createMixer({ view: fadingOut, layerTEndUs: spanUs, startAdvanceS: callbackS });
+    await flush();
+    mixer.tick(400_000, true, spanUs, anchor);
+    for (const read of [...conform.pending]) { read.resolve(); await flush(); }
+
+    expect(warn).not.toHaveBeenCalled();
+    const gain = ctx.gains[0]!.gain as StrictAudioParam;
+    const points = [];
+    for (let tUs = 420_000; tUs < spanUs; tUs += envelope.stepUs) points.push(tUs);
+    points.push(spanUs);
+    for (const tUs of points) {
+      const at = anchor.ctxTime + (tUs - anchor.compUs) / 1_000_000;
+      expect(gain.valueAt(at), `gain at ${tUs} us`).toBeCloseTo(evalEnvelope(envelope, tUs), 4);
+    }
+    expect(evalEnvelope(envelope, spanUs)).toBeCloseTo(0, 6);
+  });
 });

@@ -87,11 +87,15 @@ gain = lerp-sample(gain_db, 10 ms) → 10^(dB/20) × fade-in ramp × fade-out ra
 pan  = lerp-sample(pan, 10 ms), clamped [-1, 1] → pan_coeffs → 2×2 matrix [a,b,c,d]
 ```
 
-Both renderers linearly interpolate the same control points: Web Audio by a
+Control points sit every 10 ms from the layer start, plus one at the layer
+end. Layer edges sit on frames, so the last segment usually runs shorter than
+10 ms; it is interpolated over its real length, which keeps a fade or a
+one-frame crossfade reaching its end value at the layer's last sample. Both
+renderers linearly interpolate the same control points: Web Audio by a
 `setValueAtTime` at each chunk's start and a `linearRampToValueAtTime` to each
-grid point (gain node and the four pan-matrix gains), Rust per sample. Point
-events, not `setValueCurveAtTime`: a curve whose start the context has passed
-is moved to the current time with its duration kept, runs into the next
+control point (gain node and the four pan-matrix gains), Rust per sample.
+Point events, not `setValueCurveAtTime`: a curve whose start the context has
+passed is moved to the current time with its duration kept, runs into the next
 chunk's and gets that one refused. Static properties travel as scalars. A `Hold` keyframe becomes a
 ≤10 ms ramp. `db_to_linear`, `fade_multiplier`, `pan_coeffs` (equal-power),
 the equal-power audio crossfade gains (ADR 0177) and `role_audible` are

@@ -66,7 +66,7 @@ import type { ProjectFontStore } from '../fonts/projectFonts'
 import type { MissingFontUse } from '../fonts/uses'
 
 /** What the host asks of the project font store. */
-export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'projectChanged' | 'published' | 'missing' | 'view' | 'motifFolderChanged'>
+export type ProjectFontsHost = Pick<ProjectFontStore, 'drain' | 'collectNow' | 'projectChanged' | 'published' | 'missing' | 'uncarried' | 'view' | 'motifFolderChanged'>
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -287,12 +287,13 @@ export interface TsActorHost {
    *  gone, whose files make no package, or whose revision is not trusted on
    *  this machine. Empty with no project open. */
   unavailableMotifs: () => UnavailableMotif[]
-  /** Families the open project asks for that resolve nowhere
-   *  (`project://session` `fonts.missing`). Empty with no project open. */
+  /** Families the open project asks for that resolve nowhere, on this
+   *  machine as on any other (`project://session` `fonts.missing`). Empty
+   *  with no project open. */
   missingFonts?: () => MissingFontUse[]
   /** What the open project still needs from outside its folder
-   *  (`project://portability`, `state/portability.ts`); null with no project
-   *  open. */
+   *  (`project://portability`, `state/portability.ts`), as the folder stands:
+   *  it copies nothing. Null with no project open. */
   portability: () => PortabilityReport | null
   /** Pack project and Open packed project; null without `packNative`. Main
    *  feeds it the backend's `project_pack:progress` events. */
@@ -906,7 +907,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       motifTable: Object.keys(publishedProject.motifs),
       motifFolders: projectMotifs()?.ids() ?? [],
       excludedFonts: deps.fonts?.view()?.excluded ?? [],
-      missingFonts: deps.fonts?.missing() ?? [],
+      missingFonts: deps.fonts?.uncarried() ?? [],
       outsideStyle: deps.styleDirs ? styleOutsideProject(deps.styleDirs, opened.dir) : null,
     })
   }
@@ -1167,7 +1168,14 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'saveStatus':
         return saveStatus
       case 'portability':
-        if (channel === 'project_portability') return portability()
+        if (channel === 'project_portability') {
+          // The user opened the check (or the pack dialog): copy into
+          // `Fonts/` what the project draws and the folder lacks, as Save As
+          // and a pack do, then answer for the project open by then. The MCP
+          // reads stay reads.
+          await deps.fonts?.collectNow()
+          return portability()
+        }
         return trashUntrackedMotifFolder({
           report: portability,
           folder: (name) => projectMotifs()!.folder(name),
@@ -1193,7 +1201,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'pack': {
         if (!packer) throw new Error('Packing is not available')
         const a = args as { archive?: unknown; parent?: unknown }
-        if (channel === 'project_pack_plan') return packer.plan()
+        if (channel === 'project_pack_plan') {
+          // Opened with the pack dialog's check: its size counts the fonts
+          // that check copies back (see 'portability' below).
+          await deps.fonts?.collectNow()
+          return packer.plan()
+        }
         if (channel === 'project_pack_cancel') return packer.cancel()
         if (typeof a.archive !== 'string') throw new Error('archive is required')
         if (channel === 'project_pack') return packer.pack(a.archive)
