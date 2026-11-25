@@ -45,6 +45,9 @@ export interface AppSettings {
    *  lasts while its notice stands: main drops a code once its notice is absent
    *  (`pruneDismissedNotices`), so a later return shows it again. */
   dismissed_notices?: string[];
+  /** The app version whose release notes the user closed. The launch dialog
+   *  shows the running version's notes until this names that version. */
+  release_notes_seen_version?: string;
   /** One app-wide typography and dialog sizing preset; absent in old files. */
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicy;
@@ -171,6 +174,7 @@ export interface AppSettingsPatch {
   skipped_update_version?: string;
   /** Adds one notice code to `dismissed_notices`; repeating it changes nothing. */
   dismiss_notice?: string;
+  release_notes_seen_version?: string;
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicyPatch | null;
   /** Merge individual budgets; null restores all performance defaults. */

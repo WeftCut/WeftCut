@@ -110,6 +110,8 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       skipped_update_version: typeof parsed.skipped_update_version === 'string' && parsed.skipped_update_version !== ''
         ? parsed.skipped_update_version : undefined,
       dismissed_notices: readNoticeCodes(parsed.dismissed_notices),
+      release_notes_seen_version: typeof parsed.release_notes_seen_version === 'string' && parsed.release_notes_seen_version !== ''
+        ? parsed.release_notes_seen_version : undefined,
       layout_theme: readLayoutTheme(parsed.layout_theme),
       resource_policy: readResourcePolicy(parsed.resource_policy),
       performance: budgets ? resolvePerformanceBudgets(budgets, calibration) : readPerformanceSettings(parsed.performance),
@@ -304,6 +306,10 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       if (patch.skipped_update_version !== undefined) {
         if (typeof patch.skipped_update_version !== 'string') throw new Error('Invalid skipped update version')
         current.skipped_update_version = patch.skipped_update_version === '' ? undefined : patch.skipped_update_version
+      }
+      if (patch.release_notes_seen_version !== undefined) {
+        if (typeof patch.release_notes_seen_version !== 'string' || patch.release_notes_seen_version === '') throw new Error('Invalid release notes version')
+        current.release_notes_seen_version = patch.release_notes_seen_version
       }
       if (patch.dismiss_notice !== undefined) {
         if (typeof patch.dismiss_notice !== 'string' || patch.dismiss_notice === '') throw new Error('Invalid notice code')

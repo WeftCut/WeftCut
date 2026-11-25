@@ -16,7 +16,7 @@ vi.mock("@/bridge/ipc", () => ({
 vi.mock("@/bridge/dialog", () => ({ open: (opts: unknown) => bridge.open(opts), save: vi.fn() }));
 vi.mock("@/bridge/notification", () => ({ sendNotification: (opts: unknown) => bridge.notify(opts) }));
 
-import { openProject, openProjectFromEditor } from "./openProject";
+import { openProject, openProjectFile, openProjectFromEditor } from "./openProject";
 import { useComputeJobNoticeStore } from "../compute/computeJobNotices";
 
 const t = i18n.t.bind(i18n);
@@ -54,9 +54,9 @@ describe("the picker", () => {
 describe("a project file", () => {
   it("is handed to main as picked, which opens its folder; the caller moves to it once open", async () => {
     bridge.open.mockResolvedValueOnce("/home/u/Projects/Example/project.wcpr");
-    bridge.invoke.mockImplementation(async () => { expect(opened).not.toHaveBeenCalled() });
+    bridge.invoke.mockImplementation(async () => { expect(opened).not.toHaveBeenCalled(); return { already_open: false } });
     await expect(openProject(t, opened)).resolves.toBeNull();
-    expect(bridge.invoke).toHaveBeenCalledWith("project_open", { path: "/home/u/Projects/Example/project.wcpr" });
+    expect(bridge.invoke).toHaveBeenCalledWith("project_open", { path: "/home/u/Projects/Example/project.wcpr", keep_if_open: true });
     expect(bridge.invokeRaw).not.toHaveBeenCalled();
     expect(opened).toHaveBeenCalledOnce();
   });
@@ -68,12 +68,32 @@ describe("a project file", () => {
     expect(opened).not.toHaveBeenCalled();
   });
 
-  it("leaves the project already open as it is when its own file is picked", async () => {
+  it("stays where it is when main answers that the file's project is the one open", async () => {
+    // Main decides sameness on the resolved folder, so any spelling of the
+    // open project's file (a drive letter's case, a symlink) is caught there.
     bridge.open.mockResolvedValueOnce("/home/u/Projects/Example/project.wcpr");
-    bridge.invoke.mockImplementation(async (cmd: string) => cmd === "project_open_state" ? { dir: "/home/u/Projects/Example" } : undefined);
+    bridge.invoke.mockResolvedValue({ already_open: true });
     await expect(openProject(t, opened)).resolves.toBeNull();
-    expect(bridge.invoke).not.toHaveBeenCalledWith("project_open", expect.anything());
     expect(opened).not.toHaveBeenCalled();
+  });
+});
+
+describe("a file the OS hands over", () => {
+  it("opens as a picked one does, without asking for it", async () => {
+    bridge.invoke.mockResolvedValue({ already_open: false });
+    await expect(openProjectFile(t, "C:\\Users\\u\\Videos\\Trip\\project.wcpr", opened)).resolves.toBeNull();
+    expect(bridge.open).not.toHaveBeenCalled();
+    expect(bridge.invoke).toHaveBeenCalledWith("project_open", { path: "C:\\Users\\u\\Videos\\Trip\\project.wcpr", keep_if_open: true });
+    expect(opened).toHaveBeenCalledOnce();
+  });
+
+  it("is a pack whatever the case of its extension, and the user still places its folder", async () => {
+    bridge.open.mockResolvedValueOnce(null);
+    bridge.invokeRaw.mockResolvedValue(inspected);
+    await expect(openProjectFile(t, "/home/u/in/Example.WCPK", opened)).resolves.toBeNull();
+    expect(bridge.invokeRaw.mock.calls.map(([cmd]) => cmd)).toEqual(["project_unpack_inspect"]);
+    expect(bridge.open.mock.calls[0]![0]).toMatchObject({ directory: true });
+    expect(bridge.invoke).not.toHaveBeenCalled();
   });
 });
 
@@ -117,5 +137,12 @@ describe("from the editor", () => {
     expect(useComputeJobNoticeStore.getState().notice).toMatchObject({
       outcome: "error", title: t("open_project.failed_title"), body: t("startup.not_project_folder"),
     });
+  });
+
+  it("opens a file the OS handed over, and leaves the same notice when it cannot", async () => {
+    bridge.invoke.mockImplementation(async (cmd: string) => { if (cmd === "project_open") throw ipcError(new WorkspaceFailure({ error: "ProjectFolderMissing" })); return null });
+    await openProjectFromEditor(t, opened, "/home/u/Projects/Gone/project.wcpr");
+    expect(bridge.open).not.toHaveBeenCalled();
+    expect(useComputeJobNoticeStore.getState().notice).toMatchObject({ outcome: "error", title: t("open_project.failed_title") });
   });
 });

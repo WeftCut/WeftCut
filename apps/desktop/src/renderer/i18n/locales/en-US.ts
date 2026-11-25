@@ -541,6 +541,11 @@ const enUS = {
   help: {
     check_updates: "Check for Updates…",
     report_issue: "Report an Issue…",
+    whats_new: "What's New…",
+    release_notes_title: "What's New in WeftCut {{version}}",
+    release_notes_close: "Got it",
+    release_notes_full: "Full Release Notes",
+    release_notes_language: "These notes are in English.",
     about: "About WeftCut",
     version: "Version {{version}}",
     developed_by: "Developed by UncleChair",
@@ -3014,6 +3019,8 @@ const enUS = {
     filter: "WeftCut project or pack",
     legacy_filter: "WeftCut 0.8 project ({{file}})",
     failed_title: "Couldn't open the project",
+    // A file opened from the desktop while the editor is busy.
+    busy: "Another task is still running. Open the file again when it finishes.",
   },
   // Pack project and unpack (pack/): the project in one file and back. Percent
   // and bytes only, never a remaining-time estimate.

@@ -31,7 +31,8 @@ import { AppSelect } from "../components/AppSelect";
 import { WindowControls } from "../components/WindowControls";
 import { DiagnosticReport } from '../app/DiagnosticReport';
 import { cancelPackJob, packBytes, packPercent } from "../pack/packJobs";
-import { openProject } from "./openProject";
+import { openProject, openProjectFile } from "./openProject";
+import { useFileOpenRequests } from "./fileOpenRequests";
 import { listenForPackJobs, usePackJobStore } from "../pack/packJobStore";
 import { UpdateButton } from '../app/UpdateButton';
 import { Button } from "@/components/ui/button";
@@ -185,6 +186,15 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
       if (problem !== null) throw problem;
     }, (e) => String(e)),
     [t, runProtected, onWorkspaceReady],
+  );
+  // A file the OS handed the app opens as a picked one does, once nothing
+  // else on this screen runs.
+  useFileOpenRequests(
+    (file) => void runProtected(async () => {
+      const problem = await openProjectFile(t, file, onWorkspaceReady);
+      if (problem !== null) throw problem;
+    }, (e) => String(e)),
+    !busy,
   );
   const unpacking = usePackJobStore((s) => s.job);
   useEffect(listenForPackJobs, []);

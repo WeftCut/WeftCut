@@ -524,6 +524,11 @@ const zhCN: Resources = {
   help: {
     check_updates: "检查更新…",
     report_issue: "报告问题…",
+    whats_new: "新变化…",
+    release_notes_title: "WeftCut {{version}} 新变化",
+    release_notes_close: "知道了",
+    release_notes_full: "完整更新说明",
+    release_notes_language: "更新说明目前只有英文版。",
     about: "关于 WeftCut",
     version: "版本 {{version}}",
     developed_by: "作者:UncleChair",
@@ -2731,6 +2736,7 @@ const zhCN: Resources = {
     filter: "WeftCut 项目或打包文件",
     legacy_filter: "WeftCut 0.8 项目（{{file}}）",
     failed_title: "无法打开项目",
+    busy: "另一项任务仍在进行，完成后再打开这个文件。",
   },
   pack: {
     title: "打包项目",

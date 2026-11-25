@@ -20,7 +20,7 @@ import { AgentActivityService } from '../agent/activity'
 import { runTackIpc } from '../agent/tackIpc'
 import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
-import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
+import { PROJECT_OPENED_EVENT, type ProjectOpenOutcome, type ProjectOpenedPayload } from '../../shared/project-events'
 import { SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
 import { PUBLICATION_BASE_ARG, type ProjectVersion, type ProjectPublication, type PublishedResult } from '../../shared/projectPublication'
 import { createPublicationAnswers } from './publicationAnswers'
@@ -197,7 +197,9 @@ export interface TsActorHostDeps {
 }
 
 interface PersistenceHandlers {
-  open: (dir: string) => Promise<void>
+  /** `keepIfOpen`: the folder already open is left as it is rather than
+   *  reloaded from disk. */
+  open: (path: string, keepIfOpen?: boolean) => Promise<ProjectOpenOutcome>
   saveAs: (dir: string) => Promise<void>
   newWorkspace: (args: { parentFolder: string; name: string; width: number; height: number; fpsNum: number; fpsDen: number }) => Promise<string>
   save: () => Promise<void>
@@ -715,11 +717,17 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   const persistence: PersistenceHandlers = {
     // The Motif records after the open settles: an edit made while the
     // project was closed is a commit, which the swap would refuse.
-    open: async (path) => {
+    // The user's Open and an agent's keep the folder already open: a reload
+    // would flush and drop the undo history, checkpoints, tacks and the work
+    // session of the very project they wanted open. A bare `project_open`
+    // reloads it, a reopen from disk.
+    open: async (path, keepIfOpen = false) => {
       const dir = folderOf(path)
+      if (keepIfOpen && opened !== null && sameFolder(opened.dir, dir)) return { already_open: true }
       await replaceWorkspace(async () => { await openProject(orchestratorDeps, dir); opens(dir) })
       motifRecords.opened()
       void collectStyle()
+      return { already_open: false }
     },
     saveAs: (dir) => replaceWorkspace(async () => {
       try { await saveProjectAs(orchestratorDeps, dir, deps.workspaceDir()) }
@@ -754,11 +762,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     open: async (path) => {
       const dir = folderOf(path)
       const replaced = opened?.dir ?? null
-      // The folder already open is not reopened: a reload would flush and
-      // drop the undo history, checkpoints, tacks and the work session of the
-      // very project the caller wanted open.
-      if (replaced !== null && sameFolder(replaced, dir)) return { name: actor.snapshot().metadata.name, dir: replaced, replaced: null, already_open: true }
-      await persistence.open(dir)
+      if ((await persistence.open(dir, true)).already_open) return { name: actor.snapshot().metadata.name, dir: replaced!, replaced: null, already_open: true }
       deps.send(PROJECT_OPENED_EVENT, { dir } satisfies ProjectOpenedPayload)
       return { name: actor.snapshot().metadata.name, dir, replaced, already_open: false }
     },
@@ -1217,7 +1221,10 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         if (typeof a.parent !== 'string') throw new Error('parent is required')
         return packer.unpack(a.archive, a.parent)
       }
-      case 'open': return persistence.open((args as { path: string }).path)
+      case 'open': {
+        const a = args as { path: string; keep_if_open?: unknown }
+        return persistence.open(a.path, a.keep_if_open === true)
+      }
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)
       case 'newWorkspace': return persistence.newWorkspace(args as never)
       case 'save': return persistence.save()

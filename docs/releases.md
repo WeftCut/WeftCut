@@ -12,6 +12,15 @@ A version that breaks something (before 1.0, a minor bump) gets
 before updating. The release puts it ahead of the install steps and the
 generated changelog; a version without one gets those alone.
 
+A version whose changes users must notice in the app also gets a short
+`docs/release-notes/in-app/<x.y.z>.md`: a few bullets, read in one glance, with
+the full notes one button away on the release page. The app bundles these
+files. The first launch of that version, or of a later patch, opens them once
+(until closed; dev and E2E builds never do), and Help → What's New… reopens
+them. The dialog reads headings (`##`, `###`), paragraphs, `-` lists nested by
+two spaces, `**bold**`, `*italic*` and `` `code` ``; anything else fails
+`releaseNotes.test.ts`. They are English in every UI language.
+
 On a push to `main` in `WeftCut/WeftCut`, electron-ci's `release-plan` job
 compares the version with the one at the commit the push replaced and with
 published GitHub Releases. Only a push that changes the version to an
@@ -210,6 +219,10 @@ The toast activator CLSID next to it is stable too: notifications already in
 the notification center call it. The installer drops it from the Start Menu
 shortcut on every update, and the app stamps it back at launch (ADR 0163).
 
+The names the owned file types register under (ProgID, UTI, MIME type, in
+`src/main/fileAssociation/fileTypes.ts`) are identities as well: a renamed one
+leaves the old registration on every machine that installed it (ADR 0181).
+
 ## Manual release check
 
 Unit tests and manifest checks do not cover the installed-app path. When the
@@ -219,3 +232,6 @@ download and exit install, including network failure/retry and an export
 running during download; confirm the project reopens and the new version
 reports. On macOS also run update-and-restart (it must reopen) and a copy
 started from the mounted DMG (it must report its location).
+
+When the file association changes, double-click a `.wcpr` and a `.wcpk` on
+each installed package, once with the app closed and once with it open.

@@ -345,6 +345,14 @@ export interface WeftcutApi {
     restart(): Promise<UpdateRestartResult>
     resume(): Promise<UpdateResume>
   }
+  /// A file the OS asked WeftCut to open (ADR 0181; shared/fileOpen.ts). Main
+  /// holds at most one; the window takes it, and can do nothing else with it.
+  fileOpen: {
+    /** Whether one waits, without taking it. */
+    pending(): Promise<boolean>
+    /** The waiting file, absolute, which main then forgets; null for none. */
+    take(): Promise<string | null>
+  }
   /// Developer menu actions. Main registers their handlers in dev builds only;
   /// a release build rejects every call.
   dev: {

@@ -1,5 +1,7 @@
 import { _electron as electron, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -303,7 +305,7 @@ process.on('exit', () => {
 /// same-userData relaunch: mint the dir with `tmpDir` and hand it to both
 /// launches (see the lifecycle comment above).
 export async function launchApp(
-  opts: { userDataDir?: string; locale?: string; env?: Record<string, string> } = {},
+  opts: { userDataDir?: string; locale?: string; env?: Record<string, string>; appArgs?: readonly string[] } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const locale = opts.locale ?? 'en-US'
   const localeBase = locale.split('-')[0] ?? locale
@@ -320,7 +322,8 @@ export async function launchApp(
     mintedUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-e2e-'))
     args.push(`--user-data-dir=${mintedUserDataDir}`)
   }
-  args.push(MAIN)
+  // After the entry: what a shell passes the app (a file to open, ADR 0181).
+  args.push(MAIN, ...(opts.appArgs ?? []))
   const app = await electron.launch({
     args,
     // The elevated-run notice is a modal dialog; suppress it so it can't block the
@@ -369,6 +372,43 @@ export async function waitForHook(page: Page, name: string, timeout = 30000): Pr
     name,
     { timeout },
   )
+}
+
+const ELECTRON = createRequire(import.meta.url)('electron') as unknown as string
+
+/// How a bare launch ended: its exit code and signal, or 'still running' once
+/// the bound passed (it is then killed), with the tail of its stderr.
+export type LaunchEnd = { end: string; stderr: string }
+
+/// Launch a bare process on `userDataDir`, with `appArgs` after the entry, and
+/// report how it ended. Only for a launch expected to exit by itself (a second
+/// launch on a running profile): Playwright's launcher would wait for a window
+/// that never opens.
+export function launchExpectingExit(userDataDir: string, boundMs: number, appArgs: readonly string[] = []): Promise<LaunchEnd> {
+  // Playwright's Electron launcher adds --no-sandbox on Linux; without it the
+  // GitHub Ubuntu runner, which cannot start Chromium's sandbox, kills the
+  // process with SIGTRAP before the app's code runs.
+  const sandbox = process.platform === 'linux' ? ['--no-sandbox'] : []
+  const child = spawn(ELECTRON, [...sandbox, ...GL_SWITCHES, `--user-data-dir=${userDataDir}`, MAIN, ...appArgs], {
+    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  let stderr = ''
+  child.stderr!.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4000) })
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill()
+      resolve({ end: 'still running', stderr })
+    }, boundMs)
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer)
+      resolve({ end: signal ? `signal ${signal}` : `code ${code}`, stderr })
+    })
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+  })
 }
 
 /// Create a workspace + enter the editor via the bootstrap hook.

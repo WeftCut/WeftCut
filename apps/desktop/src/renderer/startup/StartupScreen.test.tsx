@@ -22,8 +22,11 @@ const ipc = vi.hoisted(() => ({
   keybindingsGet: vi.fn(async () => ({})),
   projectUnpackInspect: vi.fn(),
   projectPackCancel: vi.fn(async () => true),
+  projectOpen: vi.fn(),
 }));
 const dialog = vi.hoisted(() => ({ open: vi.fn() }));
+/// What the screen hands the file-open requests hook on its latest render.
+const fileOpen = vi.hoisted(() => ({ handle: null as ((file: string) => void) | null, ready: false }));
 
 vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
@@ -35,6 +38,9 @@ vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 vi.mock("../menu/nativeMenu", () => ({ useNativeMenu: () => {} }));
 vi.mock("../components/WindowControls", () => ({ WindowControls: () => null }));
 vi.mock("../app/UpdateButton", () => ({ UpdateButton: () => null }));
+vi.mock("./fileOpenRequests", () => ({
+  useFileOpenRequests: (handle: (file: string) => void, ready: boolean) => { fileOpen.handle = handle; fileOpen.ready = ready },
+}));
 
 import "../i18n";
 import { StartupScreen } from "./StartupScreen";
@@ -116,5 +122,27 @@ describe("Open project", () => {
     expect(progress.textContent).not.toMatch(/left|remaining/i);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(ipc.projectPackCancel).toHaveBeenCalled();
+  });
+});
+
+describe("a file the OS hands over", () => {
+  it("waits while the picker is open, then opens as a picked file does", async () => {
+    const user = userEvent.setup();
+    const entered = vi.fn();
+    let closePicker: (picked: string | null) => void = () => {};
+    dialog.open.mockReturnValueOnce(new Promise((resolve) => { closePicker = resolve }));
+    ipc.projectOpen.mockResolvedValue({ already_open: false });
+    render(<StartupScreen onWorkspaceReady={entered} />);
+    await screen.findByText(RECENTS[0]!.name);
+    expect(fileOpen.ready).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Open project…" }));
+    expect(fileOpen.ready, "the screen took a request while its picker was open").toBe(false);
+    await act(async () => closePicker(null));
+    expect(fileOpen.ready).toBe(true);
+
+    await act(async () => fileOpen.handle!("/home/u/Videos/Trip/project.wcpr"));
+    expect(ipc.projectOpen).toHaveBeenCalledWith("/home/u/Videos/Trip/project.wcpr", true);
+    expect(entered).toHaveBeenCalledOnce();
   });
 });
