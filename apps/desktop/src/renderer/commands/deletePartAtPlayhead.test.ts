@@ -4,6 +4,7 @@
 // the IPC call is intercepted here and answers as the actor would.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { frameGrid, snapOnGrid } from "../grid";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
 import { useProjectStore } from "../state/projectStore";
@@ -60,6 +61,26 @@ describe("delete start / end at the playhead", () => {
     await deleteEndFromPlayhead();
     expect(sent.mock.calls.map(([args]) => args.part)).toEqual(["end"]);
     expect(playheadTimeUs()).toBe(3 * S);
+  });
+
+  // Under playback the playhead runs between frames. The composition reads it
+  // on its frame grid with the actor's rounding, so targets and cut agree: a
+  // playhead that rounds onto the clip's edge cuts nothing there.
+  it("cuts on the frame the playhead rounds to, and does nothing when that frame is the clip's edge", async () => {
+    const frame = S / 30;
+    setPlayheadTimeUs(2 * S + frame / 3);
+    await deleteStartToPlayhead();
+    await deleteEndFromPlayhead();
+    expect(sent).not.toHaveBeenCalled();
+
+    setPlayheadTimeUs(6 * S - frame / 3);
+    await deleteStartToPlayhead();
+    expect(sent).not.toHaveBeenCalled();
+
+    setPlayheadTimeUs(2 * S + (2 * frame) / 3);
+    sent.mockResolvedValueOnce({ at_t_us: 2 * S });
+    await deleteStartToPlayhead();
+    expect(sent.mock.calls.map(([args]) => args.atTUs)).toEqual([snapOnGrid(2 * S + frame, frameGrid({ num: 30, den: 1 }))]);
   });
 
   it.each([

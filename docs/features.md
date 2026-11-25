@@ -624,8 +624,9 @@ undo. Both are rebindable in Settings → Keyboard and sit in the Edit menu unde
   selection if it straddles the playhead, else every straddling clip the user can
   see and edit. All of them go in the one commit, and their holes close together.
 - **Linked members are cut together**, as Split cuts them; a linked member lying
-  wholly inside the deleted part goes with it. Under Link override only the
-  target is cut.
+  wholly inside the deleted part goes with it, and every other member stays
+  linked to the clip. A member only partly inside it refuses the edit, naming
+  what stands in the way. Under Link override only the target is cut.
 - **The surviving part is the same clip**: it keeps its id, so its transitions,
   anchored markers and selection stay with it. An outgoing transition survives a
   deleted start, which a plain split of that clip refuses. A cut inside a

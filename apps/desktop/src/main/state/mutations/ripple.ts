@@ -17,7 +17,6 @@ import { planRipple, planRippleGap, type RippleMove, type RippleView } from '../
 import type { IdGen } from '../ids'
 import { applyDeleteLayer } from './delete'
 import { applyDurationAutofit, insertSorted, locateLayerIn, requireSameComposition, requireTrack } from './helpers'
-import { linkSiblingsOverlapping } from './links'
 import { applySplitLinked } from './split'
 import { frameGrid, gridIndex, snapOnGrid, timeUsAtGridIndex } from '../snap'
 
@@ -89,11 +88,15 @@ export function applyRippleDeleteLayers(p: Project, ids: readonly Uuid[]): Rippl
  * Cut every layer in `ids` at `atTUsRaw` and ripple-delete the `part` on the
  * deleted side of the cut, in one edit (docs/features.md#delete-start-or-end).
  *
- * The cut is Split's, link fan-out and partition included, so a linked A/V
- * pair loses the same part of both members; every piece of the deleted side
- * plus the link partners lying inside it (`linkSiblingsOverlapping`) goes to
- * ONE `applyRippleDeleteLayers`, so the holes merge as they would for a ripple
- * delete of the selection. The SURVIVING half of every cut layer keeps its id,
+ * The cut is Split's, link fan-out included, so a linked A/V pair loses the
+ * same part of both members; every piece of the deleted side plus the link
+ * partners lying wholly inside it goes to ONE `applyRippleDeleteLayers`, so
+ * the holes merge as they would for a ripple delete of the selection. The cut
+ * leaves a link whole (`linkMode: 'whole'`): one side is about to go, so a
+ * member outside the deleted part stays linked to the clip, and one only
+ * partly inside meets the ripple's own refusals (it starts inside the hole, or
+ * reaches across it while the clip moves). The SURVIVING half of every cut
+ * layer keeps its id,
  * so its transitions, anchored markers and selection stay with it; with the id
  * on the deleted half, an outgoing transition would ride the deleted start and
  * leave the survivor overlapping the next clip with nothing authorizing it.
@@ -113,21 +116,37 @@ export function applyRippleDeletePart(p: Project, idGen: IdGen, ids: readonly Uu
   const pieces: Uuid[] = []
   for (const id of targets) {
     if (cut.has(id)) continue
-    for (const halves of applySplitLinked(p, idGen, id, at, escapeLink, keep)) {
+    for (const halves of applySplitLinked(p, idGen, id, at, escapeLink, keep, 'whole')) {
       cut.add(keep === 'left' ? halves.left : halves.right)
       pieces.push(keep === 'left' ? halves.right : halves.left)
     }
   }
   refuseCutInsideTransition(overlaps, cut, at)
-  const doomed = new Set(pieces)
-  for (const piece of pieces) for (const sid of linkSiblingsOverlapping(c, piece)) doomed.add(sid)
-  const result = applyRippleDeleteLayers(p, [...doomed])
+  const result = applyRippleDeleteLayers(p, [...partnersWhollyInside(c, pieces)])
   const survivor = locateLayerIn(c, targets[0])!.layer
   // The pieces are born and removed inside this edit, so no snapshot holds
   // them and nothing outside it can name them; `deleted` lists only layers
   // that existed before (a linked member that went along).
   const fresh = new Set(pieces)
   return { ...result, deleted: result.deleted.filter((id) => !fresh.has(id)), kept: [...cut], at_t_us: part === 'start' ? survivor.t_start_us : survivor.t_end_us }
+}
+
+/** The pieces plus each one's link partners that lie wholly inside the span
+ *  the pieces of that link cover; the cut's own survivors and every partner
+ *  reaching outside that span stay. */
+function partnersWhollyInside(c: Composition, pieces: readonly Uuid[]): Set<Uuid> {
+  const doomed = new Set(pieces)
+  for (const link of c.links) {
+    const own = link.members.filter((m) => doomed.has(m)).map((m) => locateLayerIn(c, m)!.layer)
+    if (own.length === 0) continue
+    const start = Math.min(...own.map((l) => l.t_start_us))
+    const end = Math.max(...own.map((l) => l.t_end_us))
+    for (const m of link.members) {
+      const l = locateLayerIn(c, m)?.layer
+      if (l !== undefined && l.t_start_us >= start && l.t_end_us <= end) doomed.add(m)
+    }
+  }
+  return doomed
 }
 
 interface TransitionOverlap { track: Uuid; from: Uuid; fromStart: number; fromEnd: number; to: Uuid; toStart: number; toEnd: number }

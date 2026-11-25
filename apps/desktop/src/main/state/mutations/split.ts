@@ -74,14 +74,20 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, 
 /** Split with link spanning fan-out, partitioning the link at the cut. The
  *  target's halves; `applySplitLinked` has every member's. */
 export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean): SplitHalves {
-  return applySplitLinked(p, idGen, id, atTUsRaw, escapeLink, 'left')[0]
+  return applySplitLinked(p, idGen, id, atTUsRaw, escapeLink, 'left', 'partition')[0]
 }
 
-/** Split with link spanning fan-out, partitioning the link at the cut. Returns
- *  the halves of every layer the cut went through, the target's first. The side
- *  holding the original ids keeps the link's id; the other side's members, when
- *  two or more, form a new link. */
-export function applySplitLinked(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean, keep: SplitKeep): SplitHalves[] {
+/** What a split does to the link of the layers it cuts. `partition` (Split)
+ *  divides it at the cut: the side holding the original ids keeps the link's
+ *  id, and the other side's members, when two or more, form a new link.
+ *  `whole` (Delete start/end) adds the fresh halves to the one link, so the
+ *  ripple that follows sees every member it moves or leaves as linked to the
+ *  clip, and what is left after the delete is still that link. */
+export type SplitLinkMode = 'partition' | 'whole'
+
+/** Split with link spanning fan-out. Returns the halves of every layer the cut
+ *  went through, the target's first; `linkMode` says what becomes of the link. */
+export function applySplitLinked(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean, keep: SplitKeep, linkMode: SplitLinkMode): SplitHalves[] {
   // Pre-flight on the target.
   const target = requireLayer(p, id)
   const c = target.comp
@@ -109,7 +115,10 @@ export function applySplitLinked(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: n
   for (const sid of spanning) halvesOf.set(sid, splitSingleLayer(p, idGen, sid, atTUs, keep))
   // Link override keeps the original membership and leaves the fresh half free;
   // unsplit siblings must not bridge the cut back to that half.
-  if (link && !escapeLink) {
+  if (link && !escapeLink && linkMode === 'whole') {
+    for (const halves of halvesOf.values()) link.members.push(keep === 'left' ? halves.right : halves.left)
+    link.members.sort()
+  } else if (link && !escapeLink) {
     const left: Uuid[] = []
     const right: Uuid[] = []
     for (const member of link.members) {
