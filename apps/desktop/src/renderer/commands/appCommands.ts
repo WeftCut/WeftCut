@@ -96,6 +96,13 @@ export function projectHasLayers(): boolean {
   return (useProjectStore.getState().summary?.layer_count ?? 0) > 0;
 }
 
+/// Whether the editor may open a project now, through File › Open project or
+/// for a file the OS hands it (ADR 0181). A pack can be picked, so none may
+/// run; an open replaces the project as Close does, so the editor must be idle.
+export function openProjectAllowed(busy: boolean): boolean {
+  return !busy && usePackJobStore.getState().job === null;
+}
+
 /// Command ids with no catalogue action of their own. An action that HAS a
 /// binding must not be listed here — it already arrives through the HandlerMap
 /// above, and adding it doubles it in the palette. Exported as a value so
@@ -531,8 +538,7 @@ export function buildAppCommands(
     applyDefaultTransition: hasTransitionCut,
     // One pack or unpack at a time (main refuses a second).
     packProject: () => usePackJobStore.getState().job === null,
-    // A pack can be picked, and an open replaces the project as Close does.
-    openProject: () => !flags.busy && usePackJobStore.getState().job === null,
+    openProject: () => openProjectAllowed(flags.busy),
     // Until the first read lands, which of its two actions it is is unknown.
     projectTrust: () => useProjectTrust.getState().summary !== null,
   };

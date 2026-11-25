@@ -89,6 +89,7 @@ export const modelsRemoveCustom = (id: string): Promise<void> => invoke("models_
 import type { MotifManifest } from "../render/motifs/catalog";
 import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";
+import type { ProjectOpenOutcome } from "../../shared/project-events";
 export type { RecentEntry } from "../../shared/recents";
 import type { ReviewActivityView, ReviewActionArgs, ReviewActionResult, ReviewView, ReviewViewArgs, ReviewViewUnchanged } from "../../shared/review";
 export { REVIEW_CHANGED_EVENT } from "../../shared/review";
@@ -847,8 +848,12 @@ export async function projectSaveAs(path: string): Promise<void> {
   return invoke<void>("project_save_as", { path });
 }
 
-export async function projectOpen(path: string): Promise<void> {
-  return invoke<void>("project_open", { path });
+/// Opens the project folder `path` names (the folder or its project file).
+/// `keepIfOpen`: main leaves the project already open as it is when `path`
+/// is any spelling of it, and answers `already_open`; without it, that
+/// project is reloaded from disk.
+export async function projectOpen(path: string, keepIfOpen = false): Promise<ProjectOpenOutcome> {
+  return invoke<ProjectOpenOutcome>("project_open", keepIfOpen ? { path, keep_if_open: true } : { path });
 }
 
 /// Save the open project and tell the backend nothing is open any more, so an

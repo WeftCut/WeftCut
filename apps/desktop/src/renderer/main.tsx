@@ -11,6 +11,7 @@ import ReactDOM from "react-dom/client";
 import { PROJECT_OPENED_EVENT,type ProjectOpenedPayload } from "../shared/project-events";
 import { App } from "./App";
 import { PreviousSessionReport } from './app/DiagnosticReport';
+import { LaunchReleaseNotes } from './releaseNotes/ReleaseNotesDialog';
 import { initEval } from "./eval";
 import { useAppNoticeEvents } from "./notifications/appNotices";
 import { useFocusRegions } from "./focus/useFocusRegions";
@@ -26,6 +27,7 @@ import { wireAppSettingsStream } from './settings/appSettingsStore';
 import { applyLayoutTheme } from './settings/layoutTheme';
 import { SplashScreen } from "./startup/SplashScreen";
 import { StartupScreen } from "./startup/StartupScreen";
+import { fileOpenPending } from "./startup/fileOpenRequests";
 import {
 startRendererInitialization,
 type StartupProgress,
@@ -228,6 +230,12 @@ function Root() {
           } else if (!cancelled) setStage(current => current === "editor" ? current : "startup");
           return;
         }
+        // A file the app was opened on (ADR 0181) comes before the last
+        // project; the start screen takes it and opens it.
+        if (await fileOpenPending()) {
+          if (!cancelled) setStage(current => current === "editor" ? current : "startup");
+          return;
+        }
         const enabled = await recentsGetReopenOnLaunch();
         if (!enabled) {
           if (!cancelled) setStage(current => current === "editor" ? current : "startup");
@@ -357,6 +365,7 @@ function Root() {
         />
       )}
       {launchReady && !splashVisible && <PreviousSessionReport />}
+      {launchReady && !splashVisible && <LaunchReleaseNotes />}
       {(splashVisible || !launchReady) && (
         <SplashScreen
           ready={destinationReady}

@@ -115,4 +115,29 @@ describe("HelpMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: "Project Page" }));
     expect(open).toHaveBeenCalledWith(REPO_URL);
   });
+
+  it("opens this version's release notes from What's New", async () => {
+    const { versions, open } = stubApi();
+    versions.mockResolvedValue({ ...VERSIONS, app: "0.9.0" });
+    render(<HelpMenu />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Help/ }));
+    const item = await screen.findByText("What's New…");
+    await vi.waitFor(() => expect(item.closest("[aria-disabled='true'],[data-disabled]")).toBeNull());
+    fireEvent.click(item);
+    expect(await screen.findByRole("dialog", { name: "What's New in WeftCut 0.9.0" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Full Release Notes" }));
+    expect(open).toHaveBeenCalledWith(`${RELEASES_URL}/tag/v0.9.0`);
+    fireEvent.click(screen.getByRole("button", { name: "Got it" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("offers What's New only for a version that has release notes", async () => {
+    stubApi();
+    render(<HelpMenu />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Help/ }));
+    await vi.waitFor(() =>
+      expect(screen.getByText("What's New…").closest("[aria-disabled='true'],[data-disabled]")).not.toBeNull());
+  });
 });

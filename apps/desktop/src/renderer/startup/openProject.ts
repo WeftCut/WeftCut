@@ -1,19 +1,16 @@
 // Open project, on the start screen and in the File menu (ADR 0180): one file
 // picker for a project file or a pack. A project file opens its folder in
-// place; a pack is first unpacked into a new folder the user places.
+// place; a pack is first unpacked into a new folder the user places. A file
+// the OS hands the app (ADR 0181) takes the same path past the picker.
 
 import type { TFunction } from "i18next";
 import { open as openDialog } from "@/bridge/dialog";
-import { invoke } from "@/bridge/ipc";
 import { projectOpen } from "../ipc";
 import { notify, unpackProject } from "../pack/packJobs";
 import { describeOpenError } from "./openError";
-import { LEGACY_PROJECT_FILE, PACK_EXTENSION, PROJECT_EXTENSION, PROJECT_FILE } from "../../shared/projectFile";
+import { LEGACY_PROJECT_FILE, PACK_EXTENSION, PROJECT_EXTENSION } from "../../shared/projectFile";
 
-/// Asks for a project file or a pack and opens it. A project file opens in
-/// place and `opened` runs; an unpacked pack opens through main, which tells
-/// the window itself (`project:opened`). Answers what to show when it did not
-/// open, null when it opened or the user cancelled.
+/// Asks for a project file or a pack and opens it (`openProjectFile`).
 export async function openProject(t: TFunction, opened: () => void): Promise<string | null> {
   const picked = await openDialog({
     title: t("open_project.title"),
@@ -25,23 +22,29 @@ export async function openProject(t: TFunction, opened: () => void): Promise<str
     ],
   });
   if (typeof picked !== "string") return null;
-  if (picked.toLowerCase().endsWith(`.${PACK_EXTENSION}`)) return unpackProject(t, picked);
-  // The project already open stays as it is: an open of its own folder
-  // reloads it, which drops its undo history and checkpoints.
-  const open = (await invoke<{ dir: string } | null>("project_open_state"))?.dir;
-  if (open !== undefined && [`${open}/${PROJECT_FILE}`, `${open}\\${PROJECT_FILE}`].includes(picked)) return null;
+  return openProjectFile(t, picked, opened);
+}
+
+/// Opens a project file or a pack the user chose. A project file opens in
+/// place and `opened` runs, unless it is the project already open, which main
+/// leaves as it is; an unpacked pack opens through main, which tells the
+/// window itself (`project:opened`). Answers what to show when it did not
+/// open, null when it opened or the user cancelled.
+export async function openProjectFile(t: TFunction, file: string, opened: () => void): Promise<string | null> {
+  if (file.toLowerCase().endsWith(`.${PACK_EXTENSION}`)) return unpackProject(t, file);
   try {
-    await projectOpen(picked);
+    if ((await projectOpen(file, true)).already_open) return null;
   } catch (err) {
-    return describeOpenError(err, picked, t);
+    return describeOpenError(err, file, t);
   }
   opened();
   return null;
 }
 
-/// The same flow from the editor, its refusal as a notice. `replaced`
-/// remounts the editor on the project now open, as `project:opened` does.
-export async function openProjectFromEditor(t: TFunction, replaced: () => void): Promise<void> {
-  const problem = await openProject(t, replaced);
+/// The same flow from the editor, its refusal as a notice: through the picker,
+/// or for `file` the OS handed over. `replaced` remounts the editor on the
+/// project now open, as `project:opened` does.
+export async function openProjectFromEditor(t: TFunction, replaced: () => void, file?: string): Promise<void> {
+  const problem = await (file === undefined ? openProject(t, replaced) : openProjectFile(t, file, replaced));
   if (problem !== null) notify({ id: "open-project", outcome: "error", title: t("open_project.failed_title"), body: problem });
 }
