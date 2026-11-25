@@ -36,11 +36,19 @@ owning WebContents and main frame. Captures are never persisted.
 ## Motif documents
 
 A Motif is untrusted, user- or agent-authored web content that the app runs to
-capture frames ([motifs.md](motifs.md)). Two orthogonal axes bound it:
+capture frames ([motifs.md](motifs.md)). Three axes bound it:
 
 - **Process isolation.** The offscreen capture window (`main/motif/captureHost.ts`)
   is sandboxed, context-isolated, without Node and with **no preload**, so no
   IPC bridge exists. This bounds what a Motif can do to the host.
+- **A session of its own.** Capture windows run in the in-memory `motif-capture`
+  partition (`main/motif/captureSession.ts`), apart from the editor's session.
+  The browser process cancels every `http:`, `https:`, `ws:`, `wss:` and `file:`
+  request there and denies every permission, device, screen-capture request and
+  download. Only `motif:` has a handler in it. The webRequest listener runs
+  only for those schemes, though its presence sends every request of the
+  partition, a Motif's own `motif:` loads included, through Electron's request
+  proxy (a fraction of a millisecond each).
 - **Content confinement.** Every render document is served by the `motif:`
   scheme (`MOTIF_CSP` in `main/motif/protocol.ts`):
 
@@ -54,8 +62,10 @@ capture frames ([motifs.md](motifs.md)). Two orthogonal axes bound it:
   denied; the supplied Basis build disables dynamic execution rather than
   widening the grant.
 
-The sandbox does not restrict the network and the CSP does not stop a renderer
-exploit reaching the OS, so both axes are load-bearing.
+The CSP and the partition both refuse the network: the CSP in the page, the
+partition in the browser process, which a renderer that ignores its CSP cannot
+reach. Neither stops a renderer exploit chained with a sandbox escape reaching
+the OS; the OS sandbox and a current Electron are what stand there.
 
 **Trust decides whether a project Motif runs at all**
 ([ADR 0174](adr/0174-a-motif-runs-only-when-trusted-on-this-machine.md)).
@@ -104,7 +114,13 @@ virtualized ([motifs.md](motifs.md#security)).
 A Motif's **parameter page** has its own policy (`MOTIF_PARAMS_CSP`):
 `default-src 'none'; script-src 'unsafe-inline' motif:; style-src 'unsafe-inline' motif:; img-src data: motif:; font-src data: motif:`.
 No `connect-src`, so it cannot fetch anything, data/blob included. It uses
-`motif:` rather than `'self'` because its sandboxed origin is opaque.
+`motif:` rather than `'self'` because its sandboxed origin is opaque. The page
+is an iframe in the editor's window, in the default session, but in a renderer
+process of its own: site isolation puts `motif://<id>` apart from the editor's
+`file://` page, and Chromium isolates sandboxed iframes as well (both on by
+default; the app turns neither off). So the editor's preload bridge is not in
+its process; it reaches the editor only through the `postMessage` protocol
+`renderer/properties/motifParamsHost.ts` checks.
 
 `script-src 'unsafe-inline'` is deliberate: a Motif is untrusted code we run on
 purpose, so there is no trusted-vs-injected boundary for nonces or hashes to

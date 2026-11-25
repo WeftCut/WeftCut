@@ -1,4 +1,4 @@
-import { app, nativeImage } from 'electron'
+import { app, nativeImage, type Session } from 'electron'
 import type { MotifOsrFrame } from './offscreenFrames.js'
 import type { MotifMarkerReader, MotifTextureReader } from './native.js'
 import { CaptureQueue, type CaptureArgs, type CaptureOptions, type CaptureRun, type Rendered } from './captureQueue.js'
@@ -31,6 +31,8 @@ export interface MotifCapturerDeps {
   /// (`motif_register_runtime`); main injects it via
   /// addScriptToEvaluateOnNewDocument. Null until then.
   runtimeSource: () => string | null
+  /// Every host's session: the capture partition (./captureSession.ts).
+  session: Session
   /// The native marker reader, where it exists. Without it the hosts take
   /// bitmaps, which need no native reader.
   markerReader: Pick<MotifMarkerReader, 'read'> | null
@@ -62,6 +64,7 @@ export class MotifCapturer {
   private readonly tuning: CaptureTuning
   private readonly store: CaptureStore
   private readonly runtimeSource: () => string | null
+  private readonly session: Session
   private readonly markerReader: Pick<MotifMarkerReader, 'read'> | null
   private readonly textureReader: Pick<MotifTextureReader, 'read'> | null
 
@@ -102,6 +105,7 @@ export class MotifCapturer {
     this.tuning = deps.tuning
     this.store = deps.store
     this.runtimeSource = deps.runtimeSource
+    this.session = deps.session
     this.markerReader = deps.markerReader
     this.textureReader = deps.textureReader
     this.pool = new HostPool({
@@ -245,7 +249,7 @@ export class MotifCapturer {
     // the host exists releases it here.
     const started = performance.now()
     return CaptureHost.open(key, { width: a.width, height: a.height }, pin, {
-      runtime, markerReader: this.markerReader, tuning: this.tuning,
+      runtime, session: this.session, markerReader: this.markerReader, tuning: this.tuning,
       timed: (phase, run) => this.timed(phase, run),
       firstStep: ms => remember(this.firstStepMs, ms),
     }).then(host => { remember(this.buildMs, performance.now() - started); return host },

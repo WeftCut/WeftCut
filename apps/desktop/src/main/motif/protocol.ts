@@ -70,8 +70,11 @@ export const MOTIF_SCHEME_ENTRY = {
 ///
 /// With `standard:true`, `motif://countdown/index.html` parses with
 /// `hostname === 'countdown'` and `pathname === '/index.html'`.
-export function registerMotifProtocol(resolver: Pick<MotifResolver, 'readFile'>): void {
-  protocol.handle('motif', async (request) => {
+///
+/// One handler serves both sessions that load Motifs: the default one
+/// (`registerMotifProtocol`) and the capture hosts' own (./captureSession.ts).
+export function motifProtocolHandler(resolver: Pick<MotifResolver, 'readFile'>): MotifProtocolHandler {
+  return async (request) => {
     const url = new URL(request.url) // motif://<host>/<rest>
     const id = url.hostname
     let rest: string
@@ -112,5 +115,13 @@ export function registerMotifProtocol(resolver: Pick<MotifResolver, 'readFile'>)
         'Cache-Control': 'no-store',
       },
     })
-  })
+  }
+}
+
+export type MotifProtocolHandler = (request: Request) => Promise<Response>
+
+/// Serves `motif:` in the default session, where the editor frames a Motif's
+/// params page.
+export function registerMotifProtocol(handler: MotifProtocolHandler): void {
+  protocol.handle('motif', handler)
 }

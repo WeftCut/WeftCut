@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PNG } from 'pngjs'
+import type { Session } from 'electron'
 import { FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerBits, frameMarkerRows, frameWitnessBits } from '../../shared/motifs/frameMarker'
 import { MotifError } from '../../shared/motifs/errors'
 
@@ -16,7 +17,7 @@ let opened = 0
 let lastHost: EventEmitter | null = null
 /// The last window built, and whether the code under test destroyed it.
 /// `silent`: the window paints no more, like a host gone silent.
-let lastWindow: { destroyed: boolean; silent: boolean } | null = null
+let lastWindow: { destroyed: boolean; silent: boolean; session: unknown } | null = null
 /// Whether the last host built takes shared textures (else bitmaps).
 let lastHostTexture = false
 /// The last `__motifRender(tSec, props, meta)` expression sent to the host —
@@ -218,8 +219,11 @@ vi.mock('electron', () => {
         },
       },
     })
-    constructor(options: { width: number; height: number; webPreferences: { offscreen: unknown } }) {
+    /// The session the window was opened in.
+    session: unknown
+    constructor(options: { width: number; height: number; webPreferences: { offscreen: unknown; session?: unknown } }) {
       opened++
+      this.session = options.webPreferences.session
       this.size = contentSize = { width: options.width, height: options.height }
       this.texture = typeof options.webPreferences.offscreen === 'object'
       lastHostTexture = this.texture
@@ -249,6 +253,9 @@ const emptyStore: MotifCapturerDeps['store'] = {
   pin: () => ({ release: () => {} }),
 }
 
+/** Stands for the capture partition (captureSession.ts). */
+const CAPTURE_SESSION = { partition: 'motif-capture' } as unknown as Session
+
 /// A capturer of its own per test, with the runtime registered and the native
 /// marker reader present; `deps` replaces any of its seams.
 function newCapturer(deps: Partial<MotifCapturerDeps> = {}) {
@@ -256,6 +263,7 @@ function newCapturer(deps: Partial<MotifCapturerDeps> = {}) {
     tuning: MOTIF_TUNING_DEFAULTS,
     store: emptyStore,
     runtimeSource: () => '/* clock-takeover runtime */',
+    session: CAPTURE_SESSION,
     markerReader: { read: readMarker },
     textureReader: null,
     ...deps,
@@ -311,6 +319,11 @@ describe('MotifCapturer', () => {
     const before = opened
     await expect(capturer.capturePng(args, bg)).resolves.toBe('UE5H')
     expect(opened).toBe(before + 1)
+  })
+
+  it("opens every host in the capturer's session, never the editor's default", async () => {
+    await capturer.capturePng(args, bg)
+    expect(lastWindow?.session).toBe(CAPTURE_SESSION)
   })
 
   it('allows a 6s setup but bounds initialization and each frame independently', async () => {
