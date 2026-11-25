@@ -31,15 +31,48 @@ export function bundledReleaseNotes(): ReadonlyMap<string, string> {
   return NOTES_BY_VERSION;
 }
 
-/// The notes to open at launch, or null: the running version's own notes until
-/// the user has closed them once. Older versions' notes never show.
+export interface ReleaseNotes {
+  version: string;
+  markdown: string;
+}
+
+/// The notes that describe the running version: the newest notes at or below
+/// it. Only versions that change something carry notes, and an update lands
+/// on the latest patch, so 0.9.0's notes still describe 0.9.1.
+export function currentReleaseNotes(
+  appVersion: string,
+  notes: ReadonlyMap<string, string> = NOTES_BY_VERSION,
+): ReleaseNotes | null {
+  let best: ReleaseNotes | null = null;
+  for (const [version, markdown] of notes) {
+    if (compareVersions(version, appVersion) > 0) continue;
+    if (best === null || compareVersions(version, best.version) > 0) best = { version, markdown };
+  }
+  return best;
+}
+
+/// The notes to open at launch, or null once the user has closed them (or any
+/// newer ones).
 export function launchReleaseNotes(
   appVersion: string,
   seenVersion: string | undefined,
   notes: ReadonlyMap<string, string> = NOTES_BY_VERSION,
-): string | null {
-  if (seenVersion === appVersion) return null;
-  return notes.get(appVersion) ?? null;
+): ReleaseNotes | null {
+  const current = currentReleaseNotes(appVersion, notes);
+  if (current === null) return null;
+  if (seenVersion !== undefined && compareVersions(seenVersion, current.version) >= 0) return null;
+  return current;
+}
+
+/// Plain x.y.z versions (docs/releases.md); a missing part counts as 0.
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
 }
 
 // The notes also become the GitHub release body, so they are plain markdown;

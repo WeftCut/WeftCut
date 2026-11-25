@@ -6,7 +6,7 @@ import type { AppVersions } from "../../shared/ipc";
 import { AboutDialog } from "./AboutDialog";
 import { DiagnosticReport } from "./DiagnosticReport";
 import { UpdateDialog } from "./UpdateDialog";
-import { bundledReleaseNotes } from "../releaseNotes/releaseNotes";
+import { currentReleaseNotes } from "../releaseNotes/releaseNotes";
 import { ReleaseNotesDialog } from "../releaseNotes/ReleaseNotesDialog";
 
 /// The Help menu — the in-app update check (UpdateDialog), issue reporting
@@ -31,7 +31,7 @@ export function HelpMenu() {
       });
     return () => { alive = false; };
   }, []);
-  const notes = versions === null ? undefined : bundledReleaseNotes().get(versions.app);
+  const notes = versions === null ? null : currentReleaseNotes(versions.app);
   return (
     <>
       <Menu label={t("menu.help")}>
@@ -45,7 +45,7 @@ export function HelpMenu() {
         />
         <MenuItem
           label={t("help.whats_new")}
-          disabled={notes === undefined}
+          disabled={notes === null}
           onSelect={() => setNotesOpen(true)}
         />
         <MenuSeparator />
@@ -56,8 +56,8 @@ export function HelpMenu() {
       </Menu>
       {aboutOpen && <AboutDialog versions={versions} onClose={() => setAboutOpen(false)} />}
       {updatesOpen && <UpdateDialog onClose={() => setUpdatesOpen(false)} />}
-      {notesOpen && versions !== null && notes !== undefined && (
-        <ReleaseNotesDialog version={versions.app} markdown={notes} onClose={() => setNotesOpen(false)} />
+      {notesOpen && notes !== null && (
+        <ReleaseNotesDialog version={notes.version} markdown={notes.markdown} onClose={() => setNotesOpen(false)} />
       )}
       {reportOpen && <DiagnosticReport onClose={() => setReportOpen(false)} />}
     </>

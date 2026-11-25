@@ -41,7 +41,7 @@ export function ReleaseNotesDialog({ version, markdown, onClose }: ReleaseNotesD
 }
 
 /// Opens the running version's notes once after an update; closing them in
-/// any way records the version so the next launch stays quiet. Help → What's
+/// any way records their version so the next launch stays quiet. Help → What's
 /// New… reopens them. Dev and E2E builds never open it on their own.
 export function LaunchReleaseNotes() {
   const loaded = useAppSettingsLoaded();
@@ -59,15 +59,15 @@ export function LaunchReleaseNotes() {
   }, []);
 
   if (!loaded || appVersion === null || closed) return null;
-  const markdown = launchReleaseNotes(appVersion, seen);
-  if (markdown === null) return null;
+  const notes = launchReleaseNotes(appVersion, seen);
+  if (notes === null) return null;
   return (
     <ReleaseNotesDialog
-      version={appVersion}
-      markdown={markdown}
+      version={notes.version}
+      markdown={notes.markdown}
       onClose={() => {
         setClosed(true);
-        void setAppSettings({ release_notes_seen_version: appVersion })
+        void setAppSettings({ release_notes_seen_version: notes.version })
           .catch((error) => console.warn("[release-notes] seen", error));
       }}
     />

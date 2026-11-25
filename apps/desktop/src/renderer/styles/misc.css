@@ -259,7 +259,9 @@
   line-height: 1.5;
 }
 
-.release-notes h3 {
+/* Compound: misc.css loads before settings.css, whose .settings-panel h3
+   would otherwise win the tie. */
+.release-notes-dialog .release-notes h3 {
   font-size: var(--font-size-title);
   margin: calc(18 * var(--ui-px)) 0 calc(8 * var(--ui-px));
 }

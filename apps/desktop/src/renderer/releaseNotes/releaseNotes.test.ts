@@ -16,15 +16,27 @@ describe("bundled release notes", () => {
 
 describe("launchReleaseNotes", () => {
   const notes = new Map([["0.9.0", "notes 0.9"], ["0.8.1", "notes 0.8.1"]]);
+  const v090 = { version: "0.9.0", markdown: "notes 0.9" };
 
   it("opens the running version's notes until they are seen", () => {
-    expect(launchReleaseNotes("0.9.0", undefined, notes)).toBe("notes 0.9");
-    expect(launchReleaseNotes("0.9.0", "0.8.1", notes)).toBe("notes 0.9");
+    expect(launchReleaseNotes("0.9.0", undefined, notes)).toEqual(v090);
+    expect(launchReleaseNotes("0.9.0", "0.8.1", notes)).toEqual(v090);
     expect(launchReleaseNotes("0.9.0", "0.9.0", notes)).toBeNull();
   });
 
-  it("stays quiet for a version without notes, even when older notes are unseen", () => {
-    expect(launchReleaseNotes("0.9.1", "0.8.1", notes)).toBeNull();
+  it("opens the notes a patch release builds on when the update skipped them", () => {
+    expect(launchReleaseNotes("0.9.1", "0.8.1", notes)).toEqual(v090);
+    expect(launchReleaseNotes("0.9.1", "0.9.0", notes)).toBeNull();
+  });
+
+  it("never opens notes of a version above the running one", () => {
+    expect(launchReleaseNotes("0.8.5", undefined, notes)).toEqual({ version: "0.8.1", markdown: "notes 0.8.1" });
+    expect(launchReleaseNotes("0.7.0", undefined, notes)).toBeNull();
+  });
+
+  it("compares versions by number, not text", () => {
+    const tenth = new Map([["0.10.0", "ten"], ["0.9.0", "nine"]]);
+    expect(launchReleaseNotes("0.10.0", "0.9.0", tenth)).toEqual({ version: "0.10.0", markdown: "ten" });
   });
 });
 
