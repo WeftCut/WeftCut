@@ -6,8 +6,9 @@
 //
 // The run should be a GREEN push run of all three OSes: a red leg stops at its
 // `maxFailures`, and a scoped dispatch runs one OS on one `all` slice, so neither
-// measures what a leg costs. The script refuses a run whose timings reports are
-// missing an OS or whose parallel project reports a failure.
+// measures what a leg costs. The script refuses a run that is not a green push
+// run, and a run whose timings reports are missing an OS or whose parallel
+// project reports a failure.
 //
 // Per spec file, the cost is the SUM of its results' durations in the parallel
 // project (retries included — a leg pays for them), per OS, in whole seconds. A
@@ -150,6 +151,15 @@ export function extrasFromJobs(jobs) {
   return out
 }
 
+/// A push run is the only one whose legs run what every PR and push leg runs. A
+/// dispatch can turn on the native-decode gates (`decode_e2e`) or the @matrix
+/// tier, and the nightly runs both; their specs then cost minutes that an
+/// ordinary leg skips in seconds, and the pack starves the leg holding them.
+export function assertMeasurableRun(runId, run) {
+  if (run.event !== 'push') throw new Error(`run ${runId} is a ${run.event} run — pick a green push run on main`)
+  if (run.conclusion !== 'success') throw new Error(`run ${runId} concluded "${run.conclusion}" — pick a green run`)
+}
+
 const gh = (args, opts = {}) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], ...opts })
 
 function readReports(dir) {
@@ -175,7 +185,7 @@ async function main(argv) {
   if (!runId) throw new Error('usage: node scripts/e2e-timings-snapshot.mjs <run-id> [--repo owner/name]')
 
   const run = JSON.parse(gh(['run', 'view', runId, '-R', repo, '--json', 'headSha,conclusion,event,createdAt,jobs']))
-  if (run.conclusion !== 'success') throw new Error(`run ${runId} concluded "${run.conclusion}" — pick a green run`)
+  assertMeasurableRun(runId, run)
 
   const dir = mkdtempSync(path.join(os.tmpdir(), 'e2e-timings-'))
   try {

@@ -196,11 +196,13 @@ already says what it is has no title.
   is the button that toggles the console, so the target keeps its width
   whatever the message; the message only reads, its full text in the
   tooltip. While errors
-  arrived since the console was last open, a red count replaces the level dot
-  (`unseenErrors` in `logs/store.ts`); opening the console clears it, and
-  errors that land while it is open never count. It pulses once (1.5 s) when
-  it appears. The button's accessible name is the count, the message and
-  "Open the log".
+  arrived since the console was last open, the level dot grows into a red
+  count (`unseenErrors` in `logs/store.ts`; "99+" above 99); opening the
+  console clears it, and errors that land while it is open never count. Dot
+  and count share one slot, a one-digit count wide, so the time after it never
+  moves: the dot grows and turns red before the number fades in, and the
+  number fades out before it shrinks back. The button's accessible name is
+  the exact count, the message and "Open the log".
 - **Work pill** (`WorkPill`, model in `logs/workView.ts`): one pill for a
   background export (Preview during export), a pack or unpack (ADR 0178),
   clip-compute jobs (ADR 0121), agent calls, derivative jobs and font copies

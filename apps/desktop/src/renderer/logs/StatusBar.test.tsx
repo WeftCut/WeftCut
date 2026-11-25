@@ -5,7 +5,7 @@ import "../i18n";
 import type { LogEntry, LogLevel } from "../ipc";
 import type { AppNotice } from "../../shared/ipc";
 import type { Change } from "../../shared/review";
-import { StatusBar } from "./StatusBar";
+import { StatusBar, UNSEEN_ERRORS_SHOWN_MAX } from "./StatusBar";
 import { useLogStore } from "./store";
 import { receiveSaveStatus, useSaveStatusStore } from "../state/saveStatusStore";
 import { resetAppNoticesForTests, useAppNoticesStore } from "../notifications/appNotices";
@@ -90,22 +90,41 @@ describe("log line", () => {
     expect(source.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("swaps the level dot for a count of errors the log has not shown, and drops it once the log opens", async () => {
+  it("turns the level dot into a count of errors the log has not shown, in the same slot, and back once the log opens", async () => {
     const { logLine, errors } = renderBar();
     await act(async () => {});
+    const indicator = () => within(logLine()).getByTestId("status-bar-indicator");
     log(entry("warn", "Proxy slow"));
-    expect(errors()).toBeNull();
-    expect(logLine().querySelector(".status-bar-level-dot.level-warn")).not.toBeNull();
+    const slot = indicator();
+    expect(slot.dataset.state).toBe("dot");
+    expect(slot.dataset.level).toBe("warn");
+    expect(errors()!.textContent).toBe("");
 
     log(entry("error", "Export failed"));
     log(entry("error", "Decode failed"));
+    // One element throughout: the line after it never gains or loses a child.
+    expect(indicator()).toBe(slot);
+    expect(slot.dataset.state).toBe("count");
     expect(errors()!.textContent).toBe("2");
-    expect(logLine().querySelector(".status-bar-level-dot")).toBeNull();
     expect(logLine().getAttribute("aria-label")).toBe("2 new errors — Decode failed — Open the log");
 
     act(() => useLogStore.getState().setConsoleOpen(true));
-    expect(errors()).toBeNull();
-    expect(logLine().querySelector(".status-bar-level-dot.level-error")).not.toBeNull();
+    expect(indicator()).toBe(slot);
+    expect(slot.dataset.state).toBe("dot");
+    expect(slot.dataset.level).toBe("error");
+    // The number stays in place while it fades out.
+    expect(errors()!.textContent).toBe("2");
+  });
+
+  it("caps the shown count, the accessible name keeping the exact number", async () => {
+    const { logLine, errors } = renderBar();
+    await act(async () => {});
+    const over = UNSEEN_ERRORS_SHOWN_MAX + 1;
+    act(() => {
+      for (let i = 0; i < over; i++) useLogStore.getState().append(entry("error", `Decode failed ${i}`));
+    });
+    expect(errors()!.textContent).toBe(`${UNSEEN_ERRORS_SHOWN_MAX}+`);
+    expect(logLine().getAttribute("aria-label")).toMatch(new RegExp(`^${over} new errors — `));
   });
 
   it("announces each error with the count the line now shows, and not lower levels", async () => {
