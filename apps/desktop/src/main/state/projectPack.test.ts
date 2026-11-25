@@ -47,7 +47,7 @@ function rig(opts: { schema?: number; packSchema?: number; targetNames?: string[
     settle: async () => { log.push('settle'); return { dir: '/home/u/Example', name: 'Example Project', motifIds: ['title-card'] } },
     list: async (dir, ids) => {
       log.push(`list ${dir} ${ids.join(',')}`)
-      return [{ path: parseProjectPath('project.json'), size: 10 }, { path: parseProjectPath('Media/clip.mp4'), size: 90 }]
+      return [{ path: parseProjectPath('project.wcpr'), size: 10 }, { path: parseProjectPath('Media/clip.mp4'), size: 90 }]
     },
     readFile: () => projectJson(opts.schema ?? SCHEMA_VERSION - 1),
     freeBytes: async () => opts.free ?? Number.MAX_SAFE_INTEGER,
@@ -82,29 +82,29 @@ const refusal = async (p: Promise<unknown>) => {
 describe('pack', () => {
   it('flushes what Save As flushes before it lists the files, and packs exactly that list', async () => {
     const { packer, log, calls, runs, atNative } = rig()
-    const done = packer.pack('/home/u/out/Example.weftcut')
+    const done = packer.pack('/home/u/out/Example.wcpk')
     await atNative()
     expect(log).toEqual(['imports settled', 'settle', 'list /home/u/Example title-card', 'project_pack'])
     expect(calls[0]!.args).toEqual({
-      jobId: 'job-1', folder: '/home/u/Example', archive: '/home/u/out/Example.weftcut',
-      files: ['project.json', 'Media/clip.mp4'], appVersion: '1.2.3', schemaVersion: SCHEMA_VERSION - 1,
+      jobId: 'job-1', folder: '/home/u/Example', archive: '/home/u/out/Example.wcpk',
+      files: ['project.wcpr', 'Media/clip.mp4'], appVersion: '1.2.3', schemaVersion: SCHEMA_VERSION - 1,
     })
     runs[0]!.resolve(JSON.stringify({ files: 2 }))
-    await expect(done).resolves.toEqual({ outcome: 'done', archive: '/home/u/out/Example.weftcut', files: 2 })
+    await expect(done).resolves.toEqual({ outcome: 'done', archive: '/home/u/out/Example.wcpk', files: 2 })
   })
 
   it('gives a chosen name without the pack extension the extension', async () => {
     const { packer, calls, runs, atNative } = rig()
     const done = packer.pack('/home/u/out/Example')
     await atNative()
-    expect(calls[0]!.args.archive).toBe('/home/u/out/Example.weftcut')
+    expect(calls[0]!.args.archive).toBe('/home/u/out/Example.wcpk')
     runs[0]!.resolve(JSON.stringify({ files: 2 }))
-    await expect(done).resolves.toMatchObject({ archive: '/home/u/out/Example.weftcut' })
+    await expect(done).resolves.toMatchObject({ archive: '/home/u/out/Example.wcpk' })
   })
 
-  it('records the schema version project.json declares on disk, which the unpacking app opens', async () => {
+  it('records the schema version project.wcpr declares on disk, which the unpacking app opens', async () => {
     const { packer, calls, runs, atNative } = rig({ schema: 4 })
-    const done = packer.pack('/home/u/out/Example.weftcut')
+    const done = packer.pack('/home/u/out/Example.wcpk')
     await atNative()
     expect(calls[0]!.args.schemaVersion).toBe(4)
     runs[0]!.resolve(JSON.stringify({ files: 2 }))
@@ -113,7 +113,7 @@ describe('pack', () => {
 
   it('cancels through the job registry, answers cancelled, and clears the pill', async () => {
     const { packer, log, progress, atNative } = rig()
-    const done = packer.pack('/home/u/out/Example.weftcut')
+    const done = packer.pack('/home/u/out/Example.wcpk')
     await atNative()
     expect(packer.cancel()).toBe(true)
     await expect(done).resolves.toEqual({ outcome: 'cancelled' })
@@ -127,7 +127,7 @@ describe('pack', () => {
     const held = new Promise<void>(r => { release = r })
     const settle = async () => { await held; return { dir: '/home/u/Example', name: 'Example', motifIds: [] } }
     const packer = createProjectPacker({ ...rigged.deps, settle })
-    const done = packer.pack('/home/u/out/Example.weftcut')
+    const done = packer.pack('/home/u/out/Example.wcpk')
     expect(packer.cancel()).toBe(true)
     release()
     await expect(done).resolves.toEqual({ outcome: 'cancelled' })
@@ -139,7 +139,7 @@ describe('pack', () => {
     let land!: () => void
     const landed = new Promise<void>(r => { land = r })
     const packer = createProjectPacker({ ...rigged.deps, importsSettled: async () => { await landed; rigged.log.push('imports settled') } })
-    const done = packer.pack('/home/u/out/Example.weftcut')
+    const done = packer.pack('/home/u/out/Example.wcpk')
     for (let turn = 0; turn < 50; turn++) await Promise.resolve()
     expect(rigged.log).toEqual([])
     land()
@@ -155,7 +155,7 @@ describe('pack', () => {
       signal.addEventListener('abort', () => reject(signal.reason), { once: true })
     })
     const packer = createProjectPacker({ ...rigged.deps, importsSettled })
-    const done = packer.pack('/home/u/out/Example.weftcut')
+    const done = packer.pack('/home/u/out/Example.wcpk')
     expect(packer.cancel()).toBe(true)
     await expect(done).resolves.toEqual({ outcome: 'cancelled' })
     expect(rigged.log).toEqual([])
@@ -166,13 +166,13 @@ describe('pack', () => {
     const rigged = rig()
     const settle = async () => ({ dir: '/home/u/Other', name: 'Other', motifIds: [] })
     const packer = createProjectPacker({ ...rigged.deps, settle })
-    await expect(packer.pack('/home/u/out/Example.weftcut')).resolves.toEqual({ outcome: 'cancelled' })
+    await expect(packer.pack('/home/u/out/Example.wcpk')).resolves.toEqual({ outcome: 'cancelled' })
     expect(rigged.calls.map(c => c.cmd)).not.toContain('project_pack')
   })
 
   it('sends a cancel the registry did not take again with the next progress', async () => {
     const { packer, log, atNative, register } = rig({ lateRegistration: true })
-    const done = packer.pack('/home/u/out/Example.weftcut')
+    const done = packer.pack('/home/u/out/Example.wcpk')
     await atNative()
     packer.cancel()
     expect(log.filter(l => l.startsWith('cancel'))).toEqual(['cancel job-1'])
@@ -184,21 +184,21 @@ describe('pack', () => {
 
   it('runs one pack or unpack at a time', async () => {
     const { packer, runs, atNative } = rig()
-    const first = packer.pack('/home/u/out/Example.weftcut')
+    const first = packer.pack('/home/u/out/Example.wcpk')
     await atNative()
-    expect(await refusal(packer.pack('/home/u/out/Other.weftcut'))).toEqual({ refusal: 'PackBusy' })
-    expect(await refusal(packer.unpack('/home/u/in/Other.weftcut', '/home/u/Projects'))).toEqual({ refusal: 'PackBusy' })
+    expect(await refusal(packer.pack('/home/u/out/Other.wcpk'))).toEqual({ refusal: 'PackBusy' })
+    expect(await refusal(packer.unpack('/home/u/in/Other.wcpk', '/home/u/Projects'))).toEqual({ refusal: 'PackBusy' })
     runs[0]!.resolve(JSON.stringify({ files: 2 }))
     await first
   })
 
   it('shows the bytes of its own run, under the pack file\'s name', async () => {
     const { packer, progress, runs, atNative } = rig()
-    const done = packer.pack('/home/u/out/Example.weftcut')
+    const done = packer.pack('/home/u/out/Example.wcpk')
     await atNative()
     packer.nativeProgress({ jobId: 'another-job', done: 1, total: 2 })
     packer.nativeProgress({ jobId: 'job-1', done: 40, total: 100 })
-    expect(progress.at(-1)).toEqual({ job_id: 'job-1', kind: 'pack', file: 'Example.weftcut', done: 40, total: 100, cancelling: false })
+    expect(progress.at(-1)).toEqual({ job_id: 'job-1', kind: 'pack', file: 'Example.wcpk', done: 40, total: 100, cancelling: false })
     expect(progress.filter(p => p !== null && p.job_id !== 'job-1')).toEqual([])
     runs[0]!.resolve(JSON.stringify({ files: 2 }))
     await done
@@ -208,12 +208,12 @@ describe('pack', () => {
   it('plans the same files it packs, named for the project', async () => {
     const { packer } = rig()
     // `current` names the project "Example: Project": a colon no OS file name takes everywhere.
-    await expect(packer.plan()).resolves.toEqual({ files: 2, bytes: 100, file_name: 'Example_ Project.weftcut' })
+    await expect(packer.plan()).resolves.toEqual({ files: 2, bytes: 100, file_name: 'Example_ Project.wcpk' })
   })
 })
 
 describe('unpack', () => {
-  const archive = '/home/u/in/Example Project.weftcut'
+  const archive = '/home/u/in/Example Project.wcpk'
 
   it('unpacks into a new folder named for the pack, writes its .gitignore, then opens it', async () => {
     const { packer, log, calls, runs, atNative } = rig()

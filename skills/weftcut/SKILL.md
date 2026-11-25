@@ -27,7 +27,7 @@ WeftCut is a desktop video editor; the user watches the same project live, and e
 5. For a batch (rough cut, pause pass, captions): ask the user, then `begin_agent_session` (it checkpoints and locks the user's undo; `lock: false` opts out) and `end_agent_session` when done, on failure too.
 6. Others may edit concurrently; when a commit fails for that, re-read and reapply.
 7. Export: `start_export`; `get_export_status { wait_s }` for the completed output_path.
-8. Edit the project open in the app; never create one unless asked. With none open, `open_project` or `create_project` the one the user named, else ask. A folder with project.json is a project; if not the open one (`project.dir` in `project://session`), ask. Only tools change its files, TASTE.md and Motifs/ aside.
+8. Edit the project open in the app; never create one unless asked. With none open, `open_project` or `create_project` the one the user named, else ask. A folder with project.wcpr is a project; if not the open one (`project.dir` in `project://session`), ask. Only tools change its files, TASTE.md and Motifs/ aside.
 
 ## Session etiquette
 
@@ -49,12 +49,12 @@ The ten lines above are the etiquette; this is what they leave out.
 
 ## Working in the project folder
 
-When your working directory is a project folder (it holds `project.json`),
+When your working directory is a project folder (it holds `project.wcpr`),
 it is the project the user means. Compare it with `project.dir` in
 `project://session`; if the app has another project open, ask before
 `open_project`.
 
-- `project.json` is the app's to write; it autosaves over any edit of yours.
+- `project.wcpr` is the app's to write; it autosaves over any edit of yours.
   Read the project through its resources or `read_project`.
 - `Media/` holds the project's media. Never rename, move or overwrite a file
   there: the pool would lose it. New media goes in under a new name, through

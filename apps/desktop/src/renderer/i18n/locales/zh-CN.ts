@@ -387,9 +387,7 @@ const zhCN: Resources = {
     subtitle: "选择要打开的项目，或新建一个。",
     new_project: "新建项目",
     open_project: "打开项目…",
-    open_packed_project: "打开打包的项目…",
     unpacking: "正在解包 {{file}}",
-    open_dialog_title: "打开 WeftCut 项目文件夹",
     recent_heading: "最近",
     recent_loading: "加载中…",
     recent_empty: "暂无最近项目。",
@@ -399,7 +397,7 @@ const zhCN: Resources = {
     recent_open_failed: "无法打开项目：{{detail}}",
     recents_load_failed: "无法读取最近项目列表：{{detail}}",
     not_project_folder:
-      "此文件夹不是 WeftCut 项目。请选择由 WeftCut 创建的文件夹，或新建项目。",
+      "这不是 WeftCut 项目：所在文件夹里没有 project.wcpr。请另选一个，或新建项目。",
     project_folder_missing:
       "找不到此项目的文件夹——它可能已被移动、重命名或删除，已自动从最近列表中移除。",
     // 只陈述版本不一致，不建议"升级 WeftCut"——最常触发它的其实是本仓库另一个
@@ -407,8 +405,8 @@ const zhCN: Resources = {
     project_schema_too_new:
       "此项目由另一个 WeftCut 构建写入（项目格式 v{{found}}），当前构建读取 v{{supported}}。",
     project_schema_unreadable:
-      "此文件夹中的 project.json 未声明当前构建可识别的项目格式版本，无法打开。",
-    project_file_unreadable: "无法读取此项目的 project.json：{{detail}}",
+      "此项目文件未声明当前构建可识别的项目格式版本，无法打开。",
+    project_file_unreadable: "无法读取项目文件：{{detail}}",
     project_invalid: "此项目的内容未通过校验，文件可能已损坏或被手工修改过。",
     time_just_now: "刚刚",
     // Chinese has no plural forms; both _one and _other collapse.
@@ -969,8 +967,8 @@ const zhCN: Resources = {
     check_portability_hint: "列出项目文件夹未包含的内容。",
     pack_project: "打包项目…",
     pack_project_hint: "把项目放进一个文件，便于移动或分享。",
-    open_packed_project: "打开打包的项目…",
-    open_packed_project_hint: "把项目文件解包到新文件夹并打开。",
+    open_project: "打开项目…",
+    open_project_hint: "打开项目文件，或把打包文件解包到新文件夹后打开。",
     // 带省略号，因为这一行打开的是一个界面而不是提交任何改动：接下来是审阅，
     // 应用是面板里的另一次按下。
     review_shots: "查看镜头…",
@@ -2728,6 +2726,12 @@ const zhCN: Resources = {
       untrusted: "未在此设备上信任",
     },
   },
+  open_project: {
+    title: "打开 WeftCut 项目",
+    filter: "WeftCut 项目或打包文件",
+    legacy_filter: "WeftCut 0.8 项目（{{file}}）",
+    failed_title: "无法打开项目",
+  },
   pack: {
     title: "打包项目",
     size_one: "{{count}} 个文件 · {{size}}",
@@ -2740,9 +2744,7 @@ const zhCN: Resources = {
     bytes: "{{done}} / {{total}}",
     done_title: "项目已打包",
     failed_title: "打包失败",
-    open_title: "打开打包的项目",
     parent_title: "选择“{{folder}}”的存放位置",
-    unpack_failed_title: "无法打开打包的项目",
     busy: "已有打包或解包正在进行。",
     no_project: "没有打开的项目。",
     not_a_pack: "该文件不是 WeftCut 打包文件：{{detail}}",
@@ -2912,7 +2914,7 @@ const zhCN: Resources = {
     fonts_copied_more: "已将 {{names, list(style: narrow)}} 及另外 {{more}} 个字体族复制到 Fonts/。分享项目文件夹前请确认字体许可。",
     font_recopied: "Fonts/ 中缺少 {{name}}，已重新复制。如不想让字体随项目复制，请在 设置 › 项目 › 字体 中排除。",
     fonts_missing: "此电脑未安装 {{name}}，有 {{layers}} 个片段改用其他字体绘制。",
-    save_failing: "保存失败：无法写入 project.json",
+    save_failing: "保存失败：无法写入 project.wcpr",
     save_recovered: "项目已重新保存",
     level_filter: "严重程度筛选",
     level_all: "全部",

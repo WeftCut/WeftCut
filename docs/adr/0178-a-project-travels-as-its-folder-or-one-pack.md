@@ -47,14 +47,14 @@ plays elsewhere. Two gaps remained:
   `output/` and `project.pre-v*.json`. The same list makes the `.gitignore` a
   new project, a Save As target or an unpacked folder gets when it has none.
   A user's own `.gitignore` is kept and copied as content.
-- **A pack is one `.weftcut` file**, written and read in Rust
+- **A pack is one `.wcpk` file**, written and read in Rust
   (`commands/project_pack.rs`):
   - It is a ZIP. Every entry is stored, not recompressed, with ZIP64 for an
     entry of 4 GiB or more.
   - The first entry is a manifest listing every file with its size and exact
     modification time. The time goes back on unpack, so the project opens
     without hashing its media again. ZIP's own time has a 2 s resolution.
-  - A ZIP, not a tar, because an open reads the manifest and `project.json`
+  - A ZIP, not a tar, because an open reads the manifest and the project file
     without walking the archive, and refuses a newer schema before writing
     anything. OS file managers can also look inside.
 - **A pack waits for imports.** A file still being copied into `Media/` is
@@ -70,7 +70,7 @@ plays elsewhere. Two gaps remained:
   target and renamed. An unpack fills a dot-named sibling folder and renames
   it, into a new or empty folder only. A cancel or failure removes what the
   run wrote.
-- **Opening a pack** goes through the start screen or the File menu. The
+- **Opening a pack** is Open project picking a `.wcpk` (ADR 0180). The
   user picks the parent folder, and the unpacked folder opens through the
   ordinary open path. The pack dialog embeds the portability check and
   carries one licence line for the fonts it holds.
@@ -82,6 +82,6 @@ plays elsewhere. Two gaps remained:
   (ADR 0175), and the Motifs it holds must be trusted on the new machine.
 - Undo history and Motif revision backups (`Backups/`) do not travel; the
   unpacked project starts a new history.
-- Double-clicking a `.weftcut` file does not open it yet. File association
+- Double-clicking a `.wcpk` file does not open it yet. File association
   needs installer and `open-file` work on three OSes, and is a separate
   change.

@@ -34,7 +34,7 @@ const view = (input: { jobs?: ComputeJob[]; activities?: AgentActivity[]; deriva
     fontCopies: input.fontCopies ?? null, pack: input.pack ?? null, now: input.now ?? T0,
   });
 
-const packing: PackJobProgress = { job_id: "pack-1", kind: "pack", file: "Example.weftcut", done: 0, total: 0, cancelling: false };
+const packing: PackJobProgress = { job_id: "pack-1", kind: "pack", file: "Example.wcpk", done: 0, total: 0, cancelling: false };
 
 describe("workView", () => {
   it("is empty with nothing running", () => {

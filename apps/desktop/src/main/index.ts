@@ -31,7 +31,7 @@ import electronUpdater from 'electron-updater'
 import { createUpdates, macSelfUpdateBlocked } from './updates.js'
 import { createUpdateResume } from './updateResume.js'
 import { mediaMimeForExt } from './mediaMime.js'
-import { nodeAtomicWriteIo, writeFileAtomic } from './atomicWrite.js'
+import { nodeAtomicWriteIo, renameWithRetry, writeFileAtomic } from './atomicWrite.js'
 import { VLM_ENDPOINT_KEY_TAG, type VlmDescribeSettings } from '../shared/vlm-config.js'
 import { PLAYHEAD_READ_EVENT, PLAYHEAD_REPORT } from '../shared/editorPlayhead.js'
 import { stdioEntry } from '../shared/agentHosts.js'
@@ -920,7 +920,7 @@ app.whenReady().then(async () => {
   await initEval()
 
   // Node fs adapter — satisfies both OrchestratorFs and AutosaveFs. Their
-  // `writeFile` replaces project.json whole, so it is the atomic write.
+  // `writeFile` replaces the project file whole, so it is the atomic write.
   const nodeFs = {
     exists: (p: string) => fs.existsSync(p),
     readFile: (p: string) => fs.readFileSync(p, 'utf8'),
@@ -929,6 +929,7 @@ app.whenReady().then(async () => {
     copyFile: (s: string, d: string) => fs.copyFileSync(s, d),
     readdir: (d: string) => fs.readdirSync(d) as string[],
     rm: (p: string) => { fs.rmSync(p, { force: true }) },
+    rename: (from: string, to: string) => renameWithRetry(nodeAtomicWriteIo, from, to),
   }
 
   // A regular file's size and whole-second mtime, null when none is there.

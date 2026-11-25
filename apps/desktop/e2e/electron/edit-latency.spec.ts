@@ -28,7 +28,7 @@ test('post-drag timing correlates all phases on a dense synthetic timeline', asy
       canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 } })
     await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 62_000_000 })
     await invokeCmd(page, 'project_save')
-    const fixture = JSON.parse(fs.readFileSync(path.join(parent, 'seed', 'project.json'), 'utf8'))
+    const fixture = JSON.parse(fs.readFileSync(path.join(parent, 'seed', 'project.wcpr'), 'utf8'))
     const root = fixture.compositions[fixture.root_id]
     const track = root.tracks.find((t: any) => t.layers.length > 0)
     const prototype = track.layers[0]
@@ -40,7 +40,7 @@ test('post-drag timing correlates all phases on a dense synthetic timeline', asy
       color: { r: 230, g: 160, b: 40, a: 255 } }))
     const denseDir = path.join(parent, 'dense')
     fs.mkdirSync(denseDir)
-    fs.writeFileSync(path.join(denseDir, 'project.json'), JSON.stringify(fixture))
+    fs.writeFileSync(path.join(denseDir, 'project.wcpr'), JSON.stringify(fixture))
     await invokeCmd(page, 'project_open', { path: denseDir })
     await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
     const marker = page.locator(`[data-testid="timeline-marker"][data-marker-id="${root.markers[0].id}"]`)

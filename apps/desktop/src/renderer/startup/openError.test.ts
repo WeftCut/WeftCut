@@ -120,7 +120,7 @@ describe("describeOpenError", () => {
     ).toBe('startup.project_schema_too_new {"found":7,"supported":1}');
   });
 
-  it("maps an unversioned project.json to its own message", () => {
+  it("maps an unversioned project file to its own message", () => {
     expect(open(new WorkspaceFailure({ error: "ProjectSchemaUnreadable" }))).toBe(
       "startup.project_schema_unreadable",
     );

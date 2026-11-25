@@ -47,7 +47,7 @@ it did not, for causes in this repo:
   the only places a project path meets a path library; `fromNative` is the only
   way back and refuses rather than rewrites. A conformance test fails on any
   other `join` of a `path_rel`.
-- **`project.json` holds no absolute path for a file inside the folder.** The
+- **`project.wcpr` holds no absolute path for a file inside the folder.** The
   disk form (`projectFile.ts`) keeps `path_rel`, keeps `path_abs` only for
   external media (`path_rel` null), drops the derivative paths and writes the
   decode route as its tag alone. `serializeProject` stays the runtime wire to

@@ -590,7 +590,7 @@ approval, and each new revision is an edit in the undo history. A project render
 ADR 0173, [motif-workspaces.md](docs/motif-workspaces.md).
 _Avoid_: Motif draft, working copy, linked directory, local Motif
 
-**Motif table**: The `motifs` map in `project.json`: for each project Motif id, its lineage, the
+**Motif table**: The `motifs` map in `project.wcpr`: for each project Motif id, its lineage, the
 revision the project last recorded for its folder, and the library version it was copied from.
 Recorded state; a Motif layer must name an entry.
 _Avoid_: Motif manifest (the package's own), catalog (what `list_motifs` answers)
@@ -954,11 +954,17 @@ project can pin it. Never prescribes order.
 _Avoid_: theme (layout theme), template, preset, brand
 
 **Project folder**:
-The folder holding `project.json`; may be an agent's working directory.
+The folder holding `project.wcpr`; may be an agent's working directory.
 `Media/` holds pooled files, `Motifs/` the project Motifs, `Fonts/` the
 project fonts, `Styles/` the style `TASTE.md` extends; `Cache/` is derived,
 `TASTE.md` is hand-edited. Relative tool paths resolve against it. See ADR 0152.
 _Avoid_: project directory
+
+**Project file**:
+`project.wcpr` in the project folder: the project's state, written by
+autosave, and what Open project picks. An open takes the file or its folder
+alike; a 0.8 folder's `project.json` is renamed to it on open. See ADR 0180.
+_Avoid_: project.json (0.8 and earlier), entry file, manifest
 
 **Machine-local**:
 What a project folder keeps for this machine alone and a copy leaves behind:
@@ -967,9 +973,9 @@ files. Everything Save As copies is the project's content.
 _Avoid_: temp files, junk
 
 **Pack**:
-One `.weftcut` file holding a project's content (what Save As copies), made by
-File > Pack project and opened into a new folder from the start screen or the
-File menu. Machine-local entries stay out. See ADR 0178.
+One `.wcpk` file holding a project's content (what Save As copies), made by
+File > Pack project and opened into a new folder by Open project. Machine-local
+entries stay out. See ADR 0178.
 _Avoid_: export (that renders video), archive, bundle
 
 **Portability check**:
@@ -979,7 +985,7 @@ copy to play the same elsewhere (File > Check portability,
 _Avoid_: dependency scan, collect files
 
 **Project path**:
-Where a file sits inside the project folder, as `project.json` records it:
+Where a file sits inside the project folder, as `project.wcpr` records it:
 `/`-separated, relative, every segment a name each OS accepts
 (`Media/sub/clip.mp4`). Only `toNative` turns one into an OS path. See ADR 0175.
 _Avoid_: relative path, workspace path

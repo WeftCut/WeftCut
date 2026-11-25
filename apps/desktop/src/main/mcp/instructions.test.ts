@@ -38,10 +38,10 @@ describe('initialize instructions', () => {
     // A long pre-release tag, so the budget holds for any version string.
     const sent = mcpInstructions('10.20.30-beta.12')
     expect(sent.split('\n').length).toBeLessThanOrEqual(10)
-    // 1400 → 1550: line 8 says a working directory holding project.json is a
+    // 1400 → 1550: line 8 says a working directory holding project.wcpr is a
     // project whose files change only through tools (ADR 0152). Every client
     // reads this, with or without the skill, and an agent working in the
-    // folder would otherwise edit project.json beside the app's autosave.
+    // folder would otherwise edit project.wcpr beside the app's autosave.
     expect(sent.length).toBeLessThanOrEqual(1550)
     for (const l of sent.split('\n')) expect(l.trim()).toBe(l)
   })

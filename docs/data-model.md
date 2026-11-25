@@ -179,7 +179,7 @@ content end, and switching it off calls `fit_composition_to_layers`.
 `path_rel` is a project path (ADR 0175): `/`-separated and relative, every
 segment a name Windows, macOS and Linux accept (`src/shared/projectPath.ts`,
 Rust `state/project_path.rs`), e.g. `Media/sub/clip.mp4`. It is authoritative.
-`project.json` holds no absolute path for a file inside the folder: the disk
+`project.wcpr` holds no absolute path for a file inside the folder: the disk
 form (`state/projectFile.ts`) keeps `path_abs` only for external media
 (`path_rel === null`, an import copy still pending) and drops the derivative
 paths and the route's readiness slots. On load `mediaAtFolder` sets `path_abs =
@@ -572,7 +572,7 @@ sharing), capped at 200 entries, plus named checkpoints and an optional lock.
 
 - Undo/redo move the cursor and broadcast the snapshot there.
 - Checkpoints are in-memory snapshots that survive stack eviction; they are not
-  written to `project.json`. Restoring one records a new entry, which drops redo.
+  written to `project.wcpr`. Restoring one records a new entry, which drops redo.
 - While a work session holds the lock, undo / redo / jump / restore are refused
   to everyone but that session's connection.
 - **Unrecorded mutation classes** patch every snapshot and checkpoint in place
@@ -687,7 +687,7 @@ The workspace folder **is** the project; originals are copied in on import.
 
 ```
 <workspace>/
-├── project.json        canonical state; autosaved, replaced atomically (see Saving)
+├── project.wcpr        canonical state; autosaved, replaced atomically (see Saving)
 ├── project.pre-v{n}.json  pre-upgrade bytes (see Versioning)
 ├── view.json           UI view state for this project
 ├── .gitignore          written where a new project or a Save As target has
@@ -695,7 +695,7 @@ The workspace folder **is** the project; originals are copied in on import.
 │                       user's own is kept and copied as content
 ├── Media/              imported originals (workspace owns the bytes), any
 │                       subfolders; Voiceover/ holds synthesized speech
-├── Motifs/<id>/        the Motifs the project renders, named in project.json's
+├── Motifs/<id>/        the Motifs the project renders, named in project.wcpr's
 │                       motifs table; edited in place (see motifs.md)
 ├── Fonts/              every face of the families the project draws, one
 │                       face per file, copied automatically (ADR 0176);
@@ -711,7 +711,7 @@ The workspace folder **is** the project; originals are copied in on import.
 │                       copy is in Media/Voiceover/), inline-subs (reserved),
 │                       fonts.json (faces once seen in Fonts/, so a re-copy
 │                       is told apart from a first copy)
-├── Backups/            project.json copy every 50 commits or 5 min; newest 20 kept;
+├── Backups/            project.wcpr copy every 50 commits or 5 min; newest 20 kept;
 │                       motifs/: every Motif revision the table records, for undo
 ├── Logs/               this project's status log (status-log.md)
 └── output/             default export destination
@@ -757,12 +757,12 @@ folder while the outgoing project is still in memory. Before the swap, pending
 copies into `Fonts/` finish (the work pill shows them); a copy is written as a
 `.part` file and renamed, so one cut short leaves no partial font.
 
-Every write of `project.json` (autosave, Save As, New, the pre-upgrade copy)
-writes `project.json.tmp` beside it, flushes it to disk, renames it over the
+Every write of `project.wcpr` (autosave, Save As, New, the pre-upgrade copy)
+writes `project.wcpr.tmp` beside it, flushes it to disk, renames it over the
 target and flushes the folder entry (`main/atomicWrite.ts`, except on Windows),
 so an interrupted or failed write leaves the previous file whole. A failed autosave keeps the edits unsaved and retries
 within the interval; an explicit save reports the failure to its caller. A
-leftover `project.json.tmp` from a crash is harmless and is replaced by the next
+leftover `project.wcpr.tmp` from a crash is harmless and is replaced by the next
 write.
 
 When saving keeps failing, the user is told. The project counts as **failing to save**
@@ -771,7 +771,7 @@ write failed; the interval's own deadline always attempts a write, so the state
 is judged at each failed attempt and a failure a later cycle fixes in time shows
 nothing. Main owns the state (`autosave.ts` decides, `ts-actor-host.ts` pushes
 `project:save-status` and answers the `project_save_status` pull, both typed in
-`shared/save-status.ts`). The next successful write of `project.json` clears it,
+`shared/save-status.ts`). The next successful write of `project.wcpr` clears it,
 and so does another project replacing this one (switch, close, new, Save As). The
 status bar then shows a **Save failed** pill whose popover names the reason (disk
 full, no permission, file in use, folder missing, read-only drive, else the
@@ -786,7 +786,7 @@ content first (`state/projectContent.ts`: `Media/`, `Fonts/`, `Styles/`,
 pending font copies have finished, cloning each file where the
 filesystem can, else hard-linking a media file on one volume, else copying, and keeping
 modification times; `Cache/`, `Backups/` and logs stay behind, so the copy
-rebuilds its proxies. `project.json` is written last. The log gets one `Warn`
+rebuilds its proxies. `project.wcpr` is written last. The log gets one `Warn`
 row when the state turns and one `Info` row when a write succeeds again.
 
 Quitting runs the final save before anything shuts down. If it fails with edits
@@ -806,7 +806,7 @@ not waited for; its `.part` file is deleted and the copy redone at the next open
 
 ### `view.json`: how this project was last looked at
 
-Kept out of `project.json` so zooming never dirties the document, pushes undo or
+Kept out of `project.wcpr` so zooming never dirties the document, pushes undo or
 reaches MCP. One definition, `src/shared/view-state.ts`, shared by main (owns the
 file) and the renderer (owns the live copy). `composition_tabs` is an **intent**:
 the Panels that exist are that list intersected with the summary's compositions,
@@ -874,7 +874,7 @@ after relaunch — copy mode only, explicit confirm, never `userData` itself.
 
 ## Versioning
 
-`project.json` carries `schema_version`. `SCHEMA_VERSION` (`state/model.ts`,
+`project.wcpr` carries `schema_version`. `SCHEMA_VERSION` (`state/model.ts`,
 currently **8**) is the only home of the number; Rust round-trips the field and
 never gates on it.
 
@@ -889,11 +889,17 @@ The load path is a **version-keyed upgrade chain** ([ADR 0047](adr/0047-project-
 
 Upgrading happens in memory. Before the workspace is replaced, the exact input
 bytes are preserved and verified in `project.pre-v{n}.json` beside
-`project.json` (not in `Backups/`, whose snapshots are post-write and gc'd); an
+`project.wcpr` (not in `Backups/`, whose snapshots are post-write and gc'd); an
 identical backup is reused, a differing one kept and a numbered
 `project.pre-v{n}.{k}.json` created. Failing to preserve it aborts the open.
 These backups are never cleaned up. Saving writes the current schema; restoring
 the backup with an older build is the only downgrade.
+
+A folder from WeftCut 0.8 or earlier holds `project.json` instead. An open
+reads it and, once the project validates, renames it to `project.wcpr`
+([ADR 0180](adr/0180-a-project-opens-by-its-project-file.md)); a failed rename
+refuses the open. When both files are there, `project.wcpr` is read and
+`project.json` is left alone.
 
 | Kind of change | Where it goes |
 |---|---|

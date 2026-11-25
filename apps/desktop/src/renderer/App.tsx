@@ -142,7 +142,7 @@ import {
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
 import { PortabilityDialog } from "./portability/PortabilityDialog";
 import { PackDialog } from "./pack/PackDialog";
-import { openPackedProjectFromEditor } from "./pack/packJobs";
+import { openProjectFromEditor } from "./startup/openProject";
 import { TranscriptionInputDialog } from "./speech/TranscriptionInputDialog";
 import { setTool } from "./state/toolStore";
 import { resetPreviewView } from "./state/previewViewStore";
@@ -194,9 +194,12 @@ interface AppProps {
   /// `main.tsx`. Used by Dev menu › Motif cold start, whose reopen outlives
   /// this editor.
   onWorkspaceReady: () => void;
+  /// File → Open project opened another project in place: the editor
+  /// remounts on it, as an agent's open does (`main.tsx`).
+  onProjectReplaced: () => void;
 }
 
-export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
+export function App({ onCloseProject, onWorkspaceReady, onProjectReplaced }: AppProps) {
   const { t } = useTranslation();
   const summary = useProjectSummary();
   // The timeline the panels, the shortcuts and the Insert menu act on. Export
@@ -1146,7 +1149,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         openVoiceoverDialog: openVoiceoverPrompt,
         checkPortability: () => setPortabilityOpen(true),
         packProject: () => setPackOpen(true),
-        openPackedProject: () => void openPackedProjectFromEditor(t),
+        openProject: () => void openProjectFromEditor(t, onProjectReplaced),
       },
       {
         busy,

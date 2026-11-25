@@ -1,14 +1,15 @@
 // apps/desktop/src/main/state/projectPack.ts
 //
-// Pack project and Open packed project (ADR 0178): the one run at a time,
+// Pack project and unpack (ADR 0178): the one run at a time,
 // its progress for the work pill, and its cancel. Which files a pack holds is
 // `packFiles` (projectContent.ts); the archive bytes are the native
 // `project_pack*` commands (native/src/commands/project_pack.rs).
-import { PROJECT_FILE, schemaGate } from './persistence'
+import { schemaGate } from './persistence'
 import { PACK_TOP_LEVEL, type PackEntry } from './projectContent'
 import { WorkspaceFailure } from '../../shared/workspaceErrors'
 import { portableFileName } from '../../shared/projectPath'
-import { PACK_EXTENSION, PackFailure, type PackInspection, type PackJobProgress, type PackOutcome, type PackPlan } from '../../shared/projectPack'
+import { PackFailure, type PackInspection, type PackJobProgress, type PackOutcome, type PackPlan } from '../../shared/projectPack'
+import { PACK_EXTENSION, PROJECT_FILE } from '../../shared/projectFile'
 
 /** The backend calls a run makes. */
 export interface PackNative {
@@ -29,7 +30,7 @@ export interface ProjectPackDeps {
    *  copy in Media/ or failed; rejects with the signal's reason when `signal`
    *  aborts first. */
   importsSettled(signal: AbortSignal): Promise<void>
-  /** Writes what Save As writes before it copies (project.json, the font
+  /** Writes what Save As writes before it copies (project.wcpr, the font
    *  copies, the style TASTE.md extends), then answers the project as it
    *  stands; null with none open. */
   settle(): Promise<PackSource | null>
@@ -59,7 +60,7 @@ const CANCELLED = 'cancelled'
 const isCancelled = (error: unknown): boolean =>
   (error instanceof Error ? error.message : String(error)).trim().endsWith(CANCELLED)
 
-/** The schema version the project.json `text` declares; the open's own
+/** The schema version the project.wcpr `text` declares; the open's own
  *  refusal (WorkspaceFailure) for text it cannot read or a version newer
  *  than this app. */
 function schemaOf(text: string): number {
@@ -139,7 +140,7 @@ export function createProjectPacker(deps: ProjectPackDeps): ProjectPacker {
     }
   }
 
-  /** The pack's manifest and project.json, refusing what this app cannot
+  /** The pack's manifest and project.wcpr, refusing what this app cannot
    *  open before anything is written. */
   async function read(archive: string) {
     let seen: { manifest: { files: unknown[] }; project_json: string; total_bytes: number }

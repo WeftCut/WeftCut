@@ -14,6 +14,7 @@ import type { TsActorHost } from '../state/ts-actor-host.js'
 import { mcpDef, type McpErrorCode } from '../state/mcp-commands.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { isWorkspaceFailure, type WorkspaceError } from '../../shared/workspaceErrors.js'
+import { PACK_EXTENSION, PROJECT_FILE } from '../../shared/projectFile.js'
 import { toolErrorResult } from './toolResult.js'
 
 export const PROJECT_TOOLS: ReadonlySet<string> = new Set(['open_project', 'create_project'])
@@ -29,6 +30,13 @@ export async function runProjectTool(
   }
   if (name === 'open_project') {
     const dir = p.path as string
+    if (dir.toLowerCase().endsWith(`.${PACK_EXTENSION}`)) {
+      return toolErrorResult({
+        code: 'invalid_params',
+        message: `${dir} is a WeftCut pack, not a project: unpacking it makes a new project folder, which only the user can place. Ask them to open it from WeftCut's Open project. Nothing was changed.`,
+        data: { error: 'PackNotProject' },
+      })
+    }
     try { return toolRecord(await host.projects.open(dir)) as unknown as ServerResult }
     catch (e) { return refusal(e, dir) }
   }
@@ -82,11 +90,11 @@ function refusal(e: unknown, dir: string): ServerResult {
 export function workspaceProblem(err: WorkspaceError, dir: string): string {
   switch (err.error) {
     case 'ProjectFolderMissing': return `${dir} does not exist. read_project { view: "session" } lists recent_projects; otherwise ask the user where the project is.`
-    case 'NotProjectFolder': return `${dir} is not a WeftCut project folder (it holds no project.json). Pass the folder that holds project.json, or create_project for a new one.`
-    case 'ProjectSchemaUnreadable': return `${dir}/project.json is not a project file this WeftCut recognises (no schema_version).`
+    case 'NotProjectFolder': return `${dir} is not a WeftCut project folder (it holds no ${PROJECT_FILE}). Pass the folder that holds ${PROJECT_FILE}, or that file, or create_project for a new one.`
+    case 'ProjectSchemaUnreadable': return `${dir}'s project file is not one this WeftCut recognises (no schema_version).`
     case 'ProjectSchemaTooNew': return `${dir} was saved by a newer WeftCut (schema ${err.found}; this build reads up to ${err.supported}). Opening it here could drop what the newer version wrote; the user needs a WeftCut that reads schema ${err.found}.`
-    case 'ProjectFileUnreadable': return `${dir}/project.json could not be read: ${err.detail}`
-    case 'ProjectInvalid': return `${dir}/project.json loaded but failed validation: ${err.detail}`
+    case 'ProjectFileUnreadable': return `${dir}'s project file could not be read: ${err.detail}`
+    case 'ProjectInvalid': return `${dir}'s project file loaded but failed validation: ${err.detail}`
     case 'ProjectFolderExists': return `${dir} already exists and is never overwritten. Pick another name, or open_project it if it is a WeftCut project.`
     case 'ProjectNameRequired': return 'name is required.'
     case 'InvalidCanvasPreset': return 'width, height and fps must all be non-zero.'

@@ -104,7 +104,7 @@ tempfile = "3"
 tar = "0.4"
 # Packed projects (ADR 0178, `commands::project_pack`): a ZIP of stored
 # entries, ZIP64 for files of 4 GiB and more; random access lets an open read
-# the manifest and project.json before writing anything. Already in the graph
+# the manifest and project.wcpr before writing anything. Already in the graph
 # through ffmpeg-sidecar. `filetime` gives each unpacked file its packed
 # modification time back, so the project opens without re-hashing media.
 zip = { version = "9.1.3", default-features = false }

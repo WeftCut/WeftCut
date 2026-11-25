@@ -72,7 +72,7 @@ summary read as text without running anything; its channels are renderer-only
 and no MCP tool can trust. Trust guards against code arriving in a folder, not
 against a local agent writing code: edits made while a project is open, from a
 trusted revision, are trusted. Everything a received project folder holds is
-its sender's, `project.json`'s Motif table and `Backups/motifs/` included, so
+its sender's, `project.wcpr`'s Motif table and `Backups/motifs/` included, so
 trust is earned only from positive evidence: an edit is judged from the
 revision this session itself last observed in the folder, never from the one
 the table records, and reads apply that rule alone; a folder whose name was

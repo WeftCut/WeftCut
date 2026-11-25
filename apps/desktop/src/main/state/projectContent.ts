@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/projectContent.ts
 //
-// The files a project folder holds beside project.json, and how they travel
+// The files a project folder holds beside project.wcpr, and how they travel
 // inside or between folders: Save As copies them to the new folder, a pack
 // lists the same files (ADR 0178), and the open carries out the file moves and
 // copies a schema upgrade planned.
@@ -19,7 +19,7 @@ import { MEDIA, isPortableSegment, parseProjectPath, projectPathOf, type Project
 import { STYLES_DIR, TASTE_FILE } from '../taste/packages'
 import { FONTS_DIR } from '../fonts/projectFonts'
 import { PROJECT_MOTIFS_DIR } from '../motif/projectStore'
-import { PROJECT_FILE } from './persistence'
+import { PROJECT_FILE } from '../../shared/projectFile'
 import type { FilePlan } from './migrate'
 import { toNative, type PathPlatform } from './projectPathNative'
 
@@ -36,7 +36,7 @@ export const PROJECT_CONTENT: readonly ProjectPath[] = [
   parseProjectPath('export.json'), parseProjectPath('view.json'), GITIGNORE,
 ]
 
-/** The top-level names a pack may hold: project.json, the project content
+/** The top-level names a pack may hold: project.wcpr, the project content
  *  and `Motifs/`. An unpack refuses an archive entry under any other name. */
 export const PACK_TOP_LEVEL: readonly string[] = [PROJECT_FILE, ...PROJECT_CONTENT, PROJECT_MOTIFS_DIR]
 
@@ -199,11 +199,11 @@ async function listEntry(fs: Pick<ProjectContentFs, 'lstat' | 'readdir'>, src: s
   }
 }
 
-/** What a pack of the project folder `dir` holds: project.json first, then
+/** What a pack of the project folder `dir` holds: project.wcpr first, then
  *  every file Save As copies into a new folder — the project content
  *  (`PROJECT_CONTENT`) and `Motifs/<id>/` for each id of the project's Motif
  *  table (motif/projectCopy.ts). Never `Backups/` or another machine-local
- *  entry. project.json leads because autosave may rewrite it while the pack
+ *  entry. project.wcpr leads because autosave may rewrite it while the pack
  *  runs, and the pack fails on a file whose size changed before it was read.
  *
  *  `pooled` is the media pool's project paths: a file under `Media/` the pool

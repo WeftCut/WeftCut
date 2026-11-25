@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { WorkspaceFailure } from '../../../shared/workspaceErrors'
-import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type OrchestratorDeps, type OrchestratorFs, type WorkspaceNapi } from '../workspace-orchestrator'
+import { openProject, projectFolderOf, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type OrchestratorDeps, type OrchestratorFs, type WorkspaceNapi } from '../workspace-orchestrator'
 import { CommandFailure } from '../errors'
-import { serializeProjectToJson, PROJECT_FILE } from '../persistence'
+import { serializeProjectToJson } from '../persistence'
+import { LEGACY_PROJECT_FILE, PROJECT_FILE } from '../../../shared/projectFile'
 import { DEFAULT_GITIGNORE } from '../projectContent'
 import { canonicalize } from '../canonical'
 import { serializeProject, type GridRepair } from '../serialize'
@@ -28,6 +29,7 @@ function memFs(seed: Record<string, string> = {}): OrchestratorFs & { files: Map
     writeFile: (p, t) => { files.set(p, t) },
     mkdirp: (d) => { dirs.add(d) },
     rm: vi.fn((p) => { files.delete(p) }),
+    rename: (a, b) => { const t = files.get(a); if (t === undefined) throw new Error(`ENOENT ${a}`); files.delete(a); files.set(b, t) },
   }
 }
 
@@ -56,7 +58,7 @@ describe('openProject', () => {
     await expect(openProject(d, '/ws')).rejects.toThrow(new WorkspaceFailure({ error: 'ProjectFolderMissing' }))
   })
 
-  it('refuses NotProjectFolder when project.json is absent', async () => {
+  it('refuses NotProjectFolder when project.wcpr is absent', async () => {
     const d = deps({ fs: memFs() }); (d.fs as any).dirs.add('/ws')
     await expect(openProject(d, '/ws')).rejects.toThrow(new WorkspaceFailure({ error: 'NotProjectFolder' }))
   })
@@ -76,7 +78,7 @@ describe('openProject', () => {
     expect(d.actor.replaceState).not.toHaveBeenCalled()
   })
 
-  it('refuses ProjectFileUnreadable on a corrupt project.json, keeping the parser prose as detail', async () => {
+  it('refuses ProjectFileUnreadable on a corrupt project.wcpr, keeping the parser prose as detail', async () => {
     const fs = memFs({ [`/ws/${PROJECT_FILE}`]: '{not json' }); fs.dirs.add('/ws')
     // Only the code is asserted: the prose is V8's, and pinning it here would
     // make an engine bump a test failure.
@@ -89,6 +91,40 @@ describe('openProject', () => {
     await openProject(d, '/ws')
     expect(d.calls).toEqual(['commit:/ws', 'replaceState', 'recent:/ws:Demo'])
     expect(d.actor.replaceState).toHaveBeenCalledOnce()
+  })
+
+  describe('a folder from 0.8, holding project.json', () => {
+    const legacy = `/ws/${LEGACY_PROJECT_FILE}`
+    const current = `/ws/${PROJECT_FILE}`
+
+    it('opens, its file renamed to the project file before the workspace is committed', async () => {
+      const fs = memFs({ [legacy]: projectJson }); fs.dirs.add('/ws')
+      const d = deps({ fs })
+      const rename = fs.rename
+      fs.rename = (a, b) => { d.calls.push(`rename:${a}->${b}`); rename(a, b) }
+      await openProject(d, '/ws')
+      expect(d.calls).toEqual([`rename:${legacy}->${current}`, 'commit:/ws', 'replaceState', 'recent:/ws:Demo'])
+      expect(fs.files.get(current)).toBe(projectJson)
+      expect(fs.files.has(legacy)).toBe(false)
+    })
+
+    it('is left alone when the folder also holds the project file, which is the one read', async () => {
+      const other = serializeProjectToJson(blankProject(seededGen(), 'Older'))
+      const fs = memFs({ [current]: projectJson, [legacy]: other }); fs.dirs.add('/ws')
+      const d = deps({ fs })
+      await openProject(d, '/ws')
+      expect(d.calls).toContain('recent:/ws:Demo')
+      expect(fs.files.get(legacy)).toBe(other)
+    })
+
+    it('refuses the open and swaps nothing when the rename fails', async () => {
+      const fs = memFs({ [legacy]: projectJson }); fs.dirs.add('/ws')
+      fs.rename = () => { throw new Error('EACCES') }
+      const d = deps({ fs })
+      await expect(openProject(d, '/ws')).rejects.toMatchObject({ err: { error: 'ProjectFileUnreadable' } })
+      expect(d.calls).toEqual([])
+      expect(fs.files.get(legacy)).toBe(projectJson)
+    })
   })
 
   it('does not push recent and propagates the error when replaceState throws', async () => {
@@ -239,8 +275,24 @@ describe('openProject', () => {
   })
 })
 
+describe('projectFolderOf', () => {
+  it('names the same folder for a project folder and the project file in it', () => {
+    expect(projectFolderOf(`/home/u/Film/${PROJECT_FILE}`, 'linux')).toBe('/home/u/Film')
+    expect(projectFolderOf('/home/u/Film', 'linux')).toBe('/home/u/Film')
+    expect(projectFolderOf(`C:\\Users\\u\\Film\\${PROJECT_FILE}`, 'win32')).toBe('C:\\Users\\u\\Film')
+  })
+
+  it("takes a 0.8 folder's project.json as its project file", () => {
+    expect(projectFolderOf(`/home/u/Film/${LEGACY_PROJECT_FILE}`, 'darwin')).toBe('/home/u/Film')
+  })
+
+  it('leaves any other path as the folder to open, which the open then refuses', () => {
+    expect(projectFolderOf('/home/u/Film/notes.json', 'linux')).toBe('/home/u/Film/notes.json')
+  })
+})
+
 describe('saveProjectAs', () => {
-  it('snapshots, writes project.json under the dir, commits workspace, pushes recent', async () => {
+  it('snapshots, writes project.wcpr under the dir, commits workspace, pushes recent', async () => {
     const d = deps()
     await saveProjectAs(d, '/out')
     expect((d.fs as any).dirs.has('/out')).toBe(true)
@@ -255,7 +307,7 @@ describe('saveProjectAs', () => {
     return { ...project, motifs: { 'lower-third': entry, 'title-card': entry } }
   }
 
-  it('copies every Motif folder the table names from the open project before writing project.json', async () => {
+  it('copies every Motif folder the table names from the open project before writing project.wcpr', async () => {
     const order: string[] = []
     const fs = memFs()
     const writeFile = fs.writeFile
@@ -266,7 +318,7 @@ describe('saveProjectAs', () => {
     expect(order).toEqual(['copy:/ws->/out:lower-third,title-card', 'write:/out/.gitignore', `write:/out/${PROJECT_FILE}`])
   })
 
-  it('fails without writing project.json when a Motif folder cannot be copied', async () => {
+  it('fails without writing project.wcpr when a Motif folder cannot be copied', async () => {
     const fs = memFs()
     const copyMotifs = vi.fn(() => { throw new Error('EACCES') })
     const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
@@ -350,7 +402,7 @@ function atomicMemFs(io: MemAtomicIo): OrchestratorFs & { files: Map<string, str
   }
 }
 
-describe('project.json writes go through the atomic replacement', () => {
+describe('project.wcpr writes go through the atomic replacement', () => {
   const args = { parentFolder: '/parent', name: 'Fresh', width: 1280, height: 720, fpsNum: 24, fpsDen: 1 }
 
   it.each(['write', 'fsync', 'rename'] as const)(

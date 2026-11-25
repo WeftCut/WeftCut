@@ -57,10 +57,10 @@ async function writeFastAutosaveProject(page: Page): Promise<FastAutosaveProject
   const parent = tmpDir('weftcut-save-failure-quit-')
   await newProject(page, { parentFolder: parent, name: 'seed', canvas: CANVAS })
   await invokeCmd(page, 'project_save')
-  const seed = JSON.parse(fs.readFileSync(path.join(parent, 'seed', 'project.json'), 'utf8'))
+  const seed = JSON.parse(fs.readFileSync(path.join(parent, 'seed', 'project.wcpr'), 'utf8'))
   seed.settings.autosave_interval_secs = AUTOSAVE_INTERVAL_MIN_SECS
   const dir = path.join(parent, 'fast-autosave')
-  const projectFile = path.join(dir, 'project.json')
+  const projectFile = path.join(dir, 'project.wcpr')
   fs.mkdirSync(dir)
   fs.writeFileSync(projectFile, JSON.stringify(seed))
   return { dir, projectFile, blocker: projectFile + ATOMIC_TEMP_SUFFIX }
@@ -229,7 +229,7 @@ test('a quit that cannot save asks first: Cancel keeps the app editing, Retry on
   }
 })
 
-test('Quit Without Saving quits and leaves the last good project.json untouched', async () => {
+test('Quit Without Saving quits and leaves the last good project.wcpr untouched', async () => {
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
   const record = test.info().outputPath('quit-dialog.jsonl')

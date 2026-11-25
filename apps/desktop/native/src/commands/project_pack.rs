@@ -1,4 +1,4 @@
-//! Packed projects (ADR 0178): one `.weftcut` file holding a project folder's
+//! Packed projects (ADR 0178): one `.wcpk` file holding a project folder's
 //! content, and the way back to a folder. Main decides which files go in
 //! (`src/main/state/projectContent.ts`) and what an archive may hold; this
 //! module writes and reads the bytes. A pack is a ZIP whose entries are all
@@ -25,9 +25,11 @@ use crate::state::project_path::{fold_case, ProjectRelPath};
 
 /// The archive entry that lists every file and the exact time to give it back.
 pub const MANIFEST_ENTRY: &str = "weftcut-pack.json";
+/// The project file an inspect reads; `PROJECT_FILE` in `src/shared/projectFile.ts`.
+pub const PROJECT_FILE: &str = "project.wcpr";
 /// Bump when a reader of an older format could misread a newer pack.
 pub const PACK_FORMAT: u32 = 1;
-/// The largest manifest or project.json an archive may hold: both are read
+/// The largest manifest or project.wcpr an archive may hold: both are read
 /// whole before anything is written.
 const MAX_TEXT_ENTRY: u64 = 64 * 1024 * 1024;
 /// Bounds an archive this module did not write before it is walked.
@@ -355,7 +357,7 @@ fn read_text<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result<
     Ok(text)
 }
 
-/// Reads the manifest and project.json of the pack `archive` and checks that
+/// Reads the manifest and project.wcpr of the pack `archive` and checks that
 /// its entries are exactly the files the manifest lists, each a project path
 /// under one of `allowed_top` and at the size the manifest gives. Writes
 /// nothing.
@@ -424,7 +426,7 @@ fn validate<R: Read + Seek>(
     if seen != expected.len() {
         return Err(failed("the pack lacks files its manifest lists"));
     }
-    let project_json = read_text(zip, "project.json")?;
+    let project_json = read_text(zip, PROJECT_FILE)?;
     Ok((manifest, project_json))
 }
 
@@ -507,7 +509,7 @@ mod tests {
 
     fn top() -> Vec<String> {
         [
-            "project.json",
+            "project.wcpr",
             "Media",
             "Motifs",
             "Fonts",
@@ -537,11 +539,11 @@ mod tests {
         .unwrap();
     }
 
-    /// A small project: project.json, a clip in a subfolder, a Motif.
+    /// A small project: project.wcpr, a clip in a subfolder, a Motif.
     fn project(root: &Path) -> Vec<ProjectRelPath> {
         put(
             root,
-            "project.json",
+            "project.wcpr",
             b"{\"schema_version\":7}",
             1_700_000_000_123,
         );
@@ -559,7 +561,7 @@ mod tests {
             1_650_000_000_000,
         );
         vec![
-            p("project.json"),
+            p("project.wcpr"),
             p("Media/sub/clip.mp4"),
             p("Motifs/title/index.html"),
         ]
@@ -574,7 +576,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let files = project(&src);
-        let out = dir.path().join("demo.weftcut");
+        let out = dir.path().join("demo.wcpk");
         let (cancel, progress) = quiet();
         let run = Run {
             cancel: &cancel,
@@ -612,7 +614,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let files = project(&src);
-        let out = dir.path().join("demo.weftcut");
+        let out = dir.path().join("demo.wcpk");
         let (cancel, progress) = quiet();
         let run = Run {
             cancel: &cancel,
@@ -642,7 +644,7 @@ mod tests {
         let progress = |p: PackProgress| seen.lock().unwrap().push(p);
         pack(
             &src,
-            &dir.path().join("a.weftcut"),
+            &dir.path().join("a.wcpk"),
             &files,
             "1.0.0",
             7,
@@ -665,7 +667,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let files = project(&src);
-        let out = dir.path().join("demo.weftcut");
+        let out = dir.path().join("demo.wcpk");
         let cancel = AtomicBool::new(false);
         let progress = |p: PackProgress| {
             if p.done > 0 {
@@ -698,7 +700,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let files = project(&src);
-        let out = dir.path().join("demo.weftcut");
+        let out = dir.path().join("demo.wcpk");
         let (cancel, progress) = quiet();
         pack(
             &src,
@@ -738,7 +740,7 @@ mod tests {
             .map(|e| e.file_name().into_string().unwrap())
             .collect();
         names.sort();
-        assert_eq!(names, vec!["demo.weftcut", "src"]);
+        assert_eq!(names, vec!["demo.wcpk", "src"]);
     }
 
     #[test]
@@ -746,7 +748,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let files = project(&src);
-        let out = dir.path().join("demo.weftcut");
+        let out = dir.path().join("demo.wcpk");
         let (cancel, progress) = quiet();
         let run = Run {
             cancel: &cancel,
@@ -764,7 +766,7 @@ mod tests {
         fs::create_dir(&empty).unwrap();
         unpack(&out, &empty, &top(), &run).unwrap();
         assert!(
-            empty.join("project.json").is_file(),
+            empty.join("project.wcpr").is_file(),
             "an empty folder is taken"
         );
     }
@@ -796,7 +798,7 @@ mod tests {
 
     fn refused(listed: &[(&str, u64)], entries: &[(&str, &[u8])], link: Option<&str>) {
         let dir = tempfile::tempdir().unwrap();
-        let archive = dir.path().join("bad.weftcut");
+        let archive = dir.path().join("bad.wcpk");
         handmade(&archive, listed, entries, link);
         let (cancel, progress) = quiet();
         let dst = dir.path().join("dst");
@@ -825,26 +827,26 @@ mod tests {
         let pj: &[u8] = b"{}";
         // A path that leaves the folder, through `..` or as an absolute path.
         refused(
-            &[("project.json", 2), ("../evil", 1)],
-            &[("project.json", pj), ("../evil", b"x")],
+            &[("project.wcpr", 2), ("../evil", 1)],
+            &[("project.wcpr", pj), ("../evil", b"x")],
             None,
         );
         refused(
-            &[("project.json", 2)],
-            &[("project.json", pj), ("/etc/evil", b"x")],
+            &[("project.wcpr", 2)],
+            &[("project.wcpr", pj), ("/etc/evil", b"x")],
             None,
         );
         // A file outside the project content.
         refused(
-            &[("project.json", 2), ("Cache/x", 1)],
-            &[("project.json", pj), ("Cache/x", b"x")],
+            &[("project.wcpr", 2), ("Cache/x", 1)],
+            &[("project.wcpr", pj), ("Cache/x", b"x")],
             None,
         );
         // Two names one case-insensitive volume holds as one.
         refused(
-            &[("project.json", 2), ("Media/a.mp4", 1), ("Media/A.mp4", 1)],
+            &[("project.wcpr", 2), ("Media/a.mp4", 1), ("Media/A.mp4", 1)],
             &[
-                ("project.json", pj),
+                ("project.wcpr", pj),
                 ("Media/a.mp4", b"x"),
                 ("Media/A.mp4", b"y"),
             ],
@@ -852,28 +854,28 @@ mod tests {
         );
         // An entry the manifest does not list, or a size it does not give.
         refused(
-            &[("project.json", 2)],
-            &[("project.json", pj), ("Media/extra.mp4", b"x")],
+            &[("project.wcpr", 2)],
+            &[("project.wcpr", pj), ("Media/extra.mp4", b"x")],
             None,
         );
         refused(
-            &[("project.json", 2), ("Media/a.mp4", 5)],
-            &[("project.json", pj), ("Media/a.mp4", b"x")],
+            &[("project.wcpr", 2), ("Media/a.mp4", 5)],
+            &[("project.wcpr", pj), ("Media/a.mp4", b"x")],
             None,
         );
         // A listed file the archive lacks.
         refused(
-            &[("project.json", 2), ("Media/a.mp4", 1)],
-            &[("project.json", pj)],
+            &[("project.wcpr", 2), ("Media/a.mp4", 1)],
+            &[("project.wcpr", pj)],
             None,
         );
         // A link, even one the manifest lists at its target's length.
         refused(
-            &[("project.json", 2), ("Media/link", 11)],
-            &[("project.json", pj)],
+            &[("project.wcpr", 2), ("Media/link", 11)],
+            &[("project.wcpr", pj)],
             Some("Media/link"),
         );
-        // No project.json.
+        // No project.wcpr.
         refused(&[("Media/a.mp4", 1)], &[("Media/a.mp4", b"x")], None);
     }
 
@@ -882,7 +884,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let files = project(&src);
-        let out = dir.path().join("demo.weftcut");
+        let out = dir.path().join("demo.wcpk");
         let (cancel, progress) = quiet();
         pack(
             &src,
@@ -913,7 +915,7 @@ mod tests {
     fn a_pack_refuses_two_files_one_volume_would_merge() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
-        put(&src, "project.json", b"{}", 0);
+        put(&src, "project.wcpr", b"{}", 0);
         put(&src, "Media/a.mp4", b"x", 0);
         let (cancel, progress) = quiet();
         let run = Run {
@@ -922,8 +924,8 @@ mod tests {
         };
         let err = pack(
             &src,
-            &dir.path().join("a.weftcut"),
-            &[p("project.json"), p("Media/a.mp4"), p("Media/A.mp4")],
+            &dir.path().join("a.wcpk"),
+            &[p("project.wcpr"), p("Media/a.mp4"), p("Media/A.mp4")],
             "1",
             7,
             &run,

@@ -1,7 +1,7 @@
 import type { TFunction } from "i18next";
 import { rendererOS, type RendererOS } from "../platform";
 
-/// The plain-language reason a write of project.json failed, from its errno
+/// The plain-language reason a write of project.wcpr failed, from its errno
 /// code. EPERM is Windows' answer when another program holds the file open
 /// (a scanner, a sync client); elsewhere it is a permission refusal.
 export function saveFailureReasonKey(code: string | null, os: RendererOS = rendererOS): string {

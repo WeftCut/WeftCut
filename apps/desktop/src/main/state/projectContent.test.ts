@@ -14,7 +14,7 @@ function projectAt(dir: string) {
     [`${dir}/.gitignore`]: '/my-notes/\n',
   }
   const local = {
-    [`${dir}/project.json`]: '{}', [`${dir}/project.pre-v6.json`]: '{}',
+    [`${dir}/project.wcpr`]: '{}', [`${dir}/project.pre-v6.json`]: '{}',
     [`${dir}/Cache/proxies/h.mp4`]: 'p', [`${dir}/Backups/project-1.json`]: '{}', [`${dir}/Logs/log.jsonl`]: '',
     [`${dir}/output/render.mp4`]: 'r',
   }
@@ -176,18 +176,18 @@ describe('packFiles', () => {
   const listed = async (disk: ReturnType<typeof memDisk>, ids = ['title-card', 'lower-third']) =>
     (await packFiles('/from', ids, disk.contentFs, 'linux')).map(e => e.path as string)
 
-  it('holds exactly what Save As copies into a new folder, beside project.json and the table\'s Motifs', async () => {
+  it('holds exactly what Save As copies into a new folder, beside project.wcpr and the table\'s Motifs', async () => {
     const { disk } = packable()
     await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
     const savedAs = disk.files().filter(p => p.startsWith('/to/')).map(p => p.slice('/to/'.length))
     const pack = await listed(disk)
-    expect(pack.filter(p => p !== 'project.json' && !p.startsWith('Motifs/')).sort()).toEqual(savedAs.sort())
+    expect(pack.filter(p => p !== 'project.wcpr' && !p.startsWith('Motifs/')).sort()).toEqual(savedAs.sort())
   })
 
-  it('puts project.json first, then the Motif folders the table names, whole', async () => {
+  it('puts project.wcpr first, then the Motif folders the table names, whole', async () => {
     const { disk } = packable()
     const pack = await listed(disk)
-    expect(pack[0]).toBe('project.json')
+    expect(pack[0]).toBe('project.wcpr')
     expect(pack.filter(p => p.startsWith('Motifs/')).sort()).toEqual([
       'Motifs/lower-third/index.html', 'Motifs/title-card/.motif-notes', 'Motifs/title-card/assets/logo.png', 'Motifs/title-card/index.html',
     ])
@@ -196,7 +196,7 @@ describe('packFiles', () => {
   it('leaves out machine-local entries, Motif backups, untracked Motif folders, scratch files and links', async () => {
     const { disk, local } = packable()
     const pack = await listed(disk)
-    for (const p of local.filter(p => !p.endsWith('/project.json'))) expect(pack).not.toContain(p.slice('/from/'.length))
+    for (const p of local.filter(p => !p.endsWith('/project.wcpr'))) expect(pack).not.toContain(p.slice('/from/'.length))
     for (const p of pack) {
       expect(p.startsWith('Backups/'), p).toBe(false)
       expect(p.startsWith('Motifs/left-behind/'), p).toBe(false)
@@ -226,8 +226,8 @@ describe('packFiles', () => {
     for (const e of await packFiles('/from', [], disk.contentFs, 'linux')) expect(e.size, e.path).toBe(disk.read(`/from/${e.path}`)!.length)
   })
 
-  it('allows at the top level exactly project.json, the project content and Motifs/, none of them machine-local', () => {
-    expect([...PACK_TOP_LEVEL].sort()).toEqual(['project.json', 'Motifs', ...PROJECT_CONTENT].sort())
+  it('allows at the top level exactly project.wcpr, the project content and Motifs/, none of them machine-local', () => {
+    expect([...PACK_TOP_LEVEL].sort()).toEqual(['project.wcpr', 'Motifs', ...PROJECT_CONTENT].sort())
     const localTops = PROJECT_MACHINE_LOCAL.map(p => p.replace(/^\//, '').replace(/\/$/, ''))
     for (const top of PACK_TOP_LEVEL) expect(localTops, top).not.toContain(top)
   })
@@ -299,7 +299,7 @@ describe('placeFilePlans', () => {
 
   it('skips a move whose source is gone and reports a copy whose source is', async () => {
     const disk = memDisk()
-    disk.put('/ws/project.json', '{}')
+    disk.put('/ws/project.wcpr', '{}')
     const missing = await placeFilePlans('/ws', [
       { from: `Cache/proxies/${HASH}.mp4`, to: `Cache/proxies/${HASH}.full-p7.mp4`, mode: 'move' },
       { from: `Cache/voiceover/${HASH}.mp3`, to: 'Media/Voiceover/voiceover-aaaaaaaa.mp3', mode: 'copy' },
@@ -331,7 +331,7 @@ describe('placeFilePlans', () => {
   })
   it('copies a voiceover from the path the old file recorded when the folder has no cache of it', async () => {
     const disk = memDisk()
-    disk.put('/ws/project.json', '{}')
+    disk.put('/ws/project.wcpr', '{}')
     disk.put(`/elsewhere/Cache/voiceover/${HASH}.mp3`, 'voice')
     const missing = await placeFilePlans('/ws', [{
       from: `Cache/voiceover/${HASH}.mp3`, to: 'Media/Voiceover/voiceover-aaaaaaaa.mp3', mode: 'copy',

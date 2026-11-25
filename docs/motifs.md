@@ -631,7 +631,7 @@ failure fails the export. Cancelling stops admission and keeps completed cache f
 ## Project Motifs and the library
 
 A project renders only its own Motifs: each a folder `<project>/Motifs/<id>/`
-named in the `motifs` table of `project.json`
+named in the `motifs` table of `project.wcpr`
 ([ADR 0173](adr/0173-the-project-folder-holds-what-it-renders.md)). The table
 gives each id its lineage (`uid`), the revision the project last recorded, and
 the library version it was copied from (`from`, null for a Motif made in the

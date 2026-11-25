@@ -30,7 +30,7 @@ test('reopening adopts audio caches without rebuilding and close ends import adm
     await expect.poll(async () => (await events()).some(e => e.event === 'import:complete')).toBe(true)
     expect((await events()).filter(e => e.event === 'media:job_error')).toEqual([])
     await invokeCmd(page, 'project_save')
-    const saved = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'))
+    const saved = JSON.parse(fs.readFileSync(path.join(workspace, 'project.wcpr'), 'utf8'))
     expect(saved.media_pool[mediaId].path_rel).toBe('Media/source.wav')
     // Cache paths are runtime state (ADR 0175): taken from the jobs that wrote them.
     const landed = (kind: string) => events().then(all =>

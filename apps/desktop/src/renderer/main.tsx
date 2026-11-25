@@ -104,9 +104,10 @@ function Root() {
   // replay of the splash cannot unmount a live editor underneath it.
   const [splashIntroDone, setSplashIntroDone] = useState(false);
   const [editorPainted, setEditorPainted] = useState(false);
-  // Bumped when an agent opens or creates a project. It keys <App>, so an
-  // editor already on screen remounts on the new project exactly as a UI Close
-  // + Open would, and no store of the previous project survives.
+  // Bumped when an agent opens or creates a project, or File → Open project
+  // opens one. It keys <App>, so an editor already on screen remounts on the
+  // new project exactly as a UI Close + Open would, and no store of the
+  // previous project survives.
   const [projectEpoch, setProjectEpoch] = useState(0);
   // Here, above both surfaces: the start screen's Settings shows a notice's
   // home as the editor's bell and Settings do.
@@ -293,6 +294,7 @@ function Root() {
   }, []);
 
   const onWorkspaceReady = useCallback(() => setStage("editor"), []);
+  const onProjectReplaced = useCallback(() => setProjectEpoch((n) => n + 1), []);
   const onCloseProject = useCallback(() => {
     bindMotifFrameWorkspace(null);
     setStage("startup");
@@ -351,6 +353,7 @@ function Root() {
           key={projectEpoch}
           onCloseProject={onCloseProject}
           onWorkspaceReady={onWorkspaceReady}
+          onProjectReplaced={onProjectReplaced}
         />
       )}
       {launchReady && !splashVisible && <PreviousSessionReport />}

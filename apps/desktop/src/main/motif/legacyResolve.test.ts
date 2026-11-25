@@ -1,7 +1,7 @@
 // The v5 → v6 upgrade end to end: a v5 project opened through the real open
 // path, with a real library and project folder.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { builtinLineage, composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
@@ -50,6 +50,7 @@ const nodeFs: OrchestratorFs = {
   writeFile: (p, text) => writeFileSync(p, text),
   mkdirp: d => mkdirSync(d, { recursive: true }),
   rm: p => rmSync(p, { force: true }),
+  rename: (from, to) => renameSync(from, to),
 }
 
 /** Opens the project; answers the state installed and the upgrade report. */

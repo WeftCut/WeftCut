@@ -141,10 +141,10 @@ export const MENU_ONLY_COMMAND_IDS = [
   // A read of the whole project, with no object to act on and no reflex
   // behind it: the File menu and the palette are its homes.
   "checkPortability",
-  // The whole project into one file and back (ADR 0178): the same homes, for
-  // the same reason.
+  // The whole project into one file, and Open project, which takes a project
+  // file or a pack (ADR 0178, ADR 0180): the same homes, for the same reason.
   "packProject",
-  "openPackedProject",
+  "openProject",
 ] as const;
 
 export type MenuOnlyCommandId = (typeof MENU_ONLY_COMMAND_IDS)[number];
@@ -167,7 +167,7 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   openVoiceoverDialog: "actions.open_voiceover",
   checkPortability: "actions.check_portability",
   packProject: "actions.pack_project",
-  openPackedProject: "actions.open_packed_project",
+  openProject: "actions.open_project",
 };
 
 /// Commands implemented HERE, in full. They differ from `MENU_ONLY_COMMAND_IDS`
@@ -525,7 +525,8 @@ export function buildAppCommands(
     applyDefaultTransition: hasTransitionCut,
     // One pack or unpack at a time (main refuses a second).
     packProject: () => usePackJobStore.getState().job === null,
-    openPackedProject: () => usePackJobStore.getState().job === null,
+    // A pack can be picked, and an open replaces the project as Close does.
+    openProject: () => !flags.busy && usePackJobStore.getState().job === null,
   };
 
   // …and check state, same shape and same rule as `checkedFor` above: a

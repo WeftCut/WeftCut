@@ -489,7 +489,8 @@ project (`create_motif`, `update_motif_files`, `delete_motif`,
 Agents open or create a project **only when the user asked for that one**;
 otherwise they ask. `project://session` reports `project` (null when none),
 `recent_projects` and `default_parent_folder`. `open_project` takes an
-absolute project folder; both tools flush the previous project, drop its
+absolute project folder or its `project.wcpr` (ADR 0180), and refuses a
+`.wcpk` pack, whose unpack only the user places; both tools flush the previous project, drop its
 history and checkpoints (as UI Close + Open does) and report `replaced`; the
 renderer follows via `project:opened`. `open_project` on the folder already
 open (compared by resolved real path) reloads nothing and answers

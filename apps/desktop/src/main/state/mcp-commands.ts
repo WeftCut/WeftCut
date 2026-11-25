@@ -2555,8 +2555,8 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   //    actor: opening swaps the actor's whole state and the renderer follows.
   //    Both answer while no project is open (`APP_SCOPE_TOOLS`).
   { name: 'open_project', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Open a project folder (the one holding project.json) in the editor, as the start screen's Open does; only one the user asked for. The project open before is saved; its undo history is dropped. The folder already open is not reloaded and answers `already_open: true`. Recent projects: `read_project { view: \"session\" }`. Returns `{ name, dir, replaced, already_open }`.",
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the project folder.' } }, required: ['path'] },
+    description: "Open a project in the editor, as the start screen's Open does: its folder or the project.wcpr in it (a folder from WeftCut 0.8 holding project.json opens too, and its file becomes project.wcpr); only one the user asked for. The project open before is saved; its undo history is dropped. The folder already open is not reloaded and answers `already_open: true`. Recent projects: `read_project { view: \"session\" }`. Returns `{ name, dir, replaced, already_open }`.",
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the project folder or its project.wcpr.' } }, required: ['path'] },
     parseDedicated: (a) => ({ path: parseAbsolutePath(a.path, 'path') }) },
   { name: 'create_project', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
     description: "Create `<parent_folder>/<name>` and open it, as New Project does; only when the user asked. The project open before is saved. Defaults: the session view's `default_parent_folder`; 1920x1080 at 60 fps (the rate locks once a layer is placed). Returns `{ name, dir, replaced }`.",

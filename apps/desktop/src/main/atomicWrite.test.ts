@@ -5,7 +5,7 @@ import path from 'node:path'
 import { ATOMIC_TEMP_SUFFIX, nodeAtomicWriteIo, writeFileAtomic } from './atomicWrite'
 import { errno, memAtomicIo } from './state/__tests__/fixtures/memAtomicIo'
 
-const TARGET = '/ws/project.json'
+const TARGET = '/ws/project.wcpr'
 const TEMP = TARGET + ATOMIC_TEMP_SUFFIX
 const GOOD = '{"previous":"good"}'
 const NEXT = '{"next":"edit"}'
@@ -95,16 +95,16 @@ describe('nodeAtomicWriteIo', () => {
 
   it('replaces a file on disk and leaves only the target in its folder', () => {
     dir = mkdtempSync(path.join(tmpdir(), 'weftcut-atomic-write-'))
-    const target = path.join(dir, 'project.json')
+    const target = path.join(dir, 'project.wcpr')
     writeFileAtomic(nodeAtomicWriteIo, target, GOOD)
     writeFileAtomic(nodeAtomicWriteIo, target, NEXT)
     expect(readFileSync(target, 'utf8')).toBe(NEXT)
-    expect(readdirSync(dir)).toEqual(['project.json'])
+    expect(readdirSync(dir)).toEqual(['project.wcpr'])
   })
 
   it('throws the original error when the folder is gone, creating nothing', () => {
     dir = mkdtempSync(path.join(tmpdir(), 'weftcut-atomic-write-'))
-    const target = path.join(dir, 'missing', 'project.json')
+    const target = path.join(dir, 'missing', 'project.wcpr')
     expect(thrown(() => writeFileAtomic(nodeAtomicWriteIo, target, NEXT))).toMatchObject({ code: 'ENOENT' })
     expect(readdirSync(dir)).toEqual([])
   })

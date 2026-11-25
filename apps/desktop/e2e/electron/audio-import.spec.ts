@@ -39,7 +39,7 @@ test('audio imports retain their files and produce playable audio caches', async
     })
     const workspace = await invokeCmd<string>(page, 'workspace_dir')
     const root = await rootSummary<ProjectSummary>(page)
-    // Derivative paths are runtime state, not project.json fields (ADR 0175):
+    // Derivative paths are runtime state, not project.wcpr fields (ADR 0175):
     // each one is read from the job that produced it.
     await page.evaluate(() => {
       const state = window as any
@@ -58,15 +58,15 @@ test('audio imports retain their files and produce playable audio caches', async
       const pooled = async () => (await rootSummary<ProjectSummary>(page)).media.find(m => m.id === id)!
       await expect.poll(async () => {
         await invokeCmd(page, 'project_save')
-        const saved = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'))
+        const saved = JSON.parse(fs.readFileSync(path.join(workspace, 'project.wcpr'), 'utf8'))
         return Boolean(saved.media_pool[id].path_rel && await landed(id, 'conform') && await landed(id, 'waveform'))
       }, { timeout: 30_000, message: `${name}: copy, conform and waveform complete` }).toBe(true)
-      const saved = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'))
+      const saved = JSON.parse(fs.readFileSync(path.join(workspace, 'project.wcpr'), 'utf8'))
       const media = saved.media_pool[id]
       expect(media.kind, name).toBe('Audio')
       expect(media.label, name).toBe(name)
       expect(media.path_rel, `${name}: recorded as a project path`).toBe(`Media/${name}`)
-      expect(media, `${name}: no absolute path in project.json`).not.toHaveProperty('path_abs')
+      expect(media, `${name}: no absolute path in project.wcpr`).not.toHaveProperty('path_abs')
       const source = (await pooled()).path
       expect(source, name).toBe(path.join(workspace, 'Media', name))
       expect(digest(source), `${name}: workspace copy is byte-identical`).toBe(digest(path.join(folder, name)))

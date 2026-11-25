@@ -43,13 +43,13 @@ test.describe("packed project", () => {
       expect(layers).toBeGreaterThan(0);
 
       const outDir = tmpDir("weftcut-pack-out-");
-      const archive = path.join(outDir, "pack-source.weftcut");
+      const archive = path.join(outDir, "pack-source.wcpk");
       // Packed at once, while the import's copy into Media/ may still run:
       // the pack waits for it, so the unpacked project holds that file.
       // Resolves when the pack is complete: the run is the witness.
       expect(await invokeCmd(page, "project_pack", { archive })).toMatchObject({ outcome: "done", archive });
       // Only the pack is left: its partial file was renamed, never kept.
-      expect(readdirSync(outDir)).toEqual(["pack-source.weftcut"]);
+      expect(readdirSync(outDir)).toEqual(["pack-source.wcpk"]);
 
       const parent = tmpDir("weftcut-unpack-");
       const dir = path.join(parent, "pack-source");

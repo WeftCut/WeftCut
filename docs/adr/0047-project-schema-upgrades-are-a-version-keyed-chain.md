@@ -40,7 +40,7 @@ which rewrites it needed.
   historical step.
 - **The runner owns the stamp and the clone.** It writes `schema_version` after
   each step and clones the input once, so a throwing step leaves the original.
-- **Upgrade is in memory; the original bytes are kept.** `project.json` is
+- **Upgrade is in memory; the original bytes are kept.** `project.wcpr` is
   rewritten by the first autosave. Before the workspace swap, opening writes and
   verifies a byte-identical `project.pre-v{n}.json` beside it (identical bytes
   reuse it; different bytes get `project.pre-v{n}.{k}.json`). A failed backup

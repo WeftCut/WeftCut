@@ -44,7 +44,7 @@ const menu = {
   openVoiceoverDialog: () => {},
   checkPortability: () => {},
   packProject: () => {},
-  openPackedProject: () => {},
+  openProject: () => {},
 };
 const flags = {
   busy: false,

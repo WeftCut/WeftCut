@@ -200,11 +200,11 @@ describe("ComputeJobNotice", () => {
   it("offers to show a file the work wrote in its folder, and goes once pressed", () => {
     render(<ComputeJobNotice />);
     act(() => useComputeJobNoticeStore.setState({ notice: {
-      jobId: "pack", outcome: "ok", title: "Project packed", body: "/home/u/out/Example.weftcut", reveal: "/home/u/out/Example.weftcut",
+      jobId: "pack", outcome: "ok", title: "Project packed", body: "/home/u/out/Example.wcpk", reveal: "/home/u/out/Example.wcpk",
     } }));
     const show = screen.getAllByRole("button").find((b) => /folder|Finder|Explorer/.test(b.textContent ?? ""))!;
     fireEvent.click(show);
-    expect(mocks.reveal).toHaveBeenCalledWith("/home/u/out/Example.weftcut");
+    expect(mocks.reveal).toHaveBeenCalledWith("/home/u/out/Example.wcpk");
     expect(screen.queryByTestId("compute-notice")).toBeNull();
   });
 

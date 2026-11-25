@@ -3,8 +3,8 @@
 // The recents disclosure on the startup screen: a choice the user makes is
 // remembered for the window's session (sessionStorage), so returning from the
 // editor (which unmounts and remounts the screen) keeps it, while a fresh
-// session opens collapsed. And Open packed project, whose unpack this screen
-// shows itself: it has no work pill.
+// session opens collapsed. And Open project, which takes a pack too and whose
+// unpack this screen shows itself: it has no work pill.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -94,13 +94,13 @@ describe("recents disclosure", () => {
   });
 });
 
-describe("Open packed project", () => {
-  it("says why the picked file cannot be opened, and asks nothing more", async () => {
+describe("Open project", () => {
+  it("says why a picked pack cannot be opened, and asks nothing more", async () => {
     const user = userEvent.setup();
-    dialog.open.mockResolvedValueOnce("/home/u/in/notes.weftcut");
+    dialog.open.mockResolvedValueOnce("/home/u/in/notes.wcpk");
     ipc.projectUnpackInspect.mockRejectedValueOnce(new PackFailure({ refusal: "NotAPack", detail: "not a zip" }));
     await renderScreen();
-    await user.click(screen.getByRole("button", { name: "Open packed project…" }));
+    await user.click(screen.getByRole("button", { name: "Open project…" }));
     expect(await screen.findByText("That file isn't a WeftCut pack: not a zip")).toBeTruthy();
     expect(dialog.open).toHaveBeenCalledTimes(1);
   });
@@ -109,9 +109,9 @@ describe("Open packed project", () => {
     const user = userEvent.setup();
     await renderScreen();
     act(() => usePackJobStore.setState({ job: {
-      job_id: "pack-1", kind: "unpack", file: "Example.weftcut", done: 1.5 * 1024 * 1024, total: 3 * 1024 * 1024, cancelling: false,
+      job_id: "pack-1", kind: "unpack", file: "Example.wcpk", done: 1.5 * 1024 * 1024, total: 3 * 1024 * 1024, cancelling: false,
     } }));
-    const progress = screen.getByRole("status", { name: "Unpacking Example.weftcut" });
+    const progress = screen.getByRole("status", { name: "Unpacking Example.wcpk" });
     expect(progress.textContent).toContain("1.5 MB of 3.0 MB");
     expect(progress.textContent).not.toMatch(/left|remaining/i);
     await user.click(screen.getByRole("button", { name: "Cancel" }));

@@ -55,7 +55,7 @@ Pool files changed outside the app:
   workspace-copy write-back compares hashes; a mismatched copy is deleted and
   the item keeps its source path.
 - **One stat screens every pool file** (`state/poolFiles.ts`) against the
-  item's `file_size`/`file_mtime`; no field is added to `project.json`. Missing:
+  item's `file_size`/`file_mtime`; no field is added to `project.wcpr`. Missing:
   missing. Different size: `changed`. Different mtime only: bytes are hashed
   once in the background, one file at a time; a match records the new mtime.
   The stat is cached per item object and taken again when the item changes,

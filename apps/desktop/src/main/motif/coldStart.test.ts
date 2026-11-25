@@ -11,7 +11,7 @@ afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursiv
 function project(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'motif-cold-start-test-'))
   roots.push(root)
-  fs.writeFileSync(path.join(root, 'project.json'), '{}')
+  fs.writeFileSync(path.join(root, 'project.wcpr'), '{}')
   const hash = path.join(root, 'Cache', 'raster', 'a'.repeat(32))
   fs.mkdirSync(hash, { recursive: true })
   fs.writeFileSync(path.join(hash, '0.wfrm'), Buffer.alloc(100))
@@ -35,7 +35,7 @@ describe('motifColdStart', () => {
     expect(d.retireHosts).toHaveBeenCalledOnce()
     expect(fs.existsSync(path.join(root, 'Cache', 'raster'))).toBe(false)
     expect(fs.existsSync(path.join(root, 'Cache', 'proxy', 'keep.mp4'))).toBe(true)
-    expect(fs.existsSync(path.join(root, 'project.json'))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'project.wcpr'))).toBe(true)
     expect(d.log).toHaveBeenCalledOnce()
   })
 
@@ -51,7 +51,7 @@ describe('motifColdStart', () => {
   it.each([
     ['outside a dev build', (root: string) => [root, deps({ enabled: false })] as const],
     ['for a relative folder', () => ['some/project', deps()] as const],
-    ['for a folder without project.json', (root: string) => { fs.rmSync(path.join(root, 'project.json')); return [root, deps()] as const }],
+    ['for a folder without project.wcpr', (root: string) => { fs.rmSync(path.join(root, 'project.wcpr')); return [root, deps()] as const }],
     ['for the open project', (root: string) => [root, deps({ openFolders: () => [path.join(root, '.')] })] as const],
     ['while a project opens or closes', (root: string) => [root, deps({ transitioning: () => true })] as const],
   ])('refuses %s and touches nothing', async (_name, setup) => {

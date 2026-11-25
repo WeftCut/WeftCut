@@ -39,7 +39,7 @@ import {
  *      the right output seconds, at the same measured boundary offset. The
  *      Rust mixer walks the project itself (`audio/mix.rs`), so a Group is a
  *      second place its walk can stop early.
- *   3. SHAPE — ungroup puts the project back: the saved `project.json` compares
+ *   3. SHAPE — ungroup puts the project back: the saved `project.wcpr` compares
  *      equal to the pre-Group one modulo the ids both structural ops re-mint.
  *
  * Local-only, like every gate that needs real media (`npm run fixtures`).
@@ -144,7 +144,7 @@ const setTrackValue = (page: Page, layerId: string, paramKey: string, value: num
   })
 
 // ── The project-shape comparison ─────────────────────────────────────────────
-// `project.json` is the whole model in its disk form (`projectFile.ts`), so comparing the saved
+// `project.wcpr` is the whole model in its disk form (`projectFile.ts`), so comparing the saved
 // bytes is the broadest statement available about the round trip — every field
 // of every layer, track, link and transition, not a projection someone has to
 // remember to extend. Three things stand between the bytes and an equality:
@@ -234,14 +234,14 @@ function normalizeProject(value: unknown, tokens: Map<string, string>): unknown 
 }
 
 /// Save and read back the on-disk project. Save rather than a wire read because
-/// no command returns the serialized project, and `project.json` is the shape
+/// no command returns the serialized project, and `project.wcpr` is the shape
 /// that has to survive.
 async function saveAndRead(
   page: Page,
   projectDir: string,
 ): Promise<{ shape: unknown; mediaIds: string[]; nextGroupOrdinal: number }> {
   await invokeCmd(page, 'project_save')
-  const file = path.join(projectDir, 'project.json')
+  const file = path.join(projectDir, 'project.wcpr')
   const raw = JSON.parse(readFileSync(file, 'utf8')) as ProjectJson
   // The ordinal counter is lifted OUT of the compared shape and returned beside
   // it, not normalized away: it is monotonic, so a pre-compose spends a number

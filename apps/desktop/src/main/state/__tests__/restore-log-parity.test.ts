@@ -20,6 +20,7 @@ function makeInMemoryDeps() {
     copyFile: (s: string, d: string) => { vfs[d] = vfs[s]! },
     readdir: (d: string) => Object.keys(vfs).filter((k) => k.startsWith(d + '/') && k.slice(d.length + 1).indexOf('/') === -1).map((k) => k.slice(d.length + 1)),
     rm: (p: string) => { delete vfs[p] },
+    rename: (a: string, b: string) => { vfs[b] = vfs[a]!; delete vfs[a] },
   }
   let wsDir: string | null = null
   const memNapi = {

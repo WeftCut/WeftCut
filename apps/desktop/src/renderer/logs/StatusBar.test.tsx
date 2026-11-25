@@ -148,7 +148,7 @@ describe("save failed", () => {
   let revision = 0;
   const failing = (code: string | null, last_saved_at: string | null = null) => ({
     state: "failing" as const, revision: ++revision, since: "2026-01-02T03:04:05.000Z", last_saved_at,
-    code, path: "/home/u/Demo/project.json", dir: "/home/u/Demo",
+    code, path: "/home/u/Demo/project.wcpr", dir: "/home/u/Demo",
   });
   afterEach(() => { revision = 0; });
 
