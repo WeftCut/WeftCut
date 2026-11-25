@@ -18,29 +18,32 @@ function amplitude(samples: readonly number[], hz: number, rate: number): number
 /// A capture of the pre-compressor mix, with the transport position read with it.
 interface Capture { positionUs: number; samples: number[]; sampleRate: number }
 
-/// Plays `fromUs` to `toUs` and captures the mix on every animation frame.
-async function capturePlayback(page: Page, fromUs: number, toUs: number): Promise<Capture[]> {
-  return page.evaluate(async ([from, to]) => {
+/// Plays from `fromUs` to the composition's end and captures the mix on every
+/// animation frame. The run ends when the preview pauses itself at the end, a
+/// state that holds once reached; a position past a bound near the end shows
+/// only in the few frames before that pause, which a stalled poll can miss.
+async function capturePlayback(page: Page, fromUs: number): Promise<Capture[]> {
+  return page.evaluate(async (from) => {
     const hook = (window as any).__weftcutTest
     hook.transportPause()
     hook.transportSeekUs(from)
+    // The transport is the engine itself: play leaves it 'preparing' before it
+    // returns, so the 'paused' below is the stop at the end, not this pause.
     hook.transportPlay()
     const captures: { positionUs: number; samples: number[]; sampleRate: number }[] = []
     const deadline = performance.now() + 60_000
-    while (performance.now() < deadline) {
+    for (;;) {
       const state = hook.audioTransportSnapshot()
       if (state?.phase === 'error') throw new Error('preview playback failed')
+      if (state?.phase === 'paused') return captures
+      if (performance.now() > deadline) throw new Error(`preview never finished playing: ${state?.phase} at ${state?.positionUs}`)
       if (state?.phase === 'playing') {
         const capture = hook.audioPreCompressorSamples()
         if (capture) captures.push(capture)
-        if (capture && capture.positionUs > to) break
       }
       await new Promise(resolve => requestAnimationFrame(resolve))
     }
-    hook.transportPause()
-    if ((captures.at(-1)?.positionUs ?? 0) <= to) throw new Error(`preview did not reach ${to}`)
-    return captures
-  }, [fromUs, toUs])
+  }, fromUs)
 }
 
 const median = (values: number[]): number => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]!
@@ -67,9 +70,11 @@ async function expectEqualPowerPreview(page: Page, fromUs: number, startUs: numb
   const endUs = startUs + durationUs
   const level = (c: Capture, hz: number) => amplitude(c.samples, hz, c.sampleRate)
   for (let play = 1; ; play++) {
-    const captures = await capturePlayback(page, fromUs, toUs)
+    const captures = await capturePlayback(page, fromUs)
     const outAlone = captures.filter(c => c.positionUs < startUs - CLEAR_US)
-    const inAlone = captures.filter(c => c.positionUs > endUs + CLEAR_US)
+    // Bounded by `toUs`: the position holds on the last frame while the mix,
+    // rendered ahead of it, runs past the clip's end into silence.
+    const inAlone = captures.filter(c => c.positionUs > endUs + CLEAR_US && c.positionUs <= toUs)
     const middle = captures.filter(c => c.positionUs >= startUs + MIDDLE * durationUs && c.positionUs <= endUs - MIDDLE * durationUs)
     if (outAlone.length === 0 || inAlone.length === 0 || middle.length === 0) {
       expect(play, `captures before (${outAlone.length}), inside (${middle.length}) and after (${inAlone.length}) the fade`).toBeLessThan(PLAYS)
