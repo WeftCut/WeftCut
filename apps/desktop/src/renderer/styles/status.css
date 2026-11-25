@@ -155,10 +155,24 @@
   height: calc(8 * var(--ui-px));
   border-radius: 999px;
   transform: translate(-50%, -50%);
-  transition-property: width, height, background-color;
+  transition-property: width, height;
   transition-duration: 180ms;
   transition-timing-function: ease-in-out;
   transition-delay: 120ms;
+}
+
+/* The count's red, a layer over the level colour: the level changes at once
+   with every log line, and only the turn to and from a count fades. Its
+   timing is the mark's. */
+.status-bar-indicator-mark::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--color-red-300);
+  opacity: 0;
+  transition: inherit;
+  transition-property: opacity;
 }
 
 .status-bar-indicator[data-level="trace"] .status-bar-indicator-mark,
@@ -181,9 +195,12 @@
 .status-bar-indicator[data-state="count"] .status-bar-indicator-mark {
   width: max(calc(16 * var(--ui-px)), calc(var(--count-chars) * 1ch + 8 * var(--ui-px)));
   height: calc(16 * var(--ui-px));
-  background: var(--color-red-300);
   transition-timing-function: ease-out;
   transition-delay: 0ms;
+}
+
+.status-bar-indicator[data-state="count"] .status-bar-indicator-mark::before {
+  opacity: 1;
 }
 
 /* The count: errors since the log was last opened. */
@@ -302,6 +319,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .status-bar-indicator[data-state] .status-bar-indicator-mark,
+  .status-bar-indicator[data-state] .status-bar-indicator-mark::before,
   .status-bar-indicator[data-state] .status-bar-errors {
     transition: none;
   }
