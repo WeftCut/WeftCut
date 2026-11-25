@@ -155,10 +155,11 @@
   height: calc(8 * var(--ui-px));
   border-radius: 999px;
   transform: translate(-50%, -50%);
+  /* Expo out both ways: a click answers at once and the change settles softly. */
   transition-property: width, height;
-  transition-duration: 220ms;
-  transition-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
-  transition-delay: 50ms;
+  transition-duration: 360ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: 20ms;
 }
 
 /* The count's red, a layer over the level colour: the level changes at once
@@ -195,8 +196,6 @@
 .status-bar-indicator[data-state="count"] .status-bar-indicator-mark {
   width: max(calc(14 * var(--ui-px)), calc(var(--count-chars) * 1ch + 6 * var(--ui-px)));
   height: calc(14 * var(--ui-px));
-  transition-duration: 180ms;
-  transition-timing-function: ease-out;
   transition-delay: 0ms;
 }
 
@@ -215,13 +214,13 @@
   white-space: nowrap;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 90ms ease-in, visibility 0s linear 90ms;
+  transition: opacity 80ms ease-out, visibility 0s linear 80ms;
 }
 
 .status-bar-indicator[data-state="count"] .status-bar-errors {
   opacity: 1;
   visibility: visible;
-  transition: opacity 140ms ease-out 160ms, visibility 0s linear 160ms;
+  transition: opacity 150ms ease-out 120ms, visibility 0s linear 120ms;
 }
 
 /* A trigger on the right: the work pill and the bell. */
