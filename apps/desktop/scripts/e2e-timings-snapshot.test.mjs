@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { extrasFromJobs, fileCostsFromReport, foldReports, parseArtifactName } from './e2e-timings-snapshot.mjs'
+import { assertMeasurableRun, extrasFromJobs, fileCostsFromReport, foldReports, parseArtifactName } from './e2e-timings-snapshot.mjs'
 
 const report = (file, tests) => ({
   suites: [
@@ -93,4 +93,12 @@ test('an extra is the wall clock of its step on the one leg that ran it', () => 
   assert.deepEqual(extras.decodeBench, { 'windows-latest': 30, 'ubuntu-latest': 30, 'macos-latest': 30 })
   jobs.push({ name: 'e2e (macos-latest, e2e-3)', steps: [step('Package (unsigned)', 5)] })
   assert.throws(() => extrasFromJobs(jobs), /ran on two legs/)
+})
+
+test('only a green push run is a measurement', () => {
+  assert.doesNotThrow(() => assertMeasurableRun('1', { event: 'push', conclusion: 'success' }))
+  for (const event of ['workflow_dispatch', 'schedule', 'pull_request']) {
+    assert.throws(() => assertMeasurableRun('1', { event, conclusion: 'success' }), /push run/)
+  }
+  assert.throws(() => assertMeasurableRun('1', { event: 'push', conclusion: 'failure' }), /green run/)
 })
