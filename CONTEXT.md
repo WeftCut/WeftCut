@@ -118,7 +118,7 @@ How a decoded frame crosses from the main process to its consumer. There are
 two: *bytes* (an owned buffer the consumer hands back by lease) and *slots* (a
 pooled shared texture named by slot and generation, read and then released).
 Preview, export decode and Motif each keep their own driver and share the
-carriers. See ADR 0175.
+carriers. See ADR 0179.
 _Avoid_: lane (a decode lane picks the decoder, not the transport), channel, transport (unqualified)
 
 **Media actionability**:

@@ -21,7 +21,7 @@ Date: 2026-10-31
   `ArrayBuffer`, and no CPU zero-copy exists across main↔renderer.
   The spike ran without context isolation, so it never paid the copy a frame
   takes crossing `contextBridge`; the product does, which is why the last hop
-  is a port the preload holds (ADR 0175).
+  is a port the preload holds (ADR 0179).
 - Linux zero-copy (DMA-BUF import through Electron's native-pixmap shared
   texture) carries three unmeasured risk surfaces: DRM format-modifier
   negotiation, multi-GPU import, NVIDIA DMA-BUF export.
