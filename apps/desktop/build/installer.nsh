@@ -101,6 +101,30 @@
   System::Call 'Shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
 !macroend
 
+; LANDMINE: electron-builder's unregisterFileAssociations (APP_UNASSOCIATE)
+; deletes the ProgID but leaves `.wcpr`/`.wcpk` naming it, so an uninstalled
+; WeftCut leaves both extensions pointing at a class that is gone (seen on a
+; per-user install). An extension is released only while it still names ours:
+; another app may have claimed it since. An update runs this too, and its
+; installer then registers the types again. The ProgIDs are fileTypes.ts's,
+; held to it by fileTypes.test.ts (ADR 0181).
+!macro weftcutReleaseExtension EXT PROGID
+  Push $R0
+  ReadRegStr $R0 SHELL_CONTEXT "Software\Classes\.${EXT}" ""
+  ${If} $R0 == "${PROGID}"
+    DeleteRegValue SHELL_CONTEXT "Software\Classes\.${EXT}" ""
+  ${EndIf}
+  DeleteRegValue SHELL_CONTEXT "Software\Classes\.${EXT}\OpenWithProgids" "${PROGID}"
+  DeleteRegKey /ifempty SHELL_CONTEXT "Software\Classes\.${EXT}\OpenWithProgids"
+  DeleteRegKey /ifempty SHELL_CONTEXT "Software\Classes\.${EXT}"
+  Pop $R0
+!macroend
+
+!macro customUnInstall
+  !insertmacro weftcutReleaseExtension "wcpr" "WeftCut.Project"
+  !insertmacro weftcutReleaseExtension "wcpk" "WeftCut.Pack"
+!macroend
+
 ; ---------------------------------------------------------------------------
 ; customHeader: block a per-user install from targeting a protected system
 ; folder (Program Files / Windows), with a clear reason instead of a dead

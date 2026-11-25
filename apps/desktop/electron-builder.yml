@@ -117,8 +117,9 @@ win:
   icon: build/icon.png
   # The file types the app opens on a double-click (ADR 0181), a copy of
   # src/main/fileAssociation/fileTypes.ts held to it by fileTypes.test.ts.
-  # NSIS writes `name` as the ProgID and `description` as Explorer's Type, and
-  # takes both away on uninstall; the deb writes `mimeType` into its MIME
+  # NSIS writes `name` as the ProgID and `description` as Explorer's Type; its
+  # uninstall deletes the ProgID, and build/installer.nsh releases the
+  # extensions that named it. The deb writes `mimeType` into its MIME
   # package and its desktop entry. No icon: Windows draws the exe's, Linux a
   # generic document. macOS declares the same types in mac.extendInfo, where a
   # bundle can export a UTI, which `fileAssociations` cannot.

@@ -51,3 +51,13 @@ describe('electron-builder.yml file associations', () => {
     }
   })
 })
+
+describe('build/installer.nsh', () => {
+  const nsh = readFileSync(new URL('../../../build/installer.nsh', import.meta.url), 'utf8')
+
+  it('releases each owned extension on uninstall, under its ProgID', () => {
+    const released = [...nsh.matchAll(/!insertmacro weftcutReleaseExtension "([^"]+)" "([^"]+)"/g)].map(([, ext, progId]) => ({ ext, progId }))
+    expect(released).toHaveLength(OWNED_FILE_TYPES.length)
+    for (const type of OWNED_FILE_TYPES) expect(released).toContainEqual({ ext: type.ext, progId: type.progId })
+  })
+})
