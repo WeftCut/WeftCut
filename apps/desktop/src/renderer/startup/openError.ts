@@ -1,6 +1,6 @@
-// The launch surface's refusal → copy map. Covers both lifecycle calls it can
-// make: `project_open` (Open… and every Recent row) and
-// `project_new_workspace` (the New project dialog).
+// The workspace lifecycle's refusal → copy map: `project_open` (Open… and
+// every Recent row), `project_new_workspace` (the New project dialog) and
+// `project_save_as` (File › Save As).
 //
 // Main raises these as `WorkspaceFailure`, whose message IS the serialized
 // `WorkspaceError` — see shared/workspaceErrors.ts for why the structure has to
@@ -124,6 +124,20 @@ export function describeCreateError(
   const parsed = parseWorkspaceError(err);
   if (parsed) return render(parsed, { t, path });
   return t("new_project.create_failed", { detail: cleanIpcDetail(err) });
+}
+
+/// Localize a `projectSaveAs` rejection. `path` is the folder the save dialog
+/// answered. An occupied target gets Save As's own line: the shared one does
+/// not say why a folder that is already there is refused.
+export function describeSaveAsError(
+  err: unknown,
+  path: string,
+  t: TFunction,
+): string {
+  const parsed = parseWorkspaceError(err);
+  if (parsed?.error === "ProjectFolderExists") return t("dialogs.save_as_folder_exists");
+  if (parsed) return render(parsed, { t, path });
+  return t("dialogs.save_as_failed", { detail: cleanIpcDetail(err) });
 }
 
 /// True when the error means the recents entry is permanently dead — the

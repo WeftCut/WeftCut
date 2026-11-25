@@ -27,10 +27,10 @@ function windowsV6(opts: { voiceover?: boolean } = {}): Record<string, any> {
   const wire = JSON.parse(readFileSync('fixtures/projects/v6.json', 'utf8'))
   const item = wire.media_pool[MEDIA_ID]
   item.path_rel = 'Media\\sub\\clip.mp4'
-  item.path_abs = 'C:\\Users\\u\\Videos\\Demo.vproj\\Media\\sub\\clip.mp4'
+  item.path_abs = 'C:\\Users\\u\\Videos\\Demo\\Media\\sub\\clip.mp4'
   if (opts.voiceover) {
     wire.media_pool[VOICE_ID] = { ...structuredClone(item), id: VOICE_ID, kind: 'Audio', path_rel: null,
-      path_abs: `C:\\Users\\u\\Videos\\Demo.vproj\\Cache\\voiceover\\${VOICE_HASH}.mp3`, file_hash_blake3: VOICE_HASH,
+      path_abs: `C:\\Users\\u\\Videos\\Demo\\Cache\\voiceover\\${VOICE_HASH}.mp3`, file_hash_blake3: VOICE_HASH,
       decode_route: { route: 'bypass' } }
   }
   return wire

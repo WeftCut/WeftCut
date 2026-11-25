@@ -327,14 +327,18 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   deps.enqueueDerivatives?.(project)
 }
 
-/** project_save_as. snapshot → copy the project content and the Motif
- *  folders from `from` → default `.gitignore` where none came →
- *  write project.json → commit_workspace → place the
+/** project_save_as. refuse an existing `dir` → snapshot → copy the project
+ *  content and the Motif folders from `from` → default `.gitignore` where none
+ *  came → write the project file → commit_workspace → place the
  *  pool in `dir` with the new cache's derivatives (`rebase_media`) →
  *  push_recent → derivative re-fan-out. Never swaps state (the actor already
- *  holds it). A failed copy fails the save before project.json names it. */
+ *  holds it). A failed copy fails the save before the project file names it. */
 export async function saveProjectAs(deps: OrchestratorDeps, dir: string, from?: string | null): Promise<void> {
   const { actor, napi, fs, join } = deps
+  // New project's rule: the occupant may be another project or a folder of the
+  // user's files, and a save into it would mix this project's files into it.
+  // The open folder itself is refused by it too: Save writes there.
+  if (fs.exists(dir)) throw new WorkspaceFailure({ error: 'ProjectFolderExists' })
   const snap = actor.snapshot()
   fs.mkdirp(dir)                                              // save_to_dir's create_dir_all
   const moves = !!from && !(deps.contentFs && await sameFolder(deps.contentFs, from, dir, deps.platform ?? process.platform))
