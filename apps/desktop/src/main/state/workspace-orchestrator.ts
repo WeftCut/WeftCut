@@ -93,6 +93,10 @@ export interface OrchestratorDeps {
    *  `to` for Save As (`main/motif/projectCopy.ts`); throws when one fails.
    *  Without it the saved copy holds no Motif folder. */
   copyMotifs?: (from: string, to: string, ids: readonly string[]) => void
+  /** Makes Save As's folder `to` trusted on this machine exactly when `from`
+   *  is (`MotifTrust.carryProject`, ADR 0182). Without it the copy asks as a
+   *  new folder does. */
+  carryTrust?: (from: string, to: string) => void
   /** Moves and copies files inside a project folder and between two
    *  (projectContent.ts); node:fs/promises in production. Without it Save As
    *  copies no project content and every file an upgrade planned to copy
@@ -353,8 +357,9 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
 }
 
 /** project_save_as. refuse an existing `dir` → snapshot → copy the project
- *  content and the Motif folders from `from` → default `.gitignore` where none
- *  came → write the project file → commit_workspace → place the
+ *  content and the Motif folders from `from`, and its trust on this machine →
+ *  default `.gitignore` where none came → write the project file →
+ *  commit_workspace → place the
  *  pool in `dir` with the new cache's derivatives (`rebase_media`) →
  *  push_recent → derivative re-fan-out. Never swaps state (the actor already
  *  holds it). A failed copy fails the save before the project file names it. */
@@ -370,6 +375,9 @@ export async function saveProjectAs(deps: OrchestratorDeps, dir: string, from?: 
   if (from) {
     if (deps.contentFs) await copyProjectContent(from, dir, deps.contentFs, deps.platform ?? process.platform)
     deps.copyMotifs?.(from, dir, Object.keys(snap.motifs))
+    // Before the commit: it makes `dir` the open project folder, and its
+    // Motifs would be judged untrusted until the trust arrived.
+    deps.carryTrust?.(from, dir)
   }
   ensureGitignore(dir, fs, join)
   fs.writeFile(join(dir, PROJECT_FILE), serializeProjectToJson(snap))

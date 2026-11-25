@@ -514,6 +514,33 @@ describe('MotifCapturer', () => {
     expect(gated).toHaveLength(5)
   })
 
+  it('gates every lane again, on a new host, once the user stops trusting the project', async () => {
+    let trusted = true
+    const gated: string[] = []
+    capturer = newCapturer({
+      store: {
+        ...emptyStore,
+        gate: host => {
+          gated.push(host)
+          if (!trusted) throw new MotifError('content', `Motif '${host}' is not trusted on this machine`)
+          return { ...emptyStore.gate(host), revision: 'h1' }
+        },
+      },
+    })
+    const at = (tSec: number) => capturer.capturePng({ ...args, motifId: 'received', contentHash: 'h1', tSec }, bg)
+    await expect(at(0)).resolves.toBe('UE5H')
+    await expect(at(0.5)).resolves.toBe('UE5H')
+    expect(gated, 'the lane was gated once while trusted').toEqual(['received'])
+    const window = lastWindow!
+    const before = renderCalls
+    trusted = false
+    capturer.trustRevoked()
+    expect(window.destroyed, 'the host that rendered it while trusted is retired').toBe(true)
+    await expect(at(1)).rejects.toMatchObject({ code: 'content' })
+    expect(gated).toEqual(['received', 'received'])
+    expect(renderCalls).toBe(before)
+  })
+
   it('renders nothing of a host the gate refuses', async () => {
     const before = renderCalls
     capturer = newCapturer({

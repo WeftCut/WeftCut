@@ -52,6 +52,11 @@ export interface ProjectMotifRecordsDeps {
   /** Makes the `Motifs/` watcher tell `id`'s next change even when it ends
    *  in the state it last told (`ProjectMotifWatcher.forget`). */
   rewatch?: (id: string) => void
+  /** Whether the open project's folder is trusted on this machine (ADR 0182). */
+  projectTrusted?: () => boolean
+  /** One quiet status-log row naming the Motifs of a trusted project whose
+   *  folders changed while it was closed: they run without asking. */
+  changedWhileClosed?: (ids: readonly string[]) => void
 }
 
 export class ProjectMotifRecords {
@@ -187,24 +192,27 @@ export class ProjectMotifRecords {
     this.deps.rewatch?.(id)
   }
 
-  /** Records what `id`'s folder holds when it is not `recorded`. */
-  private record(project: ProjectMotifStore, id: string, recorded: string | null): void {
+  /** Records what `id`'s folder holds when it is not `recorded`; answers
+   *  whether it was another package. */
+  private record(project: ProjectMotifStore, id: string, recorded: string | null): boolean {
     let snapshot
-    try { snapshot = project.snapshot(id) } catch { return }
-    if (!snapshot || snapshot.revision === recorded) return
+    try { snapshot = project.snapshot(id) } catch { return false }
+    if (!snapshot || snapshot.revision === recorded) return false
     this.backups(project).backup(id, snapshot.files, snapshot.revision)
     const result = this.deps.actor.dispatch('set_project_motif', { motif_id: id, revision: snapshot.revision }, FILE_EDITS)
     if (!result.ok) {
       this.notRecorded(id)
       this.warn(`The edit to Motif '${id}' could not be recorded`, { motif_id: id, error: result.error })
     }
+    return true
   }
 
   /** A project open settled: a Motif changed while the project was closed
    *  is recorded like an edit, and the backups keep only what the table
    *  records (undo history starts empty at an open, and is never stored).
    *  Recording trusts nothing: its folders were found when the project
-   *  became the open one (`MotifResolver.setProject`). */
+   *  became the open one (`MotifResolver.setProject`). In a trusted project
+   *  those Motifs run as they are, and one log row names them. */
   opened(): void {
     const project = this.deps.project()
     if (!project) return
@@ -212,12 +220,16 @@ export class ProjectMotifRecords {
     const keep: [string, string][] = []
     const kept = () => { for (const [id, entry] of Object.entries(this.deps.actor.snapshot().motifs)) if (entry.revision) keep.push([id, entry.revision]) }
     kept()
+    const changed: string[] = []
     for (const [id, entry] of Object.entries(this.deps.actor.snapshot().motifs)) {
       try {
-        if (project.status(id).status === 'ok') this.record(project, id, entry.revision)
+        if (project.status(id).status === 'ok' && this.record(project, id, entry.revision)) changed.push(id)
       } catch (error) {
         this.warn(`Motif '${id}' could not be checked`, { motif_id: id, error: String(error) })
       }
+    }
+    if (changed.length && this.deps.projectTrusted?.()) {
+      try { this.deps.changedWhileClosed?.(changed.sort()) } catch { /* best effort */ }
     }
     kept()
     try {

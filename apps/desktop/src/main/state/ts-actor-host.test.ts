@@ -1644,6 +1644,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       if (motifTrust) motifResolver.onRevisionSeen((_id, revision, cause, base) => motifTrust.seen(revision, cause, base))
       motifResolver.setProject(project)
       let agentsTold = 0
+      let revoked = 0
       let busy = false
       const idle: Array<() => void> = []
       const exportJobs = {
@@ -1652,52 +1653,130 @@ describe('createTsActorHost — persistence-route integration', () => {
         workspaceSettled: () => {},
       } as unknown as ExportJobs
       const host = createTsActorHost({ ...fixture.deps, motifStore, motifBuiltins: [], motifResolver, exportJobs,
-        ...(motifTrust ? { motifTrust } : {}), mcpResourcesChanged: () => { agentsTold++ } })
+        ...(motifTrust ? { motifTrust } : {}), onTrustRevoked: () => { revoked++ }, mcpResourcesChanged: () => { agentsTold++ } })
       return {
         ...fixture, host, project, root, motifResolver, motifTrust, trustFile,
         setBusy: (value: boolean) => { busy = value },
         exportEnds: () => { busy = false; for (const listener of idle) listener() },
         told: () => fixture.sent.filter((s) => s.event === 'motifs:changed').length,
         agentsTold: () => agentsTold,
+        revoked: () => revoked,
         close: () => { host.stop(); motifTrust?.flush(); rmSync(root, { recursive: true, force: true }) },
       }
     }
 
-    it('runs a Motif received from another machine only once the user trusts the revision they looked at', async () => {
+    /** Opens a project holding Motif `card` as another machine's project
+     *  holds it: its folder and table entry, found as the project becomes
+     *  the open one. Answers its revision. */
+    async function receivedCard(m: ReturnType<typeof motifHost>, body = 'received'): Promise<string> {
+      await m.host.handleInvoke('project_new_workspace', publicationProject)
+      mkdirSync(m.project.folder('card'), { recursive: true })
+      writeFileSync(nodePath.join(m.project.folder('card'), 'index.html'), page('Card', body))
+      const revision = m.project.status('card').revision!
+      expect(m.host.actor.dispatch('set_project_motif', { motif_id: 'card', uid: newLineage(), revision, from: null }).ok).toBe(true)
+      m.motifResolver.setProject(new ProjectMotifStore(nodePath.join(m.root, 'Film')))
+      return revision
+    }
+    const session = (m: ReturnType<typeof motifHost>) => sessionView(m.host) as { project: { trusted: boolean } | null; motifs: { untrusted: unknown[] } }
+
+    it('asks to trust a project holding a Motif received from another machine, and runs it once the user trusts what they were shown', async () => {
       const m = motifHost({ trust: true })
       m.host.start()
       try {
-        await m.host.handleInvoke('project_new_workspace', publicationProject)
-        // A Motif folder and table entry as another machine's project holds
-        // them, found as the project becomes the open one.
-        mkdirSync(m.project.folder('card'), { recursive: true })
-        writeFileSync(nodePath.join(m.project.folder('card'), 'index.html'), page('Card', 'received'))
-        const revision = m.project.status('card').revision!
-        expect(m.host.actor.dispatch('set_project_motif', { motif_id: 'card', uid: newLineage(), revision, from: null }).ok).toBe(true)
-        m.motifResolver.setProject(new ProjectMotifStore(nodePath.join(m.root, 'Film')))
-
+        const revision = await receivedCard(m)
         const untrusted = { motif_id: 'card', status: 'untrusted', revision, diagnostic: 'not trusted on this machine' }
         expect(m.host.unavailableMotifs()).toEqual([untrusted])
-        expect(sessionView(m.host).motifs).toMatchObject({ untrusted: [{ motif_id: 'card', revision }] })
-        const rows = await m.host.handleInvoke('list_motifs', { group: 'project' }) as Array<Record<string, unknown>>
-        expect(rows.find((r) => r.id === 'card')).toMatchObject({ status: 'untrusted', revision })
+        expect(session(m).project).toMatchObject({ trusted: false })
+        expect(session(m).motifs).toMatchObject({ untrusted: [{ motif_id: 'card', revision }] })
         expect(() => m.motifResolver.gate('card')).toThrow(/not trusted/)
-        expect(await m.host.handleInvoke('motif_trust_summary', { motif_id: 'card' })).toMatchObject({
-          motif_id: 'card', revision, trusted: false, summary: { files: 1, scripts: [{ path: 'index.html' }] } })
-
-        // A revision the folder no longer holds is refused, trusting nothing.
-        await expect(m.host.handleInvoke('trust_motif', { motif_id: 'card', revision: 'f'.repeat(64) })).rejects.toThrow(/revision conflict/)
-        expect(m.host.unavailableMotifs()).toEqual([untrusted])
+        const summary = await m.host.handleInvoke('project_trust_summary', {}) as Record<string, unknown>
+        expect(summary).toMatchObject({ trusted: false, dismissed: false, prompt: true,
+          motifs: [{ motif_id: 'card', name: 'Card', revision, summary: { files: 1, scripts: [{ path: 'index.html' }] } }] })
+        expect(typeof summary.project).toBe('string')
+        const quick = await m.host.handleInvoke('project_trust_summary', { summaries: false }) as { motifs: Record<string, unknown>[] }
+        expect(quick.motifs).toEqual([{ motif_id: 'card', name: 'Card', revision }])
 
         // Trust is the machine's, not the project's: it is taken during an export.
         m.setBusy(true)
         const [told, agentsTold] = [m.told(), m.agentsTold()]
-        expect(await m.host.handleInvoke('trust_motif', { motif_id: 'card', revision })).toEqual({ motif_id: 'card', revision, trusted: true })
-        expect(m.told()).toBe(told + 1)
-        expect(m.agentsTold()).toBe(agentsTold + 1)
+        expect(await m.host.handleInvoke('trust_project', { revisions: { card: revision } })).toEqual({ trusted: true })
+        expect(m.told(), 'the catalog reads trust again').toBe(told + 1)
+        expect(m.agentsTold(), 'agents read trust again').toBe(agentsTold + 1)
         expect(m.motifResolver.gate('card').revision).toBe(revision)
         expect(m.host.unavailableMotifs()).toEqual([])
-        expect(new MotifTrust(m.trustFile, () => []).trusted(revision)).toBe(true)
+        expect(session(m).project).toMatchObject({ trusted: true })
+        expect(await m.host.handleInvoke('project_trust_summary', {})).toMatchObject({ trusted: true, prompt: false, motifs: [] })
+        // The folder is trusted, not the revision: no revision is recorded.
+        expect(new MotifTrust(m.trustFile, () => []).trusted(revision)).toBe(false)
+        // Untrusting would retire the hosts the export draws on: refused.
+        await expect(m.host.handleInvoke('untrust_project', {})).rejects.toThrow(/export/i)
+        expect(session(m).project).toMatchObject({ trusted: true })
+        expect(m.revoked()).toBe(0)
+      } finally { m.close() }
+    })
+
+    it('trusts nothing when the Motifs shown are not the ones that may not run now', async () => {
+      const m = motifHost({ trust: true })
+      m.host.start()
+      try {
+        const revision = await receivedCard(m)
+        const refused = async (revisions: Record<string, string>, why: string) => {
+          await expect(m.host.handleInvoke('trust_project', { revisions }), why).rejects.toThrow(/revision conflict/)
+          expect(m.host.unavailableMotifs(), why).toEqual([expect.objectContaining({ motif_id: 'card', status: 'untrusted' })])
+          expect(session(m).project, why).toMatchObject({ trusted: false })
+        }
+        await refused({ card: 'f'.repeat(64) }, 'a revision the folder no longer holds')
+        await refused({}, 'a Motif not shown')
+        await refused({ card: revision, lower: 'f'.repeat(64) }, 'a Motif shown that runs already')
+      } finally { m.close() }
+    })
+
+    it('trusts a project with no Motif that may not run from an empty list', async () => {
+      const m = motifHost({ trust: true })
+      m.host.start()
+      try {
+        await m.host.handleInvoke('project_new_workspace', publicationProject)
+        mkdirSync(nodePath.join(m.root, 'Film'), { recursive: true })
+        expect(await m.host.handleInvoke('project_trust_summary', {})).toMatchObject({ trusted: false, prompt: false, motifs: [] })
+        expect(await m.host.handleInvoke('trust_project', { revisions: {} })).toEqual({ trusted: true })
+        expect(session(m).project).toMatchObject({ trusted: true })
+      } finally { m.close() }
+    })
+
+    it('remembers Later for the folder: the question is not asked again, and nothing runs', async () => {
+      const m = motifHost({ trust: true })
+      m.host.start()
+      try {
+        await receivedCard(m)
+        expect(await m.host.handleInvoke('dismiss_project_trust', {})).toEqual({ dismissed: true })
+        expect(await m.host.handleInvoke('dismiss_project_trust', {})).toEqual({ dismissed: true })
+        expect(await m.host.handleInvoke('project_trust_summary', { summaries: false })).toMatchObject({ trusted: false, dismissed: true, prompt: false, motifs: [{ motif_id: 'card' }] })
+        expect(m.motifResolver.resolve('card').status).toBe('untrusted')
+      } finally { m.close() }
+    })
+
+    it('stops running what only the folder made trusted when the user stops trusting it, retiring the hosts that rendered it', async () => {
+      const m = motifHost({ trust: true })
+      m.host.start()
+      try {
+        const revision = await receivedCard(m)
+        await m.host.handleInvoke('trust_project', { revisions: { card: revision } })
+        const [told, revoked] = [m.told(), m.revoked()]
+        expect(await m.host.handleInvoke('untrust_project', {})).toEqual({ trusted: false })
+        expect(m.revoked(), 'capture hosts retired').toBe(revoked + 1)
+        expect(m.told()).toBe(told + 1)
+        expect(m.motifResolver.resolve('card').status).toBe('untrusted')
+        expect(session(m).project).toMatchObject({ trusted: false })
+        expect(await m.host.handleInvoke('project_trust_summary', { summaries: false }), 'the question stays put off').toMatchObject({ dismissed: true, prompt: false })
+      } finally { m.close() }
+    })
+
+    it('refuses the project trust channels with no project open', async () => {
+      const m = motifHost({ trust: true })
+      m.host.start()
+      try {
+        for (const [name, args] of [['project_trust_summary', {}], ['trust_project', { revisions: {} }], ['untrust_project', {}], ['dismiss_project_trust', {}]] as const)
+          await expect(m.host.handleInvoke(name, args), name).rejects.toThrow(/No project is open/)
       } finally { m.close() }
     })
 
@@ -1745,18 +1824,14 @@ describe('createTsActorHost — persistence-route integration', () => {
       } finally { m.close() }
     })
 
-    it('reads the trust card\'s summary of a revision once', async () => {
+    it('reads the trust dialog\'s summary of a revision once', async () => {
       const m = motifHost({ trust: true })
       m.host.start()
       try {
-        await m.host.handleInvoke('project_new_workspace', publicationProject)
-        mkdirSync(m.project.folder('card'), { recursive: true })
-        writeFileSync(nodePath.join(m.project.folder('card'), 'index.html'), page('Card', 'summarised once'))
-        const revision = m.project.status('card').revision!
-        expect(m.host.actor.dispatch('set_project_motif', { motif_id: 'card', uid: newLineage(), revision, from: null }).ok).toBe(true)
-        const first = await m.host.handleInvoke('motif_trust_summary', { motif_id: 'card' })
-        const snapshot = vi.spyOn(m.project, 'snapshot')
-        expect(await m.host.handleInvoke('motif_trust_summary', { motif_id: 'card' })).toEqual(first)
+        await receivedCard(m, 'summarised once')
+        const first = await m.host.handleInvoke('project_trust_summary', {})
+        const snapshot = vi.spyOn(m.motifResolver.project()!, 'snapshot')
+        expect(await m.host.handleInvoke('project_trust_summary', {})).toEqual(first)
         expect(snapshot).not.toHaveBeenCalled()
       } finally { m.close() }
     })

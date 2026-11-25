@@ -3,8 +3,9 @@
 // of `id`, a built-in's bundled package included; `<key>--proposal` is a
 // pending publication's frozen package. The protocol handler, capture and
 // covers resolve and pin through here, never through a store, so a project
-// Motif whose revision is not trusted on this machine (`trust.ts`) is served
-// to none of them.
+// Motif whose revision is not trusted on this machine (`trust.ts`), in a
+// project folder not trusted here, is served to none of them.
+import path from 'node:path'
 import { parseManifestIsland, type Manifest } from '../../shared/motifs/catalog'
 import { MotifError } from '../../shared/motifs/errors'
 import { libraryHost, libraryIdOfHost, proposalOfHost, type MotifStatus } from '../../shared/motifs/projectMotifs'
@@ -80,10 +81,11 @@ export class MotifResolver {
 
   /** `trust` decides which project revisions may run; the library's and
    *  proposals' are never asked about. Its `projectOpened`, when it has one,
-   *  hears each project become the open one before any folder of it is
-   *  seen (`MotifTrust`). */
+   *  hears each project folder become the open one before any folder of it
+   *  is seen, and its `openProjectTrusted` says whether that folder is
+   *  trusted (`MotifTrust`). */
   constructor(private readonly store: UserMotifStore, private readonly builtins: readonly BuiltinMotif[],
-    private readonly trust: MotifTrustView & { projectOpened?(): void }) {
+    private readonly trust: MotifTrustView & { projectOpened?(dir: string | null): void; openProjectTrusted?(): boolean }) {
     this.library = {
       describe: id => {
         const builtin = builtins.find(b => b.id === id)
@@ -120,21 +122,33 @@ export class MotifResolver {
    *  an edit made here. */
   setProject(project: ProjectMotifStore | null): void {
     this.projectStore = project
-    this.trust.projectOpened?.()
+    this.trust.projectOpened?.(project ? path.dirname(project.root()) : null)
     if (!project) return
     this.hear(project)
     project.open(revision => this.trust.trusted(revision))
   }
   project(): ProjectMotifStore | null { return this.projectStore }
 
+  /** Whether the open project's folder is trusted on this machine: every
+   *  revision in it may run (ADR 0182). */
+  projectFolderTrusted(): boolean {
+    return this.projectStore !== null && this.trust.openProjectTrusted?.() === true
+  }
+
   /** Whether the open project's Motif `id` may run at `revision`, its folder's
-   *  revision now. A revision not trusted yet is observed
-   *  (`ProjectMotifStore.observe`) before it is answered: an edit made on
-   *  disk while the project is open, read before the watcher has heard it,
-   *  is judged as the watcher judges it, so an agent's write is never
-   *  refused while the watcher waits for quiet. Nothing else is inferred
-   *  here: the revision the table records is never a base. */
+   *  revision now: any, in a trusted project folder. Otherwise a revision not
+   *  trusted yet is observed (`ProjectMotifStore.observe`) before it is
+   *  answered: an edit made on disk while the project is open, read before
+   *  the watcher has heard it, is judged as the watcher judges it, so an
+   *  agent's write is never refused while the watcher waits for quiet.
+   *  Nothing else is inferred here: the revision the table records is never
+   *  a base.
+   *
+   *  LANDMINE: the folder's trust is laid over the revisions' here alone.
+   *  Fed to `project.open` or to what a seen revision earns, it would record
+   *  revisions that stay trusted once the folder is untrusted. */
   projectTrusted(id: string, revision: string): boolean {
+    if (this.projectFolderTrusted()) return true
     if (this.trust.trusted(revision)) return true
     this.projectStore?.observe(id)
     return this.trust.trusted(revision)

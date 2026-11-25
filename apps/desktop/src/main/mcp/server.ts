@@ -834,8 +834,9 @@ function historyLockedRefusal(err: McpToolErrorJson, tsHost: TsActorHost): McpTo
  *  recent history the panel keeps; `lock_reason` is the history lock. `project`
  *  is the project the user has open (null on the start screen), with the Recents
  *  list and default parent folder `open_project` / `create_project` draw on.
+ *  `project.trusted` says whether the user trusts its folder here (ADR 0182);
  *  `motifs` names the open project's Motifs that cannot render, an untrusted
- *  one with the revision the user would trust; `fonts.missing` the families
+ *  one with the revision its folder holds; `fonts.missing` the families
  *  its layers ask for that resolve nowhere (ADR 0176). The resource defs
  *  themselves live in `hostResources.ts`. */
 export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsActorHost, 'projectStatus' | 'unavailableMotifs' | 'missingFonts'>>): Record<string, unknown> {

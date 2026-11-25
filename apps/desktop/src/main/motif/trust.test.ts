@@ -2,7 +2,7 @@
 // revisions the library makes trusted, and what each way of seeing a
 // revision earns, over real project folders.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
@@ -13,7 +13,7 @@ import { newLineage } from './lineage'
 import { normalize } from './motifPackage'
 import { libraryPackage, ProjectMotifStore } from './projectStore'
 import { UserMotifStore } from './store'
-import { FOUND_KEPT, libraryRevisions, MotifTrust, TRUST_CORRUPT_SUFFIX, TRUST_FILE, TRUST_KEPT, trustOnSeen } from './trust'
+import { FOUND_KEPT, libraryRevisions, MotifTrust, PROJECTS_KEPT, TRUST_CORRUPT_SUFFIX, TRUST_FILE, TRUST_KEPT, trustOnSeen } from './trust'
 
 const BUILTINS = builtinMotifs(path.resolve(__dirname, '../../shared/motifs/builtin'))
 
@@ -48,19 +48,14 @@ function received(dir: string, name: string, body = 'received'): void {
 
 describe('the trust record', () => {
   it('keeps what was trusted across a restart', () => {
-    trust.trustNow(rev(1))
+    trust.seen(rev(1), 'created', null)
     trust.seen(rev(2), 'placed', null)
     trust.flush()
     const restarted = new MotifTrust(file(), () => [])
     expect(restarted.trusted(rev(1))).toBe(true)
     expect(restarted.trusted(rev(2))).toBe(true)
     expect(restarted.trusted(rev(3))).toBe(false)
-    expect(JSON.parse(readFileSync(file(), 'utf8'))).toMatchObject({ version: 1, revisions: { [rev(1)]: [expect.any(Number), 'user'], [rev(2)]: [expect.any(Number), 'placed'] } })
-  })
-
-  it('writes the user\'s Trust before it returns', () => {
-    trust.trustNow(rev(1))
-    expect(new MotifTrust(file(), () => []).trusted(rev(1))).toBe(true)
+    expect(JSON.parse(readFileSync(file(), 'utf8'))).toMatchObject({ version: 1, revisions: { [rev(1)]: [expect.any(Number), 'created'], [rev(2)]: [expect.any(Number), 'placed'] } })
   })
 
   it('moves an unreadable record aside and trusts nothing from it', () => {
@@ -69,7 +64,8 @@ describe('the trust record', () => {
     expect(trust.trusted(rev(1))).toBe(false)
     expect(readFileSync(file() + TRUST_CORRUPT_SUFFIX, 'utf8')).toBe('{ not json')
     expect(existsSync(file())).toBe(false)
-    trust.trustNow(rev(1))
+    trust.seen(rev(1), 'placed', null)
+    trust.flush()
     expect(new MotifTrust(file(), () => []).trusted(rev(1))).toBe(true)
   })
 
@@ -104,6 +100,123 @@ describe('the trust record', () => {
     expect(trust.trusted(third)).toBe(false)
     trust.libraryChanged()
     expect(trust.trusted(third)).toBe(true)
+  })
+})
+
+describe('project folders in the record', () => {
+  /** A project folder under the test root, on disk. */
+  const folderOf = (name: string) => { const dir = path.join(root, name); mkdirSync(dir, { recursive: true }); return dir }
+  const restarted = () => new MotifTrust(file(), () => [])
+  const opened = (t: MotifTrust, dir: string | null) => { t.projectOpened(dir); return t }
+
+  it('reads a record that has only revisions, as an older build writes it, with every revision still trusted', () => {
+    mkdirSync(path.dirname(file()), { recursive: true })
+    writeFileSync(file(), JSON.stringify({ version: 1, revisions: { [rev(1)]: [1, 'user'], [rev(2)]: [2, 'placed'] } }))
+    const film = folderOf('Film')
+    trust.projectOpened(film)
+    expect(trust.trusted(rev(1)), 'the user trusted it one revision at a time').toBe(true)
+    expect(trust.trusted(rev(2))).toBe(true)
+    expect(trust.projectState()).toEqual({ trusted: false, dismissed: false })
+    expect(existsSync(file() + TRUST_CORRUPT_SUFFIX)).toBe(false)
+    // Its next write keeps those revisions and the version an older build reads.
+    trust.trustProject()
+    const saved = JSON.parse(readFileSync(file(), 'utf8'))
+    expect(saved).toMatchObject({ version: 1, revisions: { [rev(1)]: [1, 'user'], [rev(2)]: [2, 'placed'] } })
+  })
+
+  it('keeps trusted and dismissed folders across a restart', () => {
+    const [film, ad] = [folderOf('Film'), folderOf('Ad')]
+    opened(trust, film).trustProject()
+    opened(trust, ad).dismissProject()
+    expect(opened(restarted(), film).projectState()).toEqual({ trusted: true, dismissed: false })
+    expect(opened(restarted(), ad).projectState()).toEqual({ trusted: false, dismissed: true })
+    expect(opened(restarted(), folderOf('Other')).projectState()).toEqual({ trusted: false, dismissed: false })
+  })
+
+  it('drops a folder entry that is not one, alone', () => {
+    const film = folderOf('Film')
+    const key = realpathSync.native(film)
+    mkdirSync(path.dirname(file()), { recursive: true })
+    writeFileSync(file(), JSON.stringify({ version: 1, revisions: { [rev(1)]: [1, 'placed'] },
+      projects: { [key]: 5, '/somewhere/else': 'yesterday', '': 3 }, dismissed: ['not', 'a', 'map'] }))
+    expect(opened(trust, film).projectState()).toEqual({ trusted: true, dismissed: false })
+    expect(trust.trusted(rev(1))).toBe(true)
+    trust.dismissProject()
+    expect(Object.keys(JSON.parse(readFileSync(file(), 'utf8')).projects)).toEqual([key])
+  })
+
+  it('takes a symlink to a project folder and the folder for one project', () => {
+    const film = folderOf('Film')
+    const link = path.join(root, 'Film link')
+    symlinkSync(film, link, 'dir')
+    opened(trust, link).trustProject()
+    expect(opened(restarted(), film).openProjectTrusted()).toBe(true)
+  })
+
+  it('asks again for a renamed folder: it is another project', () => {
+    const film = folderOf('Film')
+    opened(trust, film).trustProject()
+    const renamed = path.join(root, 'Film renamed')
+    renameSync(film, renamed)
+    expect(opened(restarted(), renamed).openProjectTrusted()).toBe(false)
+  })
+
+  it('writes the user\'s trust of a project before it returns', () => {
+    opened(trust, folderOf('Film')).trustProject()
+    expect(opened(restarted(), path.join(root, 'Film')).openProjectTrusted()).toBe(true)
+  })
+
+  it('remembers the question put off when the user stops trusting a project', () => {
+    const film = folderOf('Film')
+    opened(trust, film).trustProject()
+    trust.untrustProject()
+    expect(trust.projectState()).toEqual({ trusted: false, dismissed: true })
+    expect(opened(restarted(), film).projectState()).toEqual({ trusted: false, dismissed: true })
+  })
+
+  it('records no revision for a folder\'s trust, and untrusting it leaves every revision as it was', () => {
+    trust.seen(rev(1), 'placed', null)
+    opened(trust, folderOf('Film')).trustProject()
+    expect(trust.trusted(rev(2))).toBe(false)
+    trust.untrustProject()
+    expect(trust.trusted(rev(1))).toBe(true)
+    expect(Object.keys(JSON.parse(readFileSync(file(), 'utf8')).revisions)).toEqual([rev(1)])
+  })
+
+  it('refuses to trust with no project open, or a folder it cannot read', () => {
+    expect(() => trust.trustProject()).toThrow(/No project is open/)
+    trust.projectOpened(path.join(root, 'Gone'))
+    expect(() => trust.trustProject()).toThrow(/cannot be read/)
+    expect(trust.openProjectTrusted()).toBe(false)
+  })
+
+  it('carries a folder\'s trust and its question put off to the folder Save As makes, and nothing from one that has neither', () => {
+    const [film, ad] = [folderOf('Film'), folderOf('Ad')]
+    opened(trust, film).trustProject()
+    opened(trust, ad).dismissProject()
+    const [filmCopy, adCopy] = [folderOf('Film copy'), folderOf('Ad copy')]
+    trust.carryProject(film, filmCopy)
+    trust.carryProject(ad, adCopy)
+    expect(opened(restarted(), filmCopy).projectState()).toEqual({ trusted: true, dismissed: false })
+    expect(opened(restarted(), adCopy).projectState()).toEqual({ trusted: false, dismissed: true })
+  })
+
+  it('keeps the newest folders of each scope past its cap, the oldest leaving first', () => {
+    const dir = (n: number) => `/projects/${n}`
+    const full = Object.fromEntries(Array.from({ length: PROJECTS_KEPT }, (_, n) => [dir(n), n]))
+    mkdirSync(path.dirname(file()), { recursive: true })
+    writeFileSync(file(), JSON.stringify({ version: 1, revisions: {}, projects: full, dismissed: full }))
+    const capped = new MotifTrust(file(), () => [], () => PROJECTS_KEPT, (d) => d)
+    capped.projectOpened(dir(PROJECTS_KEPT))
+    capped.trustProject()
+    capped.dismissProject()
+    const reread = new MotifTrust(file(), () => [], () => 0, (d) => d)
+    reread.projectOpened(dir(0))
+    expect(reread.projectState()).toEqual({ trusted: false, dismissed: false })
+    reread.projectOpened(dir(1))
+    expect(reread.projectState()).toEqual({ trusted: true, dismissed: true })
+    reread.projectOpened(dir(PROJECTS_KEPT))
+    expect(reread.projectState()).toEqual({ trusted: true, dismissed: true })
   })
 })
 

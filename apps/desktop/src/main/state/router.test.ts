@@ -37,7 +37,7 @@ const ALL_CHANNELS: readonly string[] = [
   'list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif',
   'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal',
   'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'rename_library_motif', 'update_project_motif',
-  'motif_trust_summary', 'trust_motif',
+  'project_trust_summary', 'trust_project', 'untrust_project', 'dismiss_project_trust',
   // pure native (no project actor)
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
@@ -268,8 +268,11 @@ describe('routeChannel', () => {
     }
   })
   it('routes motif authoring/read/install/project-copy channels to the motif route', () => {
-    for (const ch of ['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'rename_library_motif', 'update_project_motif', 'motif_trust_summary', 'trust_motif'])
+    for (const ch of ['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif', 'rename_library_motif', 'update_project_motif', 'project_trust_summary', 'trust_project', 'untrust_project', 'dismiss_project_trust'])
       expect(routeChannel(ch).kind, ch).toBe('motif')
+  })
+  it('routes no per-Motif trust channel: the project is what the user trusts (ADR 0182)', () => {
+    for (const ch of ['motif_trust_summary', 'trust_motif']) expect(routeChannel(ch).kind, ch).toBe('reject')
   })
   it('routes the portability check and its folder cleanup to the host, never to a command or rust', () => {
     for (const ch of ['project_portability', 'project_trash_motif_folder']) {

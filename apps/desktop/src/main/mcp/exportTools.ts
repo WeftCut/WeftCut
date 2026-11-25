@@ -96,7 +96,7 @@ const EXPORT_REFUSALS: Record<string, { code: McpErrorCode; error: string; next?
   render_timeout: { code: 'internal', error: 'RenderTimeout', next: 'retry with fewer t_us or a smaller width' },
   render_failed: { code: 'internal', error: 'RenderFailed' },
   renderer_cannot_draw: { code: 'invalid_request', error: 'RendererCannotDraw' },
-  motif_unavailable: { code: 'invalid_request', error: 'MotifUnavailable', next: 'project://session lists why; restore the folder under Motifs/, fix its files, ask the user to trust an untrusted one in the Motifs panel, or remove the layers using it' },
+  motif_unavailable: { code: 'invalid_request', error: 'MotifUnavailable', next: 'project://session lists why; restore the folder under Motifs/, fix its files, ask the user to trust the project for an untrusted one (File > Trust this project), or remove the layers using it' },
   export_unavailable: { code: 'internal', error: 'ExportUnavailable' },
 }
 export function exportRefusal(e: { code: string; message: string; data?: unknown }): McpToolErrorJson {
