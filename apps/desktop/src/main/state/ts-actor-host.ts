@@ -39,9 +39,9 @@ import { legacyMigration } from '../motif/legacyResolve'
 import { copyProjectMotifs } from '../motif/projectCopy'
 import type { BuiltinMotif } from '../motif/authoring'
 import type { MotifResolver } from '../motif/resolver'
-import { libraryPackage, libraryPackageOfLineage, type MotifState } from '../motif/projectStore'
+import { libraryPackage, libraryPackageOfLineage, type MotifState, type ProjectMotifStore } from '../motif/projectStore'
 import { ProjectMotifRecords, projectMotifAccess } from '../motif/projectRecords'
-import { ALL_TRUSTED, effectiveState, type MotifTrust, type ProjectTrustView } from '../motif/trust'
+import { ALL_TRUSTED, effectiveState, type MotifTrust, type ProjectTrustState, type ProjectTrustView } from '../motif/trust'
 import { motifTrustSummary } from '../motif/trustSummary'
 import { revisionConflict } from '../motif/refusal'
 import type { MediaItem } from './model'
@@ -157,9 +157,15 @@ export interface TsActorHostDeps {
    *  Absent (tests) → no Motif folder is readable. */
   motifResolver?: MotifResolver
   /** Which project Motif revisions may run on this machine, and the user's
-   *  Trust (`trust_motif`); the resolver gates rendering on the same record.
-   *  Absent (tests) → every revision is trusted and `trust_motif` refuses. */
-  motifTrust?: Pick<MotifTrust, 'trusted' | 'trustNow'>
+   *  trust of the open project's folder (`trust_project`, `untrust_project`,
+   *  `dismiss_project_trust`; ADR 0182); the resolver gates rendering on the
+   *  same record. Absent (tests) → every revision is trusted, the summary
+   *  answers an untrusted project with nothing to trust, and the other
+   *  project trust channels refuse. */
+  motifTrust?: Pick<MotifTrust, 'trusted' | 'projectState' | 'trustProject' | 'untrustProject' | 'dismissProject' | 'carryProject'>
+  /** The user stopped trusting the open project: what was let render while
+   *  it was trusted stops (`MotifCapturer.trustRevoked`). */
+  onTrustRevoked?: () => void
   /** Makes the open project's `Motifs/` watcher tell Motif `id`'s next
    *  change even when it ends in the state last told
    *  (`ProjectMotifWatcher.forget`). Absent (tests) → nothing watches. */
@@ -215,7 +221,9 @@ export interface OpenedProject { dir: string }
 /** What the MCP session view says about projects: the one open (its name read
  *  from the actor, so a rename cannot go stale) and where one can come from. */
 export interface ProjectStatus {
-  project: { name: string; dir: string } | null
+  /** `trusted`: whether the user trusts the project's folder on this
+   *  machine, so its Motifs run (ADR 0182). */
+  project: { name: string; dir: string; trusted: boolean } | null
   /** The Recents list, newest first — what the start screen shows. */
   recent_projects: Array<{ name: string; path: string }>
   /** Where the New Project dialog would create one. */
@@ -344,6 +352,15 @@ function restorableDrafts(missing: readonly MissingMotif[]): string {
     " copying a draft's folder into the project's Motifs folder while the project is open restores that Motif"
 }
 
+/** The renderer's project trust channels (router `MOTIF_CHANNELS`, ADR 0182).
+ *  They change this machine's record, never the project. */
+const PROJECT_TRUST_CHANNELS = ['project_trust_summary', 'trust_project', 'untrust_project', 'dismiss_project_trust']
+
+/** The last segment of a folder path, either separator. */
+function folderName(dir: string): string {
+  return dir.slice(Math.max(dir.lastIndexOf('/'), dir.lastIndexOf('\\')) + 1)
+}
+
 /** Whether two Motif tables hold the same entries. */
 function sameMotifTable(a: Readonly<ProjectMotifs>, b: Readonly<ProjectMotifs>): boolean {
   const ids = Object.keys(a)
@@ -409,6 +426,18 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     warn: (message, details) => {
       try { deps.emitLog?.({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message, details: { kind: 'ProjectMotifs', ...details } }) }
       catch (err) { console.warn('[ts-actor-host] emitLog failed (project Motifs)', err) }
+    },
+    projectTrusted: () => resolver?.projectFolderTrusted() ?? false,
+    // Info, never the bell: a trusted project's Motifs run without asking.
+    changedWhileClosed: (ids) => {
+      try {
+        deps.emitLog?.({
+          level: 'info', category: { kind: 'Project' }, source: { kind: 'System' },
+          message: `Motifs changed while WeftCut was closed: ${ids.join(', ')}`,
+          i18n_key: 'log.motifs_changed_while_closed', i18n_args: { count: ids.length, ids: ids.join(', ') },
+          details: { kind: 'TrustedMotifsChangedWhileClosed', motif_ids: [...ids] },
+        })
+      } catch (err) { console.warn('[ts-actor-host] emitLog failed (trusted Motifs changed)', err) }
     },
   })
 
@@ -553,7 +582,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       try { actor.replaceState(next) } finally { swapping = false }
     },
   }
-  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, legacyDraft, copyMotifs: copyProjectMotifs, contentFs: deps.contentFs, platform: deps.platform }
+  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, legacyDraft, copyMotifs: copyProjectMotifs, carryTrust: deps.motifTrust ? (from: string, to: string) => deps.motifTrust!.carryProject(from, to) : undefined, contentFs: deps.contentFs, platform: deps.platform }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and
@@ -816,7 +845,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     progress: (progress) => deps.send(PROJECT_PACK_PROGRESS_EVENT, progress),
     appVersion: deps.appVersion ?? '',
     join: deps.join,
-    basename: (p) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1),
+    basename: folderName,
     newJobId: () => `pack-${idGen()}`,
   }) : null
 
@@ -827,57 +856,120 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     ? { trusted: (revision, id) => resolver.projectTrusted(id, revision) }
     : deps.motifTrust ?? ALL_TRUSTED
 
-  /** The open project's Motif `id` the user is looking at in the Motifs
-   *  panel: its store and the files its folder holds now. */
-  function trustSubject(args: Record<string, unknown>) {
-    if (typeof args.motif_id !== 'string') throw new Error('motif_id is required')
+  /** The open project's Motifs; throws on the start screen. */
+  function openProjectMotifs(): ProjectMotifStore {
     const project = opened ? projectMotifs() : null
     if (!project) throw new Error('No project is open')
-    if (!Object.hasOwn(actor.snapshot().motifs, args.motif_id)) throw new Error(`No Motif '${args.motif_id}' in this project`)
-    return { id: args.motif_id, project }
+    return project
   }
 
-  /** The renderer's `motif_trust_summary`: what the trust card shows, read
-   *  without running anything. The folder's files are read only for a
-   *  revision not summarised yet. */
-  function motifTrustCard(args: Record<string, unknown>) {
-    const { id, project } = trustSubject(args)
-    const { status, revision, diagnostic } = project.status(id)
-    if (status === 'missing') throw new Error(`Motif '${id}' has no folder in this project`)
-    if (!revision) throw new Error(diagnostic ?? `Motifs/${id}/ holds no Motif package`)
-    const files = () => {
-      const snapshot = project.snapshot(id)
-      if (snapshot?.revision !== revision) throw revisionConflict(snapshot?.revision ?? null, 'look at the Motif again')
-      return snapshot.files
-    }
-    return { motif_id: id, revision, trusted: motifTrust.trusted(revision, id), summary: motifTrustSummary(revision, files) }
+  /** Each Motif the open project's table records, by id, as it stands once
+   *  trust is applied. */
+  function effectiveMotifs(project: ProjectMotifStore): [string, MotifState][] {
+    return Object.keys(actor.snapshot().motifs).sort().map((id) => [id, effectiveState(id, project.status(id), motifTrust)])
   }
 
-  /** The renderer's `trust_motif`: the user trusts the revision the card
-   *  showed, refused when the folder holds another by now. Never an MCP
-   *  tool: only the user trusts. */
-  function trustMotif(args: Record<string, unknown>) {
-    const { id, project } = trustSubject(args)
+  /** The table's Motifs that may not run here, with the revision each folder
+   *  holds: what trusting the project would let run. */
+  function untrustedMotifs(project: ProjectMotifStore): { id: string; revision: string }[] {
+    return effectiveMotifs(project).flatMap(([id, state]) => state.status === 'untrusted' ? [{ id, revision: state.revision! }] : [])
+  }
+
+  const projectTrustState = (): ProjectTrustState => deps.motifTrust?.projectState() ?? { trusted: false, dismissed: false }
+
+  /** The trust record, for a project trust channel. */
+  function trustRecord(): NonNullable<TsActorHostDeps['motifTrust']> {
     if (!deps.motifTrust) throw new Error('motifTool: trust record not configured')
-    const current = project.status(id).revision
-    if (typeof args.revision !== 'string' || current !== args.revision)
-      throw revisionConflict(current ?? null, 'look at the Motif again before trusting it')
-    deps.motifTrust.trustNow(current)
+    return deps.motifTrust
+  }
+
+  /** Trust changed what may run: the renderer's catalog and agents' views
+   *  read it again. */
+  function trustChanged(): void {
     deps.send('motifs:changed', {})
     deps.mcpResourcesChanged?.()
-    return { motif_id: id, revision: current, trusted: true }
+  }
+
+  /** The renderer's `project_trust_summary`: whether the open project is
+   *  trusted or its question put off, whether to ask now, and its Motifs
+   *  that may not run, each with what its files hold (read without running
+   *  anything; left out with `summaries: false`). A folder's files are read
+   *  only for a revision not summarised yet. */
+  function projectTrustSummary(args: Record<string, unknown>) {
+    const project = openProjectMotifs()
+    const { trusted, dismissed } = projectTrustState()
+    const summaries = args.summaries !== false
+    const motifs = untrustedMotifs(project).map(({ id, revision }) => {
+      let name: string | null = null
+      try { name = project.describe(id)?.manifest.name ?? null } catch { /* no manifest to name it */ }
+      const row = { motif_id: id, name, revision }
+      if (!summaries) return row
+      const files = () => {
+        const snapshot = project.snapshot(id)
+        if (snapshot?.revision !== revision) throw revisionConflict(snapshot?.revision ?? null, 'look at the project\'s Motifs again')
+        return snapshot.files
+      }
+      return { ...row, summary: motifTrustSummary(revision, files) }
+    })
+    return { project: folderName(opened!.dir), trusted, dismissed, prompt: !trusted && !dismissed && motifs.length > 0, motifs }
+  }
+
+  /** The renderer's `trust_project`: the user trusts the open project's
+   *  folder after looking at `revisions`, its untrusted Motifs by id. Refused,
+   *  trusting nothing, unless those are exactly the Motifs that may not run
+   *  now, at those revisions. Never an MCP tool: only the user trusts. */
+  function trustProject(args: Record<string, unknown>) {
+    const project = openProjectMotifs()
+    const record = trustRecord()
+    const shown = args.revisions
+    if (typeof shown !== 'object' || shown === null || Array.isArray(shown)) throw new Error('revisions is required')
+    const sent = shown as Record<string, unknown>
+    const current = untrustedMotifs(project)
+    const differs = current.find(({ id, revision }) => !Object.hasOwn(sent, id) || sent[id] !== revision)
+    const unshown = Object.keys(sent).find((id) => !current.some((m) => m.id === id))
+    if (differs || unshown !== undefined) {
+      const id = differs?.id ?? unshown!
+      const now = differs ? differs.revision : project.status(id).revision
+      throw revisionConflict(now ?? null, `Motif '${id}' changed; look at the project's Motifs again before trusting it`)
+    }
+    record.trustProject()
+    trustChanged()
+    return { trusted: true }
+  }
+
+  /** The renderer's `untrust_project`: the open project's Motifs that only
+   *  its folder made trusted stop running, and its question stays put off.
+   *  Refused while an export runs: it retires the capture hosts the export's
+   *  Motifs draw on. */
+  function untrustProject() {
+    deps.exportJobs?.assertWritable()
+    openProjectMotifs()
+    trustRecord().untrustProject()
+    try { deps.onTrustRevoked?.() } catch (error) { console.warn('[ts-actor-host] trust revocation failed', error) }
+    trustChanged()
+    return { trusted: false }
+  }
+
+  /** The renderer's `dismiss_project_trust`: *Later*, remembered for the
+   *  folder. */
+  function dismissProjectTrust() {
+    openProjectMotifs()
+    trustRecord().dismissProject()
+    return { dismissed: true }
   }
 
   function runMotif(name: string, args: Record<string, unknown>, by?: Actor): unknown {
     // Trust changes this machine's record, never the project: it runs during
     // an export too.
-    if (!["list_motifs", "read_motif", "list_motif_proposals", "list_motif_versions", "motif_trust_summary", "trust_motif"].includes(name)) deps.exportJobs?.assertWritable()
+    if (!["list_motifs", "read_motif", "list_motif_proposals", "list_motif_versions", ...PROJECT_TRUST_CHANNELS].includes(name)) deps.exportJobs?.assertWritable()
     if (name === 'update_project_motif') {
       if (typeof args.motif_id !== 'string') throw new Error('motif_id is required')
       return motifRecords.updateFromLibrary(args.motif_id)
     }
-    if (name === 'motif_trust_summary') return motifTrustCard(args)
-    if (name === 'trust_motif') return trustMotif(args)
+    if (name === 'project_trust_summary') return projectTrustSummary(args)
+    if (name === 'trust_project') return trustProject(args)
+    if (name === 'untrust_project') return untrustProject()
+    if (name === 'dismiss_project_trust') return dismissProjectTrust()
     if (!deps.motifStore) throw new Error('motifTool: motifStore not configured')
     return runMotifTool(name, args, {
       store: deps.motifStore,
@@ -896,8 +988,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     const project = opened ? projectMotifs() : null
     if (!project) return []
     const out: UnavailableMotif[] = []
-    for (const id of Object.keys(actor.snapshot().motifs).sort()) {
-      const state = effectiveState(id, project.status(id), motifTrust)
+    for (const [id, state] of effectiveMotifs(project)) {
       if (state.status === 'untrusted') out.push({ motif_id: id, status: state.status, diagnostic: state.diagnostic!, revision: state.revision! })
       else if (state.status !== 'ok') out.push({ motif_id: id, status: state.status, diagnostic: state.diagnostic ?? `Motifs/${id}/ is missing` })
     }
@@ -1373,7 +1464,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     ...(deps.readEditorPlayhead ? { playhead: async () => { const report = await deps.readEditorPlayhead!(); return playheadView(actor.snapshot(), report) } } : {}),
     audits: new AuditStore(projectManifest),
     projectStatus: () => ({
-      project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
+      project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir, trusted: projectTrustState().trusted },
       recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),
       default_parent_folder: deps.recents?.lastNewProjectParent() ?? null,
     }),

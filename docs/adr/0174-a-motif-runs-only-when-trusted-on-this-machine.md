@@ -140,3 +140,13 @@ judging an edit from the revision the table records, or from its backups
 (the same writer); trust per project (the same bytes are the same risk anywhere); an MCP tool
 that trusts (an agent could approve code it was handed); running an untrusted
 Motif in a stricter sandbox instead (the sandbox is what is not hardened).
+
+## Note (2026-11-25): the user trusts a project, not a Motif
+
+[ADR 0182](0182-a-projects-motifs-run-once-its-folder-is-trusted.md) makes the
+project folder the unit the user trusts: every revision under a trusted folder
+runs, and the per-Motif card and `trust_motif` are gone. A dialog asks once
+per folder, and *File > Stop trusting this project* is the untrust. The
+rules above still decide every revision of a project whose folder is not
+trusted. Trust per project is no longer rejected for folders; ADR 0182 says
+why.

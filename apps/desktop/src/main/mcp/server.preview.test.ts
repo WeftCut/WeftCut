@@ -59,7 +59,7 @@ describe('preview_motif and Motif trust', () => {
     const out = await preview({ motif_id: 'received', local_t_s: [1] }) as Res & { structuredContent: Record<string, unknown> }
     expect(out.isError).toBe(true)
     expect(out.structuredContent).toMatchObject({ error: 'MotifUntrusted', id: 'received', revision: 'a'.repeat(64) })
-    expect(out.content[0]!.text).toMatch(/not trusted on this machine.*Motifs panel.*read_motif/)
+    expect(out.content[0]!.text).toMatch(/not trusted on this machine.*trusts the project \(File > Trust this project\).*read_motif/)
     expect(capture).not.toHaveBeenCalled()
   })
 })

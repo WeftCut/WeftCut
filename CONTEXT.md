@@ -606,12 +606,19 @@ project keeps it in its Motif table, the library beside its packages, a ZIP in a
 Placing and updating keep it; a copy starts its own. A claim, never a trust signal. See ADR 0171.
 _Avoid_: Motif uuid, global id, identity (the id's word)
 
-**Trusted Motif**: A project Motif whose revision this machine may run: placed from this machine's
-library, made in a project here, edited here from a trusted revision, or trusted by the user on its
-trust card in the Motifs panel. Recorded by revision in `<dataRoot>/motifs/.trust.json`; the
-library's revisions are trusted by derivation. An untrusted one (found at a project's open, or from
-a ZIP or an outside folder) renders nothing until the user trusts it. Only the user trusts. See ADR 0174.
+**Trusted Motif**: A project Motif whose revision this machine may run: any Motif of a Trusted
+project, or one placed from this machine's library, made in a project here, or edited here from a
+trusted revision. Revisions are recorded in `<dataRoot>/motifs/.trust.json`; the library's revisions
+are trusted by derivation. An untrusted one (found at a project's open, or from a ZIP or an outside
+folder) renders nothing until the user trusts its project. See ADR 0174 and ADR 0182.
 _Avoid_: approved Motif (approval is a proposal's), safe Motif, verified Motif
+
+**Trusted project**: A project folder whose Motifs this machine runs, whatever writes them: the
+user, an agent, a sync service, an edit made while the app was closed. Trusting it trusts every
+writer of the folder. Recorded on this machine by the folder's canonical path, never in the project;
+a moved or renamed folder is another project. Only the user trusts, in the dialog that asks once per
+folder or from *File > Trust this project…*. See ADR 0182.
+_Avoid_: trusted workspace, safe project
 
 **Installed Motif**: A Motif the user saved to the library, directly or by approving a proposal, with
 its versions. Saving one changes no project.

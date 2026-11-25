@@ -1309,6 +1309,8 @@ app.whenReady().then(async () => {
     emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
     motifResolver,
     motifTrust,
+    // The capturer is made later; untrusting before it exists has no host to retire.
+    onTrustRevoked: () => motifCapturer?.trustRevoked(),
     rewatchProjectMotif: (id) => projectMotifWatcher?.forget(id),
     motifStore,
     motifBuiltins,

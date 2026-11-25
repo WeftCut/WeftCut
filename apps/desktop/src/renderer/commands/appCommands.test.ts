@@ -23,6 +23,7 @@ import { endCrop, useCropEditingStore } from '../state/cropEditingStore';
 import { useCompositionAnchorStore } from '../state/compositionAnchorStore';
 import en from "../i18n/locales/en-US";
 import { summaryFixture } from "../testing/summaryFixture";
+import { useProjectTrust } from "../motifs/projectTrust";
 
 const noop = () => {};
 
@@ -52,6 +53,7 @@ const menu = {
   applyDefaultTransition: noop,
   openVoiceoverDialog: noop,
   checkPortability: noop,
+  projectTrust: noop,
   packProject: noop,
   openProject: noop,
 };
@@ -112,6 +114,25 @@ describe("buildAppCommands", () => {
     }
     // A no-binding command that is not checkable stays that way.
     expect(defs.find((d) => d.id === "createCheckpoint")!.checked).toBeUndefined();
+  });
+
+  // One File menu item, two actions (ADR 0182): its label names the one
+  // choosing it would take, and it waits until the project's state is known.
+  it("labels the project trust item by what it does, and enables it once the trust state is read", () => {
+    const trustItem = () => buildAppCommands(handlers, menu, flags).find((d) => d.id === "projectTrust")!;
+    const state = (trusted: boolean) => ({ project: "Film", trusted, dismissed: false, prompt: false, motifs: [] });
+    try {
+      useProjectTrust.setState({ summary: null });
+      expect(trustItem().enabled!()).toBe(false);
+      useProjectTrust.setState({ summary: state(false) });
+      expect(trustItem().enabled!()).toBe(true);
+      expect(trustItem().labelKey).toBe("actions.project_trust");
+      useProjectTrust.setState({ summary: state(true) });
+      expect(trustItem().labelKey).toBe("actions.untrust_project");
+      expect(resolveKey(en, "actions.untrust_project")).toBe("Stop trusting this project");
+    } finally {
+      useProjectTrust.setState({ summary: null, open: false });
+    }
   });
 
   // The self-contained third of the namespace: no binding, no App closure. All

@@ -185,9 +185,11 @@ prop; moving footage stays a video layer.
    note.
 4. `export_motif` and `delete_motif` (removes it from the project) only when
    the user asks.
-5. A Motif that came with a project renders nothing until the user trusts it
-   in WeftCut's Motifs panel; `read_motif` inspects it without running it.
-   Never ask the user to bypass trust.
+5. A Motif that came with a project renders nothing until the user trusts the
+   project in WeftCut (the trust dialog, or File > Trust this project…);
+   `project://session` lists such Motifs under `motifs.untrusted`, and
+   `read_motif` inspects one without running it. Never ask the user to bypass
+   trust.
 
 **Fonts**: a Motif names a font only by shipping it in its package or through
 a `font_<slot>` prop, and takes the text it draws from `string` props. A family

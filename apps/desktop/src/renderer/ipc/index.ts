@@ -3053,8 +3053,8 @@ export async function listMotifCatalog(group?: "project" | "library"): Promise<M
   return out;
 }
 
-/// What the trust card shows of an untrusted project Motif's files, read as
-/// text in main and never run. Mirrors `MotifTrustSummary` in
+/// What a project Motif's files hold, read as text in main and never run: a
+/// row of the project trust dialog. Mirrors `MotifTrustSummary` in
 /// `src/main/motif/trustSummary.ts`.
 export interface MotifTrustSummary {
   files: number;
@@ -3067,24 +3067,52 @@ export interface MotifTrustSummary {
   unscanned: string[];
 }
 
-export interface MotifTrustCard {
+/// A project Motif that waits for the project's trust, at the revision its
+/// folder holds: the one Trust names.
+export interface ProjectTrustMotif {
   motif_id: string;
-  /// The revision the summary was read from: the one Trust names.
+  name: string | null;
   revision: string;
+  /// Absent when the summary was asked for without summaries.
+  summary?: MotifTrustSummary;
+}
+
+/// Whether the open project's folder is trusted on this machine, and the
+/// Motifs that wait for that trust (ADR 0182).
+export interface ProjectTrustSummary {
+  /// The project folder's name.
+  project: string;
   trusted: boolean;
-  summary: MotifTrustSummary;
+  /// The user chose Later here: the dialog never opens by itself again.
+  dismissed: boolean;
+  /// Whether opening the project asks: not trusted, not dismissed, and at
+  /// least one Motif waiting.
+  prompt: boolean;
+  /// Sorted by id.
+  motifs: ProjectTrustMotif[];
 }
 
-/// The trust card's summary of project Motif `id` as its folder holds it now.
-export async function motifTrustSummary(id: string): Promise<MotifTrustCard> {
-  return invoke<MotifTrustCard>("motif_trust_summary", { motif_id: id });
+/// The open project's trust state. `summaries: false` skips reading each
+/// Motif's files, for a caller that needs only the state.
+export async function projectTrustSummary(opts: { summaries?: boolean } = {}): Promise<ProjectTrustSummary> {
+  return invoke<ProjectTrustSummary>("project_trust_summary", opts);
 }
 
-/// The user's Trust of project Motif `id` at `revision`, the one the card
-/// showed; refused when the folder holds another by now. Renderer-only: no
-/// MCP tool trusts (ADR 0174).
-export async function trustMotif(id: string, revision: string): Promise<void> {
-  await invoke("trust_motif", { motif_id: id, revision });
+/// The user's Trust of the open project, naming each waiting Motif's revision
+/// as the dialog showed it; refused, trusting nothing, when the folder holds
+/// any other set by now. Renderer-only: no MCP tool trusts (ADR 0182).
+export async function trustProject(revisions: Record<string, string>): Promise<void> {
+  await invoke("trust_project", { revisions });
+}
+
+/// Stop trusting the open project's folder; it also stays dismissed.
+export async function untrustProject(): Promise<void> {
+  await invoke("untrust_project", {});
+}
+
+/// The user's Later: the dialog does not open by itself again for this folder.
+export async function dismissProjectTrust(): Promise<void> {
+  await invoke("dismiss_project_trust", {});
 }
 
 /** Default-props catalog cover, persisted by main across app openings. `host`

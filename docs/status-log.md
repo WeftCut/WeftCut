@@ -111,6 +111,9 @@ or per chunk — the ring is 1000 entries.
   attempt — checkpoint create/delete/restore,
   `TransitionPlacementBounce` and `MarkerReconcileDrop` (actor), project Motif
   folders the app could not keep in step with the table (`Warn` `"ProjectMotifs"`),
+  Motifs of a trusted project whose files changed while the app was closed
+  (`Info` `"TrustedMotifsChangedWhileClosed"`, one row per open naming them,
+  `log.motifs_changed_while_closed`, never a bell row; ADR 0182),
   and the cross-composition Alt-drag refusal
   (`renderer/timeline/crossCompositionRefusal.ts`).
 - **Project fonts** (`Project`, `Warn`, `source = System`; ADR 0176): one row

@@ -321,10 +321,20 @@ describe('saveProjectAs', () => {
   it('fails without writing project.wcpr when a Motif folder cannot be copied', async () => {
     const fs = memFs()
     const copyMotifs = vi.fn(() => { throw new Error('EACCES') })
-    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
+    const carryTrust = vi.fn()
+    const d = deps({ fs, copyMotifs, carryTrust, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
     await expect(saveProjectAs(d, '/out', '/ws')).rejects.toThrow('EACCES')
     expect(fs.files.has(`/out/${PROJECT_FILE}`)).toBe(false)
     expect(d.calls).toEqual([])
+    expect(carryTrust, 'a failed copy carries no trust').not.toHaveBeenCalled()
+  })
+
+  it('carries the open folder\'s trust to the new folder after the copy, before the commit makes it the open project', async () => {
+    const d = deps({ copyMotifs: vi.fn(), actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
+    const carryTrust = vi.fn((from: string, to: string) => { d.calls.push(`trust:${from}->${to}`) })
+    d.carryTrust = carryTrust
+    await saveProjectAs(d, '/out', '/ws')
+    expect(d.calls.slice(0, 2)).toEqual(['trust:/ws->/out', 'commit:/out'])
   })
 
   describe('refuses a target that already exists, as New project does', () => {
@@ -340,8 +350,9 @@ describe('saveProjectAs', () => {
       fs.writeFile = (p, t) => { touched.push(`write:${p}`); writeFile(p, t) }
       fs.mkdirp = (dir) => { touched.push(`mkdirp:${dir}`); mkdirp(dir) }
       const copyMotifs = vi.fn(() => { touched.push('copyMotifs') })
+      const carryTrust = vi.fn(() => { touched.push('carryTrust') })
       const contentFs = new Proxy({}, { get: (_target, method) => { touched.push(`content:${String(method)}`); return vi.fn() } }) as NonNullable<OrchestratorDeps['contentFs']>
-      const d = deps({ fs, copyMotifs, contentFs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
+      const d = deps({ fs, copyMotifs, carryTrust, contentFs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
       return { d, fs, before, touched }
     }
 

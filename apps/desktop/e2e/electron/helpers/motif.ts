@@ -66,16 +66,18 @@ export function motifPage(manifest: Record<string, unknown>, body: string, head 
     + `</head><body>${body}</body></html>`
 }
 
-/** The user's Trust of project Motif `id`, as the Motifs panel's trust card
- *  sends it: the revision its summary was read from (ADR 0174). A renderer
- *  channel: no agent tool trusts. Answers the trusted revision. */
-export async function trustMotif(page: Page, id: string): Promise<string> {
-  return page.evaluate(async id => {
+/** The user's Trust of the open project, as its trust dialog sends it: the
+ *  untrusted Motifs the dialog shows, each at the revision shown (ADR 0182).
+ *  Every Motif of the project's folder runs from then on, ones added later
+ *  included. A renderer channel: no agent tool trusts. Answers the map sent. */
+export async function trustProject(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(async () => {
     const invoke = (window as any).api.backend.invoke
-    const card = await invoke('motif_trust_summary', { motif_id: id })
-    await invoke('trust_motif', { motif_id: id, revision: card.revision })
-    return card.revision as string
-  }, id)
+    const summary = await invoke('project_trust_summary', { summaries: false }) as { motifs: Array<{ motif_id: string; revision: string }> }
+    const revisions = Object.fromEntries(summary.motifs.map(m => [m.motif_id, m.revision]))
+    await invoke('trust_project', { revisions })
+    return revisions
+  })
 }
 
 /** An open project's Motif row as `list_motifs` reports it. */

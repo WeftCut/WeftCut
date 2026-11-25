@@ -179,6 +179,14 @@ export class MotifCapturer {
     this.pool.retireAll()
   }
 
+  /// Revisions that passed the gate may not any more (the user stopped
+  /// trusting the project): every lane is gated again at its next capture,
+  /// and no host goes on rendering a page it loaded while trusted.
+  trustRevoked(): void {
+    this.manifestCache.clear()
+    this.pool.retireAll()
+  }
+
   /** Explicit retry revokes only this package's remembered content failure.
    * Automatic retries leave the failure latch intact to prevent retry storms. */
   resetFailure(motifId: string, contentHash: string): void {

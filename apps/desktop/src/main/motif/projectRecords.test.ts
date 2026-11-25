@@ -25,6 +25,10 @@ let records: ProjectMotifRecords
 let seen: Array<[string, string, RevisionCause]>
 let warned: string[]
 let rewatched: string[]
+/** Whether the open project's folder is trusted, and the log rows naming
+ *  Motifs changed while it was closed. */
+let folderTrusted: boolean
+let changedNotes: string[][]
 /** While set, the project refuses every write, as during an export. */
 let busy: boolean
 beforeEach(() => {
@@ -35,6 +39,8 @@ beforeEach(() => {
   seen = []
   warned = []
   rewatched = []
+  folderTrusted = false
+  changedNotes = []
   busy = false
   project.onRevisionSeen((id, revision, cause) => seen.push([id, revision, cause]))
   const idGen = seededGen()
@@ -45,6 +51,7 @@ beforeEach(() => {
   records = new ProjectMotifRecords({
     actor, project: () => project, libraryOfLineage: uid => libraryPackageOfLineage(library, [], uid),
     warn: message => warned.push(message), rewatch: id => rewatched.push(id),
+    projectTrusted: () => folderTrusted, changedWhileClosed: ids => changedNotes.push([...ids]),
   })
 })
 afterEach(() => { rmSync(root, { recursive: true, force: true }) })
@@ -202,6 +209,36 @@ describe('opening a project', () => {
     // Recorded, never heard as an edit made here: Motif trust tells the two apart.
     expect(seen.some(([, , cause]) => cause === 'edited-while-open')).toBe(false)
     expect(existsSync(folder('lower'))).toBe(true)
+  })
+})
+
+describe('opening a trusted project', () => {
+  it('names the Motifs whose folders changed while it was closed in one note', () => {
+    install('lower', 'v1')
+    install('card', 'v1')
+    place('lower')
+    place('card')
+    install('title', 'v1')
+    place('title')
+    edit('lower', 'while closed')
+    edit('card', 'while closed')
+    folderTrusted = true
+    records.opened()
+    expect(changedNotes).toEqual([['card', 'lower']])
+    // Recorded as in any project.
+    expect(entries().lower!.revision).toBe(project.status('lower').revision)
+  })
+
+  it('notes nothing when no folder changed, nor in a project that is not trusted', () => {
+    install('lower', 'v1')
+    place('lower')
+    folderTrusted = true
+    records.opened()
+    edit('lower', 'while closed')
+    folderTrusted = false
+    records.opened()
+    expect(changedNotes).toEqual([])
+    expect(entries().lower!.revision).toBe(project.status('lower').revision)
   })
 })
 
@@ -592,8 +629,8 @@ describe('Motif trust across an open', () => {
     const { trust, resolver } = trusting(); trusted = trust
     expect(actor.dispatch('set_project_motif', { motif_id: 'card', uid: newLineage(), revision: project.status('card').revision, from: null }).ok).toBe(true)
     records.opened()
-    // Edits made from the untrusted revision stay untrusted; the user then
-    // trusts the last one.
+    // Edits made from the untrusted revision stay untrusted; then the last
+    // one's bytes become trusted, as a library copy of them would make them.
     edit('card', 'first edit')
     records.folderChanged('card', project.observe('card'))
     const first = entries().card!.revision!
@@ -601,7 +638,7 @@ describe('Motif trust across an open', () => {
     records.folderChanged('card', project.observe('card'))
     const second = entries().card!.revision!
     expect(trust.trusted(first) || trust.trusted(second)).toBe(false)
-    trust.trustNow(second)
+    trust.seen(second, 'placed', null)
     // Undo puts the first edit back into a folder holding trusted bytes.
     actor.dispatch('undo', {})
     expect(project.status('card').revision).toBe(first)

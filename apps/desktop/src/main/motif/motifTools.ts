@@ -292,7 +292,7 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
 
 /** A project Motif refused because its revision is not trusted here. */
 export function untrustedRefusal(id: string, revision: string): MotifRefusal {
-  return new MotifRefusal(`Motif '${id}' is ${UNTRUSTED_DIAGNOSTIC}: the user trusts it in the Motifs panel; read_motif reads it as text`,
+  return new MotifRefusal(`Motif '${id}' is ${UNTRUSTED_DIAGNOSTIC}: the user trusts the project (File > Trust this project); read_motif reads it as text`,
     { error: 'MotifUntrusted', id, revision })
 }
 

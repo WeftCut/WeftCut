@@ -142,6 +142,8 @@ import {
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
 import { PortabilityDialog } from "./portability/PortabilityDialog";
 import { PackDialog } from "./pack/PackDialog";
+import { ProjectTrustHost } from "./motifs/ProjectTrustDialog";
+import { runProjectTrustCommand } from "./motifs/projectTrust";
 import { openProjectFromEditor } from "./startup/openProject";
 import { useFileOpenRequests } from "./startup/fileOpenRequests";
 import { notify } from "./pack/packJobs";
@@ -1157,6 +1159,7 @@ export function App({ onCloseProject, onWorkspaceReady, onProjectReplaced }: App
           applyTransitionAtPlayhead("Crossfade", undefined, settle),
         openVoiceoverDialog: openVoiceoverPrompt,
         checkPortability: () => setPortabilityOpen(true),
+        projectTrust: runProjectTrustCommand,
         packProject: () => setPackOpen(true),
         openProject: () => void openProjectFromEditor(t, onProjectReplaced),
       },
@@ -1293,6 +1296,9 @@ export function App({ onCloseProject, onWorkspaceReady, onProjectReplaced }: App
       <VoiceoverDialog />
       <TranscriptionInputDialog />
       {portabilityOpen && <PortabilityDialog onClose={() => setPortabilityOpen(false)} />}
+      {/* The project trust dialog for every surface outside the Motifs panel:
+          the open-time prompt, the File menu, the property panel. */}
+      <ProjectTrustHost />
       {packOpen && <PackDialog onClose={() => setPackOpen(false)} />}
 
       {/* Save Workspace As / Rename Workspace name prompt. */}

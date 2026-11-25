@@ -41,19 +41,23 @@ project rows.
 
 ## Trust
 
-A Motif runs only when this machine trusts its revision (ADR 0174). One placed
-from this library, made in the project here (a folder first written under
-`Motifs/` while the project is open included), or edited from a trusted
-revision while the project is open here is trusted without asking. One found when a project is opened (a
-project received from someone else), or brought in from a ZIP or a folder
-outside the project's `Motifs/`, is untrusted: it renders nothing, the
-picture shows an error placeholder, and preview_motif, a copy and
-install_motif refuse it. read_motif reads its files as text and export_motif
-writes them out; neither runs it.
+A Motif runs only when this machine trusts its project's folder or its
+revision (ADR 0182, ADR 0174). Every Motif of a trusted project runs,
+including ones added or edited later. In a project that is not trusted, one
+placed from this library, made in the project here (a folder first written
+under `Motifs/` while the project is open included), or edited from a trusted
+revision while the project is open here is trusted without asking. One found
+when a project is opened (a project received from someone else), or brought
+in from a ZIP or a folder outside the project's `Motifs/`, is untrusted: it
+renders nothing, the picture shows an error placeholder, and preview_motif, a
+copy and install_motif refuse it. read_motif reads its files as text and
+export_motif writes them out; neither runs it.
 
-Only the user trusts a Motif, on its card in the app's Motifs panel. When a
-received project lists untrusted Motifs, read them with read_motif if the user
-asks what they do, say what you found, and leave the decision to the user.
+Only the user trusts a project, in the app's project trust dialog; no tool
+can. `project://session` says whether the open project is trusted
+(project.trusted) and lists its untrusted Motifs (motifs.untrusted). When it
+lists some, read them with read_motif if the user asks what they do, say what
+you found, and leave the decision to the user.
 
 ## Making a Motif
 
@@ -77,8 +81,8 @@ The id is made from the Motif's name and numbered when the project holds it.
   the others keep the original.
 - zip: an exported package. It keeps the id and the lineage it carries; an id
   the project holds gets the lineage suffix instead of a number. It is
-  untrusted until the user trusts it, unless this machine already trusts
-  those exact bytes, as it does a ZIP exported from this library, under
+  untrusted until the user trusts the project, unless this machine already
+  trusts those exact bytes, as it does a ZIP exported from this library, under
   whichever id the copy takes.
 - directory: copies a package folder once; later edits to the source folder
   do not reach the project, and the copy is untrusted like a ZIP. A folder you

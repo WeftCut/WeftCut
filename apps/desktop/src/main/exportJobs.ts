@@ -328,7 +328,7 @@ export class ExportJobs {
     const motifs = unrenderableMotifs(h, resolved.settings, resolved.range);
     if (motifs.length) {
       const ids = motifs.map(m => m.motif_id);
-      const trust = motifs.some(m => m.status === 'untrusted') ? 'the user trusts an untrusted one in the Motifs panel; ' : ''
+      const trust = motifs.some(m => m.status === 'untrusted') ? 'the user trusts the project (File > Trust this project); ' : ''
       throw new ExportJobError('motif_unavailable', `${motifs.map(m => `Motif '${m.motif_id}' is ${m.status} (${m.diagnostic})`).join('; ')}; a layer in the export uses ${ids.length > 1 ? 'them' : 'it'}, so nothing was exported — ${trust}restore its folder under Motifs/, fix its files, or remove the layers that use it`,
         { error: 'MotifUnavailable', motif_ids: ids, motifs });
     }

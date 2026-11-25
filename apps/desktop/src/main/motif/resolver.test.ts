@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
@@ -10,7 +10,7 @@ import { normalize } from './motifPackage'
 import { ProjectMotifStore } from './projectStore'
 import { MotifGateRefusal, MotifResolver, routeOfHost } from './resolver'
 import { PROPOSALS_DIR, UserMotifStore } from './store'
-import type { MotifTrustView } from './trust'
+import { MotifTrust, TRUST_FILE, type MotifTrustView } from './trust'
 
 const BUILTINS = builtinMotifs(path.resolve(__dirname, '../../shared/motifs/builtin'))
 
@@ -223,5 +223,65 @@ describe('the frame cache key of project Motifs', () => {
     writeFileSync(path.join(project.root(), 'a', 'art.svg'), 'two')
     expect(key('a')).not.toBe(before.a)
     expect(key('b')).toBe(before.b)
+  })
+})
+
+describe('a trusted project folder', () => {
+  const trustFile = () => path.join(root, 'library', TRUST_FILE)
+  /** A resolver over the machine's trust record, hearing every revision a
+   *  project sees as the app wires it, with project folder `name` open and a
+   *  Motif received from another machine in it. */
+  function received(name: string) {
+    const trust = new MotifTrust(trustFile(), () => [])
+    const trusting = new MotifResolver(library, BUILTINS, trust)
+    trusting.onRevisionSeen((_id, revision, cause, base) => trust.seen(revision, cause, base))
+    const project = new ProjectMotifStore(path.join(root, name))
+    projectMotif(project, 'card', {}, 'motif.define({frame(t){ /* received */ }})')
+    trusting.setProject(project)
+    return { trust, resolver: trusting, project }
+  }
+  /** The revisions the record holds on disk. */
+  const recorded = (trust: MotifTrust) => {
+    trust.flush()
+    return existsSync(trustFile()) ? Object.keys(JSON.parse(readFileSync(trustFile(), 'utf8')).revisions) : []
+  }
+
+  it('runs every Motif found in it at the open, recording no revision for them', () => {
+    const { trust, resolver: trusting, project } = received('Film')
+    const revision = project.status('card').revision!
+    expect(trusting.resolve('card').status).toBe('untrusted')
+    trust.trustProject()
+    expect(trusting.projectFolderTrusted()).toBe(true)
+    expect(trusting.resolve('card')).toMatchObject({ status: 'ok', revision })
+    expect(trusting.gate('card').revision).toBe(revision)
+    expect(trust.trusted(revision)).toBe(false)
+    expect(recorded(trust)).toEqual([])
+  })
+
+  it('stops running a received Motif edited while trusted once the folder is untrusted, its revisions as they were', () => {
+    const { trust, resolver: trusting, project } = received('Film')
+    trust.trustProject()
+    const before = recorded(trust)
+    writeFileSync(path.join(project.root(), 'card', 'art.svg'), 'edited while trusted')
+    // As the watcher hears the edit.
+    project.observe('card')
+    const edited = project.status('card').revision!
+    expect(trusting.resolve('card')).toMatchObject({ status: 'ok', revision: edited })
+    trust.untrustProject()
+    expect(trusting.projectFolderTrusted()).toBe(false)
+    expect(trusting.resolve('card')).toMatchObject({ status: 'untrusted', revision: edited })
+    expect(recorded(trust)).toEqual(before)
+  })
+
+  it('trusts nothing in a project whose own folder is not trusted', () => {
+    const { trust, resolver: trusting } = received('Film')
+    const other = new ProjectMotifStore(path.join(root, 'Other'))
+    projectMotif(other, 'card', {}, 'motif.define({frame(t){ /* other */ }})')
+    trusting.setProject(other)
+    trust.trustProject()
+    expect(trusting.resolve('card').status).toBe('ok')
+    trusting.setProject(new ProjectMotifStore(path.join(root, 'Film')))
+    expect(trusting.projectFolderTrusted()).toBe(false)
+    expect(trusting.resolve('card').status).toBe('untrusted')
   })
 })

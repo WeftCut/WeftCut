@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { analyze } from '../lib/analyze.mjs'
 import { driveExport, forceCloseApp, invokeCmd, launchApp, newProject, textBoxProbe, tmpDir, waitForHook } from './helpers/driver'
-import { addLayer, connectMcp, createMotif, reopen, rgb, settledSamples, trustMotif, type Sample } from './helpers/motif'
+import { addLayer, connectMcp, createMotif, reopen, rgb, settledSamples, trustProject, type Sample } from './helpers/motif'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const FIXTURE_DIR = path.resolve(__dirname, '../fixtures/fonts/courier-prime')
@@ -465,7 +465,7 @@ motif.define({ async setup(props) {
     const { app, page } = running
     await systemScanned(page, false)
     await reopen(page, copy)
-    await trustMotif(page, motifId)
+    await trustProject(page)
     await settledSamples(page, 500_000, SIGNAL, shows(GREEN), 'the capture draws the face from Fonts/')
     // The probe bites: without the face, the capture draws a fallback.
     await stubTrash(app, path.join(tmpDir('weftcut-e2e-fonts-motif-bin-'), 'trash'))

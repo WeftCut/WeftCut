@@ -46,6 +46,7 @@ function catalogue() {
       applyDefaultTransition: noop,
       openVoiceoverDialog: noop,
       checkPortability: noop,
+      projectTrust: noop,
       packProject: noop,
       openProject: noop,
     },

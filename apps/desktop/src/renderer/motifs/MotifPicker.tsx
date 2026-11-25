@@ -2,9 +2,10 @@
 // groups (spec § Project Motifs, "Panel"). Placing a library Motif copies it
 // into the project in the same undo step; there is no separate "add to
 // project". A project row says what it needs (an update, edits not in the
-// library, a broken folder, the user's Trust) and offers it; library rows keep placing, ZIP
-// export, version history and the trash, and a library folder whose name no
-// Motif can take offers its rename. An agent's proposals sit on top.
+// library, a broken folder) and offers it, and the project group says when its
+// Motifs wait for the project's trust (ADR 0182); library rows keep placing,
+// ZIP export, version history and the trash, and a library folder whose name
+// no Motif can take offers its rename. An agent's proposals sit on top.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FolderInputIcon, PlusIcon } from "lucide-react";
@@ -13,8 +14,7 @@ import { MotifProposalList, useMotifProposals } from './MotifProposalCard';
 import { MotifVersionHistory } from './MotifVersionHistory';
 import { useSaveToLibrary } from './SaveToLibrary';
 import { MotifProblem } from './MotifProblem';
-import { TrustCard } from './TrustCard';
-import { takeMotifsPanelRow } from './openMotifsPanel';
+import { ProjectTrustDialog } from './ProjectTrustDialog';
 import { matchRows, previewMotif, projectCopyOf, rowKey, rowName, rowRenders, type MotifRow } from './motifRows';
 import { listen } from "@/bridge/events";
 import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
@@ -109,6 +109,9 @@ export function MotifPicker({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [history, setHistory] = useState<LibraryMotifRow | null>(null);
+  // The trust dialog opened from this panel, stacked on it: the App's host
+  // would mount a second modal level with the panel instead.
+  const [trustOpen, setTrustOpen] = useState(false);
   // An agent's proposed publications, each a card the user approves or
   // rejects here (ADR 0046). They sit above the catalog, where the status
   // bar's notice sends the user.
@@ -134,10 +137,6 @@ export function MotifPicker({
   };
   useEffect(() => {
     aliveRef.current = true;
-    // Opened on a row by a surface outside the panel: that row is selected,
-    // and the first catalog keeps it.
-    const requested = takeMotifsPanelRow();
-    if (requested) setSelectedKey(requested);
     reload();
     let un: (() => void) | undefined;
     let cleaned = false;
@@ -170,6 +169,7 @@ export function MotifPicker({
 
   const projectRows = useMemo(() => catalog && matchRows(catalog.project, query), [catalog, query]);
   const libraryRows = useMemo(() => catalog && matchRows(catalog.library, query), [catalog, query]);
+  const untrustedCount = catalog?.project.filter((r) => r.status === "untrusted").length ?? 0;
   const misnamed = useMemo(() => {
     const q = query.trim().toLowerCase();
     return catalog?.misnamed.filter((id) => id.toLowerCase().includes(q)) ?? [];
@@ -333,6 +333,15 @@ export function MotifPicker({
               <div className="motif-picker-list">
                 <section aria-label={t("motif_picker.group_project")}>
                   <h3 className="motif-picker-group">{t("motif_picker.group_project")}</h3>
+                  {untrustedCount > 0 && (
+                    <div className="motif-picker-group-note">
+                      <span>{t("project_trust.panel_untrusted", { count: untrustedCount })}</span>
+                      <span aria-hidden>·</span>
+                      <Button variant="ghost" size="xs" onClick={() => setTrustOpen(true)}>
+                        {t("project_trust.panel_action")}
+                      </Button>
+                    </div>
+                  )}
                   {projectRows.length === 0 && empty(catalog.project, t("motif_picker.project_empty"))}
                   {projectRows.map(card)}
                 </section>
@@ -390,14 +399,15 @@ export function MotifPicker({
                     }
                   }}
                 />
-              ) : selected?.group === "project" && selected.status === "untrusted" ? (
-                // Keyed by revision: files changed under the card are read again.
-                <TrustCard key={`${rowKey(selected)}:${selected.revision}`} motifId={selected.id} />
               ) : selected?.group === "project" ? (
                 <div className="motif-picker-unavailable">
                   <h3>{t("motif_picker.unavailable_title", { name: rowName(selected) })}</h3>
                   {selected.status !== "ok" && <MotifProblem id={selected.id} status={selected.status} diagnostic={selected.diagnostic} />}
-                  <p className="settings-status">{t("motif_picker.unavailable_hint", { id: selected.id })}</p>
+                  {selected.status === "untrusted" ? (
+                    <Button size="sm" onClick={() => setTrustOpen(true)}>{t("project_trust.panel_action")}</Button>
+                  ) : (
+                    <p className="settings-status">{t("motif_picker.unavailable_hint", { id: selected.id })}</p>
+                  )}
                 </div>
               ) : (
                 <p className="settings-status">{t("motif_picker.empty")}</p>
@@ -407,6 +417,7 @@ export function MotifPicker({
         )}
         {save.dialog}
         {history && <MotifVersionHistory motif={history.motif} onClose={() => setHistory(null)} />}
+        {trustOpen && <ProjectTrustDialog onClose={() => setTrustOpen(false)} />}
         {deleting && (
           <AppDialog
             title={t("motif_picker.delete_button")}

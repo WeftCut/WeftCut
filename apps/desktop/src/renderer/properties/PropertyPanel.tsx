@@ -58,7 +58,7 @@ import { getMotif, motifUnavailable, subscribeMotifCatalog, motifCatalogRevision
 import { MotifManagementRow, MotifSourcePanel } from "./MotifManagement";
 import { MotifProblem } from "../motifs/MotifProblem";
 import { MotifFontProblem, TextFontProblem } from "./FontProblem";
-import { openMotifsPanelAt } from "../motifs/openMotifsPanel";
+import { openProjectTrustDialog } from "../motifs/projectTrust";
 import {
   useCompositionRefCounts,
   useGroupOrdinals,
@@ -1161,10 +1161,10 @@ function MotifFields({
       <BakeStatusLine layerId={layer.id} />
       {motif === null ? (
         unavailable?.status === "untrusted" ? (
-          // Only the user trusts, and the Motifs panel's trust card is where.
+          // Only the user trusts, the whole project at once (ADR 0182).
           <>
             <MotifProblem id={v.motif_id} status="untrusted" />
-            <Button size="sm" onClick={() => openMotifsPanelAt({ group: "project", id: v.motif_id })}>
+            <Button size="sm" onClick={openProjectTrustDialog}>
               {t("property_panel.motif_review_trust")}
             </Button>
           </>

@@ -1,11 +1,11 @@
-// Which project Motif revisions may run on this machine (spec § Trust). Owns
-// the machine-local record of trusted revisions, the revisions trusted
-// without a record (the library's), the rule that decides what a revision
-// seen in the open project earns, and the overlay that turns a folder's state
-// into what may render. Does not own the gate: `MotifResolver` refuses an
-// untrusted revision, and every surface that lists Motifs overlays
-// `effectiveState`.
-import { mkdirSync, readFileSync, renameSync } from 'node:fs'
+// Which project Motif revisions may run on this machine (spec § Trust, ADR
+// 0174, ADR 0182). Owns the machine-local record of trusted revisions and of
+// trusted or dismissed project folders, the revisions trusted without a
+// record (the library's), the rule that decides what a revision seen in the
+// open project earns, and the overlay that turns a folder's state into what
+// may render. Does not own the gate: `MotifResolver` refuses an untrusted
+// revision, and every surface that lists Motifs overlays `effectiveState`.
+import { mkdirSync, readFileSync, realpathSync, renameSync } from 'node:fs'
 import path from 'node:path'
 import { ATOMIC_TEMP_SUFFIX, nodeAtomicWriteIo, writeFileAtomic } from '../atomicWrite'
 import { motifRevision, type BuiltinMotif } from './authoring'
@@ -27,13 +27,20 @@ export const TRUST_KEPT = 20_000
  *  kept: a project shipping more folders than this must not push its own
  *  out. */
 export const FOUND_KEPT = 20_000
+/** Project folders kept in each folder scope of the record (trusted,
+ *  dismissed); past it the oldest leave first. */
+export const PROJECTS_KEPT = 2_000
 
+/** LANDMINE: stays 1. A build that knows only `revisions` reads a record of
+ *  this version and ignores `projects` and `dismissed`; any other version
+ *  makes it set the whole record aside as unreadable (ADR 0182). */
 const FORMAT = 1
 const REVISION = /^[0-9a-f]{64}$/
 
 /** Why a revision was trusted: copied in from this machine's library, made
  *  in a project here, an edit made while its project was open here, or the
- *  user's own Trust. */
+ *  user's own Trust of that one revision. Nothing writes `user` now; a record
+ *  holding it is still read, and what it trusts stays trusted. */
 export type TrustCause = 'placed' | 'created' | 'edited-while-open' | 'user'
 
 /** Whether a revision may run. */
@@ -104,13 +111,36 @@ export function libraryRevisions(store: UserMotifStore, builtins: readonly Built
   return out
 }
 
-/** The trust record of one machine: revisions by when they were trusted and
- *  why, in `<library>/.trust.json`. The map in memory is the record; the
- *  file follows it, written whole aside and renamed into place, coalesced to
- *  one write per turn of the event loop (`flush` writes now). */
-export class MotifTrust implements MotifTrustView {
+/** A folder's key in the record: its canonical path, so a symlink and its
+ *  target are one project and a renamed or moved folder is another. Null when
+ *  the folder cannot be read. */
+export type CanonicalFolder = (dir: string) => string | null
+
+const realFolder: CanonicalFolder = (dir) => {
+  try { return realpathSync.native(dir) } catch { return null }
+}
+
+/** Whether the open project's folder is trusted on this machine, and whether
+ *  its question was put off (*Later*, or *Stop trusting*). */
+export interface ProjectTrustState { trusted: boolean; dismissed: boolean }
+
+interface TrustRecord {
   /** Trusted revisions, oldest first. */
-  private record: Map<string, [number, TrustCause]> | null = null
+  revisions: Map<string, [number, TrustCause]>
+  /** Trusted project folders by canonical path, oldest first. */
+  projects: Map<string, number>
+  /** Project folders whose question was put off, oldest first. */
+  dismissed: Map<string, number>
+}
+
+/** The trust record of one machine, in `<library>/.trust.json`: revisions by
+ *  when they were trusted and why, and project folders by when they were
+ *  trusted or their question put off. The maps in memory are the record; the
+ *  file follows them, written whole aside and renamed into place, coalesced
+ *  to one write per turn of the event loop (`flush` writes now). What the
+ *  user decides about a folder is written before the call returns. */
+export class MotifTrust implements MotifTrustView {
+  private record: TrustRecord | null = null
   private library: Set<string> | null = null
   /** Revisions found untrusted at the opens of projects no longer open,
    *  oldest first, at most `FOUND_KEPT`. Kept for the app's life, never per
@@ -120,16 +150,24 @@ export class MotifTrust implements MotifTrustView {
   /** Revisions found untrusted since the open project became the open one
    *  (`projectOpened`), every one kept. */
   private foundNow = new Set<string>()
+  /** The open project's folder as `projectOpened` named it, and its key once
+   *  the folder could be read. */
+  private openDir: string | null = null
+  private openKey: string | null = null
   private dirty = false
   private scheduled = false
 
   /** `readLibrary` answers the revisions the library holds
    *  (`libraryRevisions`); it is asked again after `libraryChanged`. */
   constructor(private readonly file: string, private readonly readLibrary: () => Iterable<string>,
-    private readonly clock: () => number = Date.now) {}
+    private readonly clock: () => number = Date.now, private readonly canonical: CanonicalFolder = realFolder) {}
 
+  /** Whether `revision` is trusted for its bytes. A trusted folder never
+   *  makes one so (`openProjectTrusted` is laid over this by the resolver):
+   *  trusting a folder records no revision, and untrusting it leaves every
+   *  revision as it was. */
   trusted(revision: string): boolean {
-    return this.load().has(revision) || this.libraryRevisions().has(revision)
+    return this.load().revisions.has(revision) || this.libraryRevisions().has(revision)
   }
 
   /** Applies `trustOnSeen` to a revision the open project saw. */
@@ -141,20 +179,70 @@ export class MotifTrust implements MotifTrustView {
     else if (decision === 'found') this.foundNow.add(revision)
   }
 
-  /** Another project becomes the open one: what the last one found joins
-   *  the revisions kept from earlier opens. */
-  projectOpened(): void {
+  /** Project folder `dir` becomes the open one (null: none is): what the
+   *  last one found joins the revisions kept from earlier opens. */
+  projectOpened(dir: string | null = null): void {
     for (const revision of this.foundNow) {
       this.found.delete(revision)
       this.found.add(revision)
       if (this.found.size > FOUND_KEPT) this.found.delete(this.found.values().next().value!)
     }
     this.foundNow = new Set()
+    this.openDir = dir
+    this.openKey = dir === null ? null : this.canonical(dir)
   }
 
-  /** The user's Trust: recorded and written before it returns. */
-  trustNow(revision: string): void {
-    this.add(revision, 'user')
+  /** Whether the open project's folder is trusted here: every revision under
+   *  it may run, whatever wrote it (ADR 0182). */
+  openProjectTrusted(): boolean {
+    const key = this.openFolder()
+    return key !== null && this.load().projects.has(key)
+  }
+
+  projectState(): ProjectTrustState {
+    const key = this.openFolder()
+    if (key === null) return { trusted: false, dismissed: false }
+    const record = this.load()
+    return { trusted: record.projects.has(key), dismissed: record.dismissed.has(key) }
+  }
+
+  /** The user trusts the open project's folder. Throws when no project is
+   *  open or its folder cannot be read. */
+  trustProject(): void {
+    this.put(this.load().projects, this.requireOpenFolder())
+    this.flush()
+  }
+
+  /** The user stops trusting the open project's folder; its question stays
+   *  put off. */
+  untrustProject(): void {
+    const key = this.requireOpenFolder()
+    const record = this.load()
+    if (record.projects.delete(key)) this.dirty = true
+    this.put(record.dismissed, key)
+    this.flush()
+  }
+
+  /** The user puts the open project's question off (*Later*). A folder put
+   *  off already keeps when it was. */
+  dismissProject(): void {
+    const key = this.requireOpenFolder()
+    const record = this.load()
+    if (!record.dismissed.has(key)) this.put(record.dismissed, key)
+    this.flush()
+  }
+
+  /** Save As made `toDir` from `fromDir`: the new folder is trusted, and its
+   *  question put off, exactly when the old one's is. */
+  carryProject(fromDir: string, toDir: string): void {
+    const to = this.canonical(toDir)
+    if (to === null) return
+    const from = this.canonical(fromDir)
+    const record = this.load()
+    for (const scope of [record.projects, record.dismissed]) {
+      if (from !== null && scope.has(from)) this.put(scope, to)
+      else if (scope.delete(to)) this.dirty = true
+    }
     this.flush()
   }
 
@@ -168,20 +256,46 @@ export class MotifTrust implements MotifTrustView {
   flush(): void {
     if (!this.dirty || !this.record) return
     this.dirty = false
-    const revisions: Record<string, [number, TrustCause]> = {}
-    for (const [revision, entry] of this.record) revisions[revision] = entry
+    const { revisions, projects, dismissed } = this.record
+    const saved = {
+      version: FORMAT,
+      revisions: Object.fromEntries(revisions),
+      projects: Object.fromEntries(projects),
+      dismissed: Object.fromEntries(dismissed),
+    }
     try {
       mkdirSync(path.dirname(this.file), { recursive: true })
-      writeFileAtomic(nodeAtomicWriteIo, this.file, JSON.stringify({ version: FORMAT, revisions }))
+      writeFileAtomic(nodeAtomicWriteIo, this.file, JSON.stringify(saved))
     } catch (error) {
       this.dirty = true
       console.warn('[motif-trust] the trust record could not be written', error)
     }
   }
 
+  /** The open project's folder key, read again while its folder could not
+   *  be: a project store opens before its folder is first written. */
+  private openFolder(): string | null {
+    if (this.openKey === null && this.openDir !== null) this.openKey = this.canonical(this.openDir)
+    return this.openKey
+  }
+
+  private requireOpenFolder(): string {
+    const key = this.openFolder()
+    if (key === null) throw new Error(this.openDir === null ? 'No project is open' : 'The project folder cannot be read')
+    return key
+  }
+
+  /** Sets `key` in a folder scope as its newest entry. */
+  private put(scope: Map<string, number>, key: string): void {
+    scope.delete(key)
+    scope.set(key, this.clock())
+    while (scope.size > PROJECTS_KEPT) scope.delete(scope.keys().next().value!)
+    this.dirty = true
+  }
+
   private add(revision: string, cause: TrustCause): void {
     if (!REVISION.test(revision)) return
-    const record = this.load()
+    const record = this.load().revisions
     // A revision the library holds is recorded too: it stays trusted once
     // its library version is deleted.
     if (record.has(revision)) return
@@ -198,39 +312,50 @@ export class MotifTrust implements MotifTrustView {
     return this.library
   }
 
-  private load(): Map<string, [number, TrustCause]> {
+  private load(): TrustRecord {
     if (this.record) return this.record
-    this.record = new Map()
+    this.record = { revisions: new Map(), projects: new Map(), dismissed: new Map() }
     let text: string
     try { text = readFileSync(this.file, 'utf8') } catch { return this.record }
-    const entries = parseRecord(text)
-    if (!entries) {
+    const parsed = parseRecord(text)
+    if (!parsed) {
       // Moved aside, never written over: what it held is for a person to
       // read, and until then nothing in it is trusted.
       try { renameSync(this.file, this.file + TRUST_CORRUPT_SUFFIX) } catch { /* left in place */ }
       return this.record
     }
-    entries.sort((a, b) => a[1][0] - b[1][0])
-    for (const [revision, entry] of entries.slice(-TRUST_KEPT)) this.record.set(revision, entry)
+    parsed.revisions.sort((a, b) => a[1][0] - b[1][0])
+    for (const [revision, entry] of parsed.revisions.slice(-TRUST_KEPT)) this.record.revisions.set(revision, entry)
+    for (const scope of ['projects', 'dismissed'] as const) {
+      parsed[scope].sort((a, b) => a[1] - b[1])
+      for (const [key, at] of parsed[scope].slice(-PROJECTS_KEPT)) this.record[scope].set(key, at)
+    }
     return this.record
   }
 }
 
 const CAUSES: ReadonlySet<string> = new Set<TrustCause>(['placed', 'created', 'edited-while-open', 'user'])
 
+const isMap = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
 /** The record's entries, or null when the text is no record of this format.
- *  An entry that is not one is dropped alone. */
-function parseRecord(text: string): [string, [number, TrustCause]][] | null {
+ *  An entry that is not one is dropped alone; a folder scope that is not a
+ *  map holds none, as in a record written before folder scopes. */
+function parseRecord(text: string): { revisions: [string, [number, TrustCause]][]; projects: [string, number][]; dismissed: [string, number][] } | null {
   let saved: unknown
   try { saved = JSON.parse(text) } catch { return null }
-  if (typeof saved !== 'object' || saved === null) return null
-  const { version, revisions } = saved as { version?: unknown; revisions?: unknown }
-  if (version !== FORMAT || typeof revisions !== 'object' || revisions === null || Array.isArray(revisions)) return null
+  if (!isMap(saved)) return null
+  const { version, revisions } = saved
+  if (version !== FORMAT || !isMap(revisions)) return null
   const out: [string, [number, TrustCause]][] = []
   for (const [revision, entry] of Object.entries(revisions)) {
     if (!REVISION.test(revision) || !Array.isArray(entry)) continue
     const [at, cause] = entry as unknown[]
     if (typeof at === 'number' && Number.isFinite(at) && typeof cause === 'string' && CAUSES.has(cause)) out.push([revision, [at, cause as TrustCause]])
   }
-  return out
+  const folders = (scope: unknown): [string, number][] => isMap(scope)
+    ? Object.entries(scope).filter((e): e is [string, number] => e[0] !== '' && typeof e[1] === 'number' && Number.isFinite(e[1]))
+    : []
+  return { revisions: out, projects: folders(saved.projects), dismissed: folders(saved.dismissed) }
 }
