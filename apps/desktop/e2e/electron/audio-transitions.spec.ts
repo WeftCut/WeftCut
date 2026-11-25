@@ -27,15 +27,18 @@ async function capturePlayback(page: Page, fromUs: number): Promise<Capture[]> {
     const hook = (window as any).__weftcutTest
     hook.transportPause()
     hook.transportSeekUs(from)
-    // The transport is the engine itself: play leaves it 'preparing' before it
-    // returns, so the 'paused' below is the stop at the end, not this pause.
     hook.transportPlay()
     const captures: { positionUs: number; samples: number[]; sampleRate: number }[] = []
     const deadline = performance.now() + 60_000
+    // Only a pause after the play started is the stop at the end: a play the
+    // engine declines (suspended, disposed) leaves the pause above in place,
+    // and that is the liveness error below, not an empty run.
+    let started = false
     for (;;) {
       const state = hook.audioTransportSnapshot()
       if (state?.phase === 'error') throw new Error('preview playback failed')
-      if (state?.phase === 'paused') return captures
+      if (state?.phase === 'preparing' || state?.phase === 'playing') started = true
+      else if (started && state?.phase === 'paused') return captures
       if (performance.now() > deadline) throw new Error(`preview never finished playing: ${state?.phase} at ${state?.positionUs}`)
       if (state?.phase === 'playing') {
         const capture = hook.audioPreCompressorSamples()
