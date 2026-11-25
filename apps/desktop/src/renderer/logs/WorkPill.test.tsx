@@ -204,7 +204,7 @@ describe("a pack in the work pill", () => {
   const packAt = async (done: number, opts: { cancelling?: boolean } = {}) => {
     const { usePackJobStore } = await import("../pack/packJobStore");
     act(() => usePackJobStore.setState({ job: {
-      job_id: "pack-1", kind: "pack", file: "Example.weftcut", done, total: 3 * MB, cancelling: opts.cancelling ?? false,
+      job_id: "pack-1", kind: "pack", file: "Example.wcpk", done, total: 3 * MB, cancelling: opts.cancelling ?? false,
     } }));
   };
 
@@ -216,7 +216,7 @@ describe("a pack in the work pill", () => {
     expect(container.querySelector('[role="progressbar"]')!.getAttribute("aria-valuenow")).toBe("50");
     act(() => pill(container)!.click());
     const row = container.querySelector<HTMLElement>('[data-work="pack"]')!;
-    expect(row.textContent).toContain("Example.weftcut");
+    expect(row.textContent).toContain("Example.wcpk");
     expect(row.textContent).toContain("1.5 MB of 3.0 MB");
     expect(row.textContent).not.toMatch(/left|remaining/i);
     fireEvent.click(screen.getByRole("button", { name: "Cancel pack" }));

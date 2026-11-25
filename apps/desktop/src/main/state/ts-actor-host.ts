@@ -8,7 +8,7 @@ import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
 import { CommandFailure } from './errors'
 import { createAutosave, type AutosaveController, type AutosaveFs, type AutosaveSaveState } from './autosave'
-import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type MissingMotif, type SchemaUpgradeReport } from './workspace-orchestrator'
+import { openProject, projectFolderOf, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type MissingMotif, type SchemaUpgradeReport } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
 import { ensureGitignore, packFiles, type ProjectContentFs } from './projectContent'
 import { createProjectPacker, type PackNative, type PackSource, type ProjectPacker } from './projectPack'
@@ -110,7 +110,7 @@ export interface TsActorHostDeps {
   /** node:path.join — injected for testability. */
   join: (...parts: string[]) => string
   /** The backend's pack commands and job cancel (projectPack.ts). Absent
-   *  (tests) → Pack project and Open packed project refuse. */
+   *  (tests) → Pack project and unpack refuse. */
   packNative?: PackNative
   /** Bytes free for new files in a folder (`fs.statfs`): an unpack refuses
    *  a parent without room for the pack. */
@@ -295,7 +295,7 @@ export interface TsActorHost {
    *  (`project://portability`, `state/portability.ts`), as the folder stands:
    *  it copies nothing. Null with no project open. */
   portability: () => PortabilityReport | null
-  /** Pack project and Open packed project; null without `packNative`. Main
+  /** Pack project and unpack; null without `packNative`. Main
    *  feeds it the backend's `project_pack:progress` events. */
   packer: ProjectPacker | null
   /** The open project's `Motifs/<id>/` changed on disk (`watchProjectMotifs`):
@@ -429,7 +429,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       if (state.kind === 'failing' && !wasFailing) {
         deps.emitLog?.({
           level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' },
-          message: 'Save failed: project.json cannot be written', i18n_key: 'log.save_failing',
+          message: 'Save failed: project.wcpr cannot be written', i18n_key: 'log.save_failing',
           details: { kind: 'SaveFailing', code: state.code, path: state.path, since: state.since.toISOString(),
             last_saved_at: state.lastSavedAt?.toISOString() ?? null },
         })
@@ -510,7 +510,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       })
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (grid repair)', err) }
   }
-  // Load-time schema upgrade: the migration chain moved an older project.json
+  // Load-time schema upgrade: the migration chain moved an older project file
   // forward (migrate.ts). `warn` for the same reason as the grid repair — what the
   // next save writes is no longer what was opened — and the row names the
   // verified backup and every clip whose position was baked.
@@ -711,10 +711,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   const opens = (dir: string): void => {
     if (!quitting) { opened = { dir }; deps.onWorkspaceOpened?.() }
   }
+  const folderOf = (path: string): string => projectFolderOf(path, deps.platform ?? process.platform)
   const persistence: PersistenceHandlers = {
     // The Motif records after the open settles: an edit made while the
     // project was closed is a commit, which the swap would refuse.
-    open: async (dir) => {
+    open: async (path) => {
+      const dir = folderOf(path)
       await replaceWorkspace(async () => { await openProject(orchestratorDeps, dir); opens(dir) })
       motifRecords.opened()
       void collectStyle()
@@ -749,7 +751,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
   const agentProjects: TsActorHost['projects'] = {
     shuttingDown: () => quitting,
-    open: async (dir) => {
+    open: async (path) => {
+      const dir = folderOf(path)
       const replaced = opened?.dir ?? null
       // The folder already open is not reopened: a reload would flush and
       // drop the undo history, checkpoints, tacks and the work session of the

@@ -4,7 +4,7 @@
 // report.
 //
 // WHY THIS FILE MOCKS THE LOADER: at v1 the migration chain is empty, so no real
-// project.json can arrive needing an upgrade — an older file is refused at the
+// project.wcpr can arrive needing an upgrade — an older file is refused at the
 // floor and a current one needs nothing. The wiring would therefore ship
 // completely unexercised and first run for real on a user's v1 project years from
 // now, at the exact moment its only job (keeping the original) matters. So the
@@ -27,7 +27,8 @@ vi.mock('../persistence', async (importOriginal) => {
 })
 
 const { openProject } = await import('../workspace-orchestrator')
-const { serializeProjectToJson, PROJECT_FILE, preUpgradeBackupFile } = await import('../persistence')
+const { serializeProjectToJson, preUpgradeBackupFile } = await import('../persistence')
+const { PROJECT_FILE } = await import('../../../shared/projectFile')
 const { blankProject, SCHEMA_VERSION } = await import('../model')
 const { seededGen } = await import('../ids')
 type OrchestratorDeps = import('../workspace-orchestrator').OrchestratorDeps
@@ -47,6 +48,7 @@ function memFs(seed: Record<string, string> = {}): OrchestratorFs & { files: Map
     writeFile: (p, t) => { files.set(p, t) },
     mkdirp: (d) => { dirs.add(d) },
     rm: (p) => { files.delete(p) },
+    rename: (a, b) => { const t = files.get(a); if (t === undefined) throw new Error(`ENOENT ${a}`); files.delete(a); files.set(b, t) },
   }
 }
 
@@ -73,7 +75,7 @@ function harness(fs: OrchestratorFs) {
 beforeEach(() => { state.upgradedFrom = null })
 
 describe('openProject — schema upgrade', () => {
-  it('preserves the pre-upgrade bytes verbatim, beside project.json', async () => {
+  it('preserves the pre-upgrade bytes verbatim, beside project.wcpr', async () => {
     state.upgradedFrom = 1
     const fs = memFs({ [`/ws/${PROJECT_FILE}`]: PROJECT_JSON })
     const { deps } = harness(fs)
@@ -124,7 +126,7 @@ describe('openProject — schema upgrade', () => {
     await expect(openProject(deps, '/ws')).rejects.toThrow()
     expect(calls).toEqual([])
     expect(reports).toEqual([])
-    expect(fs.files.get('/ws/project.json')).toBe(PROJECT_JSON)
+    expect(fs.files.get('/ws/project.wcpr')).toBe(PROJECT_JSON)
   })
 
   it('writes nothing and reports nothing when the file was already current', async () => {

@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import type { MotifColdStartResult } from '../../shared/ipc'
+import { PROJECT_FILE } from '../../shared/projectFile'
 
 export interface MotifColdStartDeps {
   /// False outside a dev build; every call is refused.
@@ -30,7 +31,7 @@ export async function motifColdStart(dir: unknown, deps: MotifColdStartDeps): Pr
   if (!deps.enabled) throw new Error('Motif cold start is available in dev builds only')
   if (typeof dir !== 'string' || !path.isAbsolute(dir)) throw new Error('Motif cold start needs an absolute project folder')
   const root = canonical(dir)
-  if (!fs.statSync(path.join(root, 'project.json'), { throwIfNoEntry: false })?.isFile()) {
+  if (!fs.statSync(path.join(root, PROJECT_FILE), { throwIfNoEntry: false })?.isFile()) {
     throw new Error('Motif cold start needs a WeftCut project folder')
   }
   if (deps.transitioning() || deps.openFolders().some(open => open && canonical(open) === root)) {

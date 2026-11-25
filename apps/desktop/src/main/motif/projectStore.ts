@@ -1,6 +1,6 @@
 // A project's own Motifs: the packages under `<project>/Motifs/<id>/` that
 // the project renders, read as their files stand (spec § Project Motifs). Owns
-// the folders and what they hold; the table in project.json that names them
+// the folders and what they hold; the table in project.wcpr that names them
 // is the actor's.
 import { lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'

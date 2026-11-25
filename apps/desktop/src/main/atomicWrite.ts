@@ -4,7 +4,7 @@
 // the target holds either its previous bytes or the complete new text. Owns the
 // write → fsync → rename sequence and its temp file; `writeFileAtomic` is pure
 // over an injected `AtomicWriteIo`, `nodeAtomicWriteIo` binds it to node:fs.
-// The workspace adapter's `writeFile` (project.json, pre-upgrade backups) is
+// The workspace adapter's `writeFile` (project.wcpr, pre-upgrade backups) is
 // this function.
 import fs from 'node:fs'
 import path from 'node:path'
@@ -31,8 +31,8 @@ export interface AtomicWriteIo {
 
 /** Beside the target, so the rename stays on one volume; a fixed name, so a
  *  temp left by a crash is truncated and renamed away by the next write. Not
- *  `*.json`: nothing that lists a workspace mistakes it for a project or a
- *  backup. */
+ *  `*.wcpr` or `*.json`: nothing that lists a workspace mistakes it for a
+ *  project or a backup. */
 export const ATOMIC_TEMP_SUFFIX = '.tmp'
 
 /** Rename retry for a target or temp another process holds open. Landmine:
@@ -71,7 +71,8 @@ export function writeFileAtomic(io: AtomicWriteIo, path: string, text: string): 
   try { io.syncDir(path) } catch { /* the file is replaced; only its durability is unconfirmed */ }
 }
 
-function renameWithRetry(io: AtomicWriteIo, from: string, to: string): void {
+/** Renames `from` to `to`, waiting out the brief holds described above. */
+export function renameWithRetry(io: AtomicWriteIo, from: string, to: string): void {
   for (let attempt = 0; ; attempt++) {
     try { io.rename(from, to); return }
     catch (error) {

@@ -307,7 +307,7 @@ const extraCompositions = SCENARIO === 'groups' ? groupsCompositions() : {};
 log(`scenario: ${SCENARIO} (${layers.length} layers on ${tracks.length} tracks, ${transitions.length} transitions, ${Object.keys(extraCompositions).length} groups)`);
 
 const ROOT_ID = '019f0000-0000-7000-8000-00000000c0df';
-fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
+fs.writeFileSync(path.join(project, 'project.wcpr'), JSON.stringify({
   // The app must OPEN this file, so it declares the CURRENT schema version
   // (src/main/state/model.ts) and the CURRENT container shape (the timeline
   // lives under `compositions[root_id]`). A .mjs script cannot import the TS

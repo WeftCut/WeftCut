@@ -49,7 +49,7 @@ test('text correction supports imported captions, selected/all scope, undo and s
     await expect(panel.locator('.caption-text').first()).toHaveValue('今天介绍自动剪辑功能');
     await invokeCmd(page, 'project_save');
     const workspace = await invokeCmd<string>(page, 'workspace_dir');
-    const stored = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'));
+    const stored = JSON.parse(fs.readFileSync(path.join(workspace, 'project.wcpr'), 'utf8'));
     expect(stored.settings.correction_script).toBe(SCRIPT);
     await invokeCmd(page, 'project_open', { path: workspace });
     await panel.getByRole('button', { name: 'Text correction' }).click();
@@ -113,7 +113,7 @@ test('imported captions follow manuscript lines with estimated cuts, undo and re
     await invokeCmd(page, 'correct_caption_text', args);
     await invokeCmd(page, 'project_save');
     const workspace = await invokeCmd<string>(page, 'workspace_dir');
-    const stored = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'));
+    const stored = JSON.parse(fs.readFileSync(path.join(workspace, 'project.wcpr'), 'utf8'));
     const cues = stored.compositions[summary.root_id].tracks.filter((t: { role: string }) => t.role === 'Caption').flatMap((t: { layers: unknown[] }) => t.layers);
     expect(cues).toHaveLength(2);
     expect(cues[0].t_start_us).toBe(0);

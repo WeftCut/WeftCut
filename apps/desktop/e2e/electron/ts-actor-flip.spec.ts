@@ -46,9 +46,9 @@ test('TS actor: edit → summary → undo/redo → save → workspace-switch rou
     await invoke(page, 'project_redo')
     expect(layerCount(await invoke<Summary>(page, 'project_summary'))).toBe(1)
 
-    // Save — TS autosave forceFlush writes project.json + a Backups snapshot.
+    // Save — TS autosave forceFlush writes project.wcpr + a Backups snapshot.
     await invoke(page, 'project_save')
-    expect(fs.existsSync(path.join(projectDir, 'project.json'))).toBe(true)
+    expect(fs.existsSync(path.join(projectDir, 'project.wcpr'))).toBe(true)
     const backups = path.join(projectDir, 'Backups')
     expect(fs.existsSync(backups) && fs.readdirSync(backups).some((f) => f.endsWith('.json'))).toBe(true)
 

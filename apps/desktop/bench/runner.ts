@@ -225,14 +225,14 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     }
     const readMotifs = () => read('motifs://current') as Promise<Array<Record<string, unknown>>>
     // The whole project, as the app saves it: MCP serves no whole-project
-    // read, so the bench reads the open project's project.json once the
+    // read, so the bench reads the open project's project.wcpr once the
     // autosave has caught up — its `metadata.modified_at` matches the one
     // project://settings reports, which moves on every recorded edit.
     const readProject = async (): Promise<unknown> => {
       const dir = ((await read('project://session')) as { project?: { dir?: string } | null }).project?.dir
       if (!dir) throw new Error('project://session: no project is open')
       const want = ((await read('project://settings')) as { metadata?: { modified_at?: string } }).metadata?.modified_at
-      const file = s.joinPath(dir, 'project.json')
+      const file = s.joinPath(dir, 'project.wcpr')
       const deadline = Date.now() + 15_000
       for (;;) {
         const wire = JSON.parse(await s.readText(file)) as { metadata?: { modified_at?: string } }
@@ -302,7 +302,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
 
     if (template && result.template && 'fresh_build' in result.template) {
       if (template.fresh) {
-        // Autosave debounces 500 ms; let the settled state reach project.json.
+        // Autosave debounces 500 ms; let the settled state reach project.wcpr.
         await new Promise((r) => setTimeout(r, 2_000))
         const meta: TemplateMeta = { key: template.key, parts: template.parts, project_dir: projectDir, created_at: new Date().toISOString(), media_wait_ms: result.media_wait.waited_ms }
         const saved = await s.templates.save(template.key, projectDir, meta, baselineWire, plan.task.id)

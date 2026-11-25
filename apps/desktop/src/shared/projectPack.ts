@@ -2,9 +2,6 @@
 // between main (`main/state/projectPack.ts`) and the renderer
 // (`renderer/pack/`). One pack or unpack runs at a time.
 
-/** The extension of a pack file, without its dot. */
-export const PACK_EXTENSION = 'weftcut'
-
 /** The running pack or unpack, or null once it ended: bytes written of the
  *  run's total. */
 export const PROJECT_PACK_PROGRESS_EVENT = 'project-pack:progress'
@@ -24,14 +21,14 @@ export interface PackJobProgress {
 export interface PackPlan {
   files: number
   bytes: number
-  /** `<project name>.weftcut`, a name every OS takes. */
+  /** `<project name>.wcpk`, a name every OS takes. */
   file_name: string
 }
 
 /** What a pack file holds, read before anything is written
  *  (`project_unpack_inspect`). */
 export interface PackInspection {
-  /** The project's own name, from its project.json. */
+  /** The project's own name, from its project file. */
   name: string
   /** The folder an unpack creates in the parent the user picks. */
   folder_name: string

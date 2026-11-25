@@ -1,4 +1,4 @@
-// Pack project and Open packed project from the renderer (ADR 0178): the two
+// Pack project and unpack from the renderer (ADR 0178): the two
 // flows, how the running one reads, and what a refusal says. Main owns the run
 // itself (`main/state/projectPack.ts`); one runs at a time, and
 // `packJobStore.ts` mirrors it.
@@ -10,7 +10,7 @@ import { formatBytes } from "../lib/formatBytes";
 import { useComputeJobNoticeStore } from "../compute/computeJobNotices";
 import { describeOpenError, cleanIpcDetail, parseWorkspaceError } from "../startup/openError";
 import { projectPack, projectPackCancel, projectUnpack, projectUnpackInspect, type PackJobProgress } from "../ipc";
-import { PACK_EXTENSION, parsePackRefusal } from "../../shared/projectPack";
+import { parsePackRefusal } from "../../shared/projectPack";
 
 /// The run's percent, or undefined before its total is known.
 export function packPercent(job: PackJobProgress): number | undefined {
@@ -36,14 +36,14 @@ export function describePackError(err: unknown, t: TFunction, kind: PackJobProgr
         return t("pack.no_space", { needed: formatBytes(refusal.needed), available: formatBytes(refusal.available) });
     }
   }
-  // The open's own refusals (a newer schema, an unreadable project.json).
+  // The open's own refusals (a newer schema, an unreadable project.wcpr).
   if (parseWorkspaceError(err)) return describeOpenError(err, path, t);
   return t(kind === "pack" ? "pack.pack_failed" : "pack.unpack_failed", { detail: cleanIpcDetail(err) });
 }
 
 /// Posts to the app's one notice slot (`compute/computeJobNotices.ts`), and
 /// to the OS while the window is unfocused.
-function notify(notice: { id: string; outcome: "ok" | "error"; title: string; body: string; reveal?: string }): void {
+export function notify(notice: { id: string; outcome: "ok" | "error"; title: string; body: string; reveal?: string }): void {
   const { id, reveal, ...rest } = notice;
   useComputeJobNoticeStore.setState({ notice: { jobId: id, ...rest, ...(reveal ? { reveal } : {}) } });
   if (!document.hasFocus()) sendNotification({ title: notice.title, body: notice.body });
@@ -66,16 +66,12 @@ export function cancelPackJob(): void {
   void projectPackCancel().catch((err: unknown) => console.warn("[pack] cancel failed", err));
 }
 
-/// Open packed project: the pack file, read before anything is written, then
-/// the folder to unpack it in. The project opens through main, which tells the
-/// window as an agent's open does. Answers what to show when it did not open,
-/// null when it opened or the user cancelled.
-export async function openPackedProject(t: TFunction): Promise<string | null> {
-  const archive = await openDialog({
-    title: t("pack.open_title"),
-    filters: [{ name: t("pack.filter"), extensions: [PACK_EXTENSION] }],
-  });
-  if (typeof archive !== "string") return null;
+/// The pack half of Open project (`startup/openProject.ts`): `archive` is read
+/// before anything is written, then the user picks the folder to unpack it
+/// in. The project opens through main, which tells the window as an agent's
+/// open does. Answers what to show when it did not open, null when it opened
+/// or the user cancelled.
+export async function unpackProject(t: TFunction, archive: string): Promise<string | null> {
   let folder: string;
   try {
     folder = (await projectUnpackInspect(archive)).folder_name;
@@ -90,10 +86,4 @@ export async function openPackedProject(t: TFunction): Promise<string | null> {
   } catch (err) {
     return describePackError(err, t, "unpack", folder);
   }
-}
-
-/// The same flow from the editor, its refusal as a notice.
-export async function openPackedProjectFromEditor(t: TFunction): Promise<void> {
-  const problem = await openPackedProject(t);
-  if (problem !== null) notify({ id: "unpack", outcome: "error", title: t("pack.unpack_failed_title"), body: problem });
 }

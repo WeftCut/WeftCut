@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/migrate.ts
 //
-// The version-keyed upgrade chain for `project.json`. One step per schema
+// The version-keyed upgrade chain for the project file. One step per schema
 // generation, applied in sequence: v_n → v_n+1 → … → the build's version.
 // `persistence.ts` owns the refusals (missing/non-numeric version, a file NEWER
 // than the build) and calls in here for everything older.
@@ -39,7 +39,7 @@
  *  claiming one is refused rather than guessed at. */
 export const MIN_SCHEMA_VERSION = 1
 
-/** External facts absent from old project.json. No live model or defaults enter
+/** External facts absent from an old project file. No live model or defaults enter
  * a migration: the host supplies the original Motif's manifest dimensions. */
 export interface MigrationContext {
   motifSize?: (id: string, version: number) => readonly [number, number] | null

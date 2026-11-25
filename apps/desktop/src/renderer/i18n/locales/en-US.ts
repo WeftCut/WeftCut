@@ -399,9 +399,7 @@ const enUS = {
     subtitle: "Pick a project to open, or create a new one.",
     new_project: "New project",
     open_project: "Open project…",
-    open_packed_project: "Open packed project…",
     unpacking: "Unpacking {{file}}",
-    open_dialog_title: "Open WeftCut project folder",
     recent_heading: "Recent",
     recent_loading: "Loading…",
     recent_empty: "No recent projects yet.",
@@ -411,7 +409,7 @@ const enUS = {
     recent_open_failed: "Couldn't open project: {{detail}}",
     recents_load_failed: "Couldn't load the recent projects list: {{detail}}",
     not_project_folder:
-      "That folder isn't a WeftCut project. Pick a folder created by WeftCut, or start a new project.",
+      "That isn't a WeftCut project: its folder holds no project.wcpr. Pick another, or start a new project.",
     project_folder_missing:
       "That project folder no longer exists — it may have been moved, renamed, or deleted. It was removed from the recent list.",
     // States the mismatch and stops. "Update WeftCut" is a guess that happens to
@@ -420,9 +418,9 @@ const enUS = {
     project_schema_too_new:
       "That project was written by a different build of WeftCut (project format v{{found}}); this build reads v{{supported}}.",
     project_schema_unreadable:
-      "That folder's project.json declares no project format version this build recognizes, so it can't be opened.",
+      "That project file declares no project format version this build recognizes, so it can't be opened.",
     project_file_unreadable:
-      "That project's project.json couldn't be read: {{detail}}",
+      "The project file couldn't be read: {{detail}}",
     project_invalid:
       "That project's contents didn't pass validation — the file may be damaged or hand-edited.",
     time_just_now: "just now",
@@ -1084,8 +1082,8 @@ const enUS = {
     check_portability_hint: "List what the project folder does not carry.",
     pack_project: "Pack project…",
     pack_project_hint: "Put the project in one file to move or share it.",
-    open_packed_project: "Open packed project…",
-    open_packed_project_hint: "Unpack a project file into a new folder and open it.",
+    open_project: "Open project…",
+    open_project_hint: "Open a project file, or unpack a pack into a new folder and open it.",
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
     review_shots: "Review shots…",
@@ -3007,8 +3005,16 @@ const enUS = {
   },
   // File > Check portability (portability/): what the project folder does
   // not carry.
-  // Pack project / Open packed project (pack/): the project in one file and
-  // back. Percent and bytes only, never a remaining-time estimate.
+  // Open project (startup/openProject.ts): one picker for a project file or a
+  // pack, on the start screen and in the File menu.
+  open_project: {
+    title: "Open WeftCut project",
+    filter: "WeftCut project or pack",
+    legacy_filter: "WeftCut 0.8 project ({{file}})",
+    failed_title: "Couldn't open the project",
+  },
+  // Pack project and unpack (pack/): the project in one file and back. Percent
+  // and bytes only, never a remaining-time estimate.
   pack: {
     title: "Pack project",
     size_one: "{{count}} file · {{size}}",
@@ -3021,9 +3027,7 @@ const enUS = {
     bytes: "{{done}} of {{total}}",
     done_title: "Project packed",
     failed_title: "Pack failed",
-    open_title: "Open packed project",
     parent_title: "Choose where to put “{{folder}}”",
-    unpack_failed_title: "Couldn't open the packed project",
     busy: "A pack or unpack is already running.",
     no_project: "No project is open.",
     not_a_pack: "That file isn't a WeftCut pack: {{detail}}",
@@ -3200,7 +3204,7 @@ const enUS = {
     fonts_copied_more: "Copied {{names, list(style: narrow)}} and {{more}} more into Fonts/. Check their licenses before you share the project folder.",
     font_recopied: "{{name}} was missing from Fonts/ and was copied again. To keep a font out of the project, exclude it in Settings > Project > Fonts.",
     fonts_missing: "{{name}} is not installed here. Clips drawn with another font: {{layers}}.",
-    save_failing: "Save failed: project.json cannot be written",
+    save_failing: "Save failed: project.wcpr cannot be written",
     save_recovered: "Project saved again",
     level_filter: "Severity filter",
     level_all: "All",

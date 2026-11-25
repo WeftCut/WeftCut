@@ -3,7 +3,7 @@
 // live copy, renderer/state/viewState.ts). One definition → no main↔renderer
 // drift.
 //
-// UI-only knobs: deliberately NOT part of project.json so zooming the timeline
+// UI-only knobs: deliberately NOT part of project.wcpr so zooming the timeline
 // never dirties the project document, pushes an undo entry, or shows up on the
 // MCP tool surface.
 //

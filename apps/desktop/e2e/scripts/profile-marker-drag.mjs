@@ -45,7 +45,7 @@ else {
 if (!fs.existsSync(path.join(base, 'copy-complete'))) {
   console.log('Copying project media/cache and Motif library into the diagnostic workspace…');
   fs.mkdirSync(project, { recursive: true });
-  for (const name of ['Media', 'Cache', 'view.json', 'project.json']) {
+  for (const name of ['Media', 'Cache', 'view.json', 'project.wcpr']) {
     const from = path.join(source, name);
     if (fs.existsSync(from)) fs.cpSync(from, path.join(project, name), { recursive: true });
   }
@@ -144,7 +144,7 @@ try {
   assert.ok(measurements.every(m => m.complete && !m.hidden), 'Missing phases or hidden window invalidate a capture');
   // Verify debounced persistence without forcing a save, which would mask it.
   const live = await page.evaluate(() => window.api.backend.invoke('project_summary', {}));
-  const disk = JSON.parse(fs.readFileSync(path.join(project, 'project.json'), 'utf8'));
+  const disk = JSON.parse(fs.readFileSync(path.join(project, 'project.wcpr'), 'utf8'));
   for (const [id, comp] of Object.entries(live.compositions)) {
     assert.deepEqual(comp.markers.map(m => [m.id, m.t_us, m.end_t_us]),
       disk.compositions[id].markers.map(m => [m.id, m.t_us, m.end_t_us]), 'Autosave must match the last displayed marker positions');

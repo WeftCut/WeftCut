@@ -7,7 +7,7 @@ import type { TimingFields } from '../../shared/timeMapping'
 import type { ProjectMotifs } from '../../shared/motifs/projectMotifs'
 import type { ProjectPath } from '../../shared/projectPath'
 
-/** The on-disk `project.json` schema version this build reads and writes.
+/** The on-disk `project.wcpr` schema version this build reads and writes.
  *
  *  Bump it and ship the matching `v_n → v_n+1` step in `migrate.ts` IN THE SAME
  *  CHANGE, with a committed fixture at the old version — `migrate.completeness.test.ts`
@@ -241,7 +241,7 @@ export interface MediaMetadata {
   [k: string]: unknown
 }
 /** One source in the pool. `path_abs` is runtime: for an item inside the
- *  project folder it is `toNative(projectDir, path_rel)` and project.json does
+ *  project folder it is `toNative(projectDir, path_rel)` and project.wcpr does
  *  not hold it; `path_rel` null means the file is outside the folder (an
  *  import whose copy is pending). The derivative paths and the route's
  *  readiness slots are runtime too (`projectFile.ts` owns the disk form). */

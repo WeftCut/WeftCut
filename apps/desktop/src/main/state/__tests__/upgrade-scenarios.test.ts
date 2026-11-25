@@ -6,7 +6,7 @@
 // the real open path with the production file system. Each case is a
 // situation found among real projects; the steps' own rules are tested beside
 // them (migrate.*.test.ts, legacyResolve.test.ts, project-folder.test.ts).
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, cpSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, cpSync } from 'node:fs'
 import { promises as fsp } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -22,7 +22,8 @@ import { seededGen } from '../ids'
 import { upgradeWire } from '../migrate'
 import type { Project } from '../model'
 import { motifLayerParams } from '../mutations/motif'
-import { PROJECT_FILE, serializeProjectToJson } from '../persistence'
+import { serializeProjectToJson } from '../persistence'
+import { PROJECT_FILE } from '../../../shared/projectFile'
 import { openProject, type OrchestratorDeps, type OrchestratorFs, type SchemaUpgradeReport } from '../workspace-orchestrator'
 
 const builtins = builtinMotifs('src/shared/motifs/builtin')
@@ -39,6 +40,7 @@ const nodeFs: OrchestratorFs = {
   writeFile: (p, text) => writeFileSync(p, text),
   mkdirp: d => mkdirSync(d, { recursive: true }),
   rm: p => rmSync(p, { force: true }),
+  rename: (from, to) => renameSync(from, to),
 }
 
 const manifest = (name: string): Manifest => ({ id: 'x', name, version: 1, size: [320, 180], default_duration_s: 2, props_schema: {} })

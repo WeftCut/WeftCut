@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/autosave.ts
 //
 // Auto-save subscriber + periodic Backups/ snapshots. Per docs/data-model.md the
-// workspace is the truth: every actor commit lands on disk as project.json, no
+// workspace is the truth: every actor commit lands on disk as project.wcpr, no
 // explicit Save. This module decides *when* to write: after a quiet window, and
 // no later than the project's autosave interval under a steady stream of edits,
 // and when a failing write has gone on long enough to tell the user
@@ -13,7 +13,7 @@
 // bring-up; project_save → forceFlush.
 import type { ActorHandle, ChangeEvent } from './actor'
 import type { Project, ProjectSettings } from './model'
-import { PROJECT_FILE } from './persistence'
+import { PROJECT_FILE } from '../../shared/projectFile'
 import { currentEditTrace, measureEditStage, runEditTrace } from '../../shared/editTrace'
 import { AUTOSAVE_INTERVAL_DEFAULT_SECS, AUTOSAVE_INTERVAL_MAX_SECS, AUTOSAVE_INTERVAL_MIN_SECS } from '../../shared/save-status'
 
@@ -140,7 +140,7 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
     deps.onSaveState?.(state)
   }
 
-  /** A write of project.json failed. It is reported only once the edits have
+  /** A write of project.wcpr failed. It is reported only once the edits have
    *  waited the autosave interval: a failure a later cycle fixes in time says
    *  nothing. The deadline always attempts a write at the interval, so judging
    *  at each failed attempt is enough. `atDeadline`: this attempt IS that
@@ -208,7 +208,7 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
       // Thrown out of a timer callback this would be an uncaught exception in
       // main (a modal error box on Windows). The edits stay dirty; the next edit
       // or the re-armed deadline retries.
-      console.warn('[autosave] project.json was not written; will retry', error)
+      console.warn('[autosave] project.wcpr was not written; will retry', error)
       writeFailed(error, atDeadline)
       if (dirty && unsubscribe !== null) armDeadline()
     }

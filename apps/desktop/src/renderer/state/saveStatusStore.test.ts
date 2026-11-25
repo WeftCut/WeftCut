@@ -21,7 +21,7 @@ import { useSaveStatusStore, wireSaveStatus } from "./saveStatusStore";
 
 const failing = (revision: number): SaveStatus => ({
   state: "failing", revision, since: "2026-01-02T03:04:05.000Z", last_saved_at: null,
-  code: "ENOSPC", path: "/home/u/Demo/project.json", dir: "/home/u/Demo",
+  code: "ENOSPC", path: "/home/u/Demo/project.wcpr", dir: "/home/u/Demo",
 });
 const push = (status: SaveStatus) => bus.handlers.get(SAVE_STATUS_EVENT)!({ payload: status });
 

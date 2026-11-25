@@ -42,7 +42,7 @@ function commandIds(): Set<string> {
       openVoiceoverDialog: () => {},
       checkPortability: () => {},
       packProject: () => {},
-      openPackedProject: () => {},
+      openProject: () => {},
     },
     { busy: false, canUndo: false, canRedo: false, exportLocked: false },
   );

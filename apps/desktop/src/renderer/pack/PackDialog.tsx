@@ -8,7 +8,7 @@ import { formatBytes } from "../lib/formatBytes";
 import { projectPackPlan, projectPortability, trashUntrackedMotifFolder, type PackPlan, type PortabilityReport } from "../ipc";
 import { PortabilityReportList } from "../portability/PortabilityReportList";
 import { requestSettings } from "../settings/settingsRequest";
-import { PACK_EXTENSION } from "../../shared/projectPack";
+import { PACK_EXTENSION } from "../../shared/projectFile";
 import { runPack } from "./packJobs";
 
 /// File > Pack project: the portability report with its actions, what the

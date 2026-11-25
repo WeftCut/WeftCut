@@ -840,7 +840,7 @@ export async function projectSave(): Promise<void> {
   return invoke<void>("project_save");
 }
 
-/// Whether project.json is reaching disk — the seed `saveStatusStore` mirrors.
+/// Whether project.wcpr is reaching disk — the seed `saveStatusStore` mirrors.
 export const projectSaveStatus = (): Promise<SaveStatus> => invoke<SaveStatus>(SAVE_STATUS_CHANNEL);
 
 export async function projectSaveAs(path: string): Promise<void> {
@@ -871,7 +871,7 @@ export async function trashUntrackedMotifFolder(name: string): Promise<void> {
   await invoke("project_trash_motif_folder", { name });
 }
 
-// Pack project / Open packed project (ADR 0178). Raw: none is an edit, and an
+// Pack project and unpack (ADR 0178). Raw: none is an edit, and an
 // unpack opens its project through main, which announces it with
 // `project:opened` as an agent's open does.
 import type { PackInspection, PackOutcome, PackPlan } from '../../shared/projectPack';

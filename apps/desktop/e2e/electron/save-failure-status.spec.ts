@@ -14,7 +14,7 @@ import enUS from '../../src/renderer/i18n/locales/en-US'
 // (docs/data-model.md § Saving).
 //
 // The failure is a DIRECTORY named like atomicWrite's temp file: opening it for
-// writing fails on every OS, so every write of project.json fails until it goes.
+// writing fails on every OS, so every write of project.wcpr fails until it goes.
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 /** The pill appears at the first failed write once the edit has waited the
@@ -42,10 +42,10 @@ test('a project that cannot be saved shows Save failed, offers recovery, and cle
     const parent = tmpDir('weftcut-save-failure-')
     await newProject(page, { parentFolder: parent, name: 'seed', canvas: CANVAS })
     await invokeCmd(page, 'project_save')
-    const seed = JSON.parse(fs.readFileSync(path.join(parent, 'seed', 'project.json'), 'utf8'))
+    const seed = JSON.parse(fs.readFileSync(path.join(parent, 'seed', 'project.wcpr'), 'utf8'))
     seed.settings.autosave_interval_secs = AUTOSAVE_INTERVAL_MIN_SECS
     const dir = path.join(parent, 'fast-autosave')
-    const projectFile = path.join(dir, 'project.json')
+    const projectFile = path.join(dir, 'project.wcpr')
     fs.mkdirSync(dir)
     fs.writeFileSync(projectFile, JSON.stringify(seed))
     await invokeCmd(page, 'project_open', { path: dir })

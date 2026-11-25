@@ -30,9 +30,9 @@ path when a user mentions a file.
   path is absolute on every host.
 - **The agent checks its folder is the open project.** `project://session`
   reports `project.dir`; the initialize instructions tell an agent whose folder
-  holds `project.json` to compare and ask if they differ.
+  holds `project.wcpr` to compare and ask if they differ.
 - **The folder's files change only through tools, TASTE.md aside.** The app's
-  autosave would overwrite a hand edit of `project.json`; `Media/` files are
+  autosave would overwrite a hand edit of `project.wcpr`; `Media/` files are
   recorded by path and bytes, so they are never renamed, moved or overwritten
   (ADR 0153); `Cache/` is derived. TASTE.md is the one hand-edited file
   (ADR 0126); `project://taste` reports its path before it exists. The
@@ -50,7 +50,7 @@ path when a user mentions a file.
   user pick a media item by name.
 - `resources/list` grows with the pool.
 - The folder rule costs initialize-instruction characters; without it an agent
-  in the folder edits `project.json` while the app autosaves.
+  in the folder edits `project.wcpr` while the app autosaves.
 
 ## Note (2026-11-17): `Motifs/` is edited in place, beside TASTE.md
 
@@ -61,4 +61,4 @@ Motif's files with its own file tools, without approval. The app watches
 `Motifs/` and records each new revision of a Motif the project's table names as
 a commit in the undo history. A folder written under `Motifs/` that the table
 does not name renders nothing until `create_motif` with a `directory` source
-adopts it. `project.json`, `Media/` and `Backups/` stay as above.
+adopts it. `project.wcpr`, `Media/` and `Backups/` stay as above.

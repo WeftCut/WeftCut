@@ -23,21 +23,21 @@
 export type WorkspaceError =
   // ── project_open ──
   /** The workspace folder is gone — typically a recents entry whose folder was
-   *  moved or deleted. Probed before project.json so the user is told "the
+   *  moved or deleted. Probed before project.wcpr so the user is told "the
    *  folder is gone" rather than "this isn't a WeftCut project". */
   | { error: 'ProjectFolderMissing' }
-  /** The folder is there but holds no project.json. */
+  /** The folder is there but holds no project.wcpr. */
   | { error: 'NotProjectFolder' }
-  /** project.json declares no integer schema_version — not a project file this
+  /** project.wcpr declares no integer schema_version — not a project file this
    *  build recognises. */
   | { error: 'ProjectSchemaUnreadable' }
-  /** project.json is AHEAD of this build: it may carry fields and semantics
+  /** project.wcpr is AHEAD of this build: it may carry fields and semantics
    *  that do not exist here, and writing it back would silently drop them.
    *  Both versions ride along because the copy states the mismatch rather than
    *  guessing that an app update fixes it — the file this fires on most often
    *  is one left behind by a different build of this same repo. */
   | { error: 'ProjectSchemaTooNew'; found: number; supported: number }
-  /** project.json is unparseable, or its structure failed the cast. `detail` is
+  /** project.wcpr is unparseable, or its structure failed the cast. `detail` is
    *  the underlying throw, English and unlocalized — it names a byte offset or a
    *  field, which is the only actionable thing left to say. */
   | { error: 'ProjectFileUnreadable'; detail: string }

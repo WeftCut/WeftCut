@@ -307,7 +307,7 @@ test('the exclusion list keeps a family out across opens; Allow copying brings i
     expect((await trashed(app)).map(file => path.basename(file)).sort()).toEqual([BOLD, REGULAR])
     expect(fontsIn(project)).toEqual([])
     await invokeCmd(page, 'project_save')
-    expect(JSON.parse(readFileSync(path.join(project, 'project.json'), 'utf8')).settings.excluded_fonts).toEqual([FAMILY])
+    expect(JSON.parse(readFileSync(path.join(project, 'project.wcpr'), 'utf8')).settings.excluded_fonts).toEqual([FAMILY])
 
     // Reopened: the walk runs (its missing line is the witness) and the
     // close waits for that batch, so nothing it copied can arrive later.

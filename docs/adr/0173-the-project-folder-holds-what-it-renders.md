@@ -21,7 +21,7 @@ too, the link an absolute path.
 ## Decision
 
 - **A project renders its own Motifs.** Each is a folder `Motifs/<id>/` named
-  in the `motifs` table of `project.json`: `{ <id>: { uid, revision, from } }`,
+  in the `motifs` table of `project.wcpr`: `{ <id>: { uid, revision, from } }`,
   where `uid` is the lineage (ADR 0171), `revision` the folder revision the
   project last recorded (null when no folder was ever made), and `from` the
   library `{uid, version, revision}` it was copied from (null for a Motif made

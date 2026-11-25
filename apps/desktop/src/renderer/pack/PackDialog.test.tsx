@@ -26,7 +26,7 @@ const report: PortabilityReport = {
   fonts: { excluded: [], missing: [] },
   style: { outside: null },
 };
-const plan: PackPlan = { files: 2, bytes: 1.5 * 1024 * 1024, file_name: "Example.weftcut" };
+const plan: PackPlan = { files: 2, bytes: 1.5 * 1024 * 1024, file_name: "Example.wcpk" };
 
 function backend() {
   bridge.invoke.mockImplementation(async (cmd: string) => {
@@ -53,16 +53,16 @@ describe("the pack dialog", () => {
 
   it("asks for the file under the project's name, then packs into it and closes", async () => {
     backend();
-    bridge.save.mockResolvedValue("/home/u/out/Example.weftcut");
+    bridge.save.mockResolvedValue("/home/u/out/Example.wcpk");
     const onClose = vi.fn();
     render(<PackDialog onClose={onClose} />);
     await screen.findByText("2 files · 1.5 MB");
     fireEvent.click(screen.getByRole("button", { name: "Pack…" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(bridge.save).toHaveBeenCalledWith(expect.objectContaining({
-      defaultPath: "Example.weftcut", filters: [{ name: "WeftCut pack", extensions: ["weftcut"] }],
+      defaultPath: "Example.wcpk", filters: [{ name: "WeftCut pack", extensions: ["wcpk"] }],
     }));
-    expect(bridge.invokeRaw).toHaveBeenCalledWith("project_pack", { archive: "/home/u/out/Example.weftcut" });
+    expect(bridge.invokeRaw).toHaveBeenCalledWith("project_pack", { archive: "/home/u/out/Example.wcpk" });
   });
 
   it("packs nothing and stays open when no file is picked", async () => {

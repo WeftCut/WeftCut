@@ -15,7 +15,8 @@ import { validate } from './validate'
 import type { IdGen } from './ids'
 import type { MediaItem, Project } from './model'
 import { blankProject, rootComposition } from './model'
-import { loadProjectFromJson, serializeProjectToJson, PROJECT_FILE, preUpgradeBackupFile } from './persistence'
+import { loadProjectFromJson, serializeProjectToJson, preUpgradeBackupFile } from './persistence'
+import { LEGACY_PROJECT_FILE, PROJECT_FILE } from '../../shared/projectFile'
 import { relinkMissingMedia, type RelinkDeps, type RelinkReport } from './relink'
 import { serializeProject, type GridRepair } from './serialize'
 import type { MigrationContext, MotifCopy, PositionBakeReport } from './migrate'
@@ -23,6 +24,7 @@ import { foldDerivatives, type MediaDerivativesPatch } from './mutations/media'
 import { mediaAtFolder } from './projectFile'
 import { copyLateFiles, copyProjectContent, ensureGitignore, placeFilePlans, sameFolder, type MissingFile, type ProjectContentFs } from './projectContent'
 import type { PathPlatform } from './projectPathNative'
+import { posix, win32 } from 'node:path'
 
 /** The Rust-native workspace bookkeeping, exposed over napi (Backend methods
  *  commit_workspace / push_recent / set_last_new_project_parent). */
@@ -57,6 +59,8 @@ export interface OrchestratorFs {
   mkdirp(dir: string): void
   /** Best-effort delete (stale quick proxies); must not throw on a missing file. */
   rm(path: string): void
+  /** Renames a file within one folder; throws if it cannot. */
+  rename(from: string, to: string): void
 }
 
 /** What copying one planned Motif into `Motifs/<id>/` came to: the revision
@@ -191,6 +195,15 @@ function withDraft(missing: MissingMotif, legacyDraft: OrchestratorDeps['legacyD
   return { ...missing, ...(diagnostic === undefined ? {} : { diagnostic }), draft: draft.folder }
 }
 
+/** The project folder `path` names: the folder itself, or the one holding
+ *  the project file (or a 0.8 `project.json`) that `path` names. Every open
+ *  resolves it first, so a file and its folder are the same project. */
+export function projectFolderOf(path: string, platform: PathPlatform): string {
+  const lib = platform === 'win32' ? win32 : posix
+  const name = lib.basename(path)
+  return name === PROJECT_FILE || name === LEGACY_PROJECT_FILE ? lib.dirname(path) : path
+}
+
 /** project_open. Pre-checks → load (schema gate + migration chain) →
  *  preserve pre-upgrade bytes → validate → copy migrated Motifs + carry out
  *  the upgrade's file plans → commit_workspace (pre-broadcast) → relink heal
@@ -205,9 +218,11 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // surface renders them as localized copy (shared/workspaceErrors.ts).
   if (!fs.exists(dir)) throw new WorkspaceFailure({ error: 'ProjectFolderMissing' })
   const file = join(dir, PROJECT_FILE)
-  if (!fs.exists(file)) throw new WorkspaceFailure({ error: 'NotProjectFolder' })
+  const legacyFile = join(dir, LEGACY_PROJECT_FILE)
+  const legacy = !fs.exists(file)
+  if (legacy && !fs.exists(legacyFile)) throw new WorkspaceFailure({ error: 'NotProjectFolder' })
 
-  const text = fs.readFile(file)
+  const text = fs.readFile(legacy ? legacyFile : file)
   // CAPTURE the repair report, do not emit it here. The LogBus is per-workspace and
   // `commitWorkspace` below ROTATES it, so a row emitted during the parse lands in
   // the doomed pre-open bus (or nowhere at all on a fresh launch) and silently
@@ -230,7 +245,7 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   }
   let project = loaded.project
 
-  // A schema upgrade happened in memory only; project.json still holds the old
+  // A schema upgrade happened in memory only; the project file still holds the old
   // bytes until the first edit's autosave overwrites it. Preserve them NOW —
   // this is the last moment they exist, and if a migration step is wrong they are
   // the only way back. Written straight from `text` rather than re-serializing:
@@ -262,6 +277,16 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   catch (e) {
     throw new WorkspaceFailure({ error: 'ProjectInvalid', detail: e instanceof ValidationFailure
       ? JSON.stringify({ error: 'ValidationFailed', detail: e.err }) : String(e) })
+  }
+
+  // A project from 0.8 or earlier takes the project file's name once it is
+  // known to open (ADR 0180). Before the swap: a failed rename leaves the
+  // open project as it was.
+  if (legacy) {
+    try { fs.rename(legacyFile, file) }
+    catch (error) {
+      throw new WorkspaceFailure({ error: 'ProjectFileUnreadable', detail: `Cannot rename ${LEGACY_PROJECT_FILE} to ${PROJECT_FILE}: ${String(error)}` })
+    }
   }
 
   // The upgrade only planned its Motif copies: they are written once the
@@ -329,10 +354,10 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
 
 /** project_save_as. snapshot → copy the project content and the Motif
  *  folders from `from` → default `.gitignore` where none came →
- *  write project.json → commit_workspace → place the
+ *  write the project file → commit_workspace → place the
  *  pool in `dir` with the new cache's derivatives (`rebase_media`) →
  *  push_recent → derivative re-fan-out. Never swaps state (the actor already
- *  holds it). A failed copy fails the save before project.json names it. */
+ *  holds it). A failed copy fails the save before the project file names it. */
 export async function saveProjectAs(deps: OrchestratorDeps, dir: string, from?: string | null): Promise<void> {
   const { actor, napi, fs, join } = deps
   const snap = actor.snapshot()

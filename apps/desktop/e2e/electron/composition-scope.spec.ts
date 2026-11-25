@@ -102,7 +102,7 @@ test('the timeline, the ruler and the Insert menu follow the open composition', 
     // into it — the only in-session way to switch projects.
     const dir = path.join(parent, 'two-compositions')
     fs.mkdirSync(dir)
-    fs.copyFileSync(FIXTURE, path.join(dir, 'project.json'))
+    fs.copyFileSync(FIXTURE, path.join(dir, 'project.wcpr'))
     await waitForHook(page, 'motifReopenProject')
     await page.evaluate((p) => (window as any).__weftcutTest.motifReopenProject({ path: p }), dir)
     await waitForHook(page, 'setOpenComposition')

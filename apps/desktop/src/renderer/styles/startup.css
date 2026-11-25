@@ -587,7 +587,7 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
   font-weight: 500;
 }
 
-/* An unpack started here (Open packed project): the screen has no work pill. */
+/* An unpack started here (Open project on a pack): the screen has no work pill. */
 .startup-unpack {
   display: flex;
   flex-direction: column;

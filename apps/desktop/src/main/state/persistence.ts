@@ -13,11 +13,9 @@ import { parseProject, type GridRepair } from './serialize'
 import { mediaAtFolder, toProjectFile } from './projectFile'
 import type { PathPlatform } from './projectPathNative'
 
-/** The on-disk project file name inside a workspace folder. */
-export const PROJECT_FILE = 'project.json'
-
 /** Where the pre-upgrade bytes are kept when the migration chain moves a project
- *  forward: beside `project.json`, named for the version it came from.
+ *  forward: beside the project file, named for the version it came from.
+ *  `.json`, not `.wcpr`: a backup must never be what an open picks.
  *
  *  Deliberately NOT in `Backups/`. That directory is the autosave's rolling
  *  snapshot set — 20 newest, gc'd by filename — and its snapshots are taken
@@ -77,7 +75,7 @@ export interface ParsedProjectFile {
   filePlans: FilePlan[]
 }
 
-/** Load project.json text from the folder `dir`: parse → gate → upgrade →
+/** Load the project file's text from the folder `dir`: parse → gate → upgrade →
  *  cast → each media item at its place in `dir` under `platform`'s path rules.
  *  JSON.parse throws on malformed text; the gate runs BEFORE the structural cast
  *  so the rich version-specific guidance wins over parseProject's generic check,

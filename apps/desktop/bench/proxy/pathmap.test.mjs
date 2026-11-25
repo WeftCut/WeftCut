@@ -60,7 +60,7 @@ test('toLocal: case and separator variants of the root', () => {
 test('toLocal: a sibling of the root is not the root', () => {
   const s = `${REMOTE}2\\x`
   assert.equal(map.toLocal(s).value, s)
-  assert.equal(map.toLocal('C:\\Users\\u\\weftcut-bench\\runs\\r1\\projects\\t\\project.json').rewrites.length, 0)
+  assert.equal(map.toLocal('C:\\Users\\u\\weftcut-bench\\runs\\r1\\projects\\t\\project.wcpr').rewrites.length, 0)
 })
 
 test('round trip: toLocal(toRemote(p)) === p for workdir paths', () => {

@@ -6,7 +6,7 @@
 // Every field is read independently, serde `#[serde(default)]`-style, so the
 // on-disk field set is NOT frozen: a field that changes name or shape costs a
 // user the zoom level it held, never a project. That licence is what makes this
-// file cheap to reshape, and it does not extend to project.json, which nothing
+// file cheap to reshape, and it does not extend to project.wcpr, which nothing
 // here touches.
 //
 // Workspace-scoping is handled by the caller (ts-actor-host): pre-workspace it

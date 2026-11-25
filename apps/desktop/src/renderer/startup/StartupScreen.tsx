@@ -30,7 +30,8 @@ import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { WindowControls } from "../components/WindowControls";
 import { DiagnosticReport } from '../app/DiagnosticReport';
-import { cancelPackJob, openPackedProject, packBytes, packPercent } from "../pack/packJobs";
+import { cancelPackJob, packBytes, packPercent } from "../pack/packJobs";
+import { openProject } from "./openProject";
 import { listenForPackJobs, usePackJobStore } from "../pack/packJobStore";
 import { UpdateButton } from '../app/UpdateButton';
 import { Button } from "@/components/ui/button";
@@ -40,7 +41,6 @@ import {
   ChevronUpIcon,
   FolderOpenIcon,
   GlobeIcon,
-  PackageOpenIcon,
   PlusIcon,
   SettingsIcon,
   XIcon,
@@ -178,30 +178,13 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
     [busy],
   );
 
-  const openWorkspaceFolder = useCallback(async () => {
-    const picked = await openDialog({
-      title: t("startup.open_dialog_title"),
-      directory: true,
-      multiple: false,
-    });
-    if (typeof picked !== "string") return;
-    await runProtected(
-      async () => {
-        await projectOpen(picked);
-        onWorkspaceReady();
-      },
-      (e) => describeOpenError(e, picked, t),
-    );
-  }, [t, runProtected, onWorkspaceReady]);
-
-  // The project opens through main, which brings the editor along
-  // (`project:opened`); only a refusal comes back here.
-  const openPacked = useCallback(
+  // A pack's unpack brings the editor along itself (`project:opened`).
+  const openPicked = useCallback(
     () => runProtected(async () => {
-      const problem = await openPackedProject(t);
+      const problem = await openProject(t, onWorkspaceReady);
       if (problem !== null) throw problem;
     }, (e) => String(e)),
-    [t, runProtected],
+    [t, runProtected, onWorkspaceReady],
   );
   const unpacking = usePackJobStore((s) => s.job);
   useEffect(listenForPackJobs, []);
@@ -319,20 +302,11 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
           <button
             type="button"
             className="startup-action"
-            onClick={openWorkspaceFolder}
+            onClick={() => void openPicked()}
             disabled={busy}
           >
             <AppIcon icon={FolderOpenIcon} size="display" strokeWidth={1.5} aria-hidden />
             <span className="startup-action-label">{t("startup.open_project")}</span>
-          </button>
-          <button
-            type="button"
-            className="startup-action"
-            onClick={() => void openPacked()}
-            disabled={busy}
-          >
-            <AppIcon icon={PackageOpenIcon} size="display" strokeWidth={1.5} aria-hidden />
-            <span className="startup-action-label">{t("startup.open_packed_project")}</span>
           </button>
         </div>
 

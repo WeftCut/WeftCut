@@ -1,4 +1,4 @@
-// The disk form of project.json: what a save writes and what an open turns
+// The disk form of project.wcpr: what a save writes and what an open turns
 // back into the runtime project. The runtime wire (`serializeProject`) is
 // what Rust jobs, export and project://compiled read; this file drops from it
 // what only one machine and one folder can know.
@@ -7,11 +7,11 @@ import type { MediaItem, Project } from './model'
 import { serializeProject } from './serialize'
 import { toNative, type PathPlatform } from './projectPathNative'
 
-/** Fields of a media item that project.json never holds: the derivative
+/** Fields of a media item that project.wcpr never holds: the derivative
  *  paths, which the open finds again in the cache. */
 const DERIVATIVE_FIELDS = new Set(['conform_path', 'waveform_path', 'thumbnails_dir'])
 
-/** A media item as project.json holds it: `path_abs` only for a file
+/** A media item as project.wcpr holds it: `path_abs` only for a file
  *  outside the folder, the route as its tag alone. */
 export type MediaItemFile = Omit<MediaItem, 'path_abs' | 'decode_route' | 'conform_path' | 'waveform_path' | 'thumbnails_dir'>
   & { path_abs?: string; decode_route: { route: DecodeRoute['route'] } }

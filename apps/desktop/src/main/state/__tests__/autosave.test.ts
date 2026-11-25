@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createAutosave, autosaveMaxWaitMs, BACKUPS_DIR, type AutosaveFs, type AutosaveDeps, type AutosaveSaveState } from '../autosave'
 import { AUTOSAVE_INTERVAL_DEFAULT_SECS, AUTOSAVE_INTERVAL_MAX_SECS, AUTOSAVE_INTERVAL_MIN_SECS } from '../../../shared/save-status'
 import { createActor, type ActorHandle, type ChangeEvent } from '../actor'
-import { serializeProjectToJson, PROJECT_FILE } from '../persistence'
+import { serializeProjectToJson } from '../persistence'
+import { PROJECT_FILE } from '../../../shared/projectFile'
 import { blankProject, type Project } from '../model'
 import { seededGen } from '../ids'
 import { EDIT_TRACE_PREFIX, runEditTrace } from '../../../shared/editTrace'
@@ -44,7 +45,7 @@ function setup(over: Partial<AutosaveDeps> = {}) {
 }
 
 describe('autosave forceFlush', () => {
-  it('writes project.json and a Backups snapshot', async () => {
+  it('writes project.wcpr and a Backups snapshot', async () => {
     const { fs, ctl } = setup()
     ctl.start()
     ctl.forceFlush()
@@ -86,7 +87,7 @@ describe('autosave debounce', () => {
       expect(rows).toHaveLength(1)
       expect(rows[0]).toMatchObject({ traceId: 'latest', phase: 'main.autosave', timerLateMs: 0,
         spans: [{ stage: 'serialize', durationMs: 17 }, { stage: 'write_file', durationMs: 23 }] })
-      expect(fs.files.has('/ws/project.json')).toBe(true)
+      expect(fs.files.has('/ws/project.wcpr')).toBe(true)
       // An unrelated edit must not inherit the preceding gesture's ID.
       actor.dispatch('add_track', {})
       log.mockClear()
@@ -180,7 +181,7 @@ describe('autosave write failures', () => {
   const debounceMs = 500
 
   it.each(['open', 'write', 'fsync', 'close', 'rename'] as const)(
-    'a write failing at %s keeps the last good project.json and saves the edit on a later cycle',
+    'a write failing at %s keeps the last good project.wcpr and saves the edit on a later cycle',
     async (step) => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const io = memAtomicIo(new Map([[target, GOOD]]))
@@ -202,7 +203,7 @@ describe('autosave write failures', () => {
     },
   )
 
-  it('an explicit save that fails throws to its caller, keeps project.json, and the edit is saved later', async () => {
+  it('an explicit save that fails throws to its caller, keeps project.wcpr, and the edit is saved later', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const io = memAtomicIo(new Map([[target, GOOD]]))
     const { actor, ctl } = setup({ fs: atomicMemFs(io) })

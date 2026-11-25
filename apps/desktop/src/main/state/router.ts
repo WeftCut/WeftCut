@@ -16,9 +16,9 @@ export type Route =
   | { kind: 'review' }        // Review baseline reads, approve all, revert all (ADR 0115)
   | { kind: 'tacks' }         // the user's tack actions from the agent panel (ADR 0115) — never a project write
   | { kind: 'projectSettings' } // actor.snapshot().settings
-  | { kind: 'saveStatus' }    // whether project.json is reaching disk (shared/save-status.ts) — READ-only
+  | { kind: 'saveStatus' }    // whether project.wcpr is reaching disk (shared/save-status.ts) — READ-only
   | { kind: 'portability' }   // the portability check (state/portability.ts) and its cleanup — never a project write
-  | { kind: 'pack' }          // Pack project / Open packed project (state/projectPack.ts) — no project write; an unpack opens through 'open'
+  | { kind: 'pack' }          // Pack project and unpack (state/projectPack.ts) — no project write; an unpack opens through 'open'
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
   | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
   | { kind: 'agentSessionBegin' } // legacy local channel: request agent view only

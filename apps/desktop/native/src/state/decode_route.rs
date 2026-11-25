@@ -1,5 +1,5 @@
 //! The per-source Decode Route — where preview and export each read pixels.
-//! `project.json` persists only the variant (ADR 0175); the readiness paths
+//! `project.wcpr` persists only the variant (ADR 0175); the readiness paths
 //! are runtime state, found in the cache by hash on open. They live INSIDE
 //! the variants so a route↔path contradiction (a Bypass carrying a proxy) is
 //! unrepresentable. See docs/data-model.md#mediaitem and CONTEXT.md.

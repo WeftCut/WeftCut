@@ -38,7 +38,7 @@ function windowsV6(opts: { voiceover?: boolean } = {}): Record<string, any> {
 
 /** A folder at `dir` holding `wire` and the clip at the size and time it records. */
 function folder(disk: MemDisk, dir: string, wire: Record<string, any>): void {
-  disk.put(`${dir}/project.json`, JSON.stringify(wire))
+  disk.put(`${dir}/project.wcpr`, JSON.stringify(wire))
   const item = wire.media_pool[MEDIA_ID]
   disk.put(`${dir}/Media/sub/clip.mp4`, 'c'.repeat(item.file_size), item.file_mtime)
 }
@@ -123,7 +123,7 @@ describe('openProject — a folder written on another OS', () => {
 })
 
 describe('saveProjectAs — the content goes first', () => {
-  it('leaves no project.json and commits nothing when a file cannot be copied', async () => {
+  it('leaves no project.wcpr and commits nothing when a file cannot be copied', async () => {
     const disk = memDisk()
     disk.put('/projects/Demo/Media/clip.mp4', 'clip')
     disk.refuse.clone = 'ENOTSUP'
@@ -136,7 +136,7 @@ describe('saveProjectAs — the content goes first', () => {
       fs: disk.fs, join: (...p: string[]) => p.join('/'), idGen: seededGen(), contentFs: disk.contentFs, platform: 'linux',
     }
     await expect(saveProjectAs(deps, '/projects/Copy', '/projects/Demo')).rejects.toMatchObject({ code: 'ENOSPC' })
-    expect(disk.fs.exists('/projects/Copy/project.json')).toBe(false)
+    expect(disk.fs.exists('/projects/Copy/project.wcpr')).toBe(false)
     expect(commitWorkspace).not.toHaveBeenCalled()
   })
 })
@@ -283,7 +283,7 @@ describe('the open project in its folder (host)', () => {
       invoke: async (cmd, json) => {
         const args = JSON.parse(json) as Record<string, any>
         if (cmd === 'project_pack') {
-          calls.push({ cmd, args, projectJson: disk.read(`${args.folder}/project.json`) })
+          calls.push({ cmd, args, projectJson: disk.read(`${args.folder}/project.wcpr`) })
           packs.set(args.archive, { schema: args.schemaVersion, files: (args.files as string[]).map((f) => ({ path: f, data: disk.read(`${args.folder}/${f}`)!, mtimeMs: disk.mtimeMs(`${args.folder}/${f}`)! })) })
           return JSON.stringify({ files: args.files.length })
         }
@@ -291,7 +291,7 @@ describe('the open project in its folder (host)', () => {
         const pack = packs.get(args.archive)
         if (!pack) throw new Error('No such file or directory (os error 2)')
         if (cmd === 'project_pack_inspect') {
-          return JSON.stringify({ manifest: { files: pack.files }, project_json: pack.files.find((f) => f.path === 'project.json')!.data, total_bytes: pack.files.reduce((n, f) => n + f.data.length, 0) })
+          return JSON.stringify({ manifest: { files: pack.files }, project_json: pack.files.find((f) => f.path === 'project.wcpr')!.data, total_bytes: pack.files.reduce((n, f) => n + f.data.length, 0) })
         }
         for (const f of pack.files) disk.put(`${args.folder}/${f.path}`, f.data, f.mtimeMs / 1000)
         return JSON.stringify({ files: pack.files.length })
@@ -311,15 +311,15 @@ describe('the open project in its folder (host)', () => {
     await t.host.handleInvoke('add_track', {})
     const tracks = (h: typeof t) => Object.values(h.host.actor.snapshot().compositions).reduce((n, c) => n + c.tracks.length, 0)
     const packed = tracks(t)
-    await expect(t.host.handleInvoke('project_pack', { archive: '/out/Demo.weftcut' })).resolves.toMatchObject({ outcome: 'done' })
+    await expect(t.host.handleInvoke('project_pack', { archive: '/out/Demo.wcpk' })).resolves.toMatchObject({ outcome: 'done' })
     const pack = packs.calls.find((c) => c.cmd === 'project_pack')!
     const packedTracks = Object.values(JSON.parse(pack.projectJson!).compositions as Record<string, { tracks: unknown[] }>).reduce((n, c) => n + c.tracks.length, 0)
     expect(packedTracks, 'the pack holds the track not yet autosaved').toBe(packed)
-    expect(pack.args.files).toEqual(['project.json', 'Media/sub/clip.mp4'])
+    expect(pack.args.files).toEqual(['project.wcpr', 'Media/sub/clip.mp4'])
     t.host.stop()
 
     const elsewhere = makeHost(disk, () => ({}), { packNative: packs.native })
-    await expect(elsewhere.host.handleInvoke('project_unpack', { archive: '/out/Demo.weftcut', parent: '/elsewhere' }))
+    await expect(elsewhere.host.handleInvoke('project_unpack', { archive: '/out/Demo.wcpk', parent: '/elsewhere' }))
       .resolves.toEqual({ outcome: 'done', dir: '/elsewhere/Demo' })
     expect(elsewhere.host.openedProject()).toEqual({ dir: '/elsewhere/Demo' })
     expect(elsewhere.sent.map((e) => e.event)).toContain(PROJECT_OPENED_EVENT)

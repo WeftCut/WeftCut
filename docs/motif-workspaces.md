@@ -8,7 +8,7 @@ format or model type. Every one names its subject Motif motif_id.
 ## Where a project's Motifs live
 
 A project renders its own Motifs. Each is a folder `Motifs/<id>/` in the
-project folder, named in the project's Motif table in project.json. The table
+project folder, named in the project's Motif table in project.wcpr. The table
 records each Motif's lineage, the revision the project last recorded for its
 folder, and the library version it was copied from, if any. The id is the
 folder name.

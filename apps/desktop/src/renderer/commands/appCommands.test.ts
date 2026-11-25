@@ -53,7 +53,7 @@ const menu = {
   openVoiceoverDialog: noop,
   checkPortability: noop,
   packProject: noop,
-  openPackedProject: noop,
+  openProject: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, exportLocked: true };

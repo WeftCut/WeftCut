@@ -567,7 +567,7 @@ const DECODE_ROUTES = new Set(['bypass', 'direct-export', 'proxied', 'native-sw'
  *
  *  What it does normalize: DEFAULTS for additive fields, and VALIDITY REPAIRS.
  *  Beyond that a shallow structural check rejects a truncated/corrupt
- *  project.json (right version, missing/wrong required fields) with a clear error
+ *  project.wcpr (right version, missing/wrong required fields) with a clear error
  *  rather than letting `undefined` reach the actor. Shallow by design —
  *  field-level fidelity is proven by the round-trip gates, and an undeclared NEW
  *  field is carried through by the spread (acceptable; it can only be lost on the

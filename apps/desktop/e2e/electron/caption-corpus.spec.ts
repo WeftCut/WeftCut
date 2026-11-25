@@ -123,7 +123,7 @@ async function titleSafeInCompPx(
 /// back off disk — the serialized form, so the box the importer minted is held
 /// to what SURVIVES a save rather than to a projection of live state.
 function storedCaptionParams(projectDir: string): StoredTextParams {
-  const wire = JSON.parse(fs.readFileSync(path.join(projectDir, "project.json"), "utf8")) as {
+  const wire = JSON.parse(fs.readFileSync(path.join(projectDir, "project.wcpr"), "utf8")) as {
     compositions: Record<string, { tracks: Array<{ role: string | null; layers: Array<{ params: StoredTextParams }> }> }>;
     root_id: string;
   };

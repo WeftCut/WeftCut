@@ -124,7 +124,7 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
         phase: { kind: 'inferring', done: 1, total: 2 }, phase_since: now, started_at: now, origin: { kind: 'user' },
         callers: 1, caller_disconnected: false, request_ids: [] }] }
       const saveFailed: SaveStatus = { state: 'failing', revision: 1_000_000_000, since: now, last_saved_at: null, code: 'ENOSPC',
-        path: '/home/u/Projects/status-layout/project.json', dir: '/home/u/Projects/status-layout' }
+        path: '/home/u/Projects/status-layout/project.wcpr', dir: '/home/u/Projects/status-layout' }
       await sendToRenderer(app, [
         [COMPUTE_JOBS_EVENT, jobs],
         ['media:job_started', { media_id: 'layout-probe', kind: 'proxy' }],

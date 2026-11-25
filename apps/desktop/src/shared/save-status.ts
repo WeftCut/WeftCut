@@ -9,7 +9,7 @@
  *  they keep arriving faster than the quiet window (a long agent run), and how
  *  long saving may keep failing before the user is told. Internal: not exposed
  *  in the UI or MCP. A missing or invalid value falls back to the default; the
- *  clamp keeps a hand-edited project.json from disabling the bound or turning
+ *  clamp keeps a hand-edited project.wcpr from disabling the bound or turning
  *  every edit into a write (`autosaveMaxWaitMs`). */
 export const AUTOSAVE_INTERVAL_DEFAULT_SECS = 60
 export const AUTOSAVE_INTERVAL_MIN_SECS = 5
@@ -22,7 +22,7 @@ export const SAVE_STATUS_EVENT = 'project:save-status'
 export const SAVE_STATUS_CHANNEL = 'project_save_status'
 
 /** `failing`: edits have been unsaved for at least the autosave interval and the
- *  latest write of project.json failed. Anything short of that is `ok`, a
+ *  latest write of project.wcpr failed. Anything short of that is `ok`, a
  *  failure a later cycle fixes in time included. `revision` only grows, so a
  *  late pull cannot overwrite a newer push. */
 export type SaveStatus =
@@ -37,7 +37,7 @@ export type SaveStatus =
     /** The failed write's errno code (`ENOSPC`, `EACCES` …); null when the
      *  failure carried none. */
     code: string | null
-    /** The project.json that could not be written, and its folder. */
+    /** The project.wcpr that could not be written, and its folder. */
     path: string
     dir: string
   }

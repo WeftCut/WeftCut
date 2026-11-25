@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, rmSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import nodePath from 'node:path'
 import { mapChangeEvent, createTsActorHost } from './ts-actor-host'
+import { PROJECT_FILE } from '../../shared/projectFile'
 import { UserMotifStore } from '../motif/store'
 import { composeMotifHtml } from '../../shared/motifs/catalog'
 import { createAppSettingsStore } from '../app-settings'
@@ -149,7 +150,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       expect(host.openedProject()).toBeNull()
       expect(host.publication().summary).toBeNull()
       expect(sessions).toHaveLength(1)
-      const saved = JSON.parse(vfs[`${dir}/project.json`]!)
+      const saved = JSON.parse(vfs[`${dir}/project.wcpr`]!)
       expect(saved.compositions[saved.root_id].markers).toEqual([expect.objectContaining({ id: marker })])
 
       await host.handleInvoke('project_open', { path: dir })
@@ -287,6 +288,17 @@ describe('createTsActorHost — persistence-route integration', () => {
     const closed = await host.published(() => host.handleInvoke('project_close', {}))
     expect(closed.publication?.session).toBe(4)
     expect(host.publication()).toEqual({ version: closed.publication, summary: null })
+    host.stop()
+  })
+
+  it('opens a project by its project file as by its folder', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    const dir = await host.handleInvoke('project_new_workspace', publicationProject) as string
+    await host.handleInvoke('project_close', {})
+    await host.handleInvoke('project_open', { path: `${dir}/${PROJECT_FILE}` })
+    expect(host.openedProject()?.dir).toBe(dir)
+    expect(await host.projects.open(`${dir}/${PROJECT_FILE}`)).toMatchObject({ dir, already_open: true })
     host.stop()
   })
 
@@ -581,7 +593,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       await host.handleInvoke('add_track', { kind: 'Video', name: 'Unsaved' })
       await host.handleInvoke('project_open', { path: targetDir })
 
-      const persisted = JSON.parse(vfs[`${currentDir}/project.json`]!) as {
+      const persisted = JSON.parse(vfs[`${currentDir}/project.wcpr`]!) as {
         compositions: Record<string, { tracks: Array<{ label: string | null; role: string | null }> }>; root_id: string
       }
       // The flushed edit is the third track; it stores no label, because a
@@ -611,6 +623,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       copyFile: copyFileSync,
       readdir: readdirSync,
       rm: (p) => rmSync(p, { force: true }),
+      rename: renameSync,
     } })
     const args = { parentFolder: parent, name: 'Example', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
     try {
@@ -628,7 +641,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       if (!closeFirst) await expect(host.handleInvoke('project_save', {})).rejects.toMatchObject({ code: 'ENOENT' })
       const nextDir = nodePath.join(parent, nextName)
       await expect(host.handleInvoke('project_new_workspace', { ...args, name: nextName })).resolves.toBe(nextDir)
-      expect(existsSync(nodePath.join(nextDir, 'project.json'))).toBe(true)
+      expect(existsSync(nodePath.join(nextDir, 'project.wcpr'))).toBe(true)
     } finally {
       host.stop()
       rmSync(parent, { recursive: true, force: true })
@@ -652,13 +665,13 @@ describe('createTsActorHost — persistence-route integration', () => {
   })
 
   describe('what a replacement leaves unsaved', () => {
-    /** A started host on fake timers that records every project.json write. */
+    /** A started host on fake timers that records every project.wcpr write. */
     function recordingHost() {
       vi.useFakeTimers()
       const fixture = makeInMemoryDeps()
       const write = fixture.deps.fs.writeFile
       const writes: string[] = []
-      fixture.deps.fs.writeFile = (p: string, t: string) => { if (p.endsWith('/project.json')) writes.push(p); write(p, t) }
+      fixture.deps.fs.writeFile = (p: string, t: string) => { if (p.endsWith('/project.wcpr')) writes.push(p); write(p, t) }
       const host = createTsActorHost(fixture.deps)
       host.start()
       /** Long enough for every autosave timer an unsaved state arms to fire. */
@@ -694,7 +707,7 @@ describe('createTsActorHost — persistence-route integration', () => {
         await t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Elsewhere' })
         // Off the frame grid, as an older build may have left it: the load
         // repairs it in memory.
-        const file = `${dir}/project.json`
+        const file = `${dir}/project.wcpr`
         const onDisk = JSON.parse(t.vfs[file]!)
         onDisk.compositions[onDisk.root_id].markers[0].t_us = 1_000_001
         t.vfs[file] = JSON.stringify(onDisk)
@@ -717,7 +730,7 @@ describe('createTsActorHost — persistence-route integration', () => {
 
   describe('saveNow, the save of a session the OS is ending', () => {
     /** A started host on fake timers, so autosave writes only when a test
-     *  says. `writes` lists every project.json write attempted; those of
+     *  says. `writes` lists every project.wcpr write attempted; those of
      *  `failing` paths fail with ENOSPC. `hooks.changing` runs while a
      *  replacement is in flight. */
     function sessionHost() {
@@ -728,7 +741,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       const writes: string[] = []
       const failing = new Set<string>()
       fixture.deps.fs.writeFile = (p: string, text: string) => {
-        if (p.endsWith('/project.json')) writes.push(p)
+        if (p.endsWith('/project.wcpr')) writes.push(p)
         if (failing.has(p)) throw errno('ENOSPC')
         write(p, text)
       }
@@ -736,7 +749,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       const host = createTsActorHost({ ...fixture.deps, onWorkspaceChanging: () => hooks.changing() })
       host.start()
       const savedMarkers = (dir: string): string[] => {
-        const saved = JSON.parse(fixture.vfs[`${dir}/project.json`]!)
+        const saved = JSON.parse(fixture.vfs[`${dir}/project.wcpr`]!)
         return saved.compositions[saved.root_id].markers.map((m: { id: string }) => m.id)
       }
       const done = () => { host.stop(); vi.useRealTimers(); vi.restoreAllMocks() }
@@ -751,7 +764,7 @@ describe('createTsActorHost — persistence-route integration', () => {
         expect(t.savedMarkers(dir)).toEqual([])
         t.writes.length = 0
         t.host.saveNow()
-        expect(t.writes).toEqual([`${dir}/project.json`])
+        expect(t.writes).toEqual([`${dir}/project.wcpr`])
         expect(t.savedMarkers(dir)).toEqual([marker])
         expect(t.host.hasUnsavedEdits()).toBe(false)
       } finally { t.done() }
@@ -775,7 +788,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       try {
         const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
         await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
-        t.failing.add(`${dir}/project.json`)
+        t.failing.add(`${dir}/project.wcpr`)
         expect(() => t.host.saveNow()).toThrow(expect.objectContaining({ code: 'ENOSPC' }))
         expect(t.host.hasUnsavedEdits()).toBe(true)
       } finally { t.done() }
@@ -786,7 +799,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       try {
         const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
         await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
-        t.failing.add(`${dir}/project.json`)
+        t.failing.add(`${dir}/project.wcpr`)
         await expect(t.host.shutdown()).rejects.toMatchObject({ code: 'ENOSPC' })
         t.host.abandon()
         t.failing.clear()
@@ -804,7 +817,7 @@ describe('createTsActorHost — persistence-route integration', () => {
         await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
         // Save As goes on past a failed flush of the outgoing folder, so the
         // edit is still unsaved while the replacement runs.
-        t.failing.add(`${dir}/project.json`)
+        t.failing.add(`${dir}/project.wcpr`)
         let inFlight: { unsaved: boolean; writes: string[] } | null = null
         t.hooks.changing = () => {
           t.writes.length = 0
@@ -840,9 +853,9 @@ describe('createTsActorHost — persistence-route integration', () => {
       return { ...fixture, host, signals, failing, done }
     }
 
-    /** The ids of the root composition's markers in `dir`'s project.json. */
+    /** The ids of the root composition's markers in `dir`'s project.wcpr. */
     const savedMarkers = (vfs: Record<string, string>, dir: string): string[] => {
-      const saved = JSON.parse(vfs[`${dir}/project.json`]!)
+      const saved = JSON.parse(vfs[`${dir}/project.wcpr`]!)
       return saved.compositions[saved.root_id].markers.map((m: { id: string }) => m.id)
     }
 
@@ -853,7 +866,7 @@ describe('createTsActorHost — persistence-route integration', () => {
         const unsaved = await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
         t.signals.length = 0
         const generation = t.host.hybridDeps.importGeneration!()
-        t.failing.add(`${dir}/project.json`)
+        t.failing.add(`${dir}/project.wcpr`)
         const attempt = how === 'close' ? t.host.handleInvoke('project_close', {})
           : how === 'switch' ? t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Next' })
           : t.host.shutdown()
@@ -931,7 +944,7 @@ describe('createTsActorHost — persistence-route integration', () => {
         const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
         expect(t.host.hasUnsavedEdits()).toBe(false)
         t.signals.length = 0
-        t.failing.add(`${dir}/project.json`)
+        t.failing.add(`${dir}/project.wcpr`)
         const attempt = how === 'close' ? t.host.handleInvoke('project_close', {})
           : how === 'switch' ? t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Next' })
           : t.host.shutdown()
@@ -963,7 +976,7 @@ describe('createTsActorHost — persistence-route integration', () => {
         resume!()
         const next = await opening
         expect(next).not.toBe(first)
-        expect(JSON.parse(t.vfs[`${next}/project.json`]!).metadata.name).toBe('Next')
+        expect(JSON.parse(t.vfs[`${next}/project.wcpr`]!).metadata.name).toBe('Next')
         // It belonged to the project that left: the next one owes the disk nothing.
         expect(t.host.hasUnsavedEdits()).toBe(false)
       } finally { t.done() }
@@ -996,7 +1009,7 @@ describe('createTsActorHost — persistence-route integration', () => {
         fpsDen: 1,
       })
 
-      const persisted = JSON.parse(vfs[`${currentDir}/project.json`]!) as {
+      const persisted = JSON.parse(vfs[`${currentDir}/project.wcpr`]!) as {
         compositions: Record<string, { tracks: Array<{ label: string }> }>; root_id: string
       }
       expect(persisted.compositions[persisted.root_id].tracks).toHaveLength(3)
@@ -1012,7 +1025,7 @@ describe('createTsActorHost — persistence-route integration', () => {
     const host = createTsActorHost(deps)
     host.start()
 
-    // 1. Create a new workspace — should write project.json and return the path.
+    // 1. Create a new workspace — should write project.wcpr and return the path.
     const wsPath = await host.handleInvoke('project_new_workspace', {
       parentFolder: '/projects',
       name: 'test-proj',
@@ -1023,8 +1036,8 @@ describe('createTsActorHost — persistence-route integration', () => {
     }) as string
     expect(wsPath).toBe('/projects/test-proj')
 
-    // 2. project.json must exist in the vfs at that path.
-    const projectFile = '/projects/test-proj/project.json'
+    // 2. project.wcpr must exist in the vfs at that path.
+    const projectFile = '/projects/test-proj/project.wcpr'
     expect(deps.fs.exists(projectFile)).toBe(true)
 
     // 3. project_summary should reflect the new blank project.
@@ -1035,10 +1048,10 @@ describe('createTsActorHost — persistence-route integration', () => {
     const addResult = await host.handleInvoke('add_track', { kind: 'Video', name: 'V1' })
     expect(addResult).toBeTruthy()
 
-    // 5. project_save (forceFlush) — should write updated project.json.
+    // 5. project_save (forceFlush) — should write updated project.wcpr.
     await host.handleInvoke('project_save', {})
 
-    // 6. The written project.json must be valid JSON containing our project name.
+    // 6. The written project.wcpr must be valid JSON containing our project name.
     const written = vfs[projectFile]!
     expect(written).toBeDefined()
     const parsed = JSON.parse(written) as { metadata?: { name?: string }; name?: string }
@@ -1245,7 +1258,7 @@ describe('createTsActorHost — persistence-route integration', () => {
   })
 
   describe('save status', () => {
-    /** A host whose writes of `failing` dirs' project.json fail with ENOSPC. */
+    /** A host whose writes of `failing` dirs' project.wcpr fail with ENOSPC. */
     function failingHost() {
       vi.useFakeTimers()
       vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -1271,10 +1284,10 @@ describe('createTsActorHost — persistence-route integration', () => {
       try {
         const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
         expect(await t.host.handleInvoke(SAVE_STATUS_CHANNEL, {})).toEqual({ state: 'ok', revision: 0 })
-        t.failing.add(`${dir}/project.json`)
+        t.failing.add(`${dir}/project.wcpr`)
         await t.host.handleInvoke('add_track', { kind: 'Video', name: 'Unsaved' })
         await vi.advanceTimersByTimeAsync(t.maxWaitMs() * 3)
-        expect(t.pushes()).toEqual([expect.objectContaining({ state: 'failing', code: 'ENOSPC', path: `${dir}/project.json`, dir, last_saved_at: null })])
+        expect(t.pushes()).toEqual([expect.objectContaining({ state: 'failing', code: 'ENOSPC', path: `${dir}/project.wcpr`, dir, last_saved_at: null })])
         expect(await t.host.handleInvoke(SAVE_STATUS_CHANNEL, {})).toEqual(t.pushes().at(-1))
         expect(t.saveRows()).toEqual([expect.objectContaining({ level: 'warn', i18n_key: 'log.save_failing' })])
 
@@ -1291,14 +1304,14 @@ describe('createTsActorHost — persistence-route integration', () => {
       const t = failingHost()
       try {
         const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
-        t.failing.add(`${dir}/project.json`)
+        t.failing.add(`${dir}/project.wcpr`)
         await t.host.handleInvoke('add_track', { kind: 'Video', name: 'Unsaved' })
         await vi.advanceTimersByTimeAsync(t.maxWaitMs() * 2)
         expect(t.pushes().map((p) => p.state)).toEqual(['failing'])
         const tracks = rootComposition(t.host.actor.snapshot()).tracks.length
 
         await t.host.handleInvoke('project_save_as', { path: '/projects/Rescue' })
-        const saved = JSON.parse(t.vfs['/projects/Rescue/project.json']!)
+        const saved = JSON.parse(t.vfs['/projects/Rescue/project.wcpr']!)
         expect(saved.compositions[saved.root_id].tracks).toHaveLength(tracks)
         expect(t.pushes().map((p) => p.state)).toEqual(['failing', 'ok'])
         expect(t.saveRows().map((r) => r.level)).toEqual(['warn'])
@@ -1309,7 +1322,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       const t = failingHost()
       try {
         const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
-        t.failing.add(`${dir}/project.json`)
+        t.failing.add(`${dir}/project.wcpr`)
         await t.host.handleInvoke('add_track', { kind: 'Video', name: 'Unsaved' })
         await expect(t.host.shutdown()).rejects.toMatchObject({ code: 'ENOSPC' })
         expect(t.host.openedProject()).toEqual({ dir })
