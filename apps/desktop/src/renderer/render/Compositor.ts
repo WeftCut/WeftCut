@@ -573,6 +573,13 @@ export class Compositor {
     this.sync.reset();
   }
 
+  /// PlaybackEngine calls this once per display frame, before that frame's
+  /// composite: the interval between this frame's and the previous frame's
+  /// begin times, which the tracker's late half judges.
+  noteFrameInterval(intervalMs: number): void {
+    if (this.mode === "preview") this.underrun.noteFrame(intervalMs);
+  }
+
   /// Session-end dropped + late counts for the LogBus summary row; at most
   /// once per play session (see `UnderrunTracker.takeSessionSummary`).
   takeUnderrunSessionSummary(): UnderrunSessionSummary {
@@ -738,12 +745,8 @@ export class Compositor {
     // Audio is independently scheduled by the editor session.
     if (!this.presentationVisible) {
       this.presentationDirty = true;
-      // The tick clock must be stamped on THIS exit too: composites keep
-      // running every frame while the tab is hidden, and a frozen
-      // `lastTickMs` turns the whole hidden interval into one giant "late
-      // tick" the moment the tab is shown again — a false lateFrame, a lit
-      // indicator, and a warn row blaming a render loop that never stalled.
-      // Same contract as the scrub/pause path in the visible tail.
+      // Decay here too, so the indicator is current when the tab is shown
+      // and this unjudged frame's interval is dropped.
       if (this.mode === "preview") this.underrun.tickDecay();
       // The `compositeMsLast` stamp at the tail never sees this exit, so this
       // bracket is the only account of an audio-only (hidden-tab) frame.
@@ -803,11 +806,6 @@ export class Compositor {
     // clock is running and not scrubbing (a scrub deliberately paints
     // approximate frames); decay ticks unconditionally so the indicator
     // dims after pause too (the engine's rAF tick keeps compositing).
-    //
-    // `tickDecay` must stay on the unconditional path: it also stamps the
-    // tracker's tick clock, and moving it under the `playing && !scrubbing`
-    // guard would make a whole scrub or pause difference into one giant
-    // late tick when judging resumes.
     if (this.mode === "preview") {
       if (this.playing && !this.scrubbing) {
         this.underrun.judgeSweep(this.sweepLateLayers > 0, tUsSnapped);
