@@ -1458,7 +1458,7 @@ export function installAudioTestHooks(): void {
   // Render the preview pan matrix graph offline and return mean L/R energy.
   // Drives the REAL buildPanGraph so the e2e covers graph wiring, not math.
   // Constant pan exercises the topology deterministically; the animated coeff
-  // path (panCurves) is covered by the envelope coeff-env golden.
+  // path (panGainsAt) is covered by the envelope coeff-env golden.
   hookSlot().panRenderProbe = async ({ channels, pan, frames }) => {
     const sr = 48_000;
     const ctx = new OfflineAudioContext(2, frames, sr);

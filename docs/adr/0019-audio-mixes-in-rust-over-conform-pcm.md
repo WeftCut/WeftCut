@@ -28,8 +28,8 @@ is the standard clipping answer.
   frame-offset reads.
 - **Envelope contract.** Gain (dB → linear, times fade ramps) and pan are
   sampled on a 10 ms grid by the shared eval leaf; both renderers linearly
-  interpolate the same control points (Web Audio `setValueCurveAtTime`, Rust
-  per sample). Parity is by construction, guarded by cross-language goldens.
+  interpolate the same control points (Web Audio linear ramps between them,
+  Rust per sample). Parity is by construction, guarded by cross-language goldens.
 - **Preview** is a buffer-scheduled Web Audio graph driven by the audio clock.
 - **Export** mixes f32 blocks in Rust from a `MixPlan`; ffmpeg only encodes,
   behind an always-on `alimiter` (−1 dB sample peak, auto-normalize off).
