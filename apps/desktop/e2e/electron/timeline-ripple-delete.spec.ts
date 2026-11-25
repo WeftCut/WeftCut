@@ -553,7 +553,7 @@ test.describe('ripple delete', () => {
       // reason the sentence is composed rather than looked up.
       await expect(rippleRow).toHaveAttribute(
         'title',
-        /^Ripple delete blocked: Blocker starts inside the span being closed/,
+        /^Can't close the gap: delete or move “Blocker” on /,
       )
 
       await page.keyboard.press('Escape')
@@ -568,7 +568,7 @@ test.describe('ripple delete', () => {
       // is the sentence that arrives, resolved names included. No toast, no
       // dialog (issue #18).
       const statusMessage = page.locator('.status-bar-message')
-      await expect(statusMessage).toContainText('Ripple delete blocked', { timeout: 20_000 })
+      await expect(statusMessage).toContainText("Can't close the gap", { timeout: 20_000 })
       await expect(statusMessage).toContainText('Blocker')
 
       // Nothing was written. The plan is computed off untouched state and thrown

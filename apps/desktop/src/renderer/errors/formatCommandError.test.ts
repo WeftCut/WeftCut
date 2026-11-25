@@ -188,7 +188,7 @@ describe("formatCommandError — curated tier", () => {
   // (`timeline/rippleEligibility.ts`) — so what is pinned here is the sentence
   // both surfaces get, names resolved.
   describe("ripple delete", () => {
-    it("RippleInsideHole names the blocking clip and omits the span", () => {
+    it("RippleInsideHole names the blocking clip where it sits and omits the span", () => {
       seedStore();
       const out = formatCommandError({
         error: "RippleInsideHole",
@@ -196,14 +196,14 @@ describe("formatCommandError — curated tier", () => {
         hole: { s: 0, e: 2_000_000 },
       });
       expect(out.message).toBe(
-        "Ripple delete blocked: Interview A starts inside the span being closed — add it to the selection, or delete without ripple.",
+        "Can't close the gap: delete or move “Interview A” on B-Roll at 00:00:00:00 first.",
       );
       // The hole is deliberately not interpolated: a pair of timecodes mid-line
       // reads as the clip's own range, and the remedy does not depend on them.
-      expect(out.i18n_args).toEqual({ layer: "Interview A" });
+      expect(out.i18n_args).toEqual({ layer: "“Interview A” on B-Roll at 00:00:00:00" });
     });
 
-    it("RippleCollision names both clips", () => {
+    it("RippleCollision names the clip in the way, where it sits", () => {
       seedStore();
       const out = formatCommandError({
         error: "RippleCollision",
@@ -212,20 +212,20 @@ describe("formatCommandError — curated tier", () => {
         track: "t-1",
       });
       expect(out.message).toBe(
-        "Ripple delete blocked: Ember.mp4 would land on Interview A.",
+        "Can't close the gap: move “Interview A” on B-Roll at 00:00:00:00 out of the way first.",
       );
     });
 
-    it("RippleLockedLayer names the locked clip", () => {
+    it("RippleLockedLayer names the locked clip where it sits", () => {
       seedStore();
       const out = formatCommandError({ error: "RippleLockedLayer", layer: "l-a" });
       expect(out.message).toBe(
-        "Ripple delete blocked: Interview A is locked and would have to move.",
+        "Can't close the gap: unlock “Interview A” on B-Roll at 00:00:00:00 first.",
       );
     });
 
     // The gap closing's refusal (docs/features.md#ripple-delete) opens with the
-    // ripple's four words — it greys the same row — and names the lane, since
+    // ripple's words — it greys the same row — and names the lane, since
     // the gap has no name of its own and its span was already on screen as the
     // highlight.
     it("GapNotFound names the lane the gap was on", () => {
@@ -234,7 +234,7 @@ describe("formatCommandError — curated tier", () => {
         error: "GapNotFound", track: "t-1", s: 2_000_000, e: 4_000_000,
       });
       expect(out.message).toBe(
-        "Ripple delete blocked: the selected gap on B-Roll is no longer there.",
+        "Can't close the gap: the selected gap on B-Roll is no longer there.",
       );
       expect(out.i18n_key).toBe("errors.gap_not_found");
     });
@@ -242,7 +242,7 @@ describe("formatCommandError — curated tier", () => {
     // A link has no derived name to fall back on — the timeline draws an
     // unlabelled one as a tint across the clips it holds — so the clips are
     // what the sentence can point at.
-    it("RippleLinkStraddles falls back from a missing label to the members", () => {
+    it("RippleLinkStraddles names the link by its first member, where it sits", () => {
       const summary = summaryFixture({
         media: [{ id: "m-1", label: "Aurora.mp4" }] as unknown as ProjectSummary["media"],
         root: {
@@ -283,7 +283,7 @@ describe("formatCommandError — curated tier", () => {
           hole: { s: 0, e: 1_000_000 },
         }).message,
       ).toBe(
-        "Ripple delete blocked: link Interview A + Interview A audio has members on both sides of the cut.",
+        "Can't close the gap: unlink “Interview A” on B-Roll at 00:00:00:00 first.",
       );
     });
 
@@ -295,7 +295,7 @@ describe("formatCommandError — curated tier", () => {
           link: "99999999-aaaa-4bbb-8ccc-000000000000",
           hole: { s: 0, e: 1 },
         }).message,
-      ).toContain("link #99999999");
+      ).toContain("unlink #99999999");
     });
   });
 

@@ -252,7 +252,7 @@ describe("rippleDeleteReason", () => {
     );
     const state = rippleDeleteStateOf(layers(["l-a"]), rootOf(seed(tracks)), false);
     expect(rippleDeleteReason(state, t)).toBe(
-      "Ripple delete blocked: Lower third starts inside the span being closed — add it to the selection, or delete without ripple.",
+      "Can't close the gap: delete or move “Lower third” on Track 2 at 00:00:01:00 first.",
     );
   });
 
@@ -267,7 +267,7 @@ describe("rippleDeleteReason", () => {
     expect(rippleDeleteReason(state, t)).toBe("Track 2 is locked.");
   });
 
-  it("resolves a link straddle to the link's members when it has no label", () => {
+  it("names a link straddle by the link's first member, where it sits", () => {
     const tracks = baseTracks();
     const summary = summaryFixture({
       root: {
@@ -286,7 +286,7 @@ describe("rippleDeleteReason", () => {
         t,
       ),
     ).toBe(
-      "Ripple delete blocked: link Interview A + Interview B has members on both sides of the cut.",
+      "Can't close the gap: unlink “Interview A” on Track 1 at 00:00:00:00 first.",
     );
   });
 });

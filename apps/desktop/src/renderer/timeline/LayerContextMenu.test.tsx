@@ -449,7 +449,7 @@ describe("LayerContextMenu — selection eligibility", () => {
     // Names the blocking layer, which is the whole reason the sentence is
     // composed rather than looked up.
     expect(row().getAttribute("title")).toBe(
-      "Ripple delete blocked: Lower third starts inside the span being closed — add it to the selection, or delete without ripple.",
+      "Can't close the gap: delete or move “Lower third” on Track 2 at 00:00:01:00 first.",
     );
   });
 

@@ -51,12 +51,15 @@ export interface RefusalAction {
 export interface RefusalContext {
   t: (key: string, values?: Record<string, unknown>) => string;
   layer(id: string): string;
+  /// A layer named where it sits: its name, lane and start timecode. For a
+  /// refusal that points at a clip to act on, since a clip's name is usually
+  /// its media file's and two clips cut from one file read the same.
+  placedLayer(id: string): string;
   track(id: string): string;
-  /// A link, named the way the timeline shows it: its label tab if it has one,
-  /// otherwise its MEMBERS. Unlike a layer or a lane, a link has no derived
-  /// name to fall back on — the timeline draws an unlabelled one as a tint
-  /// across the clips it holds — so the clips are the only thing a user could
-  /// look for.
+  /// A link, named by its first member where it sits (`placedLayer`). A link
+  /// has no name of its own — the timeline draws it as a tint across the clips
+  /// it holds — so a clip is the only thing a user could look for, and listing
+  /// every member repeats one media name once per clip cut from it.
   link(id: string): string;
   media(id: string): string;
   /// A project Motif by its manifest name; its id when the render catalog
@@ -76,12 +79,30 @@ function shortId(id: string): string {
 export function liveRefusalContext(
   t: (key: string, values?: Record<string, unknown>) => string,
 ): RefusalContext {
+  // Searched across every composition, like `track` below: the timecode is read
+  // on the clock of the composition that holds the layer. Shared by `link`.
+  function placedLayer(id: string): string {
+    for (const c of Object.values(useProjectStore.getState().summary?.compositions ?? {})) {
+      for (const track of c.tracks) {
+        const layer = track.layers.find((candidate) => candidate.id === id);
+        if (layer === undefined) continue;
+        return t("errors.placed_layer", {
+          layer: layerDisplayName(layer, t),
+          track: trackDisplayName(track, c.tracks, t),
+          at: formatTimecode(layer.t_start_us, c.fps_num, c.fps_den),
+        });
+      }
+    }
+    return shortId(id);
+  }
+
   return {
     t,
     layer(id) {
       const layer = useProjectStore.getState().layerById.get(id);
       return layer ? layerDisplayName(layer, t) : shortId(id);
     },
+    placedLayer,
     track(id) {
       // A refusal may name a lane in ANY composition; its name counts within
       // the composition that holds it.
@@ -100,16 +121,8 @@ export function liveRefusalContext(
       const link = Object.values(compositions)
         .flatMap((c) => c.links)
         .find((candidate) => candidate.id === id);
-      if (!link) return shortId(id);
-      // A link has no name, so it is named by its members.
-      const layers = useProjectStore.getState().layerById;
-      const members = link.layer_ids
-        .map((memberId) => {
-          const layer = layers.get(memberId);
-          return layer ? layerDisplayName(layer, t) : shortId(memberId);
-        })
-        .join(" + ");
-      return members.length > 0 ? members : shortId(id);
+      const first = link?.layer_ids[0];
+      return first === undefined ? shortId(id) : placedLayer(first);
     },
     media(id) {
       const media = useProjectStore.getState().mediaById.get(id);
@@ -268,19 +281,21 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   // is sent, so the sentence the user reads in the tooltip and the sentence the
   // status bar shows when the actor refuses for real are the same sentence.
   //
+  // Each names only what to act on, where it sits (`placedLayer`), and says
+  // what to do; the why is left out.
+  //
   // `hole` is deliberately not interpolated. It is the span being closed, and a
   // pair of timecodes in the middle of the line would be read as the layer's own
-  // range — which it is not — while the remedy ("add it to the selection") does
-  // not depend on the numbers.
+  // range — which it is not — while the remedy does not depend on the numbers.
   RippleInsideHole: {
     tier: "curated",
     key: "errors.ripple_inside_hole",
-    args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
+    args: (e, ctx) => ({ layer: ctx.placedLayer(e.layer) }),
   },
   RippleCollision: {
     tier: "curated",
     key: "errors.ripple_collision",
-    args: (e, ctx) => ({ moving: ctx.layer(e.moving), blocking: ctx.layer(e.blocking) }),
+    args: (e, ctx) => ({ blocking: ctx.placedLayer(e.blocking) }),
   },
   RippleLinkStraddles: {
     tier: "curated",
@@ -293,7 +308,7 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   RippleLockedLayer: {
     tier: "curated",
     key: "errors.ripple_locked_layer",
-    args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
+    args: (e, ctx) => ({ layer: ctx.placedLayer(e.layer) }),
   },
   // The gap closing's own refusal (docs/features.md#ripple-delete), curated for
   // the ripple four's reason: reachable from the Delete key when the mirror
