@@ -744,8 +744,10 @@ describe("AttributePanel row primitive", () => {
 });
 
 
-it('retimes the inspected clip with its link partners, offering no selection-wide option', async () => {
+it('retimes the inspected clip with its aligned link partner, offering no selection-wide option', async () => {
   const video = videoTrack(), audio = audioTrack();
+  Object.assign(audio.layers[0]!, { t_end_us: 2_000_000 });
+  Object.assign(audio.layers[0]!.params, { src_out_us: 2_000_000 });
   useProjectStore.getState().apply(summaryFixture({ root: { tracks: [video, audio], links: [{ id: 'link', layer_ids: ['layer-v1', 'layer-a1'] }] } }));
   setLayerSelection('layer-v1', ['layer-v1', 'layer-a1']);
   renderPanel(video, 'layer-v1');

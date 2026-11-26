@@ -53,17 +53,25 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layer.id, layer.t_start_us, rate, duration, fpsNum, fpsDen]);
   if (!supported) return null;
-  // A retime follows the inspected clip's link, as Start and Duration do, so
-  // linked picture and sound keep one rate. Other selected clips stay put.
+  const hasTiming = (l: LayerSummary) => ['VideoClip', 'Audio', 'Motif', 'CompositionRef'].includes(l.params.kind)
+    || (l.params.kind === 'ImageOverlay' && !!summary?.media.some(m => m.id === ('media_id' in l.params ? l.params.media_id : null) && (m.duration_us ?? 0) > 0));
+  // A retime carries the link members that sit exactly on the inspected clip
+  // (same start, end and rate), the way a trim carries members whose edge
+  // shares its time: they stay aligned under either target. The rest of the
+  // link and of the selection stays put. `docs/features.md#links`.
   const link = linksOff ? null : Object.values(summary?.compositions ?? {}).flatMap(c => c.links).find(l => l.layer_ids.includes(layer.id));
-  const targets = link ? [layer.id, ...link.layer_ids.filter(id => id !== layer.id)] : [layer.id];
+  const partners = !link || !summary ? [] : Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(track => track.layers)).filter(l =>
+    l.id !== layer.id && link.layer_ids.includes(l.id) && hasTiming(l)
+    && l.t_start_us === layer.t_start_us && l.t_end_us === layer.t_end_us && layerRateNumber(l.params) === rate);
+  const targetLayers = [layer, ...partners];
+  const targets = targetLayers.map(l => l.id);
   const conflictText = (conflict: Record<string, unknown>) => formatRetimeConflict(conflict, liveRefusalContext((key, values) => t(key, values ?? {})));
   const preview = (target: RetimeTarget) => {
     if (!summary) return null;
     const clips: RetimeClip[] = Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(track => track.layers.map(l => ({
       id: l.id, composition_id: c.id, track_id: track.id, t_start_us: l.t_start_us, t_end_us: l.t_end_us,
       grid: frameGrid({ num: c.fps_num, den: c.fps_den }), overlap_class: l.params.kind === 'Audio' ? 'audio' as const : 'visual' as const,
-      timing: ['VideoClip', 'Audio', 'Motif', 'CompositionRef'].includes(l.params.kind) || (l.params.kind === 'ImageOverlay' && summary.media.some(m => m.id === ('media_id' in l.params ? l.params.media_id : null) && (m.duration_us ?? 0) > 0)) ? layerContentTiming(l) : null,
+      timing: hasTiming(l) ? layerContentTiming(l) : null,
       locked: l.locked || track.locked, ...(l.params.kind === 'CompositionRef' ? { composition_ref: l.params.composition_id } : {}),
     }))));
     return planRetime({ clips, transitions: Object.values(summary.compositions).flatMap(c => c.transitions), layer_ids: targets, target });
@@ -78,13 +86,9 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
   const draft = draftTarget ? preview(draftTarget) : null;
   const previewError = editing && !draftTarget ? t('retime.conflicts.InvalidTarget')
     : draft && !draft.ok ? conflictText(draft.conflict) : null;
-  const targetLayers = summary ? Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(track => track.layers)).filter(l => targets.includes(l.id)) : [layer];
   const pitchLayers = targetLayers.filter(l => l.params.kind === 'Audio' || l.params.kind === 'CompositionRef');
   const pitchOn = pitchLayers.filter(l => 'preserve_pitch' in l.params ? l.params.preserve_pitch !== false : true).length;
   const pitchMixed = pitchOn > 0 && pitchOn < pitchLayers.length;
-  // Linked clips that already differ take the entered value even when it
-  // matches the inspected clip's.
-  const mixed = targetLayers.some(l => layerRateNumber(l.params) !== rate || (l.t_end_us - l.t_start_us) / 1e6 !== duration);
   const commit = (kind: 'Rate' | 'Duration', value: number) => {
     const target = targetFor(kind, value);
     if (target) void apply(target);
@@ -101,7 +105,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     // Merely focusing a field (or cancelling with Escape) must not retime it.
     if (!durationEdited.current) return;
     durationEdited.current = false;
-    if (!mixed && us !== null && formatDuration(us) === formatDuration(duration * 1e6)) {
+    if (us !== null && formatDuration(us) === formatDuration(duration * 1e6)) {
       setEditing(null);
       return;
     }
@@ -135,7 +139,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     if (rateCancelled.current) return;
     setRateOpen(false);
     const value = Number(rateText);
-    if (!mixed && value === rate) { setEditing(null); return; }
+    if (value === rate) { setEditing(null); return; }
     commit('Rate', value);
   };
   return <>

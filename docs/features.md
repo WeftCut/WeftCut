@@ -260,9 +260,11 @@ a *Group*, not a link ([CONTEXT.md](../CONTEXT.md#links-and-groups),
   keep their offset from the seed and snap on their own lattice; only the seed
   changes track. A locked or occupied destination for any member refuses the
   batch.
-- **Retime** from the inspector applies the target (and the pitch policy) to the
-  inspected clip and every member; other selected clips stay local, and a
-  locked member refuses the set. Under Link override only the inspected clip
+- **Retime** from the inspector carries the members that sit exactly on the
+  inspected clip (same start, end and rate, and retimable), so they stay
+  aligned under a rate or a duration target; the pitch policy follows the same
+  set. Other members and other selected clips stay local; a locked carried
+  member refuses the retime. Under Link override only the inspected clip
   retimes. `retime_layers` (MCP) expands nothing: it retimes exactly the clips
   it names.
 - **`enabled`** changes only the inspected clip (inspector) or the selected clips

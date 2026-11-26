@@ -59,6 +59,16 @@ it('retimes and pitches the link partners of the inspected clip, and leaves the 
   await waitFor(() => expect(setPreservePitch).toHaveBeenCalledExactlyOnceWith(['voice'], true));
 });
 
+it.each([
+  ['cannot be retimed', clip('title', 'Text')],
+  ['starts elsewhere', clip('voice', 'Audio', true, 1_000_000)],
+])('retimes the inspected clip alone when its link partner %s', async (_case, partner) => {
+  mount([clip('video', 'VideoClip'), partner], false, ['video', partner.id]);
+  expect(screen.queryByRole('checkbox')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Reset to 1×' }));
+  await waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['video'], { kind: 'Rate', value: { num: 1, den: 1 } }));
+});
+
 it('names a locked link partner when it blocks the retime', async () => {
   const voice = { ...clip('voice'), locked: true };
   mount([clip('video', 'VideoClip'), voice], false, ['video', 'voice']);
