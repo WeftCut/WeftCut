@@ -2828,6 +2828,8 @@ const enUS = {
     color_label: "Color",
     outline_width: "Outline width (px), 0 for none",
     seek_to: "Go to caption at {{timecode}}",
+    count_one: "{{count}} caption",
+    count_other: "{{count}} captions",
   },
   // Clip-compute jobs: transcribe_clip / describe_clip
   // (docs/performance-settings.md#admission-lanes, ADR 0121).

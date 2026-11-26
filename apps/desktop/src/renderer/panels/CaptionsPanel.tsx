@@ -225,82 +225,88 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
     <section className="captions-panel" aria-label={t("captions.title")}>
       {projectId && correctionProject === projectId && <TextCorrectionDialog key={projectId} onClose={() => setCorrectionProject(null)} onMutated={onMutated} />}
       {cues.length > 0 && (
-        <div className="captions-toolbar">
-          {/* Every control here restyles the whole corpus, never the selected cue. */}
-          <div className="captions-style-fields" role="group" aria-label={t("captions.style_scope")} title={t("captions.style_scope")}>
-            <div className="captions-style-control">
-              <span className="captions-style-label">{t("captions.size_label")}</span>
-              <AppNumberField
-                value={fontSize}
-                step={1}
-                min={6}
-                max={400}
-                ariaLabel={t("property_panel.font_size_px")}
-                onValueChange={setFontSize}
-                onCommit={(v) =>
-                  void tryMutate(
-                    () => restyleCaptions({ font_size_px: v }).then(onMutated),
-                    "Restyle captions",
-                  )
-                }
-              />
-            </div>
-            <div className="captions-style-control">
-              <span className="captions-style-label">{t("captions.outline_label")}</span>
-              <AppNumberField
-                value={outlineWidth}
-                step={1}
-                min={0}
-                max={64}
-                ariaLabel={t("captions.outline_width")}
-                onValueChange={setOutlineWidth}
-                onCommit={(v) =>
-                  void tryMutate(
-                    () => restyleCaptions({ outline_width: v }).then(onMutated),
-                    "Restyle captions",
-                  )
-                }
-              />
-            </div>
-            <div className="captions-style-control">
-              <span className="captions-style-label">{t("captions.color_label")}</span>
-              <AppColorField
-                value={rgbaToHex(color)}
-                ariaLabel={t("property_panel.color")}
-                onValueChange={(hex) => {
-                  const next = hexToRgba(hex, color.a);
-                  setColor(next);
-                  if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
-                  colorDebounceRef.current = setTimeout(() => {
-                    void tryMutate(
-                      () => restyleCaptions({ color: next }).then(onMutated),
-                      "Restyle captions",
-                    );
-                  }, 250);
-                }}
-              />
-            </div>
+        // Every control here restyles the whole corpus, never the selected cue.
+        <div className="captions-toolbar" role="group" aria-label={t("captions.style_scope")} title={t("captions.style_scope")}>
+          <div className="captions-style-control">
+            <span className="captions-style-label">{t("captions.size_label")}</span>
+            <AppNumberField
+              value={fontSize}
+              step={1}
+              min={6}
+              max={400}
+              ariaLabel={t("property_panel.font_size_px")}
+              onValueChange={setFontSize}
+              onCommit={(v) =>
+                void tryMutate(
+                  () => restyleCaptions({ font_size_px: v }).then(onMutated),
+                  "Restyle captions",
+                )
+              }
+            />
           </div>
-          <Button size="icon-xs" variant="ghost" className="captions-correction" aria-label={t('text_correction.title')} title={t('text_correction.title')} disabled={!projectId} onClick={() => setCorrectionProject(projectId ?? null)}>
-            <AppIcon icon={SpellCheckIcon} size="body" aria-hidden="true" />
-          </Button>
+          <div className="captions-style-control">
+            <span className="captions-style-label">{t("captions.outline_label")}</span>
+            <AppNumberField
+              value={outlineWidth}
+              step={1}
+              min={0}
+              max={64}
+              ariaLabel={t("captions.outline_width")}
+              onValueChange={setOutlineWidth}
+              onCommit={(v) =>
+                void tryMutate(
+                  () => restyleCaptions({ outline_width: v }).then(onMutated),
+                  "Restyle captions",
+                )
+              }
+            />
+          </div>
+          <div className="captions-style-control">
+            <span className="captions-style-label">{t("captions.color_label")}</span>
+            <AppColorField
+              value={rgbaToHex(color)}
+              ariaLabel={t("property_panel.color")}
+              onValueChange={(hex) => {
+                const next = hexToRgba(hex, color.a);
+                setColor(next);
+                if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
+                colorDebounceRef.current = setTimeout(() => {
+                  void tryMutate(
+                    () => restyleCaptions({ color: next }).then(onMutated),
+                    "Restyle captions",
+                  );
+                }, 250);
+              }}
+            />
+          </div>
         </div>
       )}
       <CaptionsComputeStatus comp={comp} />
       {cues.length === 0 ? (
         <p className="placeholder">{t("captions.empty")}</p>
       ) : (
-        <ul className="captions-list">
-          {cues.map((cue) => (
-            <CaptionCueRow
-              key={cue.layer.id}
-              cue={cue}
-              selected={cue.layer.id === selectedLayerId}
-              onActivate={activateCue}
-              onCommit={commitText}
-            />
-          ))}
-        </ul>
+        <>
+          {/* Text correction rewrites cue text, so it heads the cue list rather
+              than sharing the style row. */}
+          <div className="captions-list-header">
+            <span className="captions-count">{t("captions.count", { count: cues.length })}</span>
+            <Button variant="outline" disabled={!projectId} onClick={() => setCorrectionProject(projectId ?? null)}>
+              <AppIcon icon={SpellCheckIcon} size="body" aria-hidden="true" />
+              {t('text_correction.title')}
+            </Button>
+          </div>
+          <ul className="captions-list">
+            {cues.map((cue) => (
+              <CaptionCueRow
+                key={cue.layer.id}
+                cue={cue}
+                selected={cue.layer.id === selectedLayerId}
+                onActivate={activateCue}
+                onCommit={commitText}
+              />
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );

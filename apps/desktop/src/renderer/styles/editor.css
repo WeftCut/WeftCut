@@ -1472,9 +1472,8 @@
   min-width: 0;
 }
 
-/* One wrapping row: the corpus-wide style fields, then the Text correction
-   icon pushed to the far end so it reads as a separate action on the cue text.
-   Icon, not label: three labelled fields already fill the default dock. */
+/* The corpus-wide style fields on one row; a narrow dock wraps them field by
+   field. */
 .captions-toolbar {
   flex: 0 0 auto;
   display: flex;
@@ -1485,15 +1484,19 @@
   border-bottom: 1px solid var(--border-soft);
 }
 
-/* `contents` puts the fields straight into the toolbar's wrap, so a narrow
-   dock wraps field by field and the icon shares the last line instead of
-   dropping to a row of its own. */
-.captions-style-fields {
-  display: contents;
+/* Cue count on the left, Text correction on the right, above the cues it
+   rewrites. */
+.captions-list-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(8 * var(--ui-px));
 }
 
-.captions-correction {
-  margin-left: auto;
+.captions-count {
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
 }
 
 /* Keep each label with its field when a narrow dock needs another row. */

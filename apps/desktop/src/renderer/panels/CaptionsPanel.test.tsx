@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { act, cleanup, render, screen, fireEvent, within } from "@testing-library/react";
 import "../i18n";
 import { CaptionPanel } from "./CaptionPanel";
 import { useProjectStore } from "../state/projectStore";
@@ -118,6 +118,14 @@ describe("CaptionsPanel", () => {
     expect(
       screen.getByText("Import a subtitle file or transcribe a clip to create captions."),
     ).toBeTruthy();
+  });
+
+  it("heads the cue list with its count and the Text correction button", () => {
+    apply([captionTrack("t1", [textLayer("L1", 1_000_000, "Hello"), textLayer("L2", 3_000_000, "World")])]);
+    render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
+    const header = document.querySelector(".captions-list-header") as HTMLElement;
+    expect(within(header).getByText("2 captions")).toBeTruthy();
+    expect(within(header).getByRole("button", { name: "Text correction" })).toBeTruthy();
   });
 
   // Nothing to restyle or correct yet, so the empty line stands alone.

@@ -2564,6 +2564,8 @@ const zhCN: Resources = {
     color_label: "颜色",
     outline_width: "描边宽度（px），0 为无描边",
     seek_to: "跳到 {{timecode}} 的字幕",
+    count_one: "{{count}} 条字幕",
+    count_other: "{{count}} 条字幕",
   },
   // 片段计算任务：转写 / 描述（docs/performance-settings.md#admission-lanes、ADR 0121）。
   compute: {
