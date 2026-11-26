@@ -134,7 +134,6 @@ const shortJob = (name) => {
  *   jobs: GitHub job objects (completed ones only),
  *   logs: { checks?: string[], rust?: { [os]: string[] } },
  *   e2e: collectE2e(...), baseline: e2e/timings.json `seconds.parallel` or null,
- *   mermaidInfo?: boolean
  * }
  */
 export function renderSummary(model) {
@@ -297,6 +296,5 @@ export function renderSummary(model) {
     o.push('', note('🐢 = 比 `e2e/timings.json` 基线慢 ≥1.5× 且多 15s 以上', '🐢 = ≥1.5× and ≥15 s slower than the `e2e/timings.json` baseline'), '', '</details>', '')
   })
 
-  if (model.mermaidInfo) o.push('<details><summary>Mermaid version</summary>', '', '```mermaid', 'info', '```', '', '</details>', '')
   return o.join('\n') + '\n'
 }

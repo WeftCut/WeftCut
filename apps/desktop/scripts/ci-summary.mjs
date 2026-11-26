@@ -1,6 +1,6 @@
 // Write the run summary of one electron-ci run (rendering: ci-summary-lib.mjs).
 //
-//   node scripts/ci-summary.mjs [--run <id>] [--repo owner/name] [--artifacts <dir>] [--out <file>] [--mermaid-info]
+//   node scripts/ci-summary.mjs [--run <id>] [--repo owner/name] [--artifacts <dir>] [--out <file>]
 //
 // --run and --repo default to the current Actions run; --out defaults to
 // $GITHUB_STEP_SUMMARY, else stdout. --artifacts is the directory the run's
@@ -15,11 +15,10 @@ import { collectE2e, renderSummary, stripLog } from './ci-summary-lib.mjs'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
 function args(argv) {
-  const out = { run: process.env.GITHUB_RUN_ID, repo: process.env.GITHUB_REPOSITORY, artifacts: null, out: process.env.GITHUB_STEP_SUMMARY, mermaidInfo: false }
+  const out = { run: process.env.GITHUB_RUN_ID, repo: process.env.GITHUB_REPOSITORY, artifacts: null, out: process.env.GITHUB_STEP_SUMMARY }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--mermaid-info') out.mermaidInfo = true
-    else if (a.startsWith('--')) out[a.slice(2)] = argv[++i]
+    if (a.startsWith('--')) out[a.slice(2)] = argv[++i]
   }
   if (!out.run || !out.repo) throw new Error('--run and --repo are required outside GitHub Actions')
   return out
@@ -84,7 +83,6 @@ const md = renderSummary({
   logs,
   e2e: collectE2e(e2eEntries(opt.artifacts)),
   baseline,
-  mermaidInfo: opt.mermaidInfo,
 })
 if (opt.out) appendFileSync(opt.out, md)
 else process.stdout.write(md)

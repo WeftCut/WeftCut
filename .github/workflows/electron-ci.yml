@@ -1264,3 +1264,41 @@ jobs:
             dl/determinism-ubuntu-latest/linux \
             dl/determinism-macos-latest/darwin \
             --threshold 0.98
+
+  # The run page's summary of this run only: key numbers, test gates, failed
+  # and retried-then-passed tests, the job timeline, E2E split balance and
+  # Vitest cost (scripts/ci-summary.mjs). Cross-run trends are not its job.
+  # Nothing needs it, so it never holds back a release, and `always()` writes
+  # it for red runs too.
+  summary:
+    needs: [checks, rust-test, e2e]
+    if: always()
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The run's job list and the checks / rust-test logs.
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # A run whose e2e legs never started has no e2e-timings-* to fetch; the
+      # summary then simply has no E2E rows.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: e2e-timings-*
+          path: e2e-timings
+          merge-multiple: false
+
+      - name: Write the run summary
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-summary.mjs --artifacts ../../e2e-timings
