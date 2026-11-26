@@ -744,17 +744,14 @@ describe("AttributePanel row primitive", () => {
 });
 
 
-it('retimes the inspected clip unless the user explicitly enables selection-wide editing', async () => {
+it('retimes only the inspected clip in a multi-selection, like every other inspector field', async () => {
   const video = videoTrack(), audio = audioTrack();
   useProjectStore.getState().apply(summaryFixture({ root: { tracks: [video, audio], links: [{ id: 'link', layer_ids: ['layer-v1', 'layer-a1'] }] } }));
   setLayerSelection('layer-v1', ['layer-v1', 'layer-a1']);
   renderPanel(video, 'layer-v1');
-  const user = userEvent.setup();
-  await user.click(screen.getByRole('button', { name: 'Reset to 1×' }));
-  expect(retimeLayers).toHaveBeenLastCalledWith(['layer-v1'], { kind: 'Rate', value: { num: 1, den: 1 } });
-  await user.click(screen.getByRole('checkbox', { name: 'Apply to all 2 selected clips' }));
-  await user.click(screen.getByRole('button', { name: 'Reset to 1×' }));
-  expect(retimeLayers).toHaveBeenLastCalledWith(['layer-v1', 'layer-a1'], { kind: 'Rate', value: { num: 1, den: 1 } });
+  expect(within(screen.getByLabelText('Timing')).queryByRole('checkbox')).toBeNull();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Reset to 1×' }));
+  expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['layer-v1'], { kind: 'Rate', value: { num: 1, den: 1 } });
 });
 
 describe('direct retime duration editing', () => {

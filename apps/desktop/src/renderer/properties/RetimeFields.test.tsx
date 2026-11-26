@@ -34,33 +34,19 @@ function mount(clips: LayerSummary[], sameTrack = false) {
 beforeEach(async () => { await i18n.changeLanguage('en-US'); vi.clearAllMocks(); });
 afterEach(() => { cleanup(); useProjectStore.getState().apply(null); });
 
-it('shows mixed pitch and applies only to selected Audio/Group clips', async () => {
-  mount([clip('voice'), clip('group', 'CompositionRef', false), clip('video', 'VideoClip')]);
-  await userEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 3 selected clips' }));
+it('sets pitch on the inspected clip only, showing its own value in a multi-selection', async () => {
+  mount([clip('voice'), clip('other', 'Audio', false)]);
+  expect(screen.getAllByRole('checkbox')).toHaveLength(1);
   const pitch = screen.getByRole('checkbox', { name: 'Preserve pitch' }) as HTMLInputElement;
-  expect(pitch.indeterminate).toBe(true);
-  expect(pitch.getAttribute('aria-checked')).toBe('mixed');
+  expect(pitch.checked).toBe(true);
   await userEvent.click(pitch);
-  await waitFor(() => expect(setPreservePitch).toHaveBeenCalledWith(['voice', 'group'], true));
+  await waitFor(() => expect(setPreservePitch).toHaveBeenCalledExactlyOnceWith(['voice'], false));
   expect(retimeLayers).not.toHaveBeenCalled();
 });
 
-it('offers batch pitch when the primary clip is video, and states its target scope', async () => {
+it('offers no pitch control when the inspected clip is video, whatever else is selected', () => {
   mount([clip('video', 'VideoClip'), clip('voice')]);
-  expect(screen.queryByRole('checkbox', { name: 'Preserve pitch' })).toBeNull();
-  await userEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 2 selected clips' }));
-  const pitch = screen.getByRole('checkbox', { name: 'Preserve pitch' });
-  expect(screen.getByText('Applies to the 1 selected audio or Group clip.')).toBeTruthy();
-  await userEvent.click(pitch);
-  await waitFor(() => expect(setPreservePitch).toHaveBeenCalledWith(['voice'], false));
-});
-
-it('keeps pitch local until batch editing is explicitly enabled', async () => {
-  mount([clip('voice'), clip('other', 'Audio', false)]);
-  const pitch = screen.getByRole('checkbox', { name: 'Preserve pitch' }) as HTMLInputElement;
-  expect(pitch.indeterminate).toBe(false);
-  await userEvent.click(pitch);
-  await waitFor(() => expect(setPreservePitch).toHaveBeenCalledWith(['voice'], false));
+  expect(screen.queryByRole('checkbox')).toBeNull();
 });
 
 it('names the blocking clip and shows usable limits before and after a refused commit', async () => {
