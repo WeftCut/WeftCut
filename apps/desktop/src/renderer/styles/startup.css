@@ -566,9 +566,8 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
   box-shadow: var(--focus-ring);
 }
 
-/* While an open or unpack runs, the rest of the screen stays as it was, only
- * inert: the work shows where it happens, not as a dimmed screen. */
 .startup-action:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
@@ -758,6 +757,7 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
 
 .startup-recent-item:disabled {
   cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .startup-recent-name {
