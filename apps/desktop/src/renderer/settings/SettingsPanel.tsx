@@ -46,6 +46,7 @@ import {
   useTailSnapStrengthPx,
   useTimelineWheelAxis,
   useAutoDeleteEmptyTracks,
+  useBuildQuickProxiesOnImport,
   useDefaultTextFont,
   useAutoInstallUpdatesOnQuit,
 } from "./appSettingsStore";
@@ -326,6 +327,7 @@ export function SettingsPanel({
             <section className="settings-section">
               <h3>{t("settings.preview_heading")}</h3>
               <PreviewSection onError={setError} />
+              <ImportQuickProxiesSection onError={setError} />
               <PrebakeSection onError={setError} />
               <PreviewSnapSection onError={setError} />
               <GridOpacitySection onError={setError} />
@@ -503,6 +505,31 @@ function EmptyTrackCleanupSection({ onError }: { onError: (msg: string) => void 
       <span>
         <span className="settings-toggle-label">{t("settings.auto_delete_empty_tracks")}</span>
         <span className="settings-toggle-hint">{t("settings.auto_delete_empty_tracks_hint")}</span>
+      </span>
+    </label>
+  );
+}
+
+function ImportQuickProxiesSection({ onError }: { onError: (msg: string) => void }) {
+  const { t } = useTranslation();
+  const enabled = useBuildQuickProxiesOnImport();
+  return (
+    <label className="settings-toggle-row">
+      <AppSwitch
+        checked={enabled}
+        ariaLabel={t("settings.build_quick_proxies_on_import")}
+        onCheckedChange={async (next) => {
+          onError("");
+          try {
+            await setAppSettings({ build_quick_proxies_on_import: next });
+          } catch (err) {
+            onError(String(err));
+          }
+        }}
+      />
+      <span>
+        <span className="settings-toggle-label">{t("settings.build_quick_proxies_on_import")}</span>
+        <span className="settings-toggle-hint">{t("settings.build_quick_proxies_on_import_hint")}</span>
       </span>
     </label>
   );

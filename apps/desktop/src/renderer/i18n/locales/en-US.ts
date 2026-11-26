@@ -2477,6 +2477,9 @@ const enUS = {
     content_qwen3vl_mmproj: "Qwen3-VL vision projector (F16)",
     content_prereq_msvc14:
       "Requires the Microsoft Visual C++ 2015–2022 x64 runtime (usually already installed).",
+    build_quick_proxies_on_import: "Build 720p proxies on import",
+    build_quick_proxies_on_import_hint:
+      "Turn off if this machine plays the originals smoothly: a clip that exports from the original (Decode: “Original, proxy for preview”) then gets its 720p proxy only when “Prefer proxies for preview” is on or its Preview source is Proxy. Applies to all projects.",
     prebake_motifs: "Pre-bake all motif content",
     prebake_motifs_hint:
       "Bake every motif frame the timeline uses in the background.",

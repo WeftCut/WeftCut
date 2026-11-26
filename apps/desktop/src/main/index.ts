@@ -81,7 +81,7 @@ import { createDeferredLog } from './deferredLog.js'
 import { createWorkspaceEventGate } from './workspaceEvents.js'
 import type { McpLogEntryInput } from './mcp/withLog.js'
 import { ImportDiagnostics } from './importDiagnostics'
-import { recordDerivativeJob, resetDerivativeJobs } from './state/derivative-jobs'
+import { recordDerivativeJob, recordDerivativePlan, resetDerivativeJobs } from './state/derivative-jobs'
 import { IMPORT_DIAGNOSTIC_MILESTONE } from '../shared/import-diagnostics'
 import { FontCatalog } from './fonts/catalog.js'
 import { ProjectFontStore } from './fonts/projectFonts.js'
@@ -125,7 +125,7 @@ import { MODEL_EVENTS, speechModelLanguages, type ModelUseRequest, type ModelFam
 import { stalledEncoderLimitMs } from './exportE2EStall.js'
 
 const require_ = createRequire(import.meta.url)
-const { Backend } = require_('@weftcut/core') as typeof import('@weftcut/core')
+const { Backend, jobsConfigureQuickProxies } = require_('@weftcut/core') as typeof import('@weftcut/core')
 
 let backend: import('@weftcut/core').Backend | null = null
 // E2E builds only (exportE2EStall.ts). A production build folds the flag to
@@ -657,6 +657,7 @@ app.whenReady().then(async () => {
       syncMainWindowMinimumSize()
       hydrateResourceAllocation(settings.resource_allocation)
       configureResources(settings.resource_allocation!)
+      jobsConfigureQuickProxies(settings.build_quick_proxies_on_import)
       hydratePerformanceSettings(settings.performance,
       !settings.performance_policy || settings.performance_policy.decode === 'tested' && settings.performance_test_compatible
         ? settings.performance_calibration : null, !!settings.performance_policy)
@@ -666,6 +667,7 @@ app.whenReady().then(async () => {
   layoutTheme = readLayoutTheme(initialAppSettings.layout_theme)
   hydrateResourceAllocation(initialAppSettings.resource_allocation)
   configureResources(initialAppSettings.resource_allocation!)
+  jobsConfigureQuickProxies(initialAppSettings.build_quick_proxies_on_import)
   // A busy refusal said as a sentence names its holders from the live ledger.
   setResourceHolders(() => resourceSnapshot().holders ?? [])
   const measureCacheDisk = (workspace: string) => void fs.promises.statfs(workspace).then(stats => {
@@ -764,6 +766,8 @@ app.whenReady().then(async () => {
       if (event === 'import:queue' && Array.isArray(payload)) importCopies.observe(payload)
       if (event === 'import:diagnostic' || event === 'import:diagnostic-plan') {
         importDiagnostics?.native(event, payload)
+        // A media card reads the plan too: a quick proxy it leaves out is not coming.
+        if (event === 'import:diagnostic-plan') recordDerivativePlan(payload)
         return
       }
       if (event === 'media:job_complete' || event === 'media:job_error' || event === 'import:complete' || event === 'import:error') {

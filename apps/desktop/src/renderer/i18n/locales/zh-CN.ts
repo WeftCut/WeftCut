@@ -2220,6 +2220,9 @@ const zhCN: Resources = {
     content_qwen3vl_mmproj: "Qwen3-VL 视觉投影器（F16）",
     content_prereq_msvc14:
       "需要 Microsoft Visual C++ 2015–2022 x64 运行库（通常已随系统安装）。",
+    build_quick_proxies_on_import: "导入时生成 720p 代理",
+    build_quick_proxies_on_import_hint:
+      "如果本机能流畅播放原始文件，可以关闭。关闭后，导出读取原始文件的片段（解码：“原始文件，预览走代理”）仅在开启“预览优先使用代理”或其预览来源为“代理”时才生成 720p 代理。适用于所有项目。",
     prebake_motifs: "预烘焙所有 Motif 内容",
     prebake_motifs_hint:
       "后台烘焙时间线上用到的所有 Motif 帧。",

@@ -48,7 +48,6 @@ import {
   type MediaSummary,
   type ProjectSummary,
   compositionsDelete,
-  generateQuickProxy,
   analyzeShots,
   removeMedia,
 } from "../ipc";
@@ -57,7 +56,7 @@ import { parseCommandError } from "../errors/parseCommandError";
 import { registerRevealMedia } from "../state/navigation";
 import { invalidateShotSource } from "../shots/shotsStore";
 import { tryMutate } from "../errors/tryMutate";
-import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
+import { useProxyPrefStore, requestQuickProxy, setProxyOverride } from "../state/proxyPreferenceStore";
 import { setAppSettings, useMediaPoolLayout } from "../settings/appSettingsStore";
 import { openComposition } from "../state/compositionAnchorStore";
 import {
@@ -420,9 +419,7 @@ export function MediaPool({
       onProxyModeChange: (mode) => {
         closeMenu();
         const next = mode === "auto" ? null : mode === "proxy" ? true : false;
-        if (next === true && quickProxyPath(m) === null) {
-          void generateQuickProxy(m.id);
-        }
+        if (next === true && quickProxyPath(m) === null) requestQuickProxy(m.id);
         // Persisted project-settings write: a rejection without this wrap
         // is an unhandled promise rejection, not even a devtools warning.
         void tryMutate(() => setProxyOverride(m.id, next), "Set proxy mode");

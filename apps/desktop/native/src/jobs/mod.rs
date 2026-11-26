@@ -36,6 +36,7 @@ pub use frame::extract as extract_frame;
 pub use waveform::read_peaks_file;
 
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::events::EventSink;
@@ -46,6 +47,19 @@ use crate::logs::{LogBusSlot, LogCategory, LogEntryInput, LogLevel, LogSource};
 use crate::state::{
     CommandError, DecodeRoute, MediaDerivativesPatch, MediaId, MediaItem, MediaKind,
 };
+
+/// Main's `build_quick_proxies_on_import` app setting, sent at startup and on
+/// every settings commit (`src/main/index.ts`): whether an import builds the
+/// quick proxy of a `ProxyJob::QuickOnly` source
+/// (`proxy_decision::import_proxy_jobs`). On until main sends it, as the
+/// setting defaults.
+static BUILD_QUICK_PROXIES_ON_IMPORT: AtomicBool = AtomicBool::new(true);
+
+#[cfg_attr(test, allow(dead_code))] // NAPI exports have no callers in the Rust test binary.
+#[napi_derive::napi]
+pub fn jobs_configure_quick_proxies(build_on_import: bool) {
+    BUILD_QUICK_PROXIES_ON_IMPORT.store(build_on_import, Ordering::Relaxed);
+}
 
 /// Emit a completed job's derivative patch as `media:derivatives {media_id,
 /// patch}` for the TS state actor (the sole writer, applied by Electron main)
@@ -766,23 +780,32 @@ fn spawn_proxy_decision(
             return;
         }
         let route = proxy_decision::decide(&media, source_gop_secs);
-        let planned: &[&str] = match proxy_decision::job_for(route) {
-            proxy_decision::ProxyJob::None => &[],
-            proxy_decision::ProxyJob::QuickOnly => &["quick_proxy"],
-            proxy_decision::ProxyJob::QuickThenFull => &["quick_proxy", "proxy"],
-        };
-        diagnostics::plan(&events, media_id, planned, false);
+        let job = proxy_decision::job_for(route);
+        let build_on_import = BUILD_QUICK_PROXIES_ON_IMPORT.load(Ordering::Relaxed);
+        diagnostics::plan(
+            &events,
+            media_id,
+            proxy_decision::import_proxy_jobs(job, build_on_import),
+            false,
+        );
         // Commit the authoritative initial route FIRST, then spawn the jobs the
-        // route implies.
+        // route implies. `set_route` replaces the route outright, so a quick
+        // proxy already in the cache rides along: with
+        // `build_quick_proxies_on_import` off, nothing below lands it again.
         let initial = DecodeRoute::from_proxy_route(route);
+        let quick_proxy_landed = match initial {
+            DecodeRoute::Bypass => None,
+            _ => cached_derivative(&cache, &media, JobKind::QuickProxy).map(Some),
+        };
         let patch = MediaDerivativesPatch {
             set_route: Some(initial),
+            quick_proxy_landed,
             ..Default::default()
         };
         if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
             warn!("route decision commit failed for {media_id}: {e}");
         }
-        match proxy_decision::job_for(route) {
+        match job {
             proxy_decision::ProxyJob::None => {
                 emit(
                     &events,
@@ -812,7 +835,6 @@ fn spawn_proxy_decision(
                         kind: JobKind::ProxyBypass,
                     },
                 );
-                info!("direct-export accepted for {media_id}; preview proxy queued");
                 emit(
                     &events,
                     EVENT_COMPLETE,
@@ -822,10 +844,14 @@ fn spawn_proxy_decision(
                         path: Some(media.path_abs.display().to_string()),
                     },
                 );
-                // Thumbnails + waveform off the original; preview proxy in the
+                // Thumbnails + waveform off the original; quick proxy in the
                 // background WITHOUT chaining a full proxy.
-
-                spawn_quick_proxy(events, log_slot, cache, media, false, source_gop_secs);
+                if build_on_import {
+                    info!("direct-export accepted for {media_id}; quick proxy queued");
+                    spawn_quick_proxy(events, log_slot, cache, media, false, source_gop_secs);
+                } else {
+                    info!("direct-export accepted for {media_id}; quick proxy not built on import");
+                }
             }
             proxy_decision::ProxyJob::QuickThenFull => {
                 spawn_quick_proxy(events, log_slot, cache, media, true, source_gop_secs);
@@ -1404,6 +1430,66 @@ mod tests {
                     .is_none()),
             "the heal must not reset the route via set_route"
         );
+    }
+
+    /// A route decision keeps a quick proxy already in the cache: `set_route`
+    /// replaces the route outright, and with `build_quick_proxies_on_import`
+    /// off no job lands the proxy again after it (a reopen, a re-import).
+    #[tokio::test]
+    async fn a_route_decision_keeps_the_quick_proxy_already_in_the_cache() {
+        use crate::events::VecEventSink;
+        use crate::state::VideoStreamMeta;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+        let mut media = media_named(None, "/nonexistent/source.mp4");
+        // 4K H.264: export reads the original, preview a quick proxy.
+        media.metadata.video = Some(VideoStreamMeta {
+            width: 3840,
+            height: 2160,
+            fps_num: 30,
+            fps_den: 1,
+            codec: "h264".into(),
+            pix_fmt: "yuv420p".into(),
+            start_pts_us: None,
+            nb_frames: None,
+            color_matrix: None,
+            color_range: None,
+            color_primaries: None,
+            color_transfer: None,
+        });
+        let quick = cache.quick_proxy(&media.file_hash_blake3, media.proxy_recipe());
+        std::fs::write(&quick, include_bytes!("../../../fixtures/media/tiny.mp4")).unwrap();
+        // As a reopen holds it: the open adopted the cached proxy.
+        media.decode_route = DecodeRoute::DirectExport {
+            quick_proxy: Some(quick.clone()),
+        };
+
+        let sink = Arc::new(VecEventSink::new());
+        spawn_proxy_decision(sink.clone(), LogBusSlot::new(), cache.clone(), media);
+
+        // The claim is what the commit carries; the limit only ends a wait
+        // for a decision that is not coming.
+        let decided = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let patch = sink.events.lock().unwrap().iter().find_map(|(name, row)| {
+                    (name == "media:derivatives" && row["patch"].get("set_route").is_some())
+                        .then(|| row["patch"].clone())
+                });
+                if let Some(patch) = patch {
+                    break patch;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the route decision must commit");
+        assert_eq!(
+            decided["set_route"],
+            serde_json::json!({ "route": "direct-export", "quick_proxy": null })
+        );
+        assert_eq!(decided["quick_proxy_landed"], serde_json::json!(quick));
     }
 
     /// `commit_media_derivatives` always emits a `media:derivatives` event for the

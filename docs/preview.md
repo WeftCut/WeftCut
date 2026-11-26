@@ -423,6 +423,16 @@ also rescues a pinned Standard engine on a machine without the component.
 missing quick proxy on demand. It does nothing for `Bypass`, which has no
 `quick_proxy` slot, or when the proxy already exists.
 
+The app setting `build_quick_proxies_on_import` (default on) decides whether
+an import builds the quick proxy of a `DirectExport` source, the one route
+that has a quick proxy but exports from the original. Off, the import leaves
+it out (`proxy_decision::import_proxy_jobs`), and a clip gets one through
+`generate_quick_proxy` once it previews from proxy: when Prefer Proxies or its
+override turns on, or, with either already on, when its route lands or its
+project opens (`renderer/state/proxyPreferenceStore.ts`). A quick proxy
+already in the cache is kept: the route decision commits it with the route.
+Routes whose export needs an Export master build their proxies either way.
+
 - **Quick proxy** (`quick_proxy_path`): the only proxy preview reads.
 - **Export master** (`proxy_path`): the full proxy, read only by export, for
   sources that export does not decode natively. Preview never reads it, and the

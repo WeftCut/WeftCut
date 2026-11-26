@@ -3,7 +3,7 @@
 // as failed, never as "not generated yet" (sim L4: /tmp filled, the waveform
 // job died, and detect_pauses said "wait" for ten minutes).
 import { afterEach, describe, expect, it } from 'vitest'
-import { derivativeStates, hasFailedDerivative, recordDerivativeJob, resetDerivativeJobs, withDerivativeState } from './derivative-jobs'
+import { derivativeStates, hasFailedDerivative, recordDerivativeJob, recordDerivativePlan, resetDerivativeJobs, withDerivativeState } from './derivative-jobs'
 import { mediaItemTemplate } from './mutations/media'
 import type { MediaItem } from './model'
 
@@ -45,6 +45,27 @@ describe('derivativeStates', () => {
   it('a source that plays as it is has no proxy; a still has no derivatives', () => {
     expect(derivativeStates(video({ decode_route: { route: 'bypass' } }))).not.toHaveProperty('proxy')
     expect(derivativeStates({ ...mediaItemTemplate(MID, 'Image', null), kind: 'Image' })).toEqual({})
+  })
+
+  it('a direct-export source whose import planned no quick proxy has none to wait for', () => {
+    const direct = video({ decode_route: { route: 'direct-export', quick_proxy: null } })
+    const plan = (stages: string[], decision_pending = false) => recordDerivativePlan({ media_id: MID, stages, decision_pending })
+    expect(derivativeStates(direct).proxy).toBe('pending')
+    plan(['thumbnails'], true)
+    expect(derivativeStates(direct).proxy, 'its route decision is still to come').toBe('pending')
+    plan(['quick_proxy'])
+    expect(derivativeStates(direct).proxy, 'the plan lists one').toBe('pending')
+    plan([])
+    expect(derivativeStates(direct)).not.toHaveProperty('proxy')
+    // An on-demand build (Prefer Proxies, the per-clip override) is reported again.
+    recordDerivativeJob('media:job_started', { media_id: MID, kind: 'quick_proxy' })
+    expect(derivativeStates(direct).proxy).toBe('running')
+  })
+
+  it('a project switch forgets the outgoing plans', () => {
+    recordDerivativePlan({ media_id: MID, stages: [], decision_pending: false })
+    resetDerivativeJobs()
+    expect(derivativeStates(video({ decode_route: { route: 'direct-export', quick_proxy: null } })).proxy).toBe('pending')
   })
 
   it('a project switch forgets the outgoing jobs', () => {

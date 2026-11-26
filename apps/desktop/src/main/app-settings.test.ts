@@ -487,6 +487,19 @@ describe('app-settings store', () => {
     expect(s.get().auto_delete_empty_tracks).toBe(true)
   })
 
+  it('import quick proxies default on for old/invalid config and persist an explicit off choice', () => {
+    expect(store().get().build_quick_proxies_on_import).toBe(true)
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().build_quick_proxies_on_import).toBe(true)
+    expect(store({ [PATH]: '{ "build_quick_proxies_on_import": 0 }' }).get().build_quick_proxies_on_import).toBe(true)
+    const { fs } = memFs()
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    s.apply({ build_quick_proxies_on_import: false })
+    const reader = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    expect(reader.get().build_quick_proxies_on_import).toBe(false)
+    reader.apply({ display_mode: 'AllTracks' })
+    expect(reader.get().build_quick_proxies_on_import).toBe(false)
+  })
+
   it('defaults when no file', () => {
     expect(store().get()).toEqual(APP_SETTINGS_DEFAULTS)
   })

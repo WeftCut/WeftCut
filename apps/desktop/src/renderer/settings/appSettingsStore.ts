@@ -126,6 +126,10 @@ export const useFollowPlayheadEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.timeline_follow_playhead);
 export const useAutoDeleteEmptyTracks = (): boolean =>
   useAppSettingsStore((s) => s.settings.auto_delete_empty_tracks);
+/// Whether an import builds the quick proxy of a `direct-export` source
+/// (`build_quick_proxies_on_import` in `shared/app-settings.ts`).
+export const useBuildQuickProxiesOnImport = (): boolean =>
+  useAppSettingsStore((s) => s.settings.build_quick_proxies_on_import);
 /// Whether the timeline shows its marker lane at all — both halves of the row,
 /// glyphs and header cell alike (see `markers_visible` in
 /// `shared/app-settings.ts`).

@@ -45,6 +45,11 @@ export function importOptimizeStatus(m: MediaSummary, deps: OptimizeDeps): Optim
   if (route === "direct-export" && resolveDecode(m).previewPath) return "direct";
   const decodable = deps.memo.get(m.id) === "ok";
   const ps = deps.proxyStateOf(m.id);
+  // The route decision's `proxy_bypass` events leave ps "ready"; a quick-proxy
+  // job since would make it "pending". With none building (an import leaves it
+  // out while `build_quick_proxies_on_import` is off), a DirectExport original
+  // this machine decodes is complete: "bridged" would wait forever.
+  if (route === "direct-export" && decodable && ps === "ready") return "direct";
   if (ps === "failed") return "failed";
   // This machine decoded it → the bridge previews the original now; whatever
   // proxy is building is a background scroll/export upgrade.

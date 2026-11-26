@@ -169,6 +169,21 @@ pub fn job_for(route: ProxyRoute) -> ProxyJob {
     }
 }
 
+/// The proxy jobs an import starts for `job`, by `JobKind` name, in order.
+///
+/// Only a `QuickOnly` source's quick proxy is optional: its export reads the
+/// original, and Prefer Proxies or the per-clip override builds a missing one
+/// on demand (`generate_quick_proxy`, docs/preview.md § Proxies). A
+/// `QuickThenFull` source keeps both: its export needs the Export master.
+pub fn import_proxy_jobs(job: ProxyJob, build_on_import: bool) -> &'static [&'static str] {
+    match job {
+        ProxyJob::None => &[],
+        ProxyJob::QuickOnly if build_on_import => &["quick_proxy"],
+        ProxyJob::QuickOnly => &[],
+        ProxyJob::QuickThenFull => &["quick_proxy", "proxy"],
+    }
+}
+
 /// A source whose ORIGINAL the export Worker can decode: an 8-bit
 /// browser-friendly pixel format and a codec the Worker hardware-decodes —
 /// **H.264 or AV1**.
@@ -517,6 +532,27 @@ mod tests {
         // Every FullProxy-export source gets a quick proxy first (preview),
         // then the full master — no small-source skip-quick split.
         assert_eq!(job_for(BOTH_PROXY), ProxyJob::QuickThenFull);
+    }
+
+    // --- import_proxy_jobs(): the proxy jobs an import starts ---
+
+    #[test]
+    fn import_drops_only_the_direct_export_quick_proxy() {
+        // DirectExport: the quick proxy is the only job, and the setting drops it.
+        assert_eq!(
+            import_proxy_jobs(ProxyJob::QuickOnly, true),
+            &["quick_proxy"]
+        );
+        assert!(import_proxy_jobs(ProxyJob::QuickOnly, false).is_empty());
+        // Proxied export needs the Export master, so both jobs run either way;
+        // Bypass starts none.
+        for build_on_import in [true, false] {
+            assert_eq!(
+                import_proxy_jobs(ProxyJob::QuickThenFull, build_on_import),
+                &["quick_proxy", "proxy"]
+            );
+            assert!(import_proxy_jobs(ProxyJob::None, build_on_import).is_empty());
+        }
     }
 
     // --- initial_decode_route + route_needs_decision: the fresh-import gate ---

@@ -152,6 +152,12 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
         parsed.playback_resolution === 'full' || parsed.playback_resolution === 'half' || parsed.playback_resolution === 'quarter'
           ? parsed.playback_resolution
           : d.playback_resolution,
+      // Additive boolean defaulting TRUE: absent must not read as off, or every
+      // existing install would stop building the quick proxies it builds today.
+      build_quick_proxies_on_import:
+        typeof parsed.build_quick_proxies_on_import === 'boolean'
+          ? parsed.build_quick_proxies_on_import
+          : d.build_quick_proxies_on_import,
       // Additive field, same trap as playback_resolution: files written before
       // it existed have no key — an absent/unrecognized value MUST land on the
       // default ("large") so the pool keeps its legacy card layout.
@@ -341,6 +347,7 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       if (patch.preview_effects_enabled !== undefined) current.preview_effects_enabled = patch.preview_effects_enabled
       if (patch.decode_engine !== undefined) current.decode_engine = patch.decode_engine
       if (patch.playback_resolution !== undefined) current.playback_resolution = patch.playback_resolution
+      if (patch.build_quick_proxies_on_import !== undefined) current.build_quick_proxies_on_import = patch.build_quick_proxies_on_import
       if (patch.media_pool_layout !== undefined) current.media_pool_layout = patch.media_pool_layout
       if (patch.timeline_wheel_axis !== undefined) current.timeline_wheel_axis = patch.timeline_wheel_axis
       if (patch.timeline_follow_playhead !== undefined) current.timeline_follow_playhead = patch.timeline_follow_playhead

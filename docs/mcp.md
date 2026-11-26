@@ -430,9 +430,12 @@ first two):
    cache listing to learn what the app is doing:
    - A media card (`media://{id}`, each `project://media` row, the
      `import_media` answer) carries `derivatives`: `waveform` / `conform`
-     (audio), `thumbnails` / `proxy` (video; no `proxy` for a Bypass route),
-     each `"pending" | "running" | "ready" | { "failed": "<reason>" }`. Main
-     keeps the job events no MCP session receives
+     (audio), `thumbnails` / `proxy` (video), each `"pending" | "running" |
+     "ready" | { "failed": "<reason>" }`. A Bypass route has no `proxy`, nor
+     has a DirectExport source whose import left its quick proxy out (the app
+     setting `build_quick_proxies_on_import` off), until a `quick_proxy` job
+     for it starts ([preview.md](preview.md#proxies)). Main keeps the job
+     events and import plans no MCP session receives
      (`main/state/derivative-jobs.ts`). Shot detection is not a derivative: the
      call that needs it runs it.
    - A "not ready" refusal (`DerivativeNotReady`) carries `{ media_id,
