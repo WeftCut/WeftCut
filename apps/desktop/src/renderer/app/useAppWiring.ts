@@ -22,19 +22,20 @@ import { wireDecodeComponent } from "../settings/decodeComponentStore";
 import { clearProjectMotifs, syncProjectMotifsFromBackend } from "../render/motifs/syncCatalog";
 import { useProjectTrustPrompt } from "../motifs/projectTrust";
 
-/// Owns the App-root backend wiring: the pong healthcheck, keybindings +
+/// Owns the App-root backend wiring: the core healthcheck, keybindings +
 /// agent activity snapshots and independent view selection, and the
 /// stream-wiring effects (status log, project-state mirror, app-settings,
 /// and the single project-state subscription shared by App and preview).
 export function useAppWiring(): {
-  pong: string;
+  /// Set only when the native core fails the startup ping; null while healthy.
+  coreError: string | null;
   keybindings: KeybindingsMap;
   setKeybindings: React.Dispatch<React.SetStateAction<KeybindingsMap>>;
   agentMode: boolean;
   exitAgentMode: () => Promise<void>;
   enterAgentMode: () => Promise<void>;
 } {
-  const [pong, setPong] = useState<string>("…");
+  const [coreError, setCoreError] = useState<string | null>(null);
   // User shortcut overrides. Loaded once on mount; refreshed when the
   // Settings → Keyboard panel writes (it calls back via the
   // `onKeybindingsChanged` prop). The map is `Record<string, string[]>`
@@ -45,7 +46,7 @@ export function useAppWiring(): {
   const agentMode = useAgentActivity(s => s.mode === "agent");
 
   useEffect(() => {
-    ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
+    ping().catch((e) => setCoreError(String(e)));
     keybindingsGet().then(setKeybindings).catch(() => {});
   }, []);
 
@@ -189,7 +190,7 @@ export function useAppWiring(): {
   }, []);
 
   return {
-    pong,
+    coreError,
     keybindings,
     setKeybindings,
     agentMode,

@@ -488,7 +488,7 @@ export function App({ onCloseProject, onWorkspaceReady, onProjectReplaced }: App
   }, [t]);
 
   const {
-    pong,
+    coreError,
     keybindings,
     setKeybindings,
     agentMode,
@@ -1260,7 +1260,7 @@ export function App({ onCloseProject, onWorkspaceReady, onProjectReplaced }: App
     <div className="app">
       <div className="app-top-chrome">
         <AppMenuBar
-          pong={pong}
+          coreError={coreError}
           onOpenSearch={() => setPaletteOpen(true)}
           workspaceController={workspaceController}
           workspaceSnapshot={workspaceSnapshot}
