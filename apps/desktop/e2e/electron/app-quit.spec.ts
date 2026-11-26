@@ -6,7 +6,43 @@
 
 import { test, expect } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
-import { launchApp } from './helpers/driver'
+import { invokeCmd, launchApp } from './helpers/driver'
+
+/// One frame of the library's lower-third. The channel returns the PNG BYTES
+/// (Uint8Array); the signature is checked in-page. A rejection comes back as its
+/// message so the caller can tell a timeout from any other failure.
+function captureLowerThird(page: Page): Promise<{ isPng: boolean } | { error: string }> {
+  return page.evaluate(async () => {
+    try {
+      const bytes = (await (window as any).api.backend.invoke('motif_capture_frame', {
+        motifId: 'lower-third--library',
+        tSec: 0.5,
+        propsJson: '{}',
+        width: 320,
+        height: 180,
+        contentHash: '',
+      })) as Uint8Array
+      // By signature, not size: a default lower-third is mostly transparent and
+      // compresses to well under a kilobyte.
+      return { isPng: bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 }
+    } catch (error) {
+      return { error: String(error) }
+    }
+  })
+}
+
+interface CapturePhases {
+  hostBuilds: number; failed: number; loadMs: number; readyMs: number; setupMs: number; renderMs: number; outputMs: number
+}
+
+/// Where the capture service's time went so far, phase by phase; a phase cut
+/// short by its deadline is counted too.
+async function capturePhases(page: Page): Promise<string> {
+  const d = await invokeCmd<CapturePhases>(page, 'motif_capture_diagnostics')
+  const ms = (v: number) => `${Math.round(v)} ms`
+  return `${d.hostBuilds} host builds, ${d.failed} failed; load ${ms(d.loadMs)}, ready ${ms(d.readyMs)}, ` +
+    `setup ${ms(d.setupMs)}, render ${ms(d.renderMs)}, output ${ms(d.outputMs)}`
+}
 
 /// Windows Electron itself counts — the offscreen capture host included.
 function listedWindows(app: ElectronApplication): Promise<number> {
@@ -39,21 +75,20 @@ test('closing the window quits the app after a Motif has been rendered', async (
     // One frame of a builtin Motif is enough to build the offscreen host. The
     // renderer registered the clock-takeover runtime at boot (main.tsx).
     // No project is open, so the built-in renders from the library's host.
-    // The channel returns the PNG BYTES (Uint8Array) — check the magic in-page.
-    const isPng = await page.evaluate(async () => {
-      const bytes = (await (window as any).api.backend.invoke('motif_capture_frame', {
-        motifId: 'lower-third--library',
-        tSec: 0.5,
-        propsJson: '{}',
-        width: 320,
-        height: 180,
-        contentHash: '',
-      })) as Uint8Array
-      // By signature, not size: a default lower-third is mostly transparent and
-      // compresses to well under a kilobyte.
-      return bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
-    })
-    expect(isPng).toBe(true)
+    //
+    // The first frame on a cold runner can outlast the capture deadline. A
+    // timeout is probation (docs/motifs.md, failure latching): one more attempt
+    // on a rebuilt host, a second consecutive timeout latches the lane. This test
+    // is about quitting, so it takes that one retry and no more; the deadline
+    // itself is motif-capture-load.spec.ts's.
+    let frame = await captureLowerThird(page)
+    console.log(`[app-quit] capture 1: ${'error' in frame ? frame.error : 'ok'}; ${await capturePhases(page)}`)
+    if ('error' in frame && frame.error.includes('[motif:timeout]')) {
+      frame = await captureLowerThird(page)
+      console.log(`[app-quit] capture 2: ${'error' in frame ? frame.error : 'ok'}; ${await capturePhases(page)}`)
+    }
+    expect('error' in frame ? frame.error : null, 'a frame of the lower-third').toBeNull()
+    expect('isPng' in frame && frame.isPng, 'the frame is a PNG').toBe(true)
 
     // The root cause, asserted rather than assumed — the host is now one more
     // window in Electron's own count.
