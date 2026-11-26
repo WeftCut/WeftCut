@@ -229,8 +229,8 @@ colours are static.
 ## Links
 
 A `Link` is a project-level set of member `LayerId`s — a layer is in at most one
-link, no nesting. Moving, trimming, splitting or duplicating a member fans the
-edit out to the others; everything else (keyframes, opacity, gain, delete) stays
+link, no nesting. Moving, trimming, splitting, duplicating or retiming a member
+fans the edit out to the others; everything else (keyframes, opacity, gain, delete) stays
 local. A link has no rendering significance; it means "these travel together".
 One mechanism serves auto-paired A/V and manual bundles. "This is one thing" is
 a *Group*, not a link ([CONTEXT.md](../CONTEXT.md#links-and-groups),
@@ -260,6 +260,11 @@ a *Group*, not a link ([CONTEXT.md](../CONTEXT.md#links-and-groups),
   keep their offset from the seed and snap on their own lattice; only the seed
   changes track. A locked or occupied destination for any member refuses the
   batch.
+- **Retime** from the inspector applies the target (and the pitch policy) to the
+  inspected clip and every member; other selected clips stay local, and a
+  locked member refuses the set. Under Link override only the inspected clip
+  retimes. `retime_layers` (MCP) expands nothing: it retimes exactly the clips
+  it names.
 - **`enabled`** changes only the inspected clip (inspector) or the selected clips
   (`set_layers_enabled`); it never adds unselected members. A locked member or
   track refuses the whole set.

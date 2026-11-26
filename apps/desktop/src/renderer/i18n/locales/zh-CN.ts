@@ -166,7 +166,8 @@ const zhCN: Resources = {
     "details": {
       "collision": "“{{clip}}”会与“{{blocking}}”重叠，请缩短时长或提高倍率。",
       "collision_limits": "“{{clip}}”会与“{{blocking}}”重叠。最大时长：{{duration}}；最低倍率：约 {{rate}}×。",
-      "transition": "此变更会使转场“{{transition}}”失效；转场时长和相邻片段位置必须保持不变。"
+      "transition": "此变更会使转场“{{transition}}”失效；转场时长和相邻片段位置必须保持不变。",
+      "locked": "请先解锁“{{clip}}”及其轨道。"
     },
     "conflicts": {
       "EmptyTargets": "请至少选择一个片段。",

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { RotateCcwIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { retimeLayers, setPreservePitch, type LayerSummary } from '../ipc';
+import { useLinkOverride } from '../state/linkOverrideStore';
 import { AppInput } from '../components/AppInput';
 import { AppTimecodeField } from '../components/AppTimecodeField';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
 }) {
   const { t } = useTranslation();
   const summary = useProjectStore(s => s.summary);
+  const linksOff = useLinkOverride();
   const media = useMediaById(layer.params.kind === 'ImageOverlay' ? layer.params.media_id : null);
   const animatedImage = (media?.duration_us ?? 0) > 0;
   const supported = ['VideoClip', 'Audio', 'Motif', 'CompositionRef', 'ImageOverlay'].includes(layer.params.kind) && (layer.params.kind !== 'ImageOverlay' || animatedImage);
@@ -51,6 +53,10 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layer.id, layer.t_start_us, rate, duration, fpsNum, fpsDen]);
   if (!supported) return null;
+  // A retime follows the inspected clip's link, as Start and Duration do, so
+  // linked picture and sound keep one rate. Other selected clips stay put.
+  const link = linksOff ? null : Object.values(summary?.compositions ?? {}).flatMap(c => c.links).find(l => l.layer_ids.includes(layer.id));
+  const targets = link ? [layer.id, ...link.layer_ids.filter(id => id !== layer.id)] : [layer.id];
   const conflictText = (conflict: Record<string, unknown>) => formatRetimeConflict(conflict, liveRefusalContext((key, values) => t(key, values ?? {})));
   const preview = (target: RetimeTarget) => {
     if (!summary) return null;
@@ -60,7 +66,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
       timing: ['VideoClip', 'Audio', 'Motif', 'CompositionRef'].includes(l.params.kind) || (l.params.kind === 'ImageOverlay' && summary.media.some(m => m.id === ('media_id' in l.params ? l.params.media_id : null) && (m.duration_us ?? 0) > 0)) ? layerContentTiming(l) : null,
       locked: l.locked || track.locked, ...(l.params.kind === 'CompositionRef' ? { composition_ref: l.params.composition_id } : {}),
     }))));
-    return planRetime({ clips, transitions: Object.values(summary.compositions).flatMap(c => c.transitions), layer_ids: [layer.id], target });
+    return planRetime({ clips, transitions: Object.values(summary.compositions).flatMap(c => c.transitions), layer_ids: targets, target });
   };
   const targetFor = (kind: 'Rate' | 'Duration', value: number): RetimeTarget | null => {
     const units = Math.round(value * 1e6);
@@ -72,8 +78,13 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
   const draft = draftTarget ? preview(draftTarget) : null;
   const previewError = editing && !draftTarget ? t('retime.conflicts.InvalidTarget')
     : draft && !draft.ok ? conflictText(draft.conflict) : null;
-  const pitchControl = layer.params.kind === 'Audio' || layer.params.kind === 'CompositionRef';
-  const preservePitch = 'preserve_pitch' in layer.params ? layer.params.preserve_pitch !== false : true;
+  const targetLayers = summary ? Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(track => track.layers)).filter(l => targets.includes(l.id)) : [layer];
+  const pitchLayers = targetLayers.filter(l => l.params.kind === 'Audio' || l.params.kind === 'CompositionRef');
+  const pitchOn = pitchLayers.filter(l => 'preserve_pitch' in l.params ? l.params.preserve_pitch !== false : true).length;
+  const pitchMixed = pitchOn > 0 && pitchOn < pitchLayers.length;
+  // Linked clips that already differ take the entered value even when it
+  // matches the inspected clip's.
+  const mixed = targetLayers.some(l => layerRateNumber(l.params) !== rate || (l.t_end_us - l.t_start_us) / 1e6 !== duration);
   const commit = (kind: 'Rate' | 'Duration', value: number) => {
     const target = targetFor(kind, value);
     if (target) void apply(target);
@@ -90,7 +101,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     // Merely focusing a field (or cancelling with Escape) must not retime it.
     if (!durationEdited.current) return;
     durationEdited.current = false;
-    if (us !== null && formatDuration(us) === formatDuration(duration * 1e6)) {
+    if (!mixed && us !== null && formatDuration(us) === formatDuration(duration * 1e6)) {
       setEditing(null);
       return;
     }
@@ -107,7 +118,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     if (plan && !plan.ok) { setError(conflictText(plan.conflict)); resetInputs(); return; }
     setBusy(true); setError(null);
     try {
-      await retimeLayers([layer.id], target);
+      await retimeLayers(targets, target);
       setEditing(null);
       await onMutated();
     }
@@ -124,7 +135,7 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
     if (rateCancelled.current) return;
     setRateOpen(false);
     const value = Number(rateText);
-    if (value === rate) { setEditing(null); return; }
+    if (!mixed && value === rate) { setEditing(null); return; }
     commit('Rate', value);
   };
   return <>
@@ -168,11 +179,14 @@ export function RetimeFields({ layer, disabled, onMutated, fpsNum, fpsDen }: {
         </Button>
       </Field>
     </div>
-    {pitchControl ? <label className="prop-hint prop-retime-checkbox">
-      <input type="checkbox" checked={preservePitch} disabled={disabled || busy}
+    {pitchLayers.length > 0 ? <label className="prop-hint prop-retime-checkbox">
+      <input type="checkbox" checked={pitchOn === pitchLayers.length} disabled={disabled || busy}
+        ref={input => { if (input) input.indeterminate = pitchMixed; }}
+        aria-checked={pitchMixed ? 'mixed' : pitchOn === pitchLayers.length}
         onChange={e => {
+          const preserve = pitchMixed || e.target.checked;
           setBusy(true); setError(null);
-          void setPreservePitch([layer.id], e.target.checked).then(onMutated).catch(e => setError(refusalText(e))).finally(() => setBusy(false));
+          void setPreservePitch(pitchLayers.map(l => l.id), preserve).then(onMutated).catch(e => setError(refusalText(e))).finally(() => setBusy(false));
         }} />
       <span>{t('retime.pitch')}</span>
     </label> : null}
