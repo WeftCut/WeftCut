@@ -1268,16 +1268,17 @@ jobs:
   # The run page's summary of this run only: key numbers, test gates, failed
   # and retried-then-passed tests, the job timeline, E2E split balance and
   # Vitest cost (scripts/ci-summary.mjs). Cross-run trends are not its job.
-  # Nothing needs it, so it never holds back a release, and `always()` writes
-  # it for red runs too.
+  # Nothing needs it, so it never holds back a release; it summarises red runs
+  # too, but not cancelled ones. package-macos and release are not waited for:
+  # the summary covers the test jobs.
   summary:
-    needs: [checks, rust-test, e2e]
-    if: always()
+    needs: [checks, rust-test, e2e, compare]
+    if: ${{ !cancelled() }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # The run's job list and the checks / rust-test logs.
+      # The run's job list, its artifacts and the checks / rust-test logs.
       actions: read
     steps:
       - uses: actions/checkout@v7
@@ -1288,14 +1289,14 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      # A run whose e2e legs never started has no e2e-timings-* to fetch; the
-      # summary then simply has no E2E rows.
-      - uses: actions/download-artifact@v8
-        continue-on-error: true
-        with:
-          pattern: e2e-timings-*
-          path: e2e-timings
-          merge-multiple: false
+      # `gh run download`, not actions/download-artifact: with a single match
+      # (a one-leg dispatch) the action drops the per-artifact directory, and the
+      # script reads OS and leg from that directory's name. No match is no error:
+      # a run whose e2e legs never started simply has no E2E rows.
+      - name: Fetch e2e timings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download ${{ github.run_id }} -R ${{ github.repository }} -p 'e2e-timings-*' -D e2e-timings || echo "no e2e-timings artifacts in this run"
 
       - name: Write the run summary
         working-directory: apps/desktop

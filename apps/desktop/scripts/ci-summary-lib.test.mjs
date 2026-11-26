@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { collectE2e, parseCargo, parseNodeTest, parseVitest, renderSummary, stripLog } from './ci-summary-lib.mjs'
+import { CI_NAMES, collectE2e, parseCargo, parseNodeTest, parseVitest, renderSummary, stripLog } from './ci-summary-lib.mjs'
+
+const workflow = readFileSync(new URL('../../../.github/workflows/electron-ci.yml', import.meta.url), 'utf8')
+
+test('every job and step the summary reads exists in electron-ci', () => {
+  for (const job of [CI_NAMES.checksJob, CI_NAMES.rustJob, CI_NAMES.e2eJob]) assert.match(workflow, new RegExp(`\\n  ${job}:\\n`), `job ${job}`)
+  for (const step of [CI_NAMES.vitestStep, CI_NAMES.nodeTestStep]) assert.ok(workflow.includes(`- name: ${step}\n`), `step ${step}`)
+})
+
+test('the summary job never holds back a release', () => {
+  const release = workflow.slice(workflow.indexOf('\n  release:\n'))
+  const needs = release.match(/\n    needs: \[([^\]]*)\]/)[1].split(',').map((s) => s.trim())
+  assert.ok(!needs.includes('summary'), `release needs ${needs.join(', ')}`)
+})
 
 const ESC = '\x1b'
 const vitestLog = stripLog([

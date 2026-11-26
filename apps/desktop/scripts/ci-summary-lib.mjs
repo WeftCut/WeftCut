@@ -6,6 +6,17 @@
 // report, so this never downloads another run's artifacts.
 import path from 'node:path'
 
+/// electron-ci job and step names this summary reads. Asserted against the
+/// workflow text by ci-summary-lib.test.mjs, so a rename is loud rather than a
+/// silent ⚪ row.
+export const CI_NAMES = {
+  checksJob: 'checks',
+  vitestStep: 'Unit tests (vitest)',
+  nodeTestStep: 'Build-script tests (node:test)',
+  rustJob: 'rust-test',
+  e2eJob: 'e2e',
+}
+
 const OS_ORDER = ['ubuntu', 'windows', 'macos']
 const OS_LABEL = { ubuntu: 'linux', windows: 'windows', macos: 'macos' }
 
@@ -156,7 +167,7 @@ export function renderSummary(model) {
   const regress = specCosts.filter(isSlow).sort((a, b) => b.x - a.x)
 
   // ---- headline
-  const status = failedJobs.length ? ['❌', '失败', 'Failed'] : cancelled ? ['⚪', '已取消', 'Cancelled'] : ['✅', '通过', 'Passed']
+  const status = failedJobs.length ? ['❌', '失败', 'Failed'] : cancelled ? ['⚪', '已取消', 'Cancelled'] : ['✅', '测试通过', 'Tests passed']
   const where = model.sourceIsThisRun ? '' : ` · [run ${run.id}](${run.url})`
   o.push(`## ${status[0]} electron-ci ${status[1]} · ${status[2]} · \`${run.sha.slice(0, 7)}\` · ${run.branch} · ${run.event}${where}`, '')
   const nz = [], ne = []
@@ -183,26 +194,31 @@ export function renderSummary(model) {
   const nodeTest = logs.checks ? parseNodeTest(logs.checks) : null
   const stepOf = (job, name) => job?.steps?.find((s) => s.name === name)
   const mark = (c) => (c === 'success' ? '✅' : c === 'skipped' || c == null ? '⚪' : c === 'cancelled' ? '⚪' : '❌')
+  const legTimes = (times) => {
+    if (!times.length) return '—'
+    const lo = fmt(Math.min(...times)), hi = fmt(Math.max(...times))
+    return lo === hi ? fmt(times[0]) : `${lo}–${hi} <sub>per leg</sub>`
+  }
   section(o, '测试闸门 · Test gates', () => {
     const rows = []
-    const checks = jobs.find((j) => j.name === 'checks')
+    const checks = jobs.find((j) => j.name === CI_NAMES.checksJob)
     if (checks) {
-      const vs = stepOf(checks, 'Unit tests (vitest)'), ns = stepOf(checks, 'Build-script tests (node:test)')
-      rows.push(`| Vitest | ${mark(vs?.conclusion)} | ${vitest ? `${(vitest.tests.passed ?? 0).toLocaleString('en')} <sub>${vitest.files.passed ?? '?'} files</sub>` : '—'} | ${vitest?.tests.failed ?? 0} | ${vitest?.tests.skipped ?? '—'} | — | ${vitest ? fmt(vitest.wall) : vs?.completed_at ? fmt(T(vs.completed_at) - T(vs.started_at)) : '—'} |`)
-      rows.push(`| node:test | ${mark(ns?.conclusion)} | ${nodeTest?.pass ?? '—'} | ${nodeTest?.fail ?? 0} | ${nodeTest?.skipped ?? '—'} | — | ${nodeTest ? fmt(nodeTest.ms / 1000) : '—'} |`)
+      const vs = stepOf(checks, CI_NAMES.vitestStep), ns = stepOf(checks, CI_NAMES.nodeTestStep)
+      rows.push(`| Vitest | ${mark(vs?.conclusion)} | ${vitest ? `${(vitest.tests.passed ?? 0).toLocaleString('en')} <sub>${vitest.files.passed ?? '?'} files</sub>` : '—'} | ${vitest ? vitest.tests.failed ?? 0 : '—'} | ${vitest?.tests.skipped ?? '—'} | — | ${vitest ? fmt(vitest.wall) : vs?.completed_at ? fmt(T(vs.completed_at) - T(vs.started_at)) : '—'} |`)
+      rows.push(`| node:test | ${mark(ns?.conclusion)} | ${nodeTest?.pass ?? '—'} | ${nodeTest?.fail ?? '—'} | ${nodeTest?.skipped ?? '—'} | — | ${nodeTest ? fmt(nodeTest.ms / 1000) : '—'} |`)
     }
     for (const os of OS_ORDER) {
-      const j = jobs.find((x) => x.name === `rust-test (${os}-latest)`); if (!j) continue
+      const j = jobs.find((x) => x.name === `${CI_NAMES.rustJob} (${os}-latest)`); if (!j) continue
       const c = logs.rust?.[os] ? parseCargo(logs.rust[os]) : null
       rows.push(`| Rust · ${OS_LABEL[os]} | ${mark(j.conclusion)} | ${c ? `${c.passed.toLocaleString('en')} <sub>${c.binaries} binaries</sub>` : '—'} | ${c?.failed ?? '—'} | ${c?.ignored ?? '—'} | — | ${j.started_at && j.completed_at ? `${fmt(r(j))} <sub>job</sub>` : '—'} |`)
     }
     for (const os of OS_ORDER) {
-      const legs = jobs.filter((j) => j.name.startsWith('e2e (') && osOf(j.name) === os); if (!legs.length) continue
+      const legs = jobs.filter((j) => j.name.startsWith(`${CI_NAMES.e2eJob} (`) && osOf(j.name) === os); if (!legs.length) continue
       const ts = e2e.tests.filter((t) => t.os === os)
       const n = (s) => ts.filter((t) => t.status === s).length
       const res = legs.some((j) => j.conclusion === 'failure' || j.conclusion === 'timed_out') ? '❌' : n('flaky') ? '🟨' : legs.every((j) => j.conclusion === 'success') ? '✅' : '⚪'
       const times = legs.filter((j) => j.started_at && j.completed_at && j.conclusion !== 'skipped').map(r)
-      rows.push(`| E2E · ${OS_LABEL[os]} | ${res} | ${ts.length ? `${(n('expected') + n('flaky')).toLocaleString('en')} <sub>${legs.length} leg${legs.length > 1 ? 's' : ''}</sub>` : '—'} | ${n('unexpected') ? `**${n('unexpected')}**` : 0} | ${n('skipped')} | ${n('flaky') ? `**${n('flaky')}**` : 0} | ${times.length ? (times.length > 1 ? `${fmt(Math.min(...times))}–${fmt(Math.max(...times))} <sub>per leg</sub>` : fmt(times[0])) : '—'} |`)
+      rows.push(`| E2E · ${OS_LABEL[os]} | ${res} | ${ts.length ? `${(n('expected') + n('flaky')).toLocaleString('en')} <sub>${legs.length} leg${legs.length > 1 ? 's' : ''}</sub>` : '—'} | ${!ts.length ? '—' : n('unexpected') ? `**${n('unexpected')}**` : 0} | ${ts.length ? n('skipped') : '—'} | ${!ts.length ? '—' : n('flaky') ? `**${n('flaky')}**` : 0} | ${legTimes(times)} |`)
     }
     if (!rows.length) throw new Error('no test jobs in this run')
     o.push(H('🚦', '测试闸门', 'Test gates'), '', `| ${th('闸门', 'Gate')} | ${th('结果', 'Result')} | ${th('通过', 'Passed')} | ${th('失败', 'Failed')} | ${th('跳过', 'Skipped')} | ${th('重试后过', 'Passed on retry')} | ${th('耗时', 'Time')} |`, '|---|:-:|--:|--:|--:|:-:|--:|', ...rows, '')

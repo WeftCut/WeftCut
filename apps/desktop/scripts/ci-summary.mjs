@@ -10,7 +10,7 @@ import { existsSync, readdirSync, readFileSync, appendFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { collectE2e, renderSummary, stripLog } from './ci-summary-lib.mjs'
+import { CI_NAMES, collectE2e, renderSummary, stripLog } from './ci-summary-lib.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -67,21 +67,26 @@ const run = await api(`repos/${opt.repo}/actions/runs/${opt.run}`)
 // Jobs still running — this summary's own job among them — have no times to show.
 const jobs = (await jobsOf(opt.repo, opt.run)).filter((j) => j.status === 'completed')
 const logs = { rust: {} }
-const checks = jobs.find((j) => j.name === 'checks' && j.conclusion !== 'skipped')
+const checks = jobs.find((j) => j.name === CI_NAMES.checksJob && j.conclusion !== 'skipped')
 if (checks) logs.checks = await logOf(opt.repo, checks)
 for (const j of jobs) {
-  const m = j.name.match(/^rust-test \((\w+)-latest\)$/)
+  const m = j.name.match(new RegExp(`^${CI_NAMES.rustJob} \\((\\w+)-latest\\)$`))
   if (m && j.conclusion !== 'skipped') logs.rust[m[1]] = await logOf(opt.repo, j)
 }
 const timings = path.resolve(HERE, '..', 'e2e', 'timings.json')
 const baseline = existsSync(timings) ? JSON.parse(readFileSync(timings, 'utf8')).seconds?.parallel ?? null : null
 
+const entries = e2eEntries(opt.artifacts)
+const e2e = collectE2e(entries)
+// What the summary had to work with, in the job log: a missing source otherwise
+// only shows as absent rows on a green job.
+console.error(`run ${opt.run}: ${jobs.length} completed jobs · checks log ${logs.checks ? 'read' : 'missing'} · rust logs ${Object.keys(logs.rust).join(', ') || 'none'} · e2e reports ${entries.length} (${e2e.tests.length} tests, ${e2e.partial.length} live-only)`)
 const md = renderSummary({
   run: { id: run.id, url: run.html_url, sha: run.head_sha, branch: run.head_branch, event: run.event, attempt: run.run_attempt },
   sourceIsThisRun: String(opt.run) === process.env.GITHUB_RUN_ID,
   jobs,
   logs,
-  e2e: collectE2e(e2eEntries(opt.artifacts)),
+  e2e,
   baseline,
 })
 if (opt.out) appendFileSync(opt.out, md)
