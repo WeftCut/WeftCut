@@ -2601,7 +2601,7 @@
 .prop-bake-status.is-warming { color: var(--warning); }
 .prop-bake-status.is-preview_ready { color: var(--success); }
 .prop-bake-status.is-ready { color: var(--success); }
-/* The Motif's own rows (Library, Files) under the clip's props: every clip of
+/* The Motif's own rows (Version, Source) under the clip's props: every clip of
    the Motif shares them, so a rule sets them apart. */
 .prop-motif-package {
   display: flex;
@@ -2611,15 +2611,19 @@
   padding-top: calc(8 * var(--ui-px));
   border-top: 1px solid var(--border-soft);
 }
-/* A value that can run to several lines (a string prop, a row of actions over
-   a path) keeps its caption on its first line, not centred on the block. */
-.property-panel .prop-field:has(.motif-prop-text, .prop-motif-row-value) {
+/* A value that runs to several lines (a wrapped string prop, a path over its
+   buttons) keeps its caption on its first line, not centred on the block. */
+.property-panel .prop-field:has(.motif-prop-text, .prop-motif-source) {
   align-items: start;
 }
-.property-panel .prop-field:has(.motif-prop-text, .prop-motif-row-value) > .prop-field-label {
+.property-panel .prop-field:has(.motif-prop-text) > .prop-field-label {
   padding-top: calc(5 * var(--ui-px));
 }
-.prop-motif-row-value {
+.property-panel .prop-field:has(.prop-motif-source) > .prop-field-label {
+  padding-top: calc(4 * var(--ui-px));
+}
+.prop-motif-version,
+.prop-motif-source {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -2629,7 +2633,7 @@
 .prop-motif-actions { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); flex-wrap: wrap; }
 /* The folder path wraps anywhere: it is one long word, and cut off it would
    hide the part that names the Motif. Selectable, so it can be copied by hand. */
-.prop-motif-files-path {
+.prop-motif-source-path {
   padding-top: calc(4 * var(--ui-px));
   font-family: var(--mono, ui-monospace, monospace);
   font-size: var(--font-size-caption);

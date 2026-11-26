@@ -57,9 +57,10 @@ gesture; the color swatch is debounced so an OS color-dialog drag does not
 flood the serial capture queue. The picker's props form uses the same
 generator.
 
-**The Motif's rows.** *Library* shows the project Motif's state against the
-library and its actions (below). *Files* shows its folder, with *Open folder*
-and *Copy path*: its files are edited there with the user's own tools
+**The Motif's rows.** *Version* compares the project's copy with the library
+(*Same as library*, *Modified*, *Update available*, *Project only*) and offers
+its actions (below). *Source* shows the Motif's folder, with *Open folder* and
+*Copy path*: its files are edited there with the user's own tools
 ([motif-workspaces.md](motif-workspaces.md#editing-in-place)). The folder
 opens, not `index.html`, whose default handler is a browser. *New Motif* opens
 the section on the layer it places.

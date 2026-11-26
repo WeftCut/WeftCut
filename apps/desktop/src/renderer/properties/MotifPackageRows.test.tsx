@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 //
-// The Motif section's rows for the Motif itself: its library state, and the
-// Files row that names the project Motif's own folder and opens that folder,
-// never a file in it (a `.html` file's default handler is a browser).
+// The Motif section's rows for the Motif itself: its Version against the
+// library, and the Source row that names the project Motif's own folder and
+// opens that folder, never a file in it (a `.html` file's default handler is a
+// browser).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -30,11 +31,11 @@ const row = { group: "project", id: "lower", uid: "u", status: "ok", state: "pro
 const catalog: MotifCatalog = { project: [row], library: [], misnamed: [] };
 
 describe("MotifPackageRows", () => {
-  it("shows the Motif's library state and its folder, and opens that folder", async () => {
+  it("shows the Motif's version and its folder, and opens that folder", async () => {
     listMotifCatalog.mockResolvedValue(catalog);
     render(<MotifPackageRows motifId="lower" files />);
     expect(await screen.findByText(FOLDER)).toBeTruthy();
-    expect(screen.getByText("Library")).toBeTruthy();
+    expect(screen.getByText("Version")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Open folder" }));
     expect(shellOpen).toHaveBeenCalledWith(FOLDER);
   });
@@ -56,10 +57,10 @@ describe("MotifPackageRows", () => {
     expect(await screen.findByText(/no file manager/)).toBeTruthy();
   });
 
-  it("has no Files row for a Motif that cannot render", async () => {
+  it("has no Source row for a Motif that cannot render", async () => {
     listMotifCatalog.mockResolvedValue(catalog);
     render(<MotifPackageRows motifId="lower" files={false} />);
-    expect(await screen.findByText("Library")).toBeTruthy();
+    expect(await screen.findByText("Version")).toBeTruthy();
     expect(screen.queryByText(FOLDER)).toBeNull();
   });
 });

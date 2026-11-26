@@ -1,7 +1,7 @@
 // The selected Motif layer's project Motif itself, as rows of the property
-// panel's Motif section: its state against the library with the same actions
-// the Motifs panel's row offers (motifs/motifRows.ts), and the folder its files
-// are edited in. The project's Motif is the one being edited: every clip of it
+// panel's Motif section: its version against the library with the same actions
+// the Motifs panel's row offers (motifs/motifRows.ts), and the folder its
+// source is edited in. The project's Motif is the one being edited: every clip of it
 // changes, with no approval (spec § Project Motifs, "Edited in place, no
 // approval").
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -32,7 +32,7 @@ function useMotifCatalog(): MotifCatalog | null {
   return catalog;
 }
 
-/// Project Motif `motifId`'s Library row and, when `files`, its Files row.
+/// Project Motif `motifId`'s Version row and, when `files`, its Source row.
 /// Why a Motif cannot render is said above these rows, by the section.
 export function MotifPackageRows({ motifId, files }: { motifId: string; files: boolean }) {
   const catalog = useMotifCatalog();
@@ -40,15 +40,16 @@ export function MotifPackageRows({ motifId, files }: { motifId: string; files: b
   if (!row) return null;
   return (
     <div className="prop-motif-package">
-      <LibraryRow row={row} libraryName={(id) => catalog?.library.find((r) => r.id === id)?.motif.name} />
-      {files ? <FilesRow path={row.path} /> : null}
+      <VersionRow row={row} libraryName={(id) => catalog?.library.find((r) => r.id === id)?.motif.name} />
+      {files ? <SourceRow path={row.path} /> : null}
     </div>
   );
 }
 
-/// The Motif's state against the library and what can be done with it.
-/// Removal is not offered: the selected layer uses it, so it would be refused.
-function LibraryRow({
+/// This project's copy against the library's version of its lineage, and what
+/// can be done about it. Removal is not offered: the selected layer uses the
+/// Motif, so it would be refused.
+function VersionRow({
   row,
   libraryName,
 }: {
@@ -77,8 +78,8 @@ function LibraryRow({
   const state = row.status === "ok" ? row.state : row.status;
   const take = libraryTake(row);
   return (
-    <Field label={t("property_panel.motif_library")} as="div">
-      <div className="prop-motif-row-value">
+    <Field label={t("property_panel.motif_version")} hint={t("property_panel.motif_version_hint")} as="div">
+      <div className="prop-motif-version">
         <div className="prop-motif-actions">
           <span className={`motif-card-status status-${state}`}>{t(`motif_picker.status.${state}`)}</span>
           {take && (
@@ -103,12 +104,12 @@ function LibraryRow({
   );
 }
 
-/// Where the Motif lives, to edit it with the user's own tools. Saving there is
+/// The Motif's source: the folder it lives in, to edit with the user's own tools. Saving there is
 /// all an edit takes: the project's `Motifs/` is watched, and each save that
 /// leaves a valid package is one undo step (docs/motif-workspaces.md § Editing
 /// in place). The folder opens rather than a file in it: a `.html` file's
 /// default handler is a browser, not an editor.
-function FilesRow({ path }: { path: string }) {
+function SourceRow({ path }: { path: string }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -125,13 +126,13 @@ function FilesRow({ path }: { path: string }) {
   };
 
   return (
-    <Field label={t("property_panel.motif_files")} hint={t("property_panel.motif_files_hint")} as="div">
-      <div className="prop-motif-row-value">
-        <code className="prop-motif-files-path" title={path}>{path}</code>
+    <Field label={t("property_panel.motif_source")} hint={t("property_panel.motif_source_hint")} as="div">
+      <div className="prop-motif-source">
+        <code className="prop-motif-source-path" title={path}>{path}</code>
         <div className="prop-motif-actions">
-          <Button size="sm" onClick={openFolder}>{t("property_panel.motif_files_open")}</Button>
+          <Button size="sm" onClick={openFolder}>{t("property_panel.motif_source_open")}</Button>
           <Button size="sm" onClick={copyPath}>
-            {copied ? t("property_panel.motif_files_copied") : t("property_panel.motif_files_copy")}
+            {copied ? t("property_panel.motif_source_copied") : t("property_panel.motif_source_copy")}
           </Button>
         </div>
         {err && <p className="settings-error">{err}</p>}
