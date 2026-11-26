@@ -69,6 +69,7 @@ import {
   resetUnderrunState,
   setUnderrunState,
 } from "../state/underrunStore";
+import { resetPlaybackFps, setPlaybackFps } from "../state/playbackFpsStore";
 import {
   subscribeEffectOverrides,
 } from "./effects/effectOverrides";
@@ -473,6 +474,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         // Edge-triggered + throttled (UnderrunTracker) — feeds the
         // transport bar's DroppedFramesIndicator via the module store.
         onUnderrun: setUnderrunState,
+        // One reading per window while playing, null on stop — the
+        // preview toolbar's fps readout.
+        onPlaybackFps: setPlaybackFps,
         originalAssetUrl,
         sourceColor,
         mediaById: lookupMedia,
@@ -794,6 +798,17 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     if (app) setPixiPresentationVisible(app, visible);
   }, [visible]);
 
+  // A minimized or hidden window hides the document, which `visible` (the
+  // dock tab's) does not follow: the fps readout restarts as for a re-shown
+  // tab. Chromium fires this before the first rAF after the window returns.
+  useEffect(() => {
+    const onVisibility = (): void => {
+      if (document.visibilityState === "visible") compositorRef.current?.noteDocumentShown();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
   // A Standard switch (from the card's own button or the settings panel) or
   // the ffmpeg component finishing load can change whether a given media is
   // decodable — but `unsupportedIds` must be updated ONLY by the Compositor's
@@ -913,6 +928,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   useEffect(() => {
     return () => {
       resetUnderrunState();
+      resetPlaybackFps();
       if (samplerRef.current) clearPreviewSampler(samplerRef.current);
       samplerRef.current = null;
       if (gizmoProbeRef.current) clearGizmoProbe(gizmoProbeRef.current);

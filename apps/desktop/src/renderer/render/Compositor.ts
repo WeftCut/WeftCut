@@ -56,6 +56,7 @@ import {
   type UnderrunSessionSummary,
   type UnderrunSnapshot,
 } from "./underrunTracker";
+import { PlaybackFpsMeter } from "./playbackFpsMeter";
 import {
   CompositionNode,
   type ActiveClipProbe,
@@ -170,6 +171,10 @@ export interface CompositorInit {
   /// `UnderrunTracker` (never per-frame — feedback_playhead_gate_and_tiers);
   /// safe to feed straight into React state. Export omits it.
   onUnderrun?: (snapshot: UnderrunSnapshot) => void;
+  /// Preview-only: the effective playback frame rate for the preview's fps
+  /// readout, at most once per `PLAYBACK_FPS_WINDOW_MS` while playing and null
+  /// when it stops (`PlaybackFpsMeter`). Export omits it.
+  onPlaybackFps?: (fps: number | null) => void;
   /// Resolver for the asset URL of a media item's ORIGINAL file.
   /// Used for ImageOverlay layers (loaded via `createImageBitmap`).
   /// May return the same URL as `proxyAssetUrl` for media kinds
@@ -320,6 +325,8 @@ export class Compositor {
   /// session lifecycle from `setMasterPlayState`; the tick interval is read
   /// off the tracker's own clock.
   private underrun: UnderrunTracker;
+  /// Feeds the preview's fps readout from the same per-sweep verdict.
+  private fpsMeter: PlaybackFpsMeter;
   /// Visible VideoClip layers judged late during the CURRENT composite
   /// sweep. Reset before the layer loop, read after it — same
   /// reset/accumulate/fire ownership split as `unsupportedMedia`.
@@ -346,6 +353,7 @@ export class Compositor {
     this.mode = init.mode;
     this.exportEffects = init.effects ?? true;
     this.underrun = new UnderrunTracker({ onChange: init.onUnderrun });
+    this.fpsMeter = new PlaybackFpsMeter(init.onPlaybackFps ?? (() => {}));
     this.app.stage.addChild(this.stage);
     this.host = {
       renderer: this.app.renderer,
@@ -523,10 +531,26 @@ export class Compositor {
     if (this.presentationVisible === visible) return;
     this.presentationVisible = visible;
     if (visible) {
+      this.restartFpsMeterAfterGap();
       this.scheduleRepaint();
     } else {
       this.presentationDirty = true;
     }
+  }
+
+  /// PixiPreview calls this when the document is shown again (a window
+  /// restored or shown). A hidden document gets no rAF, so nothing composites
+  /// while the clock runs on; the dock tab's `setPresentationVisible` never
+  /// sees it.
+  noteDocumentShown(): void {
+    this.restartFpsMeterAfterGap();
+  }
+
+  /// The clock ran on while no sweep was metered: the gap is a jump, as a seek
+  /// is, not frames the screen missed. Not inferred from a long frame interval
+  /// in the meter: a stalled composite loop has those too, and must read low.
+  private restartFpsMeterAfterGap(): void {
+    if (this.playing) this.fpsMeter.restart();
   }
 
   /** Stable read-only lifecycle probe for integration tests and diagnostics. */
@@ -557,7 +581,8 @@ export class Compositor {
     if (playing !== this.playing) this.root.invalidateMotifPlayback();
     // Master-clock release = new play session: reset the dropped-frame
     // counters so the indicator reflects this run, not history.
-    if (playing && !this.playing) { this.underrun.beginPlay(); this.sync.reset(); }
+    if (playing && !this.playing) { this.underrun.beginPlay(); this.sync.reset(); this.fpsMeter.restart(); }
+    if (!playing && this.playing) this.fpsMeter.stop();
     if (!playing) this.sync.interrupt();
     const changed = playing !== this.playing;
     this.playing = playing;
@@ -568,9 +593,11 @@ export class Compositor {
   /// decoder rings, so the tracker suppresses lateness until the
   /// pipeline re-primes (first all-fresh sweep, capped) — otherwise
   /// every timeline click during playback would flash the indicator.
+  /// The fps meter restarts too: the frames a seek jumps over are not owed.
   noteSeekWhilePlaying(): void {
     this.underrun.noteSeekWhilePlaying();
     this.sync.reset();
+    this.fpsMeter.restart();
   }
 
   /// PlaybackEngine calls this once per display frame, before that frame's
@@ -658,6 +685,7 @@ export class Compositor {
       this.fpsDen = composition.fps_den;
       // Same fps drives the underrun tracker's late-tick threshold.
       this.underrun.bindFrameBudgetMs((1_000 * this.fpsDen) / this.fpsNum);
+      this.fpsMeter.setTargetFps(this.fpsNum, this.fpsDen);
     }
     // No `unsupportedMedia` reconciliation: the next `compositeFrame` sweep
     // rebuilds the set from this project's layers and fires on any change.
@@ -808,7 +836,12 @@ export class Compositor {
     // dims after pause too (the engine's rAF tick keeps compositing).
     if (this.mode === "preview") {
       if (this.playing && !this.scrubbing) {
-        this.underrun.judgeSweep(this.sweepLateLayers > 0, tUsSnapped);
+        // A sweep the post-seek grace held back is the ring rebuild, not the
+        // playback rate. noteSeekWhilePlaying restarted the meter, so its new
+        // window opens on the first sweep the tracker judges.
+        if (this.underrun.judgeSweep(this.sweepLateLayers > 0, tUsSnapped)) {
+          this.fpsMeter.noteSweep(tUsSnapped, this.sweepLateLayers === 0, performance.now());
+        }
       }
       this.underrun.tickDecay();
     }

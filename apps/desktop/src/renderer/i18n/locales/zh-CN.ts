@@ -1116,6 +1116,10 @@ const zhCN: Resources = {
     zoom_label: "预览缩放",
     zoom_fit: "适应窗口",
     zoom_percent: "{{percent}}%",
+    playback_fps: "{{fps}} fps",
+    playback_fps_hint:
+      "播放时每秒实际显示到屏幕上的帧数。低于 {{target}} fps 的 {{percent}}% 时显示为红色。",
+    playback_fps_low: "，低于 {{target}} fps 的 {{percent}}%",
     // 渲染目标旁的网格一行，网格开启时显示。
     grid_label: "网格",
     grid_columns: "列数",

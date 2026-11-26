@@ -286,9 +286,10 @@ describe("UnderrunTracker", () => {
     const { tracker, advance } = makeTracker({ graceMaxMs: 1_000 });
     tracker.beginPlay();
     tracker.noteSeekWhilePlaying();
-    tracker.judgeSweep(true, 0);
+    // Reported held back, so the fps meter can wait for the same re-prime.
+    expect(tracker.judgeSweep(true, 0)).toBe(false);
     advance(500);
-    tracker.judgeSweep(true, FRAME_US);
+    expect(tracker.judgeSweep(true, FRAME_US)).toBe(false);
     expect(tracker.snapshot()).toEqual({
       active: false,
       droppedFrames: 0,
@@ -300,8 +301,8 @@ describe("UnderrunTracker", () => {
     const { tracker } = makeTracker();
     tracker.beginPlay();
     tracker.noteSeekWhilePlaying();
-    tracker.judgeSweep(false, 0); // re-primed
-    tracker.judgeSweep(true, FRAME_US);
+    expect(tracker.judgeSweep(false, 0)).toBe(true); // re-primed
+    expect(tracker.judgeSweep(true, FRAME_US)).toBe(true);
     expect(tracker.snapshot().droppedFrames).toBe(1);
   });
 
@@ -309,9 +310,9 @@ describe("UnderrunTracker", () => {
     const { tracker, advance } = makeTracker({ graceMaxMs: 1_000 });
     tracker.beginPlay();
     tracker.noteSeekWhilePlaying();
-    tracker.judgeSweep(true, 0); // suppressed
+    expect(tracker.judgeSweep(true, 0)).toBe(false); // suppressed
     advance(1_001);
-    tracker.judgeSweep(true, FRAME_US); // wedged decoder can't hide forever
+    expect(tracker.judgeSweep(true, FRAME_US)).toBe(true); // wedged decoder can't hide forever
     expect(tracker.snapshot().droppedFrames).toBe(1);
   });
 

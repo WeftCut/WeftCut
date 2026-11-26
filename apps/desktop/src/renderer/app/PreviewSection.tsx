@@ -42,6 +42,7 @@ import {
 } from "../preview/previewTargetOptions";
 import { PlayheadTimecode } from "../preview/PlayheadTimecode";
 import { DroppedFramesIndicator } from "../preview/DroppedFramesIndicator";
+import { PlaybackFpsReadout } from "../preview/PlaybackFpsReadout";
 import { RendererLimitIndicator } from "../preview/RendererLimitIndicator";
 import { MotifProposalIndicator } from "../motifs/MotifProposalIndicator";
 import { AudioPlaybackStatus } from "../preview/AudioPlaybackStatus";
@@ -107,6 +108,7 @@ export function PreviewSection({
       <div className="preview-target-bar">
         <RenderTargetControl />
         <PreviewGridToolbar />
+        <PlaybackFpsReadout targetFps={comp ? comp.fps_num / comp.fps_den : null} />
         <PreviewZoomControl />
       </div>
       <div id="video-surface" className="video-surface">

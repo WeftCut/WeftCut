@@ -1275,6 +1275,11 @@ const enUS = {
     zoom_label: "Preview zoom",
     zoom_fit: "Fit",
     zoom_percent: "{{percent}}%",
+    playback_fps: "{{fps}} fps",
+    playback_fps_hint:
+      "Frames per second that reach the screen while playing. Red below {{percent}}% of {{target}} fps.",
+    // Screen-reader text after the reading while it shows red.
+    playback_fps_low: ", below {{percent}}% of {{target}} fps",
     // The grid row beside the render target, shown while the grid is on.
     grid_label: "Grid",
     grid_columns: "Columns",

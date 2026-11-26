@@ -485,11 +485,32 @@ Caching, prewarming and transport are described in [`motifs.md`](motifs.md).
 dropped when the ring had no fresh frame for it. A frame is late when the gap
 between display frames (rAF timestamps, not when the composite ran) was long
 enough to show a comp frame late or skip it; the display interval is learned
-from the frame cadence. It counts the
+from the frame cadence. After a seek while playing it counts nothing until the
+rebuilt rings paint fresh, for at most 1 s. It counts the
 current episode, dims after 1.5 s with no new problem, and clears after 3 s
 of quiet, including while paused. Clearing is confirmed on the next composite,
 and any new problem cancels it. Decay runs on the composite tick; there is no
 UI timer. Session totals are kept in the Performance Monitor.
+
+**Playback fps readout** (preview toolbar, beside the zoom control;
+`render/playbackFpsMeter.ts`). While playing, about every 500 ms, it shows the
+share of the comp frames the clock passed that some sweep painted fresh, times
+the previewed composition's rate. Both are counted on the comp-frame grid, and
+a window closes only as a new comp frame begins, so smooth playback reads
+exactly that rate. A comp frame swept more than once counts once. A frame
+painted only stale, or one the loop skipped, counts as passed but not shown.
+It turns red below 95 % of the rate; at 30 fps and below, one lost frame in a
+window is enough. At a rate equal to the display's (59.94 or 60 fps on a
+60 Hz display) it can read red while the dropped/late indicator is quiet: the
+clock is sampled inside the rAF callback, not at the frame's vsync, so while a
+comp-frame boundary sits within the callback's jitter, frames repeat and skip
+in turn and the readout counts every skip. At exactly 60 fps that phase can
+hold for a whole playback. Above the display's rate it reads the display's rate
+and stays red; the dropped/late indicator does not count those frames. It
+starts a new window on play, on a seek and when a hidden Preview tab or a
+minimized or hidden app window is shown again, waits out the dropped/late
+indicator's grace after a seek, and is hidden while stopped. The drop counter
+counts the frames lost; this readout gives the rate the viewer got.
 
 **Performance Monitor** (dev builds only: Dev menu › Performance Monitor). This
 is a separate window (`render/PerfHUD.tsx`, `performanceMonitorWindow.ts`).
@@ -507,7 +528,7 @@ the host pool and preview warm as on a first open (`app/motifColdStart.ts`,
 `main/motif/coldStart.ts`).
 
 The Drop counter only reports whether the ring had a fresh frame. A loop
-stalled by a synchronous GPU drain reports zero drops yet looks jerky. A
-steady submit cadence can also hide a frozen Motif, which is why Motif lag/hold
-is a separate tile. For per-stage timing use
-[`playback-perf.md`](playback-perf.md) and `render/perf/stageTimers.ts`.
+stalled by a synchronous GPU drain reports zero drops yet looks jerky; the fps
+readout shows it as a lower rate. A steady submit cadence can also hide a
+frozen Motif, which is why Motif lag/hold is a separate tile. For per-stage
+timing use [`playback-perf.md`](playback-perf.md) and `render/perf/stageTimers.ts`.

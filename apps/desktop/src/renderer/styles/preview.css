@@ -119,6 +119,27 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The playback fps readout, shown only while playing, takes the far end's
+   auto margin and keeps the zoom readout right beside it. */
+.preview-target-bar .playback-fps-readout {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  user-select: none;
+  cursor: default;
+}
+
+.preview-target-bar .playback-fps-readout.is-low {
+  color: var(--destructive);
+  font-weight: 600;
+}
+
+.preview-target-bar .playback-fps-readout + .preview-zoom-select {
+  margin-left: 0;
+}
+
 /* Shown while the grid is on, between the target and the zoom readout. It
    gives way before the zoom readout does: it shrinks and scrolls its own
    controls (wheel, or Tab into a hidden one), scrollbar hidden for the bar's

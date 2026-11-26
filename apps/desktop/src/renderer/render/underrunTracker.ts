@@ -266,7 +266,8 @@ export class UnderrunTracker {
   /// `anyLate` = at least one visible VideoClip painted from a stale ring;
   /// `frameUs` is the snapped comp time that was judged. The late half
   /// judges the interval `noteFrame` left for this composite, if any.
-  judgeSweep(anyLate: boolean, frameUs: number): void {
+  /// False when the post-seek grace held this sweep back.
+  judgeSweep(anyLate: boolean, frameUs: number): boolean {
     const nowMs = this.now();
     const frameMs = this.pendingFrameMs;
     this.pendingFrameMs = null;
@@ -277,12 +278,12 @@ export class UnderrunTracker {
       if (!anyLate && !tickLate) {
         this.graceArmed = false; // pipeline re-primed; judge normally again
       } else if (nowMs < this.graceDeadlineMs) {
-        return;
+        return false;
       } else {
         this.graceArmed = false; // grace expired with playback still behind
       }
     }
-    if (!anyLate && !tickLate) return;
+    if (!anyLate && !tickLate) return true;
     // Cancel even if deduplication leaves both counters unchanged. The
     // confirmation must observe a quiet interval, not merely stable totals.
     this.pendingClear = null;
@@ -304,6 +305,7 @@ export class UnderrunTracker {
     } else {
       this.emit(false);
     }
+    return true;
   }
 
   /// Hold-off decay; called every composite (playing or not) so the
