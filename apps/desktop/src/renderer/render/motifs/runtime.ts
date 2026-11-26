@@ -8,11 +8,20 @@ export function createMotifRuntime(g: any = {}) {
   const epoch = 1700000000000;
   let rafQ: Array<(t: number) => void> = [];
   g.performance = { now: () => vclock };
-  g.Date = Object.assign(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    function () { return new (Date as any)(epoch + vclock); },
-    { now: () => epoch + vclock },
-  );
+  // LANDMINE: the real Date is taken before the swap. In a page `g` is the
+  // global, so a bare `Date` below would be this replacement itself and an
+  // argument-less `new Date()` would recurse until the stack overflowed.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const RealDate: any = g.Date ?? Date;
+  // "Now" is the virtual clock; with arguments, and for `instanceof`, it is
+  // the real Date. Called without `new` it returns a string, as Date does.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function VirtualDate(...args: any[]) {
+    if (!new.target) return new RealDate(epoch + vclock).toString();
+    return args.length ? new RealDate(...args) : new RealDate(epoch + vclock);
+  }
+  VirtualDate.prototype = RealDate.prototype;
+  g.Date = Object.assign(VirtualDate, { now: () => epoch + vclock, parse: RealDate.parse, UTC: RealDate.UTC });
   g.requestAnimationFrame = (cb: (t: number) => void) => { rafQ.push(cb); return rafQ.length; };
   g.cancelAnimationFrame = () => {};
   g.setTimeout = () => 0;
