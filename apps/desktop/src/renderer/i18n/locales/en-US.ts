@@ -398,6 +398,7 @@ const enUS = {
     new_project: "New project",
     open_project: "Open project…",
     unpacking: "Unpacking {{file}}",
+    opening: "Opening…",
     recent_heading: "Recent",
     recent_loading: "Loading…",
     recent_empty: "No recent projects yet.",

@@ -23,6 +23,7 @@ const ipc = vi.hoisted(() => ({
   projectUnpackInspect: vi.fn(),
   projectPackCancel: vi.fn(async () => true),
   projectOpen: vi.fn(),
+  projectUnpack: vi.fn(),
 }));
 const dialog = vi.hoisted(() => ({ open: vi.fn() }));
 /// What the screen hands the file-open requests hook on its latest render.
@@ -122,6 +123,56 @@ describe("Open project", () => {
     expect(progress.textContent).not.toMatch(/left|remaining/i);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(ipc.projectPackCancel).toHaveBeenCalled();
+  });
+
+  it("shows the unpack in place of Open project, not as a block of its own", async () => {
+    await renderScreen();
+    act(() => usePackJobStore.setState({ job: {
+      job_id: "pack-1", kind: "unpack", file: "Example.wcpk", done: 1, total: 3, cancelling: false,
+    } }));
+    const progress = screen.getByRole("status", { name: "Unpacking Example.wcpk" });
+    expect(progress.parentElement!.classList.contains("startup-actions")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Open project…" })).toBeNull();
+  });
+
+  // Main clears the run before it opens the unpacked folder.
+  it("reads Opening once every byte is written, until the open settles", async () => {
+    const user = userEvent.setup();
+    let settle: (answer: unknown) => void = () => {};
+    dialog.open.mockResolvedValueOnce("/home/u/in/Example.wcpk").mockResolvedValueOnce("/home/u/Projects");
+    ipc.projectUnpackInspect.mockResolvedValueOnce({ name: "Example", folder_name: "Example", files: 3, bytes: 3 });
+    ipc.projectUnpack.mockReturnValueOnce(new Promise((resolve) => { settle = resolve }));
+    await renderScreen();
+    await user.click(screen.getByRole("button", { name: "Open project…" }));
+    await vi.waitFor(() => expect(ipc.projectUnpack).toHaveBeenCalled());
+
+    // Main sends the full total and the clear back to back: no render need land between them.
+    const run = { job_id: "pack-1", kind: "unpack", file: "Example.wcpk", done: 3, total: 3, cancelling: false } as const;
+    act(() => {
+      usePackJobStore.setState({ job: run });
+      usePackJobStore.setState({ job: null });
+    });
+    expect(screen.getByRole("status", { name: "Unpacking Example.wcpk" }).textContent).toContain("Opening…");
+    expect(screen.queryByRole("button", { name: "Open project…" })).toBeNull();
+
+    await act(async () => settle({ outcome: "done", dir: "/home/u/Projects/Example" }));
+    expect(screen.queryByRole("status", { name: "Unpacking Example.wcpk" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open project…" })).toBeTruthy();
+  });
+
+  it("goes back to Open project when the unpack is cancelled", async () => {
+    const user = userEvent.setup();
+    dialog.open.mockResolvedValueOnce("/home/u/in/Example.wcpk").mockResolvedValueOnce("/home/u/Projects");
+    ipc.projectUnpackInspect.mockResolvedValueOnce({ name: "Example", folder_name: "Example", files: 3, bytes: 3 });
+    ipc.projectUnpack.mockReturnValueOnce(new Promise(() => {}));
+    await renderScreen();
+    await user.click(screen.getByRole("button", { name: "Open project…" }));
+    await vi.waitFor(() => expect(ipc.projectUnpack).toHaveBeenCalled());
+
+    act(() => usePackJobStore.setState({ job: { job_id: "pack-1", kind: "unpack", file: "Example.wcpk", done: 3, total: 3, cancelling: true } }));
+    act(() => usePackJobStore.setState({ job: null }));
+    expect(screen.queryByRole("status", { name: "Unpacking Example.wcpk" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open project…" })).toBeTruthy();
   });
 });
 

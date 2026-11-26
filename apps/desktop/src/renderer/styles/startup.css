@@ -587,29 +587,67 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
   font-weight: 500;
 }
 
-/* An unpack started here (Open project on a pack): the screen has no work pill. */
-.startup-unpack {
-  display: flex;
-  flex-direction: column;
-  gap: calc(6 * var(--ui-px));
-  padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px));
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-card);
-  background: var(--card);
-  font-size: var(--font-size-body);
-}
-.startup-unpack-line {
-  display: flex;
-  justify-content: space-between;
-  gap: calc(8 * var(--ui-px));
-  color: var(--muted-foreground);
-}
-.startup-unpack-name {
+/* An unpack started here takes the Open project card's place (UnpackCard in
+ * StartupScreen.tsx). The panel is centred, so the card keeps the idle card's
+ * box exactly: the ring is the icon's size, the label stays one line, and
+ * Cancel sits out of flow in the corner. `min-width: 0` stops a long line
+ * from widening its grid column. */
+.startup-action-working {
+  position: relative;
   min-width: 0;
-  overflow-wrap: anywhere;
+  cursor: default;
+}
+
+/* Not a button while it works: no hover or press. */
+.startup-action.startup-action-working:hover,
+.startup-action.startup-action-working:active {
+  border-color: var(--border-soft);
+  background: var(--card);
+  transform: none;
+}
+
+.startup-action-working .progress-ring {
+  width: var(--icon-size-display);
+  height: var(--icon-size-display);
+}
+
+.startup-action-working .progress-ring circle {
+  stroke-width: 1.5;
+}
+
+.startup-action-working .startup-action-label {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.startup-action-cancel {
+  position: absolute;
+  top: calc(6 * var(--ui-px));
+  right: calc(6 * var(--ui-px));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(4 * var(--ui-px));
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.startup-action-cancel:hover {
+  background: var(--surface-raised);
   color: var(--foreground);
 }
-.startup-unpack-cancel { align-self: flex-end; }
+
+.startup-action-cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
 
 .startup-error {
   margin: 0;

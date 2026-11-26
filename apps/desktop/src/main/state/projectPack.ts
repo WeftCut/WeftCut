@@ -223,6 +223,11 @@ export function createProjectPacker(deps: ProjectPackDeps): ProjectPacker {
         publish()
         const done = await runNative(run, 'project_unpack', { folder: dir, archive, allowedTop: PACK_TOP_LEVEL })
         if (done.outcome === 'cancelled') return done
+        // The native progress is sampled, so its last report may fall short.
+        // Every byte is written now: the start screen reads a full run that
+        // ends without a cancel as the open that follows.
+        run.progress.done = run.progress.total
+        publish()
       } finally {
         end(run)
       }

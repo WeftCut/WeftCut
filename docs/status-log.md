@@ -225,7 +225,9 @@ already says what it is has no title.
   the file and elapsed time, a bar, fps and
   speed, Cancel (no remaining-time estimate); a pack or unpack: the pack file,
   a bar, bytes done of the total and Cancel (no remaining-time estimate either;
-  the start screen, which has no pill, shows an unpack it started the same way);
+  the start screen, which has no pill, shows an unpack it started in its Open
+  project card instead: the ring, percent and bytes on one line, a corner
+  Cancel, and "Opening" until the editor takes over);
   clip jobs with their status and
   Cancel (`ComputeJobStatus`); agent calls with a link to the Activity tab;
   derivatives one row per media item with the kinds in progress. Every Cancel

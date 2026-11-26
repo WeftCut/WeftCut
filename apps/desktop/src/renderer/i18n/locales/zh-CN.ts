@@ -386,6 +386,7 @@ const zhCN: Resources = {
     new_project: "新建项目",
     open_project: "打开项目…",
     unpacking: "正在解包 {{file}}",
+    opening: "正在打开…",
     recent_heading: "最近",
     recent_loading: "加载中…",
     recent_empty: "暂无最近项目。",

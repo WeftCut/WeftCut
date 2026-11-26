@@ -227,6 +227,17 @@ describe('unpack', () => {
     expect(log.slice(-3)).toEqual(['project_unpack', 'gitignore /home/u/Projects/Example Project', 'open /home/u/Projects/Example Project'])
   })
 
+  it('reports every byte written, then clears the pill, before it opens the folder', async () => {
+    const rigged = rig()
+    const opened: (PackJobProgress | null)[] = []
+    const packer = createProjectPacker({ ...rigged.deps, open: async () => { opened.push(...rigged.progress.slice(-2)) } })
+    const done = packer.unpack(archive, '/home/u/Projects')
+    await rigged.atNative()
+    rigged.runs[0]!.resolve(JSON.stringify({ files: 3 }))
+    await done
+    expect(opened).toEqual([{ job_id: 'job-1', kind: 'unpack', file: 'Example Project.wcpk', done: 300, total: 300, cancelling: false }, null])
+  })
+
   it('refuses a pack of a newer schema before writing anything', async () => {
     const { packer, log } = rig({ packSchema: SCHEMA_VERSION + 1 })
     expect(await refusal(packer.unpack(archive, '/home/u/Projects')))
