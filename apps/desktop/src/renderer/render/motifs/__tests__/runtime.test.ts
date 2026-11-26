@@ -272,6 +272,25 @@ describe("motif runtime seek", () => {
     expect(rt.global.performance.now()).toBe(500);
     expect(rt.global.Date.now()).toBe(rt.epoch + 500);
   });
+  it("Date answers the virtual clock with no arguments and stays the real Date with them, installed on the page's own global", () => {
+    // A page's global is the object the runtime replaces Date on, as in a capture host.
+    const page = runInNewContext(`
+      var rt = (${createMotifRuntime.toString()})(globalThis);
+      rt.seek(2500);
+      ({
+        now: new Date().getTime(), nowFn: Date.now(), called: typeof Date(),
+        given: new Date(2020, 0, 2).getFullYear(), parsed: Date.parse("2020-01-02T00:00:00Z"),
+        utc: Date.UTC(2020, 0, 2), isDate: new Date() instanceof Date, epoch: rt.epoch,
+      })
+    `);
+    expect(page.now).toBe(page.epoch + 2500);
+    expect(page.nowFn).toBe(page.epoch + 2500);
+    expect(page.called).toBe("string");
+    expect(page.given).toBe(2020);
+    expect(page.parsed).toBe(Date.UTC(2020, 0, 2));
+    expect(page.utc).toBe(Date.UTC(2020, 0, 2));
+    expect(page.isDate).toBe(true);
+  });
   it("setInterval/setTimeout are neutralized", () => {
     const rt = createMotifRuntime();
     const spy = vi.fn();
