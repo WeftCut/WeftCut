@@ -1,0 +1,56 @@
+name: ci-summary-trial
+
+# Throwaway: renders the electron-ci run summary for past runs so GitHub's own
+# Markdown/Mermaid rendering can be checked. Not for main.
+on:
+  push:
+    branches: [ci-run-summary]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "ci-summary-probe-marker"
+
+  summary:
+    needs: probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [45641025579, 45636485847, 45603021236]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # Can a finished job's log be read while its own run is still in progress?
+      # Decides whether the real summary job may read Vitest/Rust results from logs.
+      - name: Probe in-run log access
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs[] | select(.name=="probe") | .id')
+          code=$(curl -sSL -o probe.log -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${{ github.repository }}/actions/jobs/$id/logs")
+          found=$(grep -c ci-summary-probe-marker probe.log || true)
+          echo "probe log: HTTP $code, marker lines $found"
+          echo "> In-run log probe: HTTP $code, marker lines $found" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download e2e timings of the source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download ${{ matrix.source }} -R ${{ github.repository }} -p 'e2e-timings-*' -D e2e-artifacts || echo "no e2e-timings artifacts"
+
+      - name: Write summary
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-summary.mjs --run ${{ matrix.source }} --artifacts ../../e2e-artifacts --mermaid-info
