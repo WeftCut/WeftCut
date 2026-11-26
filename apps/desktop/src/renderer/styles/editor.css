@@ -2602,34 +2602,17 @@
 .prop-bake-status.is-preview_ready { color: var(--success); }
 .prop-bake-status.is-ready { color: var(--success); }
 .prop-motif-lifecycle { display: flex; align-items: center; gap: calc(8 * var(--ui-px)); margin: calc(6 * var(--ui-px)) 0; flex-wrap: wrap; }
-.prop-motif-source { margin: calc(8 * var(--ui-px)) 0; }
-/* Recessed code well (--surface-sunken per docs/ui-tokens.md "inset editors").
-   Without an explicit skin the Tailwind preflight leaves the textarea as a
-   borderless transparent box — raw source floating on the panel. */
-.prop-motif-source-text {
-  width: 100%;
-  box-sizing: border-box;
-  min-height: calc(160 * var(--ui-px));
-  margin: 0 0 calc(8 * var(--ui-px));
-  padding: calc(8 * var(--ui-px));
+.prop-motif-files { display: flex; flex-direction: column; gap: calc(6 * var(--ui-px)); margin: calc(6 * var(--ui-px)) 0; }
+/* The folder path wraps anywhere: it is one long word, and cut off it would
+   hide the part that names the Motif. Selectable, so it can be copied by hand. */
+.prop-motif-files-path {
   font-family: var(--mono, ui-monospace, monospace);
   font-size: var(--font-size-caption);
-  line-height: var(--line-height-body);
-  color: var(--foreground);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-control);
-  resize: vertical;
-  white-space: pre;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+  user-select: text;
 }
-.prop-motif-source-text:focus {
-  outline: none;
-  border-color: var(--ring);
-}
-.prop-motif-source-text:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.prop-motif-files-actions { display: flex; gap: calc(8 * var(--ui-px)); flex-wrap: wrap; }
 /* A Motif's own params page. Height is author-declared (clamped host-side) and
    set inline; the panel column already scrolls, so a tall page just extends it.
    Transparent background: the page paints its own surface from the theme

@@ -334,6 +334,35 @@
   letter-spacing: normal;
 }
 
+/* A string prop's box, on the property panel and in the picker: grows with its
+   text (`field-sizing`) so the whole value shows, and no resize grip, since
+   the box already fits. The count sits under its right edge. */
+.motif-prop-text {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(2 * var(--ui-px));
+  min-width: 0;
+}
+.motif-prop-text-box {
+  box-sizing: border-box;
+  field-sizing: content;
+  resize: none;
+  line-height: var(--line-height-body);
+}
+.motif-prop-text-box.is-multiline {
+  min-height: calc(3lh + 10 * var(--ui-px));
+}
+.motif-prop-count {
+  align-self: flex-end;
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.motif-prop-count.is-full {
+  color: var(--warning);
+}
+
 .motif-picker-field {
   display: grid;
   grid-template-columns: calc(110 * var(--ui-px)) 1fr;

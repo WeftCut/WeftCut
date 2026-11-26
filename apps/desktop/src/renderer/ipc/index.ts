@@ -1,4 +1,3 @@
-import { parseManifestIsland } from '../../shared/motifs/catalog';
 import type { MotifStatus } from '../../shared/motifs/projectMotifs';
 import type { PortabilityReport } from '../../shared/portability';
 import type { TimingFields } from '../../shared/timeMapping'
@@ -3160,18 +3159,6 @@ export async function addMotif(args: {
 /// `src/main/motif/watcher.ts`, `src/main/index.ts`).
 export const MOTIFS_CHANGED_EVENT = "motifs:changed";
 
-export interface MotifSource {
-  revision: string;
-  manifest: MotifManifest;
-  html: string;
-}
-
-/// Project Motif `id`'s page, with the revision an edit must name.
-export async function getMotifSource(id: string): Promise<MotifSource> {
-  const file = await invoke<{ manifest: MotifManifest; revision: string; text: string }>("read_motif", { motif_id: id, path: "index.html" });
-  return { manifest: file.manifest, revision: file.revision, html: file.text };
-}
-
 /// Makes a new project Motif from authored `{ manifest, html }`, as one undo
 /// step. Returns its id.
 export async function createProjectMotif(manifest: MotifManifest, html: string): Promise<string> {
@@ -3185,17 +3172,6 @@ export async function createProjectMotif(manifest: MotifManifest, html: string):
 /// Imports a Motif ZIP into the project. Returns the id it took there.
 export async function importMotif(path: string): Promise<string> {
   return (await invoke<{ motif_id: string }>("create_motif", { source: { kind: "zip", path } })).motif_id;
-}
-
-/// Rewrites project Motif `id` from its full edited page (in-app source
-/// panel): every clip of it changes, with no approval. Refused when the
-/// folder no longer holds `expectedRevision`. Returns the new revision.
-export async function updateMotifSource(id: string, source: string, expectedRevision: string): Promise<string> {
-  const result = await invoke<{ revision: string }>("update_motif_files", {
-    motif_id: id, expected_revision: expectedRevision,
-    files: [{ path: "index.html", text: source }, { path: "manifest.json", text: JSON.stringify(parseManifestIsland(source)) }],
-  });
-  return result.revision;
 }
 
 /// Replaces project Motif `id`'s copy with the library's current version of

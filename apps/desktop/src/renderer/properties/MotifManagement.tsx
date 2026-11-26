@@ -1,19 +1,14 @@
 // The selected Motif layer's project Motif, managed from the property panel:
 // its state against the library with the same actions the Motifs panel's row
-// offers (motifs/motifRows.ts), and its source, edited in place. The project's
-// Motif is the one being edited: every clip of it changes, with no approval
-// (spec § Project Motifs, "Edited in place, no approval").
+// offers (motifs/motifRows.ts), and the folder its files are edited in. The
+// project's Motif is the one being edited: every clip of it changes, with no
+// approval (spec § Project Motifs, "Edited in place, no approval").
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { refusalText } from "../errors/tryMutate";
-import {
-  getMotifSource,
-  listMotifCatalog,
-  updateMotifSource,
-  updateProjectMotif,
-  type MotifCatalog,
-} from "../ipc";
+import { open as openPath } from "@/bridge/shell";
+import { listMotifCatalog, updateProjectMotif, type MotifCatalog } from "../ipc";
 import { MotifProblem } from "../motifs/MotifProblem";
 import { canSaveToLibrary, libraryTake } from "../motifs/motifRows";
 import { useSaveToLibrary } from "../motifs/SaveToLibrary";
@@ -83,57 +78,44 @@ export function MotifManagementRow({ motifId }: { motifId: string }) {
   );
 }
 
-/// In-app source editor for the selected layer's project Motif. See
-/// docs/motifs.md. Deliberately minimal: a plain textarea of the Motif's full
-/// composed source (manifest island + body). "Apply" writes it through
-/// `updateMotifSource`, refused when the folder changed since it was read;
-/// `motifs:changed` → the catalog resyncs (new content_hash) → the canvas
-/// preview re-captures.
-export function MotifSourcePanel({ motifId }: { motifId: string }) {
+/// The property panel section holding `MotifFilesPanel`; "New Motif" opens
+/// it on the layer it places.
+export const MOTIF_FILES_SECTION = "motif_files";
+
+/// Where the selected layer's project Motif lives, to edit it with the user's
+/// own tools. Saving there is all an edit takes: the project's `Motifs/` is
+/// watched, and each save that leaves a valid package is one undo step
+/// (docs/motif-workspaces.md § Editing in place). The folder opens rather than
+/// a file in it: a `.html` file's default handler is a browser, not an editor.
+export function MotifFilesPanel({ motifId }: { motifId: string }) {
   const { t } = useTranslation();
-  const [source, setSource] = useState<string | null>(null);
-  const [revision, setRevision] = useState('');
-  const [busy, setBusy] = useState(false);
+  const catalog = useMotifCatalog();
+  const [copied, setCopied] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const path = catalog?.project.find((r) => r.id === motifId)?.path;
+  if (!path) return null;
 
-  // Seed the textarea from the project folder whenever the Motif changes.
-  useEffect(() => {
-    let alive = true;
+  const openFolder = () => {
     setErr(null);
-    setSource(null);
-    getMotifSource(motifId)
-      .then((s) => { if (alive) { setSource(s.html); setRevision(s.revision); } })
-      .catch((e) => { if (alive) setErr(refusalText(e)); });
-    return () => { alive = false; };
-  }, [motifId]);
-
-  const apply = async () => {
-    if (source == null) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      setRevision(await updateMotifSource(motifId, source, revision));
-    } catch (e) {
-      setErr(refusalText(e));
-    } finally {
-      setBusy(false);
-    }
+    openPath(path).catch((e: unknown) => setErr(refusalText(e)));
+  };
+  const copyPath = () => {
+    navigator.clipboard.writeText(path).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }, (e: unknown) => setErr(refusalText(e)));
   };
 
   return (
-    <div className="prop-motif-source">
-      <p className="prop-hint">{t("property_panel.motif_source_hint")}</p>
-      <textarea
-        className="prop-motif-source-text"
-        aria-label={t("property_panel.motif_source")}
-        spellCheck={false}
-        value={source ?? ""}
-        disabled={source == null || busy}
-        onChange={(e) => setSource(e.target.value)}
-      />
-      <Button size="sm" disabled={busy || source == null} onClick={apply}>
-        {busy ? t("property_panel.motif_source_applying") : t("property_panel.motif_source_apply")}
-      </Button>
+    <div className="prop-motif-files">
+      <p className="prop-hint">{t("property_panel.motif_files_hint")}</p>
+      <code className="prop-motif-files-path" title={path}>{path}</code>
+      <div className="prop-motif-files-actions">
+        <Button size="sm" onClick={openFolder}>{t("property_panel.motif_files_open")}</Button>
+        <Button size="sm" onClick={copyPath}>
+          {copied ? t("property_panel.motif_files_copied") : t("property_panel.motif_files_copy")}
+        </Button>
+      </div>
       {err && <p className="settings-error">{err}</p>}
     </div>
   );

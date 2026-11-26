@@ -55,7 +55,7 @@ import { useTextFit } from "./useTextFit";
 // row (fades/flip/mute/content/font, Motif props) commits scalars through
 // `updateLayerParams`.
 import { getMotif, motifUnavailable, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
-import { MotifManagementRow, MotifSourcePanel } from "./MotifManagement";
+import { MOTIF_FILES_SECTION, MotifFilesPanel, MotifManagementRow } from "./MotifManagement";
 import { MotifProblem } from "../motifs/MotifProblem";
 import { MotifFontProblem, TextFontProblem } from "./FontProblem";
 import { openProjectTrustDialog } from "../motifs/projectTrust";
@@ -1208,8 +1208,8 @@ function MotifFields({
         <MotifManagementRow motifId={v.motif_id} />
       </PropSection>
       {motif ? (
-        <PropSection layerKind={layer.kind} sectionId="motif_source" title={t("property_panel.motif_source")} defaultCollapsed>
-          <MotifSourcePanel motifId={v.motif_id} />
+        <PropSection layerKind={layer.kind} sectionId={MOTIF_FILES_SECTION} title={t("property_panel.motif_files")} defaultCollapsed>
+          <MotifFilesPanel motifId={v.motif_id} />
         </PropSection>
       ) : null}
     </>
