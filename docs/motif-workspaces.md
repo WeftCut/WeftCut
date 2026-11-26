@@ -228,8 +228,9 @@ target, with "save as new" beside it.
 
 ## Preview and export
 
-preview_motif takes 1–24 times (local_t_s, seconds from the Motif's start,
-not timeline time) and returns one labelled PNG contact sheet, plus the exact
+preview_motif takes local_t_s, a list of 1–24 times in seconds from the
+Motif's start (not timeline time), and returns one labelled PNG contact
+sheet, plus the exact
 revision and the canvas and frame sizes. Each frame is the whole canvas at its
 own size scaled to fit width and height (640 wide when neither is given; at
 most 2×, aspect kept, never cropped); frames keep their transparency. Supply
