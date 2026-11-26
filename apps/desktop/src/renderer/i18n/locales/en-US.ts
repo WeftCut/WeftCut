@@ -2682,7 +2682,6 @@ const enUS = {
     horizontal: "Horizontal",
     vertical: "Vertical",
     fades: "Fade in & out",
-    motif_management: "Manage Motif",
     // A Motif `media` prop: pick a pool image, or a video and the frame to take.
     motif_media_none: "No picture",
     motif_media_frame_at: "Frame at (s)",
@@ -2809,6 +2808,9 @@ const enUS = {
     bake_pause_disk: "Waiting for writable cache storage",
     bake_baking: "Pre-baking… {{done}}/{{total}}",
     bake_error: "Pre-bake failed",
+    motif: "Motif",
+    motif_library: "Library",
+    motif_text_limit: "Up to {{max}} characters",
     motif_files: "Files",
     motif_files_copied: "Copied",
     motif_files_copy: "Copy path",

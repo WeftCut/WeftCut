@@ -3,6 +3,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { canonicalizeProps, type Manifest } from "../../shared/motifs/catalog";
+import "../i18n";
 import { StringPropField } from "./MotifPropFields";
 
 afterEach(cleanup);
@@ -41,10 +42,15 @@ describe("StringPropField", () => {
     expect(onCommit).toHaveBeenCalledWith("world");
   });
 
-  it("shows the count against the Motif's limit", async () => {
+  it("says the limit only once it cut the input, and not after the field is left", async () => {
     render(<StringPropField label="Title" spec={short} value="" onCommit={vi.fn()} />);
-    await userEvent.type(screen.getByRole("textbox"), "abc");
-    expect(screen.getByText(`3 / ${short.max_length}`)).toBeTruthy();
+    const el = screen.getByRole("textbox");
+    await userEvent.type(el, "abcde");
+    expect(screen.queryByRole("status")).toBeNull();
+    await userEvent.type(el, "f");
+    expect(screen.getByRole("status").textContent).toContain(String(short.max_length));
+    await userEvent.click(document.body);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("stops at the limit the validator enforces, counting an emoji as one character", async () => {

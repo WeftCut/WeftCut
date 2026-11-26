@@ -43,7 +43,7 @@ import { addMotifIn } from "../ipc/compositionScoped";
 import { refusalText } from "../errors/tryMutate";
 import { trackDisplayName } from "../lib/trackName";
 import { MotifPropField } from "../properties/MotifPropFields";
-import { MOTIF_FILES_SECTION } from "../properties/MotifManagement";
+import { MOTIF_SECTION } from "../properties/MotifManagement";
 import { requestPropSectionExpand } from "../properties/PropSection";
 import { defaultPropsFor, MotifPreview, useDebounced } from "./MotifPreview";
 import { newMotifSource } from "../render/motifs/newMotifSource";
@@ -57,7 +57,7 @@ interface Props {
   /// Fired after the picker places a layer, from "New Motif" or "Add to
   /// timeline". The App selects the layer and reveals its track: an
   /// auto-created overlay track has no role, so A/B Roll hides it until
-  /// revealed. "New Motif" lands the user on the property panel's Files
+  /// revealed. "New Motif" lands the user on the property panel's Motif
   /// section this way (docs/motifs.md § Parameter UI).
   onPlaced: (layerId: string) => void;
   /// The composition the picker is adding to — the timeline that holds the
@@ -204,12 +204,12 @@ export function MotifPicker({
     // already selected and the error shows in place.
     setSelectedKey(rowKey({ group: "project", id }));
     // Straight to where it is edited: place it at the playhead (default
-    // props/duration, fresh overlay track), open the property panel's files
-    // section, hand the new layer to the App for select + reveal, and close
-    // the picker.
+    // props/duration, fresh overlay track), open the property panel's Motif
+    // section (its Files row is where the new Motif is written), hand the new
+    // layer to the App for select + reveal, and close the picker.
     const layerId = await addMotifIn({ compositionId, motifId: id, tStartUs: currentTimeUs });
     await placed();
-    requestPropSectionExpand("Motif", MOTIF_FILES_SECTION);
+    requestPropSectionExpand("Motif", MOTIF_SECTION);
     onPlaced(layerId);
     onClose();
   });

@@ -336,7 +336,7 @@
 
 /* A string prop's box, on the property panel and in the picker: grows with its
    text (`field-sizing`) so the whole value shows, and no resize grip, since
-   the box already fits. The count sits under its right edge. */
+   the box already fits. The limit note, when shown, sits under it. */
 .motif-prop-text {
   display: flex;
   flex: 1 1 auto;
@@ -357,13 +357,8 @@
 .motif-prop-text-box.is-multiline {
   min-height: calc(3lh + 10 * var(--ui-px));
 }
-.motif-prop-count {
-  align-self: flex-end;
+.motif-prop-limit {
   font-size: var(--font-size-caption);
-  font-variant-numeric: tabular-nums;
-  color: var(--muted-foreground);
-}
-.motif-prop-count.is-full {
   color: var(--warning);
 }
 

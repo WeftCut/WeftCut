@@ -295,7 +295,7 @@ export function StringPropField({
     onCommit(clampToMaxLength(text, spec));
   };
   return (
-    <Field label={label} stacked>
+    <Field label={label}>
       <MotifTextInput
         spec={spec}
         value={text}
@@ -330,11 +330,11 @@ function clampToMaxLength(
   return chars.length > spec.max_length ? chars.slice(0, spec.max_length).join("") : text;
 }
 
-/// A string prop's text box on both surfaces: full width and as tall as its
-/// text, so the value the Motif will draw is visible whole, with the limit
-/// shown beside the count. A single-line prop is a textarea too (it wraps
-/// instead of scrolling sideways) but holds no newline: Enter is swallowed
-/// and a pasted one becomes a space.
+/// A string prop's text box on both surfaces: the value column's width and as
+/// tall as its text, so the value the Motif will draw is visible whole. A
+/// single-line prop is a textarea too (it wraps instead of scrolling sideways)
+/// but holds no newline: Enter is swallowed and a pasted one becomes a space.
+/// The limit is said only when it cut what was typed or pasted.
 function MotifTextInput({
   spec,
   value,
@@ -351,8 +351,14 @@ function MotifTextInput({
   /// Runs before the single-line Enter guard.
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 }) {
+  const { t } = useTranslation();
+  const [cut, setCut] = useState(false);
   const shape = (raw: string) => (spec.multiline ? raw : raw.replace(/\r?\n/g, " "));
-  const count = Array.from(value).length;
+  const take = (raw: string) => {
+    const kept = clampToMaxLength(raw, spec);
+    setCut(kept !== raw);
+    onChange(kept);
+  };
   return (
     <span className="motif-prop-text">
       <textarea
@@ -364,18 +370,22 @@ function MotifTextInput({
         // ends, which fires after its last change.
         onChange={(e) => {
           const raw = shape(e.target.value);
-          onChange((e.nativeEvent as InputEvent).isComposing ? raw : clampToMaxLength(raw, spec));
+          if ((e.nativeEvent as InputEvent).isComposing) onChange(raw);
+          else take(raw);
         }}
-        onCompositionEnd={(e) => onChange(clampToMaxLength(shape(e.currentTarget.value), spec))}
-        onBlur={onBlur}
+        onCompositionEnd={(e) => take(shape(e.currentTarget.value))}
+        onBlur={() => {
+          setCut(false);
+          onBlur?.();
+        }}
         onKeyDown={(e) => {
           onKeyDown?.(e);
           if (e.key === "Enter" && !spec.multiline) e.preventDefault();
         }}
       />
-      {spec.max_length != null ? (
-        <span className={count >= spec.max_length ? "motif-prop-count is-full" : "motif-prop-count"}>
-          {count} / {spec.max_length}
+      {cut && spec.max_length != null ? (
+        <span className="motif-prop-limit" role="status">
+          {t("property_panel.motif_text_limit", { max: spec.max_length })}
         </span>
       ) : null}
     </span>

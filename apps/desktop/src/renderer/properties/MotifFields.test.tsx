@@ -148,7 +148,7 @@ function renderMotifPanel(
       currentTimeUs={1_000_000}
     />,
   );
-  return screen.getByRole("region", { name: "Props" });
+  return screen.getByRole("region", { name: "Motif" });
 }
 
 /// Open a Base UI Select by keyboard, NOT `user.click` — a click on the
@@ -271,7 +271,7 @@ describe("MotifFields commit contract", () => {
       />,
     );
     const user = userEvent.setup();
-    const section = screen.getByRole("region", { name: "Props" });
+    const section = screen.getByRole("region", { name: "Motif" });
     const trigger = within(section).getByRole("combobox", { name: /^font.headline$/i });
     expect(trigger.textContent).toBe("Motif default");
     await openSelect(user, trigger);
@@ -378,7 +378,7 @@ describe("MotifFields params-page branch", () => {
         currentTimeUs={1_000_000}
       />,
     );
-    const section = screen.getByRole("region", { name: "Props" });
+    const section = screen.getByRole("region", { name: "Motif" });
     const frame = section.querySelector("iframe")!;
     expect(frame).toBeTruthy();
     // Scripts only — no `allow-same-origin`, so the page can never reach the
@@ -402,7 +402,7 @@ describe("MotifFields params-page branch", () => {
         currentTimeUs={1_000_000}
       />,
     );
-    const srcOf = () => screen.getByRole("region", { name: "Props" }).querySelector("iframe")!.getAttribute("src");
+    const srcOf = () => screen.getByRole("region", { name: "Motif" }).querySelector("iframe")!.getAttribute("src");
     await waitFor(() => expect(srcOf()).toContain("motif://"));
     const before = srcOf();
     act(() => setProjectMotifs([{ ...TEST_MANIFEST, has_params_ui: true }]));

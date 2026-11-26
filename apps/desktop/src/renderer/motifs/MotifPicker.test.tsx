@@ -59,7 +59,7 @@ vi.mock("../render/motifs/host", () => ({ captureMotifFramePngBlob: capture }));
 import { MotifPicker } from "./MotifPicker";
 import { open, save } from "@/bridge/dialog";
 import { setProjectMotifs } from "../render/motifs/catalog";
-import { MOTIF_FILES_SECTION } from "../properties/MotifManagement";
+import { MOTIF_SECTION } from "../properties/MotifManagement";
 import { clearPropSectionMemory, PropSection } from "../properties/PropSection";
 
 afterEach(() => {
@@ -484,7 +484,7 @@ function colorReadout(swatch: HTMLInputElement): string {
 }
 
 describe("New Motif", () => {
-  it("places the new Motif and opens the Files section of the property panel it lands on", async () => {
+  it("places the new Motif and opens the Motif section of the property panel it lands on", async () => {
     ipcMocks.createProjectMotif.mockResolvedValue("untitled-motif");
     await renderPicker();
     await userEvent.click(screen.getByRole("button", { name: "New Motif" }));
@@ -492,11 +492,11 @@ describe("New Motif", () => {
     cleanup();
     // The panel mounts on the placed Motif layer after the picker closes.
     render(
-      <PropSection layerKind="Motif" sectionId={MOTIF_FILES_SECTION} title="Files" defaultCollapsed>
+      <PropSection layerKind="Motif" sectionId={MOTIF_SECTION} title="Motif" defaultCollapsed>
         <p>folder</p>
       </PropSection>,
     );
-    expect(screen.getByRole("button", { name: "Files" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "Motif" }).getAttribute("aria-expanded")).toBe("true");
   });
 });
 

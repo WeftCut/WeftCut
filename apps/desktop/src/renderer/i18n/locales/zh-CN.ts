@@ -2420,7 +2420,6 @@ const zhCN: Resources = {
     horizontal: "水平",
     vertical: "垂直",
     fades: "淡入与淡出",
-    motif_management: "管理 Motif",
     // A Motif `media` prop: pick a pool image, or a video and the frame to take.
     motif_media_none: "无图片",
     motif_media_frame_at: "取帧时间（秒）",
@@ -2538,6 +2537,9 @@ const zhCN: Resources = {
     bake_pause_disk: "等待可写的缓存目录",
     bake_baking: "预烘焙中 {{done}}/{{total}}",
     bake_error: "预烘焙失败",
+    motif: "Motif",
+    motif_library: "Motif 库",
+    motif_text_limit: "最多 {{max}} 个字符",
     motif_files: "文件",
     motif_files_copied: "已复制",
     motif_files_copy: "复制路径",
