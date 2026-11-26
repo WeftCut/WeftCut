@@ -62,6 +62,7 @@ it('retimes and pitches the link partners of the inspected clip, and leaves the 
 it.each([
   ['cannot be retimed', clip('title', 'Text')],
   ['starts elsewhere', clip('voice', 'Audio', true, 1_000_000)],
+  ['plays at another rate', { ...clip('voice'), params: { ...clip('voice').params, src_out_us: 4_000_000, time_map: { kind: 'Affine', rate: { num: 2, den: 1 } } } } as LayerSummary],
 ])('retimes the inspected clip alone when its link partner %s', async (_case, partner) => {
   mount([clip('video', 'VideoClip'), partner], false, ['video', partner.id]);
   expect(screen.queryByRole('checkbox')).toBeNull();

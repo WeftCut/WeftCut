@@ -94,6 +94,12 @@ describe("formatCommandError — curated tier", () => {
     expect(out.message).not.toContain('null');
   });
 
+  it.each(['Locked', 'SilencePadded'])('names the clip behind a %s retime refusal', (kind) => {
+    seedStore();
+    const out = formatCommandError({ error: 'RetimeRejected', reason: { kind, layer_id: 'l-b' } });
+    expect(out.message).toContain('“Ember.mp4”');
+  });
+
   it('identifies the conflicting transition by its participants', () => {
     seedStore();
     const summary = structuredClone(useProjectStore.getState().summary!);

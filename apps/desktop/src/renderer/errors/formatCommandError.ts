@@ -177,9 +177,11 @@ export function formatRetimeConflict(reason: Record<string, unknown>, ctx: Refus
     }
     return ctx.t('retime.details.collision', args);
   }
-  // A linked partner can be the locked one, so name it.
-  if (reason.kind === 'Locked' && typeof reason.layer_id === 'string') {
-    return ctx.t('retime.details.locked', { clip: ctx.layer(reason.layer_id) });
+  // The inspector carries aligned link partners, so the refusing clip may not
+  // be the one on screen: name it.
+  const named = reason.kind === 'Locked' ? 'locked' : reason.kind === 'SilencePadded' ? 'silence_padded' : null;
+  if (named && typeof reason.layer_id === 'string') {
+    return ctx.t(`retime.details.${named}`, { clip: ctx.layer(reason.layer_id) });
   }
   if (reason.kind === 'Transition' && typeof reason.transition_id === 'string') {
     return ctx.t('retime.details.transition', { transition: ctx.transition(reason.transition_id) });

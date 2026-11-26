@@ -165,7 +165,8 @@ const enUS = {
       "collision": "“{{clip}}” would overlap “{{blocking}}”. Shorten the duration or increase the speed.",
       "collision_limits": "“{{clip}}” would overlap “{{blocking}}”. Maximum duration: {{duration}}; minimum speed: ≈{{rate}}×.",
       "transition": "This change would invalidate the transition “{{transition}}”. Its duration and the neighbouring clips must stay fixed.",
-      "locked": "Unlock “{{clip}}” and its track."
+      "locked": "Unlock “{{clip}}” and its track.",
+      "silence_padded": "“{{clip}}” plays silence past its media. Trim the silence away before changing speed."
     },
     "conflicts": {
       "EmptyTargets": "Select at least one clip.",
