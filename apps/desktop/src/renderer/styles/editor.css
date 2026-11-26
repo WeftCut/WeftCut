@@ -1472,23 +1472,24 @@
   min-width: 0;
 }
 
-/* One wrapping row: the corpus-wide style fields, then Text correction pushed
-   to the far end so it reads as a separate action on the cue text. */
+/* One wrapping row: the corpus-wide style fields, then the Text correction
+   icon pushed to the far end so it reads as a separate action on the cue text.
+   Icon, not label: three labelled fields already fill the default dock. */
 .captions-toolbar {
   flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: calc(8 * var(--ui-px)) calc(12 * var(--ui-px));
+  gap: calc(8 * var(--ui-px)) calc(10 * var(--ui-px));
   padding-bottom: calc(8 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
 
+/* `contents` puts the fields straight into the toolbar's wrap, so a narrow
+   dock wraps field by field and the icon shares the last line instead of
+   dropping to a row of its own. */
 .captions-style-fields {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: calc(8 * var(--ui-px)) calc(12 * var(--ui-px));
+  display: contents;
 }
 
 .captions-correction {
@@ -1513,7 +1514,7 @@
    here it sits inline in the toolbar row. */
 .captions-toolbar .app-number-field {
   flex: 0 0 auto;
-  width: calc(64 * var(--ui-px));
+  width: calc(48 * var(--ui-px));
 }
 
 .property-panel {

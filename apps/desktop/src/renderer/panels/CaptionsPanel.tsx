@@ -19,6 +19,8 @@ import { AppColorField, hexToRgba, rgbaToHex } from "../components/AppColorField
 import { AppNumberField } from "../components/AppNumberField";
 import { TextCorrectionDialog } from "../speech/TextCorrectionDialog";
 import { Button } from "../components/ui/button";
+import { AppIcon } from "../components/AppIcon";
+import { SpellCheckIcon } from "lucide-react";
 import { useProjectStore } from "../state/projectStore";
 import { ComputeJobStatus } from "../compute/ComputeJobStatus";
 import { useComputeJobsStore } from "../compute/computeJobsStore";
@@ -279,7 +281,9 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
               />
             </div>
           </div>
-          <Button variant="ghost" className="captions-correction" disabled={!projectId} onClick={() => setCorrectionProject(projectId ?? null)}>{t('text_correction.title')}</Button>
+          <Button size="icon-xs" variant="ghost" className="captions-correction" aria-label={t('text_correction.title')} title={t('text_correction.title')} disabled={!projectId} onClick={() => setCorrectionProject(projectId ?? null)}>
+            <AppIcon icon={SpellCheckIcon} size="body" aria-hidden="true" />
+          </Button>
         </div>
       )}
       <CaptionsComputeStatus comp={comp} />
