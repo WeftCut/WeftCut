@@ -297,7 +297,8 @@ The document renders in an offline, isolated capture host. Hard limits:
   local ES modules work. Use relative URLs: the app assigns the package's id,
   including when copying or saving to the library. Bare imports such as `three` need a
   local import map or a bundle produced before import; the app does not
-  resolve npm packages. Root `.revisions` is a reserved path.
+  resolve npm packages (*Third-party libraries* below). Root `.revisions` is
+  a reserved path.
 - **Local resource loading.** Render pages may fetch their own `motif://<id>/`
   files and `data:` / `blob:` URLs. Images may use those same sources; fonts may
   use local files or `data:` URLs. Other Motifs, `file:`, project-media schemes,
@@ -336,6 +337,45 @@ The document renders in an offline, isolated capture host. Hard limits:
   Await all decoding in setup; Workers may only be created during setup, at
   most eight live, and are terminated when it completes or fails. Workers do
   not drive frame animation.
+
+### Third-party libraries
+
+A Motif runs only code its package holds: nothing is fetched from a CDN or
+npm when it renders. Bring a library in while writing the Motif:
+
+1. **Take a pinned browser ES-module build**: one bundled file, or the
+   library's own tree of ES modules when its files import each other by
+   relative path (copy the tree whole and map its entry file; the import map
+   stands in for the package's export map). A tree full of bare imports such as
+   `@scope/name/...` is easier bundled into one file first (esbuild or
+   Rollup, unminified). Prefer unminified code: the project trust dialog
+   flags minified code, and a readable file is one `read_motif` can check.
+2. **Copy it into the package**, under `vendor/<library>/`, with every file
+   it loads while running: WASM, decoder scripts, worker scripts, data.
+   Write large files into the Motif's folder directly; `update_motif_files`
+   takes at most 256 KiB per file.
+3. **Map its bare import** in `index.html`, with relative paths, since the
+   package's id changes when it is copied:
+
+   ```html
+   <script type="importmap">
+   {"imports": {"some-lib": "./vendor/some-lib/some-lib.module.js"}}
+   </script>
+   <script type="module" src="./scene.js"></script>
+   ```
+
+4. **Point the library's own URLs into the package.** Many libraries load
+   decoders, WASM or workers from their CDN by default. That request is
+   blocked and `setup` fails. Set the library's path option (decoder path,
+   WASM URL, worker URL, base URL) to a package path, as the Three.js
+   template does with `setDecoderPath('./vendor/draco/')`; Babylon.js takes
+   them in `DracoCompression.Configuration.decoder`.
+5. **Keep to the runtime limits above.** No `eval` or `new Function`: a
+   library that compiles code while running needs its CSP-safe build. Create
+   Workers and compile WASM in `setup` only. Load nothing from the network.
+
+Then render a frame with `preview_motif`: a library that still reaches
+outside the package fails there, not in export.
 
 ### Three.js
 
