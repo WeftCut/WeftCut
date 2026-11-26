@@ -11,6 +11,12 @@ test('every job and step the summary reads exists in electron-ci', () => {
   for (const step of [CI_NAMES.vitestStep, CI_NAMES.nodeTestStep]) assert.ok(workflow.includes(`- name: ${step}\n`), `step ${step}`)
 })
 
+test('the summary job runs when the jobs it covers run: never on a draft PR', () => {
+  const jobIf = (name) => workflow.slice(workflow.indexOf(`\n  ${name}:\n`)).match(/\n    if: (.*)/)[1]
+  for (const gate of [jobIf(CI_NAMES.checksJob), jobIf(CI_NAMES.rustJob)]) assert.ok(gate.includes('!github.event.pull_request.draft'))
+  assert.ok(jobIf('summary').includes('!github.event.pull_request.draft'), jobIf('summary'))
+})
+
 test('the summary job never holds back a release', () => {
   const release = workflow.slice(workflow.indexOf('\n  release:\n'))
   const needs = release.match(/\n    needs: \[([^\]]*)\]/)[1].split(',').map((s) => s.trim())

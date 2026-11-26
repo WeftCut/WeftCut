@@ -1269,11 +1269,12 @@ jobs:
   # and retried-then-passed tests, the job timeline, E2E split balance and
   # Vitest cost (scripts/ci-summary.mjs). Cross-run trends are not its job.
   # Nothing needs it, so it never holds back a release; it summarises red runs
-  # too, but not cancelled ones. package-macos and release are not waited for:
-  # the summary covers the test jobs.
+  # too, but not cancelled ones, and like the jobs it covers it skips draft PRs.
+  # package-macos and release are not waited for: the summary covers the test
+  # jobs.
   summary:
     needs: [checks, rust-test, e2e, compare]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !github.event.pull_request.draft }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
