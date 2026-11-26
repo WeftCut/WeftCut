@@ -24,7 +24,7 @@ import type {
 import { AppIcon } from "@/components/AppIcon";
 
 interface AppMenuBarProps {
-  pong: string;
+  coreError: string | null;
   /// Palette open lives here rather than in the registry — the palette
   /// deliberately excludes "open the palette" (appCommands.ts).
   onOpenSearch: () => void;
@@ -77,7 +77,7 @@ export function DevMenu({
 /// from the catalog), so no project state is read here. Locale cycling
 /// lives here because it only touches i18n.
 export function AppMenuBar({
-  pong,
+  coreError,
   onOpenSearch,
   workspaceController,
   workspaceSnapshot,
@@ -161,9 +161,9 @@ export function AppMenuBar({
         )}
       </button>
       <div className="header-right" data-drag-region>
-        {pong !== "ok" && pong !== "…" && (
+        {coreError !== null && (
           <span className="ping" data-drag-region>
-            {t("app.core_status", { status: pong })}
+            {t("app.core_error", { error: coreError })}
           </span>
         )}
         <button

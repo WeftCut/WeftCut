@@ -300,7 +300,7 @@ const enUS = {
   },
   app: {
     title: "WeftCut",
-    core_status: "core: {{status}}",
+    core_error: "core error: {{error}}",
     window_title: "WeftCut — {{name}}",
   },
   splash: {

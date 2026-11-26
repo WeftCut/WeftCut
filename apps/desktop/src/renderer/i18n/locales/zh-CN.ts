@@ -292,7 +292,7 @@ const zhCN: Resources = {
   },
   app: {
     title: "WeftCut",
-    core_status: "核心：{{status}}",
+    core_error: "核心错误：{{error}}",
     window_title: "WeftCut — {{name}}",
   },
   splash: {
