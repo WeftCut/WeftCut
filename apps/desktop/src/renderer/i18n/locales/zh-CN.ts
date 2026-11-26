@@ -2557,10 +2557,11 @@ const zhCN: Resources = {
   captions: {
     title: "字幕",
     empty: "导入字幕文件，或转写片段语音，即可创建字幕。",
-    style_heading: "样式",
-    // 数字框旁边的两个词；下面的无障碍标签要说明 0 的含义，因为字段本身没地方说。
+    style_scope: "应用于全部字幕",
+    // 样式字段旁边的词；下面的描边无障碍标签要说明 0 的含义，因为字段本身没地方说。
     size_label: "字号",
     outline_label: "描边",
+    color_label: "颜色",
     outline_width: "描边宽度（px），0 为无描边",
     seek_to: "跳到 {{timecode}} 的字幕",
   },
