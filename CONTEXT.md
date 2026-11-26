@@ -482,8 +482,8 @@ never satisfy each other. See [mcp.md](docs/mcp.md#video-understanding-optional-
 ## Links and Groups
 
 **Link**:
-A flat set of two or more layers in one composition whose move, trim and split
-fan out to every member (`Project.links`; a layer in at most one). No bounds,
+A flat set of two or more layers in one composition whose move, trim, split and
+inspector retime fan out to every member (`Project.links`; a layer in at most one). No bounds,
 no rendering. UI word: Link / 链接. See ADR 0052.
 _Avoid_: group, bundle, pair
 

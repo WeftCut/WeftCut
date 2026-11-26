@@ -160,16 +160,14 @@ const enUS = {
   },
   retime: {
     "title": "Retime",
-    "apply_selection": "Apply to all {{count}} selected clips",
-    "mixed": "Selected clips have different rates or durations. Entering a value applies it to every selected clip.",
     "refused": "{{reason}}",
     "details": {
       "collision": "“{{clip}}” would overlap “{{blocking}}”. Shorten the duration or increase the speed.",
       "collision_limits": "“{{clip}}” would overlap “{{blocking}}”. Maximum duration: {{duration}}; minimum speed: ≈{{rate}}×.",
-      "transition": "This change would invalidate the transition “{{transition}}”. Its duration and the neighbouring clips must stay fixed."
+      "transition": "This change would invalidate the transition “{{transition}}”. Its duration and the neighbouring clips must stay fixed.",
+      "locked": "Unlock “{{clip}}” and its track.",
+      "silence_padded": "“{{clip}}” plays silence past its media. Trim the silence away before changing speed."
     },
-    "pitch_scope_one": "Applies to the {{count}} selected audio or Group clip.",
-    "pitch_scope_other": "Applies to the {{count}} selected audio or Group clips.",
     "conflicts": {
       "EmptyTargets": "Select at least one clip.",
       "LayerMissing": "A selected clip no longer exists.",
@@ -2727,7 +2725,7 @@ const enUS = {
     media_usage_go: "Go to this clip",
     locked: "Locked",
     duration: "Duration",
-    multi_primary: "Editing primary clip “{{label}}” — {{count}} clips selected; changes apply only to this clip.",
+    multi_primary: "{{count}} clips selected; editing one of them.",
     text: "Text",
     content: "Content",
     font_family: "Font family",

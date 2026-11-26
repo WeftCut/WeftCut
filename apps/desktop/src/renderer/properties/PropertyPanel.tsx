@@ -396,10 +396,7 @@ function LayerPanel({
       </div>
       {selectionCount > 1 ? (
         <p className="prop-primary-note">
-          {t("property_panel.multi_primary", {
-            label: layerDisplayName(layer, t, groupOrdinals),
-            count: selectionCount,
-          })}
+          {t("property_panel.multi_primary", { count: selectionCount })}
         </p>
       ) : null}
       {layer.params.kind !== "Audio" && layer.params.kind !== "Color" ? (

@@ -6,6 +6,7 @@ import i18n from '../i18n';
 import { RetimeFields } from './RetimeFields';
 import { useProjectStore } from '../state/projectStore';
 import { useSelectionStore } from '../state/selectionStore';
+import { setLinkOverride } from '../state/linkOverrideStore';
 import { summaryFixture } from '../testing/summaryFixture';
 import type { LayerSummary, TrackSummary } from '../ipc';
 
@@ -23,44 +24,66 @@ function clip(id: string, kind = 'Audio', preserve_pitch = true, start = 0): Lay
     params: { kind, src_in_us: 0, src_out_us: 2_000_000, preserve_pitch },
   } as unknown as LayerSummary;
 }
-function mount(clips: LayerSummary[], sameTrack = false) {
+function mount(clips: LayerSummary[], sameTrack = false, linked: string[] = []) {
   const tracks = (sameTrack ? [clips] : clips.map(c => [c])).map((layers, i) => ({
     id: `track-${i}`, label: null, enabled: true, locked: false, layers,
   })) as TrackSummary[];
-  useProjectStore.getState().apply(summaryFixture({ root: { tracks, duration_us: 10_000_000 } }));
+  const links = linked.length ? [{ id: 'link', layer_ids: linked }] : [];
+  useProjectStore.getState().apply(summaryFixture({ root: { tracks, links, duration_us: 10_000_000 } }));
   useSelectionStore.setState({ selection: { kind: 'layers', primary: clips[0]!.id, ids: new Set(clips.map(c => c.id)) } });
   render(<RetimeFields layer={clips[0]!} disabled={false} onMutated={vi.fn()} fpsNum={30} fpsDen={1} />);
 }
 beforeEach(async () => { await i18n.changeLanguage('en-US'); vi.clearAllMocks(); });
-afterEach(() => { cleanup(); useProjectStore.getState().apply(null); });
+afterEach(() => { cleanup(); useProjectStore.getState().apply(null); setLinkOverride(false); });
 
-it('shows mixed pitch and applies only to selected Audio/Group clips', async () => {
-  mount([clip('voice'), clip('group', 'CompositionRef', false), clip('video', 'VideoClip')]);
-  await userEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 3 selected clips' }));
+it('sets pitch on the inspected clip only when the other selected clips are unlinked', async () => {
+  mount([clip('voice'), clip('other', 'Audio', false)]);
+  expect(screen.getAllByRole('checkbox')).toHaveLength(1);
   const pitch = screen.getByRole('checkbox', { name: 'Preserve pitch' }) as HTMLInputElement;
-  expect(pitch.indeterminate).toBe(true);
-  expect(pitch.getAttribute('aria-checked')).toBe('mixed');
+  expect(pitch.checked).toBe(true);
   await userEvent.click(pitch);
-  await waitFor(() => expect(setPreservePitch).toHaveBeenCalledWith(['voice', 'group'], true));
+  await waitFor(() => expect(setPreservePitch).toHaveBeenCalledExactlyOnceWith(['voice'], false));
   expect(retimeLayers).not.toHaveBeenCalled();
 });
 
-it('offers batch pitch when the primary clip is video, and states its target scope', async () => {
+it('offers no pitch control for a video clip whose selected audio is not linked to it', () => {
   mount([clip('video', 'VideoClip'), clip('voice')]);
-  expect(screen.queryByRole('checkbox', { name: 'Preserve pitch' })).toBeNull();
-  await userEvent.click(screen.getByRole('checkbox', { name: 'Apply to all 2 selected clips' }));
-  const pitch = screen.getByRole('checkbox', { name: 'Preserve pitch' });
-  expect(screen.getByText('Applies to the 1 selected audio or Group clip.')).toBeTruthy();
-  await userEvent.click(pitch);
-  await waitFor(() => expect(setPreservePitch).toHaveBeenCalledWith(['voice'], false));
+  expect(screen.queryByRole('checkbox')).toBeNull();
 });
 
-it('keeps pitch local until batch editing is explicitly enabled', async () => {
-  mount([clip('voice'), clip('other', 'Audio', false)]);
-  const pitch = screen.getByRole('checkbox', { name: 'Preserve pitch' }) as HTMLInputElement;
-  expect(pitch.indeterminate).toBe(false);
-  await userEvent.click(pitch);
-  await waitFor(() => expect(setPreservePitch).toHaveBeenCalledWith(['voice'], false));
+it('retimes and pitches the link partners of the inspected clip, and leaves the rest of the selection', async () => {
+  mount([clip('video', 'VideoClip'), clip('voice', 'Audio', false), clip('music')], false, ['video', 'voice']);
+  await userEvent.click(screen.getByRole('button', { name: 'Reset to 1×' }));
+  await waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['video', 'voice'], { kind: 'Rate', value: { num: 1, den: 1 } }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Preserve pitch' }));
+  await waitFor(() => expect(setPreservePitch).toHaveBeenCalledExactlyOnceWith(['voice'], true));
+});
+
+it.each([
+  ['cannot be retimed', clip('title', 'Text')],
+  ['starts elsewhere', clip('voice', 'Audio', true, 1_000_000)],
+  ['plays at another rate', { ...clip('voice'), params: { ...clip('voice').params, src_out_us: 4_000_000, time_map: { kind: 'Affine', rate: { num: 2, den: 1 } } } } as LayerSummary],
+])('retimes the inspected clip alone when its link partner %s', async (_case, partner) => {
+  mount([clip('video', 'VideoClip'), partner], false, ['video', partner.id]);
+  expect(screen.queryByRole('checkbox')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Reset to 1×' }));
+  await waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['video'], { kind: 'Rate', value: { num: 1, den: 1 } }));
+});
+
+it('names a locked link partner when it blocks the retime', async () => {
+  const voice = { ...clip('voice'), locked: true };
+  mount([clip('video', 'VideoClip'), voice], false, ['video', 'voice']);
+  await userEvent.click(screen.getByRole('button', { name: 'Reset to 1×' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('voice'));
+  expect(retimeLayers).not.toHaveBeenCalled();
+});
+
+it('retimes only the inspected clip while the link override is on', async () => {
+  setLinkOverride(true);
+  mount([clip('video', 'VideoClip'), clip('voice')], false, ['video', 'voice']);
+  expect(screen.queryByRole('checkbox')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Reset to 1×' }));
+  await waitFor(() => expect(retimeLayers).toHaveBeenCalledExactlyOnceWith(['video'], { kind: 'Rate', value: { num: 1, den: 1 } }));
 });
 
 it('names the blocking clip and shows usable limits before and after a refused commit', async () => {
