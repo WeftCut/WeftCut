@@ -59,7 +59,11 @@ generator.
 
 **The Motif's rows.** *Version* compares the project's copy with the library
 (*Same as library*, *Modified*, *Update available*, *Project only*) and offers
-its actions (below). *Source* shows the Motif's folder, with *Open folder* and
+its actions (below). When they differ, a note under the state names the
+versions: an unchanged copy behind the library's; a copy edited here since the
+library version it came from; the same while the library moved on, where
+updating replaces the edits made here; or, with no version it came from, the
+library version it differs from. *Source* shows the Motif's folder, with *Open folder* and
 *Copy path*: its files are edited there with the user's own tools
 ([motif-workspaces.md](motif-workspaces.md#editing-in-place)). The folder
 opens, not `index.html`, whose default handler is a browser. *New Motif* opens

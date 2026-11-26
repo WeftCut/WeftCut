@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { refusalText } from "../errors/tryMutate";
 import { open as openPath } from "@/bridge/shell";
 import { listMotifCatalog, updateProjectMotif, type MotifCatalog, type ProjectMotifRow } from "../ipc";
-import { canSaveToLibrary, libraryTake } from "../motifs/motifRows";
+import { canSaveToLibrary, libraryRowOf, libraryTake, versionGap, type VersionGap } from "../motifs/motifRows";
 import { useSaveToLibrary } from "../motifs/SaveToLibrary";
 import { motifCatalogRevision, subscribeMotifCatalog } from "../render/motifs/catalog";
 import { Field } from "./Field";
@@ -40,7 +40,11 @@ export function MotifPackageRows({ motifId, files }: { motifId: string; files: b
   if (!row) return null;
   return (
     <div className="prop-motif-package">
-      <VersionRow row={row} libraryName={(id) => catalog?.library.find((r) => r.id === id)?.motif.name} />
+      <VersionRow
+        row={row}
+        gap={versionGap(row, libraryRowOf(row, catalog?.library ?? []))}
+        libraryName={(id) => catalog?.library.find((r) => r.id === id)?.motif.name}
+      />
       {files ? <SourceRow path={row.path} /> : null}
     </div>
   );
@@ -51,9 +55,12 @@ export function MotifPackageRows({ motifId, files }: { motifId: string; files: b
 /// Motif, so it would be refused.
 function VersionRow({
   row,
+  gap,
   libraryName,
 }: {
   row: ProjectMotifRow;
+  /// How the two differ, said under the state when they do.
+  gap: VersionGap | null;
   libraryName: (id: string) => string | undefined;
 }) {
   const { t } = useTranslation();
@@ -96,6 +103,7 @@ function VersionRow({
             </Button>
           )}
         </div>
+        {gap && <p className="prop-motif-version-gap">{t(`property_panel.motif_version_${gap.kind}`, gap)}</p>}
         {err && <p className="settings-error">{err}</p>}
         {notice && <p className="prop-hint" role="status">{notice}</p>}
         {save.dialog}

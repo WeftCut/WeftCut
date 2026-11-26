@@ -2613,8 +2613,18 @@
 }
 /* A value that runs to several lines (a wrapped string prop, a path over its
    buttons) keeps its caption on its first line, not centred on the block. */
-.property-panel .prop-field:has(.motif-prop-text, .prop-motif-source) {
+.property-panel .prop-field:has(.motif-prop-text, .prop-motif-source, .prop-motif-version-gap) {
   align-items: start;
+}
+/* The Version row's first line is its state and buttons: the caption centres
+   on that line, not on the note under it. */
+.property-panel .prop-field:has(.prop-motif-version-gap) > .prop-field-label {
+  padding-top: calc(4 * var(--ui-px));
+}
+.prop-motif-version-gap {
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-body);
+  color: var(--muted-foreground);
 }
 .property-panel .prop-field:has(.motif-prop-text) > .prop-field-label {
   padding-top: calc(5 * var(--ui-px));
