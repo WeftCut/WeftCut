@@ -339,13 +339,17 @@
    the box already fits. The count sits under its right edge. */
 .motif-prop-text {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: stretch;
   gap: calc(2 * var(--ui-px));
   min-width: 0;
 }
+/* `field-sizing: content` sizes width too: the row's width is set here so a
+   short value keeps a full-width box and only the height follows the text. */
 .motif-prop-text-box {
   box-sizing: border-box;
+  width: 100%;
   field-sizing: content;
   resize: none;
   line-height: var(--line-height-body);
