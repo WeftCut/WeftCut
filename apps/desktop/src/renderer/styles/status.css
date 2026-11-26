@@ -279,39 +279,40 @@
   to { transform: rotate(360deg); }
 }
 
-/* A background export's progress, as a ring with the percent beside it. */
-.work-pill-ring {
+/* Measured progress as a ring (components/ProgressRing.tsx). This size and
+ * stroke are the work pill's, beside its label; the start screen sets its own. */
+.progress-ring {
   display: inline-flex;
   width: calc(14 * var(--ui-px));
   height: calc(14 * var(--ui-px));
 }
 
-.work-pill-ring svg {
+.progress-ring svg {
   width: 100%;
   height: 100%;
 }
 
-.work-pill-ring circle {
+.progress-ring circle {
   fill: none;
   stroke-width: 2.5;
 }
 
-.work-pill-ring-track {
+.progress-ring-track {
   stroke: color-mix(in srgb, var(--primary) 25%, transparent);
 }
 
-.work-pill-ring-fill {
+.progress-ring-fill {
   stroke: var(--primary);
   stroke-linecap: round;
   transition: stroke-dashoffset 200ms linear;
 }
 
-.work-pill-ring.is-indeterminate svg {
+.progress-ring.is-indeterminate svg {
   animation: status-bar-spin 1s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .work-pill-ring.is-indeterminate svg,
+  .progress-ring.is-indeterminate svg,
   .status-bar-spinner {
     animation: none;
   }

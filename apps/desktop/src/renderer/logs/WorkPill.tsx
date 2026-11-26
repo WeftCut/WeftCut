@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Hourglass } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
+import { ProgressRing } from "@/components/ProgressRing";
 import { useStatusPopover } from "@/components/useStatusPopover";
 import { useAgentActivity } from "../agent/activityStore";
 import { openAgentTab } from "../agent/openAgentTab";
@@ -91,9 +92,9 @@ export function WorkPill({ backgroundExport }: {
         aria-label={label}
       >
         {exportView
-          ? <ProgressRing phase={exportView.phase} percent={exportView.percent} />
+          ? <ProgressRing label={exportView.phase} percent={exportView.percent} />
           : packLead
-            ? <ProgressRing phase={packLead.phase} percent={packLead.percent} />
+            ? <ProgressRing label={packLead.phase} percent={packLead.percent} />
             : waiting
             ? <AppIcon icon={Hourglass} size="label" aria-hidden />
             : <span className="status-bar-spinner" aria-hidden="true" />}
@@ -193,25 +194,6 @@ function fontCopiesLabel(t: TFunction, copies: FontCopies): string {
   return copies.closing
     ? t("status_bar.work.fonts_closing")
     : t("status_bar.work.fonts_copying", { done: copies.done, total: copies.total });
-}
-
-/// The ring owns the accessible progress value; without a percent it spins.
-function ProgressRing({ phase, percent }: { phase: string; percent: number | undefined }) {
-  const radius = 6;
-  const circumference = 2 * Math.PI * radius;
-  // The indeterminate arc: a short segment that the spin animation turns.
-  const shown = percent ?? 30;
-  return (
-    <span role="progressbar" aria-label={phase} aria-valuemin={0} aria-valuemax={100}
-      {...(percent === undefined ? {} : { "aria-valuenow": percent })}
-      className={percent === undefined ? "work-pill-ring is-indeterminate" : "work-pill-ring"}>
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        <circle className="work-pill-ring-track" cx="8" cy="8" r={radius} />
-        <circle className="work-pill-ring-fill" cx="8" cy="8" r={radius} transform="rotate(-90 8 8)"
-          strokeDasharray={circumference} strokeDashoffset={circumference * (1 - shown / 100)} />
-      </svg>
-    </span>
-  );
 }
 
 /// The file and elapsed time, the bar, then the measured rate with Cancel. The

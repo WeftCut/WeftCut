@@ -35,6 +35,7 @@ import { openProject, openProjectFile } from "./openProject";
 import { useFileOpenRequests } from "./fileOpenRequests";
 import { listenForPackJobs, usePackJobStore } from "../pack/packJobStore";
 import { UpdateButton } from '../app/UpdateButton';
+import { ProgressRing } from "@/components/ProgressRing";
 import { Button } from "@/components/ui/button";
 import {
   ChevronDownIcon,
@@ -198,6 +199,19 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   );
   const unpacking = usePackJobStore((s) => s.job);
   useEffect(listenForPackJobs, []);
+  // Main clears the run before it opens the unpacked folder, so the run this
+  // screen started is kept until its open settles: the card reads "Opening"
+  // instead of flicking back to Open project before the editor arrives.
+  const [lastRun, setLastRun] = useState<PackJobProgress | null>(null);
+  useEffect(() => {
+    if (!busy) setLastRun(null);
+    else if (unpacking) setLastRun(unpacking);
+  }, [busy, unpacking]);
+  const openWork: OpenWork | null = unpacking
+    ? { job: unpacking, opening: false }
+    : busy && lastRun !== null && ranToEnd(lastRun)
+      ? { job: lastRun, opening: true }
+      : null;
 
   const openRecent = useCallback(
     async (entry: RecentEntry) => {
@@ -309,18 +323,21 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
             <AppIcon icon={PlusIcon} size="display" strokeWidth={1.5} aria-hidden />
             <span className="startup-action-label">{t("startup.new_project")}</span>
           </button>
-          <button
-            type="button"
-            className="startup-action"
-            onClick={() => void openPicked()}
-            disabled={busy}
-          >
-            <AppIcon icon={FolderOpenIcon} size="display" strokeWidth={1.5} aria-hidden />
-            <span className="startup-action-label">{t("startup.open_project")}</span>
-          </button>
+          {openWork ? (
+            <UnpackCard work={openWork} />
+          ) : (
+            <button
+              type="button"
+              className="startup-action"
+              onClick={() => void openPicked()}
+              disabled={busy}
+            >
+              <AppIcon icon={FolderOpenIcon} size="display" strokeWidth={1.5} aria-hidden />
+              <span className="startup-action-label">{t("startup.open_project")}</span>
+            </button>
+          )}
         </div>
 
-        {unpacking && <UnpackProgress job={unpacking} />}
         {error && <p className="startup-error">{error}</p>}
 
         <section className="startup-recent" style={RECENT_BODY_STYLE}>
@@ -419,24 +436,45 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   );
 }
 
-/// The unpack the start screen started, with its Cancel: this screen has no
-/// work pill. Percent and bytes only, never a remaining-time estimate.
-function UnpackProgress({ job }: { job: PackJobProgress }) {
+/// The unpack in the Open project card, or the open that follows it.
+type OpenWork = { job: PackJobProgress; opening: boolean };
+
+/// A run that wrote every byte and was not cancelled goes on to open the folder
+/// (`unpack` in main/state/projectPack.ts reports the full total first).
+function ranToEnd(job: PackJobProgress): boolean {
+  return !job.cancelling && job.total > 0 && job.done >= job.total;
+}
+
+/// The unpack this screen started, in place of the Open project card it came
+/// from: the ring where the icon was and one line where the label was, so the
+/// panel keeps its height. This screen has no work pill, so Cancel is here.
+/// Percent and bytes only, never a remaining-time estimate.
+function UnpackCard({ work: { job, opening } }: { work: OpenWork }) {
   const { t } = useTranslation();
-  const percent = packPercent(job);
+  const percent = opening ? 100 : packPercent(job);
+  const phase = opening
+    ? t("startup.opening")
+    : job.cancelling
+      ? t("status_bar.work.pack_cancelling")
+      : percent === undefined
+        ? t("status_bar.work.unpacking")
+        : t("status_bar.work.unpacking_percent", { percent });
+  const line = !opening && !job.cancelling && job.total > 0 ? `${phase} · ${packBytes(t, job)}` : phase;
+  const name = t("startup.unpacking", { file: job.file });
   return (
-    <div className="startup-unpack" role="status" aria-label={t("startup.unpacking", { file: job.file })}>
-      <div className="startup-unpack-line">
-        <span className="startup-unpack-name">{t("startup.unpacking", { file: job.file })}</span>
-        <span>{job.cancelling ? t("status_bar.work.pack_cancelling") : packBytes(t, job)}</span>
-      </div>
-      <div className="progress-track" aria-hidden="true">
-        <div className="progress-fill" style={{ width: `${percent ?? 0}%` }} />
-      </div>
-      {!job.cancelling && (
-        <Button variant="secondary" size="sm" className="startup-unpack-cancel" onClick={cancelPackJob}>
-          {t("compute.ui.cancel")}
-        </Button>
+    <div className="startup-action startup-action-working" role="status" aria-label={name} title={name}>
+      <ProgressRing label={phase} percent={percent} />
+      <span className="startup-action-label">{line}</span>
+      {!opening && !job.cancelling && (
+        <button
+          type="button"
+          className="startup-action-cancel"
+          onClick={cancelPackJob}
+          aria-label={t("compute.ui.cancel")}
+          title={t("compute.ui.cancel")}
+        >
+          <AppIcon icon={XIcon} size="body" aria-hidden />
+        </button>
       )}
     </div>
   );
