@@ -146,9 +146,12 @@ describe("Open project", () => {
     await user.click(screen.getByRole("button", { name: "Open project…" }));
     await vi.waitFor(() => expect(ipc.projectUnpack).toHaveBeenCalled());
 
+    // Main sends the full total and the clear back to back: no render need land between them.
     const run = { job_id: "pack-1", kind: "unpack", file: "Example.wcpk", done: 3, total: 3, cancelling: false } as const;
-    act(() => usePackJobStore.setState({ job: run }));
-    act(() => usePackJobStore.setState({ job: null }));
+    act(() => {
+      usePackJobStore.setState({ job: run });
+      usePackJobStore.setState({ job: null });
+    });
     expect(screen.getByRole("status", { name: "Unpacking Example.wcpk" }).textContent).toContain("Opening…");
     expect(screen.queryByRole("button", { name: "Open project…" })).toBeNull();
 

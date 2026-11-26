@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
 } from "react";
@@ -202,15 +203,22 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   // Main clears the run before it opens the unpacked folder, so the run this
   // screen started is kept until its open settles: the card reads "Opening"
   // instead of flicking back to Open project before the editor arrives.
-  const [lastRun, setLastRun] = useState<PackJobProgress | null>(null);
+  // LANDMINE: read from the store's own transition, not a render. Main sends
+  // the full total and the clear back to back, and no render need land between.
+  const [endedRun, setEndedRun] = useState<PackJobProgress | null>(null);
+  const busyRef = useRef(busy);
+  useEffect(() => usePackJobStore.subscribe((now, before) => {
+    if (now.job === before.job) return;
+    setEndedRun(now.job === null && before.job !== null && busyRef.current ? before.job : null);
+  }), []);
   useEffect(() => {
-    if (!busy) setLastRun(null);
-    else if (unpacking) setLastRun(unpacking);
-  }, [busy, unpacking]);
+    busyRef.current = busy;
+    if (!busy) setEndedRun(null);
+  }, [busy]);
   const openWork: OpenWork | null = unpacking
     ? { job: unpacking, opening: false }
-    : busy && lastRun !== null && ranToEnd(lastRun)
-      ? { job: lastRun, opening: true }
+    : busy && endedRun !== null && ranToEnd(endedRun)
+      ? { job: endedRun, opening: true }
       : null;
 
   const openRecent = useCallback(
