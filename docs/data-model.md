@@ -919,6 +919,34 @@ pins `MIN_SCHEMA_VERSION + STEPS.length === SCHEMA_VERSION`, the step versions,
 and that every fixture upgrades and passes `parseProject` + `validate`. A bump
 without its step cannot be repaired later.
 
+### One bump per release
+
+A guideline, not a gate. Every released number stays in the chain, its step
+and fixture, for good, so a format users keep moves **at most one version past
+the last release**. Read the released number at the newest tag
+(`git describe --tags --abbrev=0`, then `git show <tag>:<file>`).
+
+- **Main equals the release**: bump once, with the step and the fixture above.
+  This opens the version.
+- **Main is already one ahead**: the version is open. Add the conversion to the
+  open step (its `from` is the released number) and hand-edit the open fixture
+  and its `fixtures/projects/README.md` entry. Leave the number alone.
+- The open step and fixture are editable until the release ships them; from
+  then on they are frozen like the rest.
+- A project main saved between two changes to the open version carries the new
+  number in an older shape. Write each conversion added to the open step so it
+  leaves input already in its target shape unchanged, and such a project still
+  opens.
+
+The same rule holds for every format users keep: the Motif store's `.format`,
+`PACK_FORMAT` (`.wcpk`), the Motif trust file, window geometry and the
+workspace layout. Regenerable caches (waveform peaks, conform files, Motif
+frame headers, the VLM prompt template) bump on every shape change, as often as
+needed: a mismatch rebuilds the cache, and a number shared by two shapes would
+read a stale one as valid.
+
+0.9.0 ships v6–v8 from one cycle; the rule counts from 0.9.0.
+
 ### Steps
 
 - **v1 → v2**: an Audio layer with `params.mute: true` becomes `enabled: false,

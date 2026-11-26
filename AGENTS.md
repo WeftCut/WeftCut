@@ -17,6 +17,7 @@ Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening an upstream issue or PR
 ## Design rules
 
 - **Know the cause before compensating for it.** When a change hides a symptom instead of removing it, first find what produces the symptom. If the cause is in this repo, fix it there; stacked compensations usually mean a design that needs changing. If it lies outside (an engine, driver or OS behaviour), keep the compensation and name the cause in a landmine comment (see `docs/comment-style.md`) and in the PR. Retries for transient failures, and fast paths or caches chosen by measurement, are design, not compensation.
+- **One format bump per release.** A format users keep (project schema, Motif store, `.wcpk`, trust, window and layout files) sits at most one version past the last release; a later change in the same cycle joins the open version's upgrade step. Caches bump on every shape change. Before changing any format version, read `docs/data-model.md` § One bump per release.
 
 ## Agent skills
 
