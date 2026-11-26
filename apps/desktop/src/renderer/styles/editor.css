@@ -2613,13 +2613,16 @@
 }
 /* A value that runs to several lines (a wrapped string prop, a path over its
    buttons) keeps its caption on its first line, not centred on the block. */
-.property-panel .prop-field:has(.motif-prop-text, .prop-motif-source, .prop-motif-version-gap) {
+.property-panel .prop-field:has(.motif-prop-text, .prop-motif-source, .prop-motif-version) {
   align-items: start;
 }
-/* The Version row's first line is its state and buttons: the caption centres
-   on that line, not on the note under it. */
-.property-panel .prop-field:has(.prop-motif-version-gap) > .prop-field-label {
-  padding-top: calc(4 * var(--ui-px));
+/* The Version row reads state, then the note on how the copy differs, then
+   its actions. Its first line is as tall as the caption's, so the small state
+   tag centres on the caption whatever follows it. */
+.prop-motif-version-state {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--font-size-body) * var(--line-height-body));
 }
 .prop-motif-version-gap {
   font-size: var(--font-size-caption);
@@ -2635,6 +2638,7 @@
 .prop-motif-version,
 .prop-motif-source {
   display: flex;
+  align-items: flex-start;
   flex: 1 1 auto;
   flex-direction: column;
   gap: calc(6 * var(--ui-px));

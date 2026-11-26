@@ -87,23 +87,27 @@ function VersionRow({
   return (
     <Field label={t("property_panel.motif_version")} hint={t("property_panel.motif_version_hint")} as="div">
       <div className="prop-motif-version">
-        <div className="prop-motif-actions">
+        <span className="prop-motif-version-state">
           <span className={`motif-card-status status-${state}`}>{t(`motif_picker.status.${state}`)}</span>
-          {take && (
-            <Button size="sm" disabled={busy} title={t(`motif_picker.${take}_hint`)} onClick={run(async () => {
-              const { unfinished } = await updateProjectMotif(row.id);
-              if (unfinished) setNotice(t("motif_picker.unfinished_moved", { path: unfinished }));
-            })}>
-              {t(`motif_picker.${take}_button`)}
-            </Button>
-          )}
-          {canSaveToLibrary(row) && (
-            <Button size="sm" disabled={busy} onClick={run(() => save.start(row.id))}>
-              {t("motif_picker.save_button")}
-            </Button>
-          )}
-        </div>
+        </span>
         {gap && <p className="prop-motif-version-gap">{t(`property_panel.motif_version_${gap.kind}`, gap)}</p>}
+        {(take || canSaveToLibrary(row)) && (
+          <div className="prop-motif-actions">
+            {take && (
+              <Button size="sm" disabled={busy} title={t(`motif_picker.${take}_hint`)} onClick={run(async () => {
+                const { unfinished } = await updateProjectMotif(row.id);
+                if (unfinished) setNotice(t("motif_picker.unfinished_moved", { path: unfinished }));
+              })}>
+                {t(`motif_picker.${take}_button`)}
+              </Button>
+            )}
+            {canSaveToLibrary(row) && (
+              <Button size="sm" disabled={busy} onClick={run(() => save.start(row.id))}>
+                {t("motif_picker.save_button")}
+              </Button>
+            )}
+          </div>
+        )}
         {err && <p className="settings-error">{err}</p>}
         {notice && <p className="prop-hint" role="status">{notice}</p>}
         {save.dialog}
