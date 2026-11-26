@@ -2458,7 +2458,7 @@ const zhCN: Resources = {
     media_usage_go: "跳转到该片段",
     locked: "锁定",
     duration: "时长",
-    multi_primary: "正在编辑主片段“{{label}}”——已选中 {{count}} 个片段；修改仅应用于此片段。",
+    multi_primary: "已选中 {{count}} 个片段，正在编辑其中一个。",
     text: "文本",
     content: "内容",
     font_family: "字体",

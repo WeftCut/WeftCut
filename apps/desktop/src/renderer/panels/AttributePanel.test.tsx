@@ -269,7 +269,8 @@ describe("AttributePanel Layer envelope", () => {
     setLayerSelection("layer-a1", ["layer-a1", "layer-x"]);
     renderPanel(track, "layer-a1");
 
-    expect(screen.getByText(/“voice\.wav” — 2 clips selected/)).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Label" }).getAttribute("placeholder")).toBe("voice.wav");
+    expect(screen.getByText("2 clips selected; editing one of them.")).toBeTruthy();
     expect(screen.queryByText("Source: voice.wav")).toBeNull();
     expect(screen.queryByText(/layer-a1/)).toBeNull();
   });
@@ -614,18 +615,16 @@ describe("AttributePanel local disclosures", () => {
 });
 
 describe("AttributePanel multi-selection", () => {
-  it("identifies which primary layer is edited when several layers are selected", () => {
+  it("says one of the selected clips is edited when several layers are selected", () => {
     setLayerSelection("layer-1", ["layer-1", "layer-2"]);
     renderPanel(colorTrack());
-    const note = screen.getByText(/changes apply only to this clip/);
-    expect(note.textContent).toContain("“Card”");
-    expect(note.textContent).toContain("2 clips selected");
+    expect(screen.getByText("2 clips selected; editing one of them.")).toBeTruthy();
   });
 
-  it("omits the primary-layer note for a single selection", () => {
+  it("omits the selection note for a single selection", () => {
     setLayerSelection("layer-1", ["layer-1"]);
     renderPanel(colorTrack());
-    expect(screen.queryByText(/changes apply only to this clip/)).toBeNull();
+    expect(screen.queryByText(/editing one of them/)).toBeNull();
   });
 });
 

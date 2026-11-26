@@ -2725,7 +2725,7 @@ const enUS = {
     media_usage_go: "Go to this clip",
     locked: "Locked",
     duration: "Duration",
-    multi_primary: "Editing primary clip “{{label}}” — {{count}} clips selected; changes apply only to this clip.",
+    multi_primary: "{{count}} clips selected; editing one of them.",
     text: "Text",
     content: "Content",
     font_family: "Font family",
