@@ -19,6 +19,8 @@ import { AppColorField, hexToRgba, rgbaToHex } from "../components/AppColorField
 import { AppNumberField } from "../components/AppNumberField";
 import { TextCorrectionDialog } from "../speech/TextCorrectionDialog";
 import { Button } from "../components/ui/button";
+import { AppIcon } from "../components/AppIcon";
+import { SpellCheckIcon } from "lucide-react";
 import { useProjectStore } from "../state/projectStore";
 import { ComputeJobStatus } from "../compute/ComputeJobStatus";
 import { useComputeJobsStore } from "../compute/computeJobsStore";
@@ -222,16 +224,12 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
   return (
     <section className="captions-panel" aria-label={t("captions.title")}>
       {projectId && correctionProject === projectId && <TextCorrectionDialog key={projectId} onClose={() => setCorrectionProject(null)} onMutated={onMutated} />}
-      <section className="captions-style-section" aria-label={t("captions.style_heading")}>
-        <div className="captions-toolbar-heading">
-          <h4>{t("captions.style_heading")}</h4>
-          <Button variant="outline" disabled={!projectId} onClick={() => setCorrectionProject(projectId ?? null)}>{t('text_correction.title')}</Button>
-        </div>
-        <div className="captions-style-fields">
+      {cues.length > 0 && (
+        // Every control here restyles the whole corpus, never the selected cue.
+        <div className="captions-toolbar" role="group" aria-label={t("captions.style_scope")} title={t("captions.style_scope")}>
           <div className="captions-style-control">
             <span className="captions-style-label">{t("captions.size_label")}</span>
             <AppNumberField
-              disabled={!cues.length}
               value={fontSize}
               step={1}
               min={6}
@@ -249,7 +247,6 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
           <div className="captions-style-control">
             <span className="captions-style-label">{t("captions.outline_label")}</span>
             <AppNumberField
-              disabled={!cues.length}
               value={outlineWidth}
               step={1}
               min={0}
@@ -264,39 +261,52 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
               }
             />
           </div>
-          <AppColorField
-            disabled={!cues.length}
-            value={rgbaToHex(color)}
-            ariaLabel={t("property_panel.color")}
-            onValueChange={(hex) => {
-              const next = hexToRgba(hex, color.a);
-              setColor(next);
-              if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
-              colorDebounceRef.current = setTimeout(() => {
-                void tryMutate(
-                  () => restyleCaptions({ color: next }).then(onMutated),
-                  "Restyle captions",
-                );
-              }, 250);
-            }}
-          />
+          <div className="captions-style-control">
+            <span className="captions-style-label">{t("captions.color_label")}</span>
+            <AppColorField
+              value={rgbaToHex(color)}
+              ariaLabel={t("property_panel.color")}
+              onValueChange={(hex) => {
+                const next = hexToRgba(hex, color.a);
+                setColor(next);
+                if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
+                colorDebounceRef.current = setTimeout(() => {
+                  void tryMutate(
+                    () => restyleCaptions({ color: next }).then(onMutated),
+                    "Restyle captions",
+                  );
+                }, 250);
+              }}
+            />
+          </div>
         </div>
-      </section>
+      )}
       <CaptionsComputeStatus comp={comp} />
       {cues.length === 0 ? (
         <p className="placeholder">{t("captions.empty")}</p>
       ) : (
-        <ul className="captions-list">
-          {cues.map((cue) => (
-            <CaptionCueRow
-              key={cue.layer.id}
-              cue={cue}
-              selected={cue.layer.id === selectedLayerId}
-              onActivate={activateCue}
-              onCommit={commitText}
-            />
-          ))}
-        </ul>
+        <>
+          {/* Text correction rewrites cue text, so it heads the cue list rather
+              than sharing the style row. */}
+          <div className="captions-list-header">
+            <span className="captions-count">{t("captions.count", { count: cues.length })}</span>
+            <Button variant="outline" disabled={!projectId} onClick={() => setCorrectionProject(projectId ?? null)}>
+              <AppIcon icon={SpellCheckIcon} size="body" aria-hidden="true" />
+              {t('text_correction.title')}
+            </Button>
+          </div>
+          <ul className="captions-list">
+            {cues.map((cue) => (
+              <CaptionCueRow
+                key={cue.layer.id}
+                cue={cue}
+                selected={cue.layer.id === selectedLayerId}
+                onActivate={activateCue}
+                onCommit={commitText}
+              />
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );

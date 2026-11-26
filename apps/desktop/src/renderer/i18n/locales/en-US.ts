@@ -2820,13 +2820,16 @@ const enUS = {
   captions: {
     title: "Captions",
     empty: "Import a subtitle file or transcribe a clip to create captions.",
-    style_heading: "Style",
-    // The two words beside the number fields; the aria-label below says what 0
-    // does, because the field has no visible way to.
+    style_scope: "Applies to all captions",
+    // The words beside the style fields; the outline aria-label below says what
+    // 0 does, because the field has no visible way to.
     size_label: "Size",
     outline_label: "Outline",
+    color_label: "Color",
     outline_width: "Outline width (px), 0 for none",
     seek_to: "Go to caption at {{timecode}}",
+    count_one: "{{count}} caption",
+    count_other: "{{count}} captions",
   },
   // Clip-compute jobs: transcribe_clip / describe_clip
   // (docs/performance-settings.md#admission-lanes, ADR 0121).

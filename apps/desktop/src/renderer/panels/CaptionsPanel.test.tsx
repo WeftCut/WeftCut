@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { act, cleanup, render, screen, fireEvent, within } from "@testing-library/react";
 import "../i18n";
 import { CaptionPanel } from "./CaptionPanel";
 import { useProjectStore } from "../state/projectStore";
@@ -120,6 +120,22 @@ describe("CaptionsPanel", () => {
     ).toBeTruthy();
   });
 
+  it("heads the cue list with its count and the Text correction button", () => {
+    apply([captionTrack("t1", [textLayer("L1", 1_000_000, "Hello"), textLayer("L2", 3_000_000, "World")])]);
+    render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
+    const header = document.querySelector(".captions-list-header") as HTMLElement;
+    expect(within(header).getByText("2 captions")).toBeTruthy();
+    expect(within(header).getByRole("button", { name: "Text correction" })).toBeTruthy();
+  });
+
+  // Nothing to restyle or correct yet, so the empty line stands alone.
+  it("hides the style controls and Text correction while a project has no captions", () => {
+    apply([]);
+    render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
+    expect(screen.queryByRole("group", { name: "Applies to all captions" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Text correction" })).toBeNull();
+  });
+
   it("lists caption cues as editable inputs", () => {
     seed();
     render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
@@ -176,11 +192,10 @@ describe("CaptionsPanel", () => {
     expect(updateLayerParams).toHaveBeenCalledWith("L1", { kind: "Text", content: "World" });
   });
 
-  it("renders a style section with size, outline and color controls", () => {
+  it("renders corpus-wide size, outline and color controls", () => {
     seed();
     render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
-    // Style heading visible
-    expect(screen.getByText("Style")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Applies to all captions" })).toBeTruthy();
     expect(screen.getByLabelText("Font size (px)")).toBeTruthy();
     expect(screen.getByLabelText("Outline width (px), 0 for none")).toBeTruthy();
     expect(screen.getByLabelText("Color")).toBeTruthy();
