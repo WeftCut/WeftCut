@@ -2096,6 +2096,9 @@ const zhCN: Resources = {
     place_or: " 或 ",
     hint_facts: "连接信息，请参照具体客户端文档填写对应值",
     http_unsupported: "{{host}} 只支持本地命令，请通过 stdio 配置连接。",
+    dsh_plugin_hint:
+      "在 DeepSeek Harness 里添加这个文件夹：插件 → 添加插件。WeftCut 会自动更新它。之前手动粘贴进 cordis.patch.yml 的 weftcut 配置请删掉。",
+    http_plugin: "{{host}} 通过上面的插件连接，由插件运行本机的 weftcut 程序。",
   },
   settings: {
     auto_install_updates_on_quit: '关闭应用时自动安装可用更新',

@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   AGENT_HOSTS,
+  dshPluginDir,
   httpCommand,
   httpSnippet,
   placePath,
@@ -40,7 +41,9 @@ describe('agent host snippets', () => {
   })
 
   it('every stdio snippet runs the profile binary with `mcp` and sets no environment', () => {
-    for (const host of AGENT_HOSTS) {
+    // The dsh plugin's entry is written by the app; its tests hold it
+    // (dshPluginInstall.test.ts).
+    for (const host of AGENT_HOSTS.filter((h) => h.format !== 'dsh-plugin')) {
       const text = stdioSnippet(host, stdioEntry(WIN_PATH))
       // The path as the format encodes it: JSON escapes, which TOML and YAML
       // double-quoted strings share; the facts block prints it raw.
@@ -68,6 +71,14 @@ describe('agent host snippets', () => {
       if (host.http) expect(text, host.id).toContain('Bearer secret')
       else expect(text, host.id).toBeNull()
     }
+  })
+
+  it('DeepSeek Harness is handed the plugin folder the app writes, by path', () => {
+    const dsh = AGENT_HOSTS.find((h) => h.format === 'dsh-plugin')!
+    const dir = 'C:\\Users\\u\\AppData\\Roaming\\WeftCut\\dsh-plugin'
+    expect(stdioSnippet(dsh, stdioEntry(WIN_PATH))).toBe(dir)
+    expect(dshPluginDir(WIN_PATH)).toBe(dir)
+    expect(stdioCommand(dsh, stdioEntry(WIN_PATH))).toBe(`dsh plugin --profile web add '${dir}'`)
   })
 
   it('host ids are unique, so tab ids and test lookups are too', () => {
@@ -108,7 +119,7 @@ const FENCE: Record<AgentConfigFormat, string> = {
   'codex-toml': 'toml',
   'claude-code-json': 'json',
   'mcp-servers-json': 'json',
-  'dsh-patch-yaml': 'yaml',
+  'dsh-plugin': 'text',
   facts: 'text',
 }
 
@@ -121,6 +132,7 @@ const SURFACE: Record<AgentHostSurface, string> = {
 const OS_NAME = { mac: 'macOS', windows: 'Windows', linux: 'Linux' } as const
 
 function docPlaces(host: AgentHost): string {
+  if (host.format === 'dsh-plugin') return 'none: a plugin WeftCut writes'
   if (host.places.length === 0) return "the client's own docs"
   return host.places
     .map((place) => {
@@ -144,6 +156,7 @@ function renderHostBlock(): string {
     return [
       `**${h.name}**`,
       '',
+      ...(h.format === 'dsh-plugin' ? ['The plugin folder, whose patch carries the stdio entry:', ''] : []),
       '```' + FENCE[h.format],
       stdioSnippet(h, DOC_ENTRY),
       '```',

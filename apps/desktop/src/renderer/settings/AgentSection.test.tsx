@@ -33,7 +33,7 @@ vi.mock("../ipc", async (importActual) => {
 
 import i18n from "../i18n";
 import { AgentSection } from "./AgentSection";
-import { AGENT_HOSTS, stdioSnippet } from "../../shared/agentHosts";
+import { AGENT_HOSTS, dshPluginDir, stdioSnippet } from "../../shared/agentHosts";
 
 /// No binary installed → the HTTP-primary layout (an unpackaged run before
 /// `build:cli`). Its skill state matches: a dev tree before `build:skills`
@@ -338,15 +338,27 @@ describe("AgentSection with the weftcut binary installed", () => {
   it("each tab's snippet is the table's, under a hint naming the host's file", async () => {
     render(<AgentSection />);
     await snippetText();
-    await userEvent.click(screen.getByRole("tab", { name: "DeepSeek Harness" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Cursor" }));
     const panel = await screen.findByRole("tabpanel");
-    const host = AGENT_HOSTS.find((h) => h.name === "DeepSeek Harness")!;
+    const host = AGENT_HOSTS.find((h) => h.name === "Cursor")!;
     expect(panel.querySelector("pre")?.textContent).toBe(
       stdioSnippet(host, { command: INFO_CLI.cli_path, args: ["mcp"] }),
     );
-    expect(panel.textContent).toContain("Paste into ~/.dsh/cordis.patch.yml");
-    // No terminal command writes a Harness entry.
+    expect(panel.textContent).toContain("Paste into ~/.cursor/mcp.json");
+    // No terminal command writes a Cursor entry.
     expect(await cliText()).toBeNull();
+  });
+
+  it("the DeepSeek Harness tab hands over the plugin folder the app writes, and the command that adds it", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    await userEvent.click(screen.getByRole("tab", { name: "DeepSeek Harness" }));
+    const panel = await screen.findByRole("tabpanel");
+    const dir = dshPluginDir(INFO_CLI.cli_path);
+    expect(panel.querySelector("pre")?.textContent).toBe(dir);
+    expect(panel.textContent).toContain("Plugins → Add plugin");
+    expect(await cliText()).toContain(`dsh plugin --profile web add`);
+    expect(await cliText()).toContain(dir);
   });
 
   it("the Generic tab shows the command and its argument with no config wrapper", async () => {

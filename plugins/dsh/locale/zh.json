@@ -1,6 +1,0 @@
-{
-  "meta": {
-    "title": "WeftCut 侧边预览",
-    "description": "在右侧栏标签页里显示 WeftCut 的侧边预览：时间线、播放控制、导出进度，按需显示剪辑的实时画面。agent 调用 open_side_preview 时自动打开，工具行上也有“打开”按钮。需要 WeftCut 正在运行，且它的 MCP 服务器以 weftcut 这个名字接入（在 WeftCut 里：设置 > Agent > DeepSeek Harness）。页面只读项目、控制播放，不修改剪辑。"
-  }
-}

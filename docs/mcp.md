@@ -162,7 +162,7 @@ and its expected side is the text to paste.
 | ChatGPT / Codex | `~/.codex/config.toml` | yes | side panel |
 | Claude Code | `~/.claude.json`; project: `.mcp.json` | yes | side browser |
 | Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\claude_desktop_config.json`, Linux `~/.config/Claude/claude_desktop_config.json` | no | none |
-| DeepSeek Harness | `~/.dsh/cordis.patch.yml` | yes | side browser |
+| DeepSeek Harness | none: a plugin WeftCut writes | no | side browser |
 | Cursor | `~/.cursor/mcp.json`; project: `.cursor/mcp.json` | yes | side browser |
 | Generic | the client's own docs | yes | none |
 
@@ -214,16 +214,13 @@ Or in a terminal: `claude mcp remove weftcut -s user; claude mcp add weftcut -s 
 
 **DeepSeek Harness**
 
-```yaml
-- insert:
-    - id: mcp-weftcut
-      name: '@deepseek-ai/dsh-mcp-client'
-      config:
-        serverName: weftcut
-        transport: stdio
-        command: "<userData>/cli/weftcut"
-        args: ["mcp"]
+The plugin folder, whose patch carries the stdio entry:
+
+```text
+<userData>/dsh-plugin
 ```
+
+Or in a terminal: `dsh plugin --profile web add '<userData>/dsh-plugin'`
 
 **Cursor**
 
@@ -262,20 +259,34 @@ two manifests' name, version and description equal, and fails when the
 plugin's files change while `version` does not: `content.lock.json` maps each
 version to a hash of the files, and a change needs a new version and entry.
 
-**The DeepSeek Harness bundle** (`plugins/dsh/`) shows the companion page in
-a Harness right-sidebar tab instead of its side browser. It is plain files the
-Harness loads as they are (a `cordis.patch.yml` row and a browser module), no
-build step, and it connects nothing: the server is still the entry above,
-whose `serverName: weftcut` gives the wire name its tool row is keyed to,
-`mcp__weftcut__open_side_preview`. A fresh result of that call opens the tab;
-the row's Open button and the sidebar's new-tab page open it again. The tab
-frames the link in a frame sandboxed to scripts only (see Sandboxed frames
-below) and unloads it while out of view. The link is kept in the Harness
-page's local storage, since a tab's parameters do not survive a reload.
-`main/mcp/dshBundle.test.ts` holds the row's tool name to the server name the
-entry writes, its link pattern to the documented link shape, and the manifest
-to what dsh validates. It is not published: install it from a checkout with
-`dsh plugin --profile <profile> add <absolute path to plugins/dsh>`.
+**The DeepSeek Harness plugin** (ADR 0183) is what the DeepSeek Harness tab
+hands over instead of a config entry. At every start the app writes it to
+`<userData>/dsh-plugin/` (`main/mcp/dshPluginInstall.ts`), rewriting only the
+files whose content changed: a generated `package.json` at the app's version, a
+generated `cordis.patch.yml`, and plain JS the Harness loads as it is from
+`apps/desktop/dsh-plugin/`, bundled into main at build time. The user adds the
+folder once (`dsh plugin --profile <profile> add <folder>`, or Plugins → Add
+plugin); the Harness links it, so later starts update it in place.
+
+- **The server.** The patch's `weftcut-mcp` row is the stdio entry, `serverName:
+  weftcut`, running the profile's binary. A profile that still holds the pasted
+  `mcp-weftcut` row from older versions loads both; the second `weftcut` server
+  refuses its name and the first keeps serving.
+- **The tab.** A right-sidebar page tab frames the companion page, sandboxed to
+  scripts only (see Sandboxed frames below), and only while the tab is in
+  view: the Harness keeps a collapsed sidebar's tabs mounted. The link is kept
+  in the Harness page's local storage, since a tab's parameters do not survive
+  a reload. The tab is on the sidebar's new-tab page as WeftCut side preview.
+- **Opening it.** A fresh result of `mcp__weftcut__open_side_preview` opens the
+  tab, and its row keeps an Open button. With no link known, the tab shows
+  Open WeftCut, which runs `/weftcut`: the plugin's Host half calls
+  `open_side_preview` through the Harness's tool registry, with no model turn;
+  when the app is closed it calls `launch_weftcut` and retries until the app's
+  tools arrive (30 s bound). The command answers `WeftCut side preview: <link>`,
+  which the tab, and a `/weftcut` typed in the composer, open.
+- `main/mcp/dshPluginInstall.test.ts` holds the folder, the patch's command,
+  rewrite-only-on-change, the names the tool row and command call the tools
+  by, the link pattern, and the manifest dsh validates.
 
 ### Companion page
 
