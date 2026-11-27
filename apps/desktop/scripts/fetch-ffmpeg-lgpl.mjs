@@ -31,21 +31,36 @@ import { execSync } from 'node:child_process'
 import { cpus, tmpdir } from 'node:os'
 import { assertMacPortable, macMinimumSystemVersion } from './macho-portability.mjs'
 
+// Win/Linux: one BtbN/FFmpeg-Builds release. Pin a month-end `autobuild-*`
+// tag: BtbN deletes its daily releases after about two weeks and keeps the
+// month-end ones. LANDMINE — keep BTBN_TAG and BTBN_BUILD equal to the pin in
+// fetch-ffmpeg.mjs; each script holds its own copy because CI keys each ffmpeg
+// cache on that one script's hash, so a shared module would leave a bumped pin
+// behind a stale cache.
+// Bump: pick the newest month-end tag in `gh release list -R BtbN/FFmpeg-Builds`,
+// take the n8.1 build name from its asset names, and copy the
+// win64-lgpl-shared and linux64-lgpl-shared lines of its checksums.sha256 into
+// BUILDS (the linux64-gpl line goes to fetch-ffmpeg.mjs).
+const BTBN_TAG = 'autobuild-2026-10-31-12-59'
+const BTBN_BUILD = 'n8.1.3-27-g8dca1586f4'
+
 // n8.1 matches the crate pin ffmpeg-next = "8.1" (decode/Cargo.toml). The
-// win/linux descriptors name the BtbN asset, the archive's top dir, the
-// transient banner exe, and which subdir holds the runtime shared libraries;
-// mac names its pinned source tarball instead (see below).
+// win/linux descriptors name the BtbN asset and its SHA-256, the archive's top
+// dir, the transient banner exe, and which subdir holds the runtime shared
+// libraries; mac names its pinned source tarball instead (see below).
 const BUILDS = {
   win: {
-    asset: 'ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip',
-    inner: 'ffmpeg-n8.1-latest-win64-lgpl-shared-8.1',
+    asset: `ffmpeg-${BTBN_BUILD}-win64-lgpl-shared-8.1.zip`,
+    inner: `ffmpeg-${BTBN_BUILD}-win64-lgpl-shared-8.1`,
+    sha256: '5cef7bc48e513f3cee7c881e8b2999d835541edb1846c3e89443a67f8f8556ab',
     exe: 'ffmpeg.exe',
     exes: ['ffmpeg.exe', 'ffprobe.exe', 'ffplay.exe'],
     libDir: 'bin', // *.dll live in bin/ (also the PATH-prepend dir at runtime)
   },
   linux: {
-    asset: 'ffmpeg-n8.1-latest-linux64-lgpl-shared-8.1.tar.xz',
-    inner: 'ffmpeg-n8.1-latest-linux64-lgpl-shared-8.1',
+    asset: `ffmpeg-${BTBN_BUILD}-linux64-lgpl-shared-8.1.tar.xz`,
+    inner: `ffmpeg-${BTBN_BUILD}-linux64-lgpl-shared-8.1`,
+    sha256: '493e89a48da02b9a7d217b60f7f60c3c917c9bed73459d8a106e5e987da082ef',
     exe: 'ffmpeg',
     exes: ['ffmpeg', 'ffprobe', 'ffplay'],
     libDir: 'lib', // *.so* live in lib/ (resolved at runtime via the .node's RUNPATH)
@@ -113,7 +128,7 @@ const LIBVA = {
 
 const MIN_ARCHIVE_BYTES = 10 * 1024 * 1024
 const MAX_ATTEMPTS = 3
-const RELEASE = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest'
+const RELEASE = `https://github.com/BtbN/FFmpeg-Builds/releases/download/${BTBN_TAG}`
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const destOf = (osKey) => join(HERE, '..', 'resources', 'ffmpeg-lgpl', osKey)
@@ -421,6 +436,16 @@ function main() {
       rmSync(dest, { recursive: true, force: true })
     }
   }
+  // A tree staged from an archive other than the pinned one is fetched again,
+  // so a bumped pin takes effect on an existing checkout too.
+  if (existsSync(manifestPath)) {
+    const staged = JSON.parse(readFileSync(manifestPath, 'utf8')).asset
+    const pinned = cfg.asset ?? cfg.source.asset
+    if (staged !== pinned) {
+      console.log(`ffmpeg-lgpl was staged from ${staged}; fetching the pinned ${pinned}.`)
+      rmSync(dest, { recursive: true, force: true })
+    }
+  }
   if (existsSync(manifestPath)) {
     const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
     assertLgplBanner(m.configuration) // re-assert even on the cached copy
@@ -451,10 +476,15 @@ function main() {
     }
     let size = 0
     try { size = statSync(archivePath).size } catch { /* missing */ }
-    if (size >= MIN_ARCHIVE_BYTES) break
-    if (attempt === MAX_ATTEMPTS) throw new Error(`download invalid (${size} bytes) from ${url}`)
+    const got = size >= MIN_ARCHIVE_BYTES ? sha256Of(archivePath) : null
+    if (got === cfg.sha256) break
+    const msg = got
+      ? `ffmpeg-lgpl: sha256 mismatch for ${cfg.asset}\n  expected ${cfg.sha256}\n  got      ${got}`
+      : `download invalid (${size} bytes) from ${url}`
+    if (attempt === MAX_ATTEMPTS) throw new Error(msg)
+    console.warn(`Warning: ${msg} — will retry`)
   }
-  const sha256 = createHash('sha256').update(readFileSync(archivePath)).digest('hex')
+  const sha256 = cfg.sha256
   console.log('Extracting bin/ + include/ + lib/ ...')
   // `tar -xf` auto-detects the format: GNU tar reads .tar.xz on Linux, bsdtar
   // (Windows 10+'s `tar`) reads .zip. Each OS only ever extracts its own asset.
