@@ -121,8 +121,8 @@ function keyframeTimestamps(file: string): number[] | null {
   if (r.status !== 0) throw new Error(`ffprobe keyframes failed: ${r.stderr ?? ''}`)
   return r.stdout
     .trim()
-    // ffprobe 8.x terminates each csv row with a trailing comma ("0.000000,");
-    // 7.1 does not. Split on commas too so both sidecar generations parse.
+    // A frame carrying side data gets an empty extra csv section, so its row
+    // reads "0.000000,". Split on commas too so that row still parses.
     .split(/[\s,]+/)
     .map(Number)
     .filter((t) => !Number.isNaN(t))

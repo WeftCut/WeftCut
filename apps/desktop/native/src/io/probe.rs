@@ -196,12 +196,20 @@ pub async fn probe_max_keyframe_gap_secs_scoped(
     if !output.status.success() {
         return None;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let ts: Vec<f64> = stdout
-        .lines()
-        .filter_map(|l| l.trim().parse::<f64>().ok())
-        .collect();
+    let ts = keyframe_times_from_csv(&String::from_utf8_lossy(&output.stdout));
     max_keyframe_gap_secs(&ts, KEYFRAME_SCAN_SECONDS)
+}
+
+/// Keyframe timestamps from `-show_entries frame=pts_time -of csv=p=0`.
+/// Only a row's first field is the time: a frame that carries side data
+/// (the first keyframe of a typical H.264 stream holds its SEI) gets an empty
+/// `side_data_list` section appended, so its row reads `0.000000,`. Parsing
+/// the whole row drops that keyframe, and losing t=0 shrinks the first gap.
+fn keyframe_times_from_csv(stdout: &str) -> Vec<f64> {
+    stdout
+        .lines()
+        .filter_map(|l| l.split(',').next()?.trim().parse::<f64>().ok())
+        .collect()
 }
 
 /// Largest gap (seconds) between consecutive keyframe timestamps.
@@ -1192,5 +1200,14 @@ mod tests {
         assert!((max_keyframe_gap_secs(&dense, 12.0).unwrap() - 0.2).abs() < 1e-9);
         // Sparse / unsorted: reports the LARGEST consecutive gap (~6 s).
         assert!((max_keyframe_gap_secs(&[6.0, 0.0], 12.0).unwrap() - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn keyframe_csv_keeps_a_row_with_side_data() {
+        // ffprobe's csv for a first keyframe carrying side data ends in an
+        // empty section; that keyframe still opens the first gap.
+        let times = keyframe_times_from_csv("0.000000,\n5.000000\n6.000000\r\n7.000000\n");
+        assert_eq!(times, vec![0.0, 5.0, 6.0, 7.0]);
+        assert_eq!(max_keyframe_gap_secs(&times, 12.0), Some(5.0));
     }
 }
