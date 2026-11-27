@@ -16,10 +16,11 @@
 //! entries carry no word but say where the cue text has a space; `audio_event`
 //! entries are dropped.
 //!
-//! Scribe returns one flat word list, so cues are cut the way the FunASR
-//! parser cuts its own ([`split_into_cues`]) — at silences, then by span and
-//! width — with a width that counts a CJK character as two columns, since
-//! Scribe's output is as often spaced text as CJK.
+//! Scribe returns one flat word list. Cues are cut at its sentence ends, then
+//! within a sentence the way the FunASR parser cuts its own
+//! ([`split_into_cues`]) — at silences, then by span and width — with a width
+//! that counts a CJK character as two columns, since Scribe's output is as
+//! often spaced text as CJK.
 
 use serde::Deserialize;
 
@@ -50,7 +51,10 @@ impl TranscriptParser for ElevenLabsParser {
         } else {
             WordTiming::Exact
         };
-        let mut segments = split_into_cues(words, &CUE_LIMITS);
+        let mut segments: Vec<_> = sentences(words)
+            .into_iter()
+            .flat_map(|sentence| split_into_cues(sentence, &CUE_LIMITS))
+            .collect();
         // The split keeps every word once and in order, so the flags line up.
         let mut at = 0;
         for seg in &mut segments {
@@ -233,6 +237,33 @@ fn is_opening(c: char) -> bool {
             | '〔'
             | '〖'
     )
+}
+
+/// Marks that end a sentence.
+fn ends_sentence(c: char) -> bool {
+    matches!(c, '.' | '!' | '?' | '…' | '。' | '！' | '？' | '｡')
+}
+
+/// The word list cut after every word whose text ends a sentence, closing
+/// quotes and brackets aside (`slow。”`). Unlike FunASR, Scribe punctuates, so
+/// a cue never has to run across a sentence end, nor break inside a sentence
+/// that fits, wherever the widest pause in a run falls.
+fn sentences(words: Vec<Word>) -> Vec<Vec<Word>> {
+    let mut out = vec![Vec::new()];
+    for w in words {
+        let ends = w
+            .text
+            .chars()
+            .rev()
+            .find(|&c| !matches!(c, '”' | '’' | '"' | '\'' | ')' | '）' | '」' | '』' | '»'))
+            .is_some_and(ends_sentence);
+        out.last_mut().expect("never empty").push(w);
+        if ends {
+            out.push(Vec::new());
+        }
+    }
+    out.retain(|s| !s.is_empty());
+    out
 }
 
 /// Display columns: a CJK character or full-width mark is two.
@@ -420,7 +451,8 @@ mod tests {
             ["It", "was", "slow。”。", "Finally,", "“done"]
         );
         assert_eq!(words[3].t_start_us, 900_000);
-        assert_eq!(t.segments[0].text, "It was slow。”。Finally, “done");
+        let cues: Vec<&str> = t.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(cues, ["It was slow。”。", "Finally, “done"]);
         assert_well_formed(&t.segments);
     }
 
@@ -505,6 +537,30 @@ mod tests {
         assert_well_formed(&t.segments);
         assert_eq!(columns("你好"), 4);
         assert_eq!(columns("hi，"), 4);
+    }
+
+    #[test]
+    fn cues_break_at_sentence_ends_not_inside_a_sentence() {
+        // No pause reaches the silence threshold, and the CJK sentence's
+        // widest gap falls before its last character.
+        let t = parse(
+            r#"{"words":[
+            {"text":"Again.","start":0.0,"end":0.4,"type":"word"},
+            {"text":"然","start":0.45,"end":0.6,"type":"word"},
+            {"text":"后","start":0.6,"end":0.75,"type":"word"},
+            {"text":"压","start":0.75,"end":0.9,"type":"word"},
+            {"text":"低","start":0.9,"end":1.05,"type":"word"},
+            {"text":"一","start":1.05,"end":1.2,"type":"word"},
+            {"text":"点","start":1.45,"end":1.6,"type":"word"},
+            {"text":"。","start":1.6,"end":2.4,"type":"word"},
+            {"text":"Done","start":2.45,"end":2.7,"type":"word"},
+            {"text":" ","type":"spacing"},
+            {"text":"now.”","start":2.75,"end":3.0,"type":"word"},
+            {"text":"Next","start":3.05,"end":3.3,"type":"word"}]}"#,
+        );
+        let cues: Vec<&str> = t.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(cues, ["Again.", "然后压低一点。", "Done now.”", "Next"]);
+        assert_well_formed(&t.segments);
     }
 
     #[test]
