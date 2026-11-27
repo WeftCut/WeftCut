@@ -1965,8 +1965,9 @@ const enUS = {
       "{{count}} frame late during playback — the render loop stalled",
     late_frames_other:
       "{{count}} frames late during playback — the render loop stalled",
-    dropped_frames_cause: "Frames dropped during playback — decoding fell behind",
-    late_frames_cause: "Frames late during playback — the render loop stalled",
+    dropped_frames_cause: "Dropped frames (decoding fell behind)",
+    late_frames_cause: "Late frames (the render loop stalled)",
+    dropped_late_frames_cause: "Dropped (decoding fell behind) / late (the render loop stalled)",
   },
   export: {
     cancelling: "Cancelling export…",

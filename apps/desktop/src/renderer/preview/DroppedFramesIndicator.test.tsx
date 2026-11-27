@@ -27,15 +27,14 @@ describe("the dropped/late indicator's tooltip", () => {
     expect(indicator.title).toBe(tooltip);
   });
 
-  it("names each cause that occurred", () => {
+  it.each([
+    [5, 0, "transport.dropped_frames_cause"],
+    [0, 2, "transport.late_frames_cause"],
+    [5, 2, "transport.dropped_late_frames_cause"],
+  ] as const)("with %i dropped and %i late, names the causes behind the numbers shown", (dropped, late, key) => {
     render(<DroppedFramesIndicator />);
-    report(5, 0);
-    const indicator = screen.getByRole("status");
-    expect(indicator.title).toBe(i18n.t("transport.dropped_frames_cause"));
-    report(5, 2);
-    expect(indicator.title).toBe(
-      `${i18n.t("transport.dropped_frames_cause")} · ${i18n.t("transport.late_frames_cause")}`,
-    );
+    report(dropped, late);
+    expect(screen.getByRole("status").title).toBe(i18n.t(key));
   });
 
   it("keeps the counts in the accessible name", () => {
