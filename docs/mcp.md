@@ -262,6 +262,20 @@ two manifests' name, version and description equal, and fails when the
 plugin's files change while `version` does not: `content.lock.json` maps each
 version to a hash of the files, and a change needs a new version and entry.
 
+**The DeepSeek Harness bundle** (`plugins/dsh/`) shows the companion page in
+a Harness right-sidebar tab instead of its side browser. It is plain files the
+Harness loads as they are (a `cordis.patch.yml` row and a browser module), no
+build step, and it connects nothing: the server is still the entry above,
+whose `serverName: weftcut` gives the wire name its tool row is keyed to,
+`mcp__weftcut__open_side_preview`. A fresh result of that call opens the tab;
+the row's Open button and the sidebar's new-tab page open it again. The tab
+frames the link in a frame sandboxed to scripts only (see Sandboxed frames
+below) and unloads it while out of view. The link is kept in the Harness
+page's local storage, since a tab's parameters do not survive a reload.
+`main/mcp/dshBundle.test.ts` holds the tool name, the link format and the
+manifest to the app's. Install it by path or package name:
+`dsh plugin --profile <profile> add <spec>`, or Plugins → Add plugin.
+
 ### Companion page
 
 The side preview: a page beside the chat, for a desktop host's built-in browser: the project's

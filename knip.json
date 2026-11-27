@@ -5,7 +5,8 @@
   // not dead code — so we don't flag them. Keeps the report to actionable signal.
   "ignoreExportsUsedInFile": true,
   // Throwaway prototypes, each run by hand on its own; nothing imports them.
-  "ignore": ["poc/**"],
+  // The DeepSeek Harness bundle, whose files dsh loads from its package.json.
+  "ignore": ["poc/**", "plugins/dsh/**"],
   // Host tools the scripts and tests spawn, not npm packages: the bundled or
   // system ffmpeg, the Go and C toolchains, and OS utilities.
   "ignoreBinaries": [

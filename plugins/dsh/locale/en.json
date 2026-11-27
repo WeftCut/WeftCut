@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WeftCut side preview",
+    "description": "Shows WeftCut's side preview in a right-sidebar tab: the timeline, player controls, export progress and, on request, a live picture of the edit. The tab opens when the agent calls open_side_preview, and the tool row has an Open button. Needs WeftCut running with its MCP server added under the name weftcut (in WeftCut: Settings > Agent > DeepSeek Harness). The page reads the project and drives the player; it never edits."
+  }
+}
