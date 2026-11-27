@@ -73,11 +73,15 @@ window.__ModuleLoader__.load({
       try { localStorage.setItem(LAST_LINK, url) } catch {}
     }
 
-    // Not `keepMounted`: a tab out of view unmounts its frame, and with it the
-    // page's picture stream, which an off-screen frame would otherwise keep.
+    // The frame exists only while the tab is in view. dsh keeps a body mounted
+    // in a collapsed sidebar, and a hidden frame's page still counts as open
+    // (document.hidden follows the Harness window), so the app would keep
+    // feeding it state and, if asked for, the picture.
     function Body({ useTabInfo, t }) {
       const { tab } = useTabInfo()
-      const url = tab.navigation.params?.url ?? readLast()
+      if (!tab.visible) return null
+      const param = tab.navigation.params?.url
+      const url = typeof param === 'string' && LINK.test(param) ? param : readLast()
       if (url === undefined) {
         return h('div', {
           style: { padding: 16, color: 'var(--dsw-alias-label-secondary)', font: 'inherit' },

@@ -272,9 +272,10 @@ the row's Open button and the sidebar's new-tab page open it again. The tab
 frames the link in a frame sandboxed to scripts only (see Sandboxed frames
 below) and unloads it while out of view. The link is kept in the Harness
 page's local storage, since a tab's parameters do not survive a reload.
-`main/mcp/dshBundle.test.ts` holds the tool name, the link format and the
-manifest to the app's. Install it by path or package name:
-`dsh plugin --profile <profile> add <spec>`, or Plugins → Add plugin.
+`main/mcp/dshBundle.test.ts` holds the row's tool name to the server name the
+entry writes, its link pattern to the documented link shape, and the manifest
+to what dsh validates. It is not published: install it from a checkout with
+`dsh plugin --profile <profile> add <absolute path to plugins/dsh>`.
 
 ### Companion page
 

@@ -42,18 +42,18 @@ describe('plugins/dsh', () => {
     expect(constant('TOOL')).toBe(`'mcp__${serverName}__${OPEN_COMPANION}'`)
   })
 
-  it('frames the link the app hands out and nothing else', () => {
+  it('frames links of the documented shape, with a real page key, and nothing else', () => {
     const literal = /^\/(.+)\/$/.exec(constant('LINK'))![1]!
     const link = new RegExp(literal)
     const dir = mkdtempSync(path.join(os.tmpdir(), 'dsh-bundle-'))
     try {
-      // The app's link: the MCP listener's /companion with the page key in the
-      // fragment (docs/mcp.md § Companion page).
+      // The shape docs/mcp.md § Companion page gives: the MCP listener's
+      // /companion with the page key in the fragment. The port is any port.
       const key = loadOrCreatePageKey(dir)
-      expect(link.test(`http://127.0.0.1:37347/companion#k=${key}`)).toBe(true)
-      expect(link.test(`http://127.0.0.1:37347/mcp#k=${key}`)).toBe(false)
-      expect(link.test(`http://example.com:37347/companion#k=${key}`)).toBe(false)
-      expect(link.test(`http://127.0.0.1:37347/companion#k=${key}&x=javascript:`)).toBe(false)
+      expect(link.test(`http://127.0.0.1:1/companion#k=${key}`)).toBe(true)
+      expect(link.test(`http://127.0.0.1:1/mcp#k=${key}`)).toBe(false)
+      expect(link.test(`http://example.com:1/companion#k=${key}`)).toBe(false)
+      expect(link.test(`http://127.0.0.1:1/companion#k=${key}&x=javascript:`)).toBe(false)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

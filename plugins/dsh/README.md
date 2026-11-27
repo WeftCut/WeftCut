@@ -10,8 +10,9 @@ never edits.
 1. In WeftCut, open Settings > Agent > DeepSeek Harness and add the entry it
    shows to `~/.dsh/cordis.patch.yml`. This bundle does not connect WeftCut; it
    expects the server under the name `weftcut`, as that entry writes it.
-2. Install this bundle in DeepSeek Harness: Plugins > Add plugin, or
-   `dsh plugin --profile <profile> add <spec>`.
+2. Install this bundle in DeepSeek Harness from a checkout of this
+   repository: `dsh plugin --profile <profile> add <absolute path to plugins/dsh>`,
+   or Plugins > Add plugin with that path.
 3. Ask the agent to open the preview. When it calls `open_side_preview`, the
    tab opens beside the chat. The tool's row has an Open button that opens it
    again, and the sidebar's new-tab page lists it as WeftCut side preview.
