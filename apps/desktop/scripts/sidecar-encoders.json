@@ -1,0 +1,46 @@
+{
+  "win32": [
+    { "need": "h264 (nvenc)", "anyOf": ["h264_nvenc"] },
+    { "need": "h264 (qsv)", "anyOf": ["h264_qsv"] },
+    { "need": "h264 (amf)", "anyOf": ["h264_amf"] },
+    { "need": "h264 (software)", "anyOf": ["libx264"] },
+    { "need": "hevc (nvenc)", "anyOf": ["hevc_nvenc"] },
+    { "need": "hevc (qsv)", "anyOf": ["hevc_qsv"] },
+    { "need": "hevc (amf)", "anyOf": ["hevc_amf"] },
+    { "need": "hevc (software)", "anyOf": ["libx265"] },
+    { "need": "av1 (nvenc)", "anyOf": ["av1_nvenc"] },
+    { "need": "av1 (qsv)", "anyOf": ["av1_qsv"] },
+    { "need": "av1 (amf)", "anyOf": ["av1_amf"] },
+    { "need": "av1 (software)", "anyOf": ["libsvtav1", "libaom-av1"] },
+    { "need": "prores (software)", "anyOf": ["prores_ks"] },
+    { "need": "dnxhr (software)", "anyOf": ["dnxhd"] },
+    { "need": "aac audio", "anyOf": ["aac"] },
+    { "need": "opus audio", "anyOf": ["libopus"] }
+  ],
+  "darwin": [
+    { "need": "h264 (videotoolbox)", "anyOf": ["h264_videotoolbox"] },
+    { "need": "h264 (software)", "anyOf": ["libx264"] },
+    { "need": "hevc (videotoolbox)", "anyOf": ["hevc_videotoolbox"] },
+    { "need": "hevc (software)", "anyOf": ["libx265"] },
+    { "need": "av1 (software)", "anyOf": ["libsvtav1", "libaom-av1"] },
+    { "need": "prores (software)", "anyOf": ["prores_ks"] },
+    { "need": "dnxhr (software)", "anyOf": ["dnxhd"] },
+    { "need": "aac audio", "anyOf": ["aac"] },
+    { "need": "opus audio", "anyOf": ["libopus"] }
+  ],
+  "linux": [
+    { "need": "h264 (nvenc)", "anyOf": ["h264_nvenc"] },
+    { "need": "h264 (vaapi)", "anyOf": ["h264_vaapi"] },
+    { "need": "h264 (software)", "anyOf": ["libx264"] },
+    { "need": "hevc (nvenc)", "anyOf": ["hevc_nvenc"] },
+    { "need": "hevc (vaapi)", "anyOf": ["hevc_vaapi"] },
+    { "need": "hevc (software)", "anyOf": ["libx265"] },
+    { "need": "av1 (nvenc)", "anyOf": ["av1_nvenc"] },
+    { "need": "av1 (vaapi)", "anyOf": ["av1_vaapi"] },
+    { "need": "av1 (software)", "anyOf": ["libsvtav1", "libaom-av1"] },
+    { "need": "prores (software)", "anyOf": ["prores_ks"] },
+    { "need": "dnxhr (software)", "anyOf": ["dnxhd"] },
+    { "need": "aac audio", "anyOf": ["aac"] },
+    { "need": "opus audio", "anyOf": ["libopus"] }
+  ]
+}

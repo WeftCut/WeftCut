@@ -61,6 +61,14 @@ AAC muxes into any container; Opus only into `mkv` (Opus-in-MP4/MOV playback
 is unreliable in Chromium). Audio-only output is `.m4a` (AAC) or `.mka` (Opus).
 Audio `sampleRate`/`channels` of `null` follow the composition.
 
+The packaged ffmpeg sidecar must carry every encoder export can select on its
+OS, or packaging fails, naming the missing ones
+(`scripts/after-pack-encoders.mjs`). That means each hardware adapter the OS
+probes, one of each codec's software adapters (AV1: libsvtav1 or libaom-av1),
+`aac` and `libopus`. The list is `scripts/sidecar-encoders.json`; a Rust test
+in `export/encoder_registry.rs` rebuilds it from the catalog, so the two
+cannot drift.
+
 ### Rate control
 
 `rateMode` selects one of two exclusive shapes; Rust models it as the

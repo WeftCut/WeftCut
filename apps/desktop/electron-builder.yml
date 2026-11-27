@@ -19,7 +19,7 @@ publish:
   releaseType: release
 # Pack-time gates, re-asserted from the packaged files rather than from what the
 # supply steps believed they staged: both ffmpeg lanes' licensing compliance, the
-# presence of the agent skill bundle, the `weftcut` binary with its licence, the
+# sidecar's export encoders, the presence of the agent skill bundle, the `weftcut` binary with its licence, the
 # ffmpeg reaper and the Linux glibc floor. Each refuses to let the build become a
 # distributable; see scripts/after-pack.mjs.
 afterPack: ./scripts/after-pack.mjs

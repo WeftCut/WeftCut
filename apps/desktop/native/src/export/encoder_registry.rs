@@ -1589,4 +1589,76 @@ mod tests {
         ));
         assert!(probe.calls().is_empty());
     }
+
+    /// The pack-time sidecar gate (`scripts/after-pack-encoders.mjs`) reads its
+    /// requirement from `scripts/sidecar-encoders.json`; this rebuilds that file
+    /// from the catalog so the two cannot drift. Each hardware adapter an OS can
+    /// pick is its own group (a missing one silently falls back to software);
+    /// each codec's software adapters form one any-of group (Windows ships
+    /// libaom-av1 but not libsvtav1).
+    #[test]
+    fn sidecar_encoder_requirement_matches_the_registry() {
+        // Exhaustive matches: a new variant fails to compile until it is listed.
+        let codecs = [
+            VideoCodec::H264,
+            VideoCodec::Hevc,
+            VideoCodec::Av1,
+            VideoCodec::Prores,
+            VideoCodec::Dnxhr,
+        ];
+        let _listed = |codec: VideoCodec| match codec {
+            VideoCodec::H264
+            | VideoCodec::Hevc
+            | VideoCodec::Av1
+            | VideoCodec::Prores
+            | VideoCodec::Dnxhr => {}
+        };
+        let platform_key = |platform: Platform| match platform {
+            Platform::Windows => "win32",
+            Platform::Macos => "darwin",
+            Platform::Linux => "linux",
+        };
+        let family_name = |family: HardwareFamily| match family {
+            HardwareFamily::Nvenc => "nvenc",
+            HardwareFamily::Qsv => "qsv",
+            HardwareFamily::Amf => "amf",
+            HardwareFamily::VideoToolbox => "videotoolbox",
+            HardwareFamily::Vaapi => "vaapi",
+        };
+        let group =
+            |need: String, any_of: Vec<&str>| serde_json::json!({ "need": need, "anyOf": any_of });
+        // The two values `AudioEncodeSpec::codec` carries from the renderer.
+        let audio = [("aac", "aac audio"), ("opus", "opus audio")].map(|(codec, need)| {
+            let args = crate::export::audio_encode_args(codec, 128_000);
+            group(need.to_string(), vec![args[1].to_str().unwrap()])
+        });
+
+        let mut expected = serde_json::Map::new();
+        for platform in [Platform::Windows, Platform::Macos, Platform::Linux] {
+            let mut groups = Vec::new();
+            for codec in codecs {
+                for family in platform.hardware_families() {
+                    if let Some(adapter) = AdapterId::for_hardware(*family, codec) {
+                        groups.push(group(
+                            format!("{codec} ({})", family_name(*family)),
+                            vec![adapter.name()],
+                        ));
+                    }
+                }
+                let software = software_adapters(codec).iter().map(|a| a.name()).collect();
+                groups.push(group(format!("{codec} (software)"), software));
+            }
+            groups.extend(audio.iter().cloned());
+            expected.insert(platform_key(platform).into(), groups.into());
+        }
+        let expected = serde_json::Value::Object(expected);
+
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../../../scripts/sidecar-encoders.json")).unwrap();
+        assert!(
+            committed == expected,
+            "scripts/sidecar-encoders.json no longer matches the encoder catalog; replace it with:\n{}",
+            serde_json::to_string_pretty(&expected).unwrap()
+        );
+    }
 }

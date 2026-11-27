@@ -6,6 +6,7 @@
 // carried by `files`/`extraResources` — those two links degrade silently, so the
 // supply-time check has to be re-run against what actually landed in the package.
 import cli from './after-pack-cli.mjs'
+import encoders from './after-pack-encoders.mjs'
 import glibc from './after-pack-glibc.mjs'
 import licensing from './after-pack-licensing.mjs'
 import macosPortable from './after-pack-macos-portable.mjs'
@@ -14,6 +15,7 @@ import skill from './after-pack-skill.mjs'
 
 export default function afterPack(context) {
   licensing(context)
+  encoders(context)
   skill(context)
   cli(context)
   reaper(context)
