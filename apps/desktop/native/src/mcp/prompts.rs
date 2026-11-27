@@ -99,14 +99,15 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
                 PromptArgDef {
                     name: "voice".into(),
                     description: Some(
-                        "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer.".into(),
+                        "A voice id from `list_voices` (the provider selected in Settings → Voiceover)."
+                            .into(),
                     ),
                     required: true,
                 },
                 PromptArgDef {
                     name: "speed".into(),
                     description: Some(
-                        "Optional speech speed in [0.25, 4.0]. Omit for the provider default."
+                        "Optional speech speed within the range `list_voices` reports. Omit for the provider default."
                             .into(),
                     ),
                     required: false,
@@ -229,7 +230,7 @@ fn expand_auto_caption(args: Option<&Map<String, Value>>) -> Result<PromptResult
 4. Call `apply_transcripts` with the `transcripts`.
 5. Report how many cues landed.
 
-If `transcribe_clip` refuses, tell the user what it names and offer the options it lists. Never pass `backend: \"openai\"` or `\"byo_endpoint\"` on your own: they upload the audio, so they need the user's consent."
+If `transcribe_clip` refuses, tell the user what it names and offer the options it lists. Never pass `backend: \"openai\"`, `\"elevenlabs\"` or `\"byo_endpoint\"` on your own: they upload the audio, so they need the user's consent."
     );
     Ok(PromptResult {
         description: Some("Auto-caption a clip via transcribe_clip + apply_transcripts.".into()),
@@ -253,7 +254,9 @@ fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, M
     if let Some(s) = &speed {
         extra.push_str(&format!(", `speed: {s}`"));
     }
-    let mut steps: Vec<String> = Vec::new();
+    let mut steps: Vec<String> = vec![format!(
+        "Call `list_voices`. If no voice's `id` is exactly \"{voice}\", show the user the voices (names and labels) and ask which to use."
+    )];
     if let Some(t) = &track {
         steps.push(format!(
             "Find the track the user calls \"{t}\" in `project://tracks` and pass its `track_id` as `target_track_id`. If none fits, or several do, ask."
@@ -261,7 +264,7 @@ fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, M
         extra.push_str(", `target_track_id`");
     }
     steps.push(format!(
-        "Call `synthesize_speech` with `text: <the script>`{extra}. A script longer than the tool takes goes in several calls, split at paragraph boundaries, in order."
+        "Call `synthesize_speech` with `text: <the script>`{extra}. A script longer than `list_voices`' `max_chars` goes in several calls, split at paragraph boundaries, in order."
     ));
     steps.push(
         "Report where the voiceover landed and whether it was `cached` (no new charge).".into(),
@@ -284,7 +287,7 @@ Script:
 Steps:
 {steps}
 
-If `synthesize_speech` refuses, tell the user what it names; an OpenAI key goes under Settings → API keys."
+If `list_voices` or `synthesize_speech` refuses, tell the user what it names; the voiceover provider and its key are set in Settings → Voiceover."
     );
     Ok(PromptResult {
         description: Some("Generate cloud TTS and attach it as an Audio layer.".into()),
@@ -485,7 +488,12 @@ mod tests {
             !body.contains("voice voice"),
             "the sentence names one voice once"
         );
-        assert!(body.contains("Settings → API keys"));
+        assert!(body.contains("Settings → Voiceover"));
+        assert!(body.contains("`list_voices`"));
+        assert!(
+            !body.contains("alloy"),
+            "no provider's voice list is built in"
+        );
         assert!(
             !body.contains("target_track_id"),
             "no track named, no track step"

@@ -14,7 +14,10 @@ use crate::inference::http::{bearer_auth, parse_retry_after, send_with_retry, sh
 use crate::speech::backend::SpeechBackend;
 use crate::speech::error::SpeechError;
 use crate::speech::parse::RawTranscript;
-use crate::speech::synthesizer::{AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer};
+use crate::speech::synthesizer::{
+    check_request, AudioFormat, SpeedRange, SynthesizeRequest, SynthesizeResponse, Synthesizer,
+    Voice, VoiceoverFacts,
+};
 use crate::speech::transcriber::{TranscribeRequest, Transcriber};
 
 /// OpenAI's documented Whisper upload cap. Surfacing this as a structured
@@ -115,13 +118,31 @@ async fn ok_or_speech_error(response: reqwest::Response) -> Result<reqwest::Resp
 // ============================================================
 
 const TTS_ENDPOINT: &str = "https://api.openai.com/v1/audio/speech";
-pub const TTS_MODEL: &str = "tts-1";
-/// OpenAI's documented per-request input cap for tts-1 (characters of `input`).
-pub const TTS_MAX_INPUT_CHARS: usize = 4096;
-/// Voices documented in the OpenAI tts-1 docs. The provider checks the list
-/// before sending so the agent gets a clean rejection rather than a 400 from
-/// the API.
-pub const TTS_VOICES: &[&str] = &["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+
+/// tts-1's voiceover facts: OpenAI's documented per-request input cap and
+/// speed range; it answers the mp3 this client asks for.
+const TTS_FACTS: VoiceoverFacts = VoiceoverFacts {
+    provider: SpeechBackend::OpenAi,
+    model: "tts-1",
+    max_chars: 4096,
+    speed: Some(SpeedRange {
+        min: 0.25,
+        max: 4.0,
+        default: 1.0,
+    }),
+    format: AudioFormat::Mp3,
+};
+
+/// tts-1's voices, `(id, display name)`. Static: OpenAI documents them and
+/// every key has all of them.
+const TTS_VOICES: &[(&str, &str)] = &[
+    ("alloy", "Alloy"),
+    ("echo", "Echo"),
+    ("fable", "Fable"),
+    ("onyx", "Onyx"),
+    ("nova", "Nova"),
+    ("shimmer", "Shimmer"),
+];
 
 /// OpenAI tts-1 client. Carries the API key resolved from the in-memory cache
 /// at construction time.
@@ -147,46 +168,43 @@ struct TtsBody<'a> {
 
 #[async_trait]
 impl Synthesizer for OpenAiTts {
-    async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResponse, SpeechError> {
-        if req.text.is_empty() {
-            return Err(SpeechError::Provider {
-                provider: SpeechBackend::OpenAi,
-                message: "text is empty — tts-1 requires non-empty input".into(),
-            });
-        }
-        if req.text.chars().count() > TTS_MAX_INPUT_CHARS {
-            return Err(SpeechError::PayloadTooLarge {
-                bytes: req.text.len() as u64,
-                cap: TTS_MAX_INPUT_CHARS as u64,
-            });
-        }
-        if !TTS_VOICES
+    fn facts(&self) -> VoiceoverFacts {
+        TTS_FACTS
+    }
+
+    async fn voices(&self) -> Result<Vec<Voice>, SpeechError> {
+        Ok(TTS_VOICES
             .iter()
-            .any(|v| v.eq_ignore_ascii_case(&req.voice))
-        {
-            return Err(SpeechError::Provider {
+            .map(|(id, name)| Voice {
+                id: (*id).to_string(),
+                name: (*name).to_string(),
+                labels: Default::default(),
+                preview_url: None,
+            })
+            .collect())
+    }
+
+    async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResponse, SpeechError> {
+        check_request(&TTS_FACTS, &req)?;
+        // Exact ids, as `voices` lists them: the cache key keeps a voice as
+        // given, so accepting `Alloy` would cache one voice under two keys.
+        if !TTS_VOICES.iter().any(|(id, _)| *id == req.voice) {
+            let ids: Vec<&str> = TTS_VOICES.iter().map(|(id, _)| *id).collect();
+            return Err(SpeechError::InvalidInput {
                 provider: SpeechBackend::OpenAi,
                 message: format!(
-                    "unknown voice {:?}; expected one of {}",
+                    "OpenAI tts-1 has no voice {:?}; its voices are {} (`list_voices`)",
                     req.voice,
-                    TTS_VOICES.join(", "),
+                    ids.join(", "),
                 ),
             });
         }
-        if let Some(s) = req.speed {
-            if !(0.25..=4.0).contains(&s) {
-                return Err(SpeechError::Provider {
-                    provider: SpeechBackend::OpenAi,
-                    message: format!("speed {s} outside tts-1 range [0.25, 4.0]",),
-                });
-            }
-        }
 
         let body = TtsBody {
-            model: TTS_MODEL,
+            model: TTS_FACTS.model,
             input: &req.text,
             voice: &req.voice,
-            response_format: "mp3",
+            response_format: TTS_FACTS.format.extension(),
             speed: req.speed,
         };
         let auth = bearer_auth(&self.key);
@@ -201,37 +219,9 @@ impl Synthesizer for OpenAiTts {
         let bytes = response.bytes().await?.to_vec();
         Ok(SynthesizeResponse {
             audio: bytes,
-            format: AudioFormat::Mp3,
+            format: TTS_FACTS.format,
         })
     }
-}
-
-/// Cache key for a content-addressed tts result. Stable across calls so the
-/// `synthesize_speech` MCP tool can skip the API entirely on a repeat
-/// request. Composition is `blake3(model || '\0' || lowercase(voice) || '\0'
-/// || speed-or-"default" || '\0' || text)`.
-///
-/// Voice is lowercased before hashing because OpenAI tts-1 is case-insensitive
-/// on the voice argument (we lowercase for matching too); a future provider
-/// that's case-sensitive on voice will need its own key composition.
-///
-/// `speed: None` and `speed: Some(1.0)` produce DIFFERENT keys on purpose:
-/// the agent might rely on "no `speed` parameter" being the provider's
-/// untouched default, which can be observably different from explicitly
-/// passing 1.0 in some providers' rate-shaping logic.
-pub fn tts_cache_key(text: &str, voice: &str, speed: Option<f32>) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(TTS_MODEL.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(voice.to_ascii_lowercase().as_bytes());
-    hasher.update(&[0]);
-    match speed {
-        Some(s) => hasher.update(format!("{s}").as_bytes()),
-        None => hasher.update(b"default"),
-    };
-    hasher.update(&[0]);
-    hasher.update(text.as_bytes());
-    hasher.finalize().to_hex().to_string()
 }
 
 // ============================================================
@@ -250,10 +240,8 @@ fn map_status_to_speech_error(
         StatusCode::PAYLOAD_TOO_LARGE => SpeechError::PayloadTooLarge {
             // Whisper-shaped arm: `transcribe` pre-checks
             // `WHISPER_MAX_UPLOAD_BYTES`, so landing here means OpenAI
-            // tightened the cap or we miscounted. A tts-1 413 also lands here
-            // and is reported against the Whisper cap, not
-            // `TTS_MAX_INPUT_CHARS` — thread the caller's cap in if that ever
-            // has to be exact.
+            // tightened the cap or we miscounted. tts-1's text cap is checked
+            // before sending, so its 413 is not expected here.
             bytes: 0,
             cap: WHISPER_MAX_UPLOAD_BYTES,
         },
@@ -353,93 +341,49 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn tts_rejects_empty_text() {
-        let tts = OpenAiTts::new("test-key".into());
-        let err = tts
-            .synthesize(SynthesizeRequest {
-                text: String::new(),
-                voice: "alloy".into(),
-                speed: None,
-            })
-            .await
-            .expect_err("empty text");
-        assert!(format!("{err}").contains("empty"));
+    fn tts_req(text: &str, voice: &str, speed: Option<f32>) -> SynthesizeRequest {
+        SynthesizeRequest {
+            text: text.into(),
+            voice: voice.into(),
+            speed,
+        }
     }
 
-    #[tokio::test]
-    async fn tts_rejects_text_exceeding_cap() {
-        let tts = OpenAiTts::new("test-key".into());
-        let too_long = "a".repeat(TTS_MAX_INPUT_CHARS + 1);
-        let err = tts
-            .synthesize(SynthesizeRequest {
-                text: too_long,
-                voice: "alloy".into(),
-                speed: None,
-            })
-            .await
-            .expect_err("text too long");
-        match err {
-            SpeechError::PayloadTooLarge { cap, .. } => {
-                assert_eq!(cap, TTS_MAX_INPUT_CHARS as u64);
-            }
-            other => panic!("expected PayloadTooLarge, got {other:?}"),
+    async fn refused(req: SynthesizeRequest) -> String {
+        match OpenAiTts::new("test-key".into()).synthesize(req).await {
+            Err(SpeechError::InvalidInput { message, .. }) => message,
+            other => panic!("expected InvalidInput, got {:?}", other.map(|_| ())),
         }
     }
 
     #[tokio::test]
-    async fn tts_rejects_unknown_voice() {
-        let tts = OpenAiTts::new("test-key".into());
-        let err = tts
-            .synthesize(SynthesizeRequest {
-                text: "hello".into(),
-                voice: "no-such-voice".into(),
-                speed: None,
-            })
+    async fn tts_refuses_what_its_facts_rule_out_before_sending() {
+        assert!(refused(tts_req("", "alloy", None)).await.contains("empty"));
+        let too_long = "a".repeat(TTS_FACTS.max_chars + 1);
+        assert!(refused(tts_req(&too_long, "alloy", None))
             .await
-            .expect_err("unknown voice");
-        assert!(format!("{err}").contains("unknown voice"));
+            .contains("at most 4096"));
+        assert!(refused(tts_req("hello", "alloy", Some(5.0)))
+            .await
+            .contains("speed 5"));
     }
 
+    /// Voice ids are exact: a different case is another id, which the cache
+    /// would otherwise key apart from the voice it plays.
     #[tokio::test]
-    async fn tts_rejects_speed_outside_supported_range() {
-        let tts = OpenAiTts::new("test-key".into());
-        let err = tts
-            .synthesize(SynthesizeRequest {
-                text: "hello".into(),
-                voice: "alloy".into(),
-                speed: Some(5.0),
-            })
-            .await
-            .expect_err("speed too high");
-        assert!(format!("{err}").contains("speed 5"));
-    }
-
-    #[test]
-    fn tts_cache_key_is_stable_and_input_sensitive() {
-        let a = tts_cache_key("hello world", "alloy", None);
-        let b = tts_cache_key("hello world", "alloy", None);
-        assert_eq!(a, b, "same inputs → same key");
-
-        // Voice change → different key.
-        let c = tts_cache_key("hello world", "nova", None);
-        assert_ne!(a, c);
-
-        // Voice case-insensitive (we lowercase before hashing).
-        let d = tts_cache_key("hello world", "Alloy", None);
-        assert_eq!(a, d);
-
-        // Speed: None hashes a literal "default" sentinel, so it is DISTINCT
-        // from an explicit Some(1.0) — see the function doc for why.
-        let e = tts_cache_key("hello world", "alloy", Some(1.0));
-        assert_ne!(
-            a, e,
-            "speed=None and speed=Some(1.0) should be distinct cache entries — the agent might rely on the default vs. explicit-1.0 distinction",
+    async fn tts_takes_only_the_voice_ids_it_lists() {
+        let msg = refused(tts_req("hello", "no-such-voice", None)).await;
+        assert!(
+            msg.contains("no voice") && msg.contains("list_voices"),
+            "{msg}"
         );
-
-        // Text change → different key.
-        let f = tts_cache_key("hello world!", "alloy", None);
-        assert_ne!(a, f);
+        assert!(refused(tts_req("hello", "Alloy", None))
+            .await
+            .contains("no voice"));
+        let voices = OpenAiTts::new("k".into()).voices().await.unwrap();
+        let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
+        assert_eq!(voices[0].name, "Alloy");
     }
 
     #[test]

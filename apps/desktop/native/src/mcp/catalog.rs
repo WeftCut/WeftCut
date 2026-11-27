@@ -154,9 +154,11 @@ tool_table! {
     "extract_clip_audio" => ("Extract the ORIGINAL source audio that plays on a VideoClip or Audio layer (a VideoClip through its linked Audio member) — before gain, mute, effects or mixing — for an agent running its own speech model; no engine or API key is involved and nothing is uploaded. Returns a JSON metadata block (`layer_id`, `media_id`, `t_start_us`, `t_end_us`, `src_in_us`, `src_out_us`, `duration_us`, `rate` {num, den}, `sample_rate_hz`, `channels`, `bits_per_sample`, `byte_length`, `mime_type`) plus an MCP audio block: base64 WAV, mono 16 kHz 16-bit, starting at zero — about 2.6 MB of base64 per 60 s. Optional `t_start_us`/`t_end_us` are timeline µs, defaulting to the layer endpoints; at most 60 s of source audio per call (timeline windows ≤ 60 s / rate), so a long clip is several calls. Map a WAV offset `w` to the timeline as `t_start_us + w / rate`, then `apply_transcripts`. Refuses a layer that plays no sound and a window outside the layer.",
                              super::clip_audio::ExtractClipAudioArgs, super::clip_audio::extract_clip_audio, ToolAnnotations::READ),
     #[cfg(feature = "speech")]
-    "transcribe_clip" => ("Transcribe the audio that plays on 1–20 VideoClip or Audio layers (a VideoClip through its linked Audio member). Returns `{ transcripts: [{ source: { layer_id, signature }, backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing }], failed? }`, one per layer in order, timeline µs; hand `transcripts` to `apply_transcripts` as is. Cut pauses first, caption after: a clip changed since is refused there. `failed` lists layers that refused, with why. `t_start_us`/`t_end_us` narrow one layer's window. `language` is BCP-47; a model that does not cover it, or the language it detects, refuses with options. `whisper_cpp` and `funasr` run on this machine; `openai` (cloud) and `byo_endpoint` (the user's server) UPLOAD the audio — name one in `backend` only with the user's consent. Without `backend` the model selected in Settings runs, never another; if it cannot, the refusal names what it lacks and the ready engines. A retry after a client timeout joins the running job.", tools::TranscribeClipArgs, tools::transcribe_clip, ToolAnnotations::READ_OPEN),
+    "transcribe_clip" => ("Transcribe the audio that plays on 1–20 VideoClip or Audio layers (a VideoClip through its linked Audio member). Returns `{ transcripts: [{ source: { layer_id, signature }, backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing }], failed? }`, one per layer in order, timeline µs; hand `transcripts` to `apply_transcripts` as is. Cut pauses first, caption after: a clip changed since is refused there. `failed` lists layers that refused, with why. `t_start_us`/`t_end_us` narrow one layer's window. `language` is BCP-47; a model that does not cover it, or the language it detects, refuses with options. `whisper_cpp` and `funasr` run on this machine; `openai`, `elevenlabs` (cloud) and `byo_endpoint` (the user's server) UPLOAD the audio — name one in `backend` only with the user's consent. Without `backend` the model selected in Settings runs, never another; if it cannot, the refusal names what it lacks and the ready engines. A retry after a client timeout joins the running job.", tools::TranscribeClipArgs, tools::transcribe_clip, ToolAnnotations::READ_OPEN),
     #[cfg(feature = "speech")]
-    "synthesize_speech" => ("Synthesize speech with the configured cloud TTS provider (OpenAI tts-1; the text is uploaded) and place it as a voiceover Audio layer, one placement or none: a refused placement adds nothing to the pool. `text` ≤ 4096 chars; `voice`; optional `speed` 0.25..4.0 (default ≈ 1.0); `composition_id` (default root); `t_start_us` (default: the composition's end); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. The MP3 is cached by `(model, voice, speed, text)`, so a repeat makes no API request; it is pooled in Media/Voiceover/ (needs an open project). Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech, ToolAnnotations::WRITE_OPEN),
+    "synthesize_speech" => ("Speak text with the voiceover provider selected in Settings → Voiceover (uploads the text) and place it as a voiceover Audio layer, one placement or none: a refused placement adds nothing to the pool. `voice` is an id from `list_voices`, which also gives `text`'s cap and `speed`'s range. `composition_id` (default root); `t_start_us` (default: the composition's end); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. Cached by provider, model, voice, speed and text: a repeat makes no API request. Pooled in Media/Voiceover/ (needs an open project). Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech, ToolAnnotations::WRITE_OPEN),
+    #[cfg(feature = "speech")]
+    "list_voices" => ("The voiceover provider selected in Settings → Voiceover, and what `synthesize_speech` takes with it: `{ provider, model, max_chars, speed: { min, max, default } | null, format, voices: [{ id, name, labels, preview_url }] }`. Pass a voice's `id` as `voice`, exactly as listed. `speed: null` means the model has no speed control. ElevenLabs lists the account's own voices (a request to the provider); OpenAI's are fixed. With no provider selected it refuses naming the setting.", tools::ListVoicesArgs, tools::list_voices, ToolAnnotations::READ_OPEN),
     #[cfg(feature = "speech")]
     "describe_clip" => ("Describe a video's visual content as timestamped segments with a video-understanding model (local Qwen3-VL / MiniCPM-V, or an OpenAI-compatible endpoint). Name a pooled item by `media_id` (placed or not; the whole source by default) or a VideoClip by `layer_id` (the source it plays, plus its `mapping`, as `analyze_clip`'s). Samples the window at `fps` (default 1.0), ≤3600 frames per call. Returns `{ backend, model, summary?, media_id, mapping?, segments: [{ src_start_us, src_end_us, text, tags }] }`, source µs; `text` is prose, `tags` short visual keywords; long windows add a `summary`. Cached per source range, so a retry after a client timeout or an interruption resumes; `refresh` re-describes. `src_start_us`/`src_end_us` (e.g. a shot's) narrow the window; `focus` steers `tags`; `language` is BCP-47 (default: UI language). `qwen3_vl` and `minicpm_v` run on this machine; `byo_endpoint` UPLOADS frames — name it only with the user's consent. `backend` REQUIRES that engine, never substituting; omitted: the selected engine, then availability (local first).", tools::DescribeClipArgs, tools::describe_clip, ToolAnnotations::READ_OPEN),
 }
@@ -280,15 +282,15 @@ mod tests {
         assert!(!transcribe.contains_key("layer_id"));
         assert!(!transcribe.contains_key("model_languages"));
         assert!(!props("describe_clip").contains_key("purpose"));
-        // TTS carries the same injected config (its OpenAI key).
-        let tts = cat
-            .tools
-            .iter()
-            .find(|t| t.name == "synthesize_speech")
-            .expect("synthesize_speech must be advertised");
-        assert!(tts.input_schema["properties"]
-            .as_object()
-            .is_some_and(|p| !p.contains_key("speech_config")));
+        // Voiceover carries the same injected config and the selected
+        // provider; `list_voices` takes nothing else.
+        for name in ["synthesize_speech", "list_voices"] {
+            let advertised = props(name);
+            assert!(!advertised.contains_key("speech_config"), "{name}");
+            assert!(!advertised.contains_key("voiceover_backend"), "{name}");
+        }
+        assert!(props("list_voices").is_empty());
+        assert!(props("synthesize_speech").contains_key("voice"));
     }
 
     #[cfg(feature = "speech")]
@@ -297,6 +299,7 @@ mod tests {
         let cat = catalog();
         assert!(cat.tools.iter().any(|t| t.name == "transcribe_clip"));
         assert!(cat.tools.iter().any(|t| t.name == "synthesize_speech"));
+        assert!(cat.tools.iter().any(|t| t.name == "list_voices"));
         assert!(cat.tools.iter().any(|t| t.name == "describe_clip"));
         // every advertised tool must dispatch — schema is an object.
         for t in &cat.tools {

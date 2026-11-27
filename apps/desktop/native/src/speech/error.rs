@@ -37,6 +37,31 @@ pub enum SpeechError {
     #[error("{provider:?} did not answer within {secs}s — raise the model's request timeout in Settings → Transcription, or transcribe a shorter window")]
     EndpointTimeout { provider: SpeechBackend, secs: u64 },
 
+    /// A request the provider cannot serve as asked: a voice it does not have,
+    /// a speed outside its range, text over its per-request cap. The message
+    /// names the limit and where to read it; the caller fixes its arguments.
+    #[error("{message}")]
+    InvalidInput {
+        provider: SpeechBackend,
+        message: String,
+    },
+
+    /// The key is valid but scoped without a permission this request needs.
+    /// `message` is the provider's own, which names the permission.
+    #[error(
+        "{provider:?} refused the request: the API key lacks a permission it needs — {message}"
+    )]
+    PermissionDenied {
+        provider: SpeechBackend,
+        message: String,
+    },
+
+    #[error("{provider:?} refused the request: the account is out of credits or over its quota — {message}")]
+    QuotaExceeded {
+        provider: SpeechBackend,
+        message: String,
+    },
+
     #[error("{provider:?} returned an error: {message}")]
     Provider {
         provider: SpeechBackend,

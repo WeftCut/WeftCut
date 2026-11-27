@@ -387,7 +387,8 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   on reads, `destructiveHint` on writes (true for removals and reverts),
   `idempotentHint` on sets (and `import_media`), `openWorldHint: false` on
   every tool that stays on this machine and `true` on `transcribe_clip`,
-  `describe_clip` and `synthesize_speech`, whose engine may upload — and the
+  `describe_clip`, `synthesize_speech` and `list_voices`, whose engine may be a
+  cloud one — and the
   agent panel's read/write split reads the same flag. An argument a tool does
   not take is refused naming the accepted set (a renamed one names its
   replacement), never dropped.
@@ -1288,8 +1289,9 @@ in its description (convention 5).
 - `/auto-caption { clip?, language? }` — `transcribe_clip` →
   `apply_transcripts` with its `transcripts` as they came; never an uploading
   `backend` without the user's consent.
-- `/voiceover { script, voice, speed?, track? }` — `synthesize_speech`,
-  splitting a long script at paragraphs.
+- `/voiceover { script, voice, speed?, track? }` — `list_voices` to check the
+  voice, then `synthesize_speech`, splitting a script over `max_chars` at
+  paragraphs.
 
 ## Agent panel and lifecycle
 
@@ -1433,8 +1435,8 @@ lives only in `structuredContent`.
 
 ## Speech (optional, user-supplied)
 
-Speech-to-text runs over pluggable backends — OpenAI Whisper (cloud),
-whisper.cpp and FunASR sidecars (local), and `byo_endpoint`, any
+Speech-to-text runs over pluggable backends — OpenAI Whisper and ElevenLabs
+Scribe (cloud), whisper.cpp and FunASR sidecars (local), and `byo_endpoint`, any
 OpenAI-compatible transcription server (ADR 0036). Keys live in `safeStorage`;
 main injects the selected model's config into every call that resolves an
 engine, so the Rust resolver is stateless. Transcription uses the model
@@ -1443,9 +1445,11 @@ after its downloads install and a minimal inference succeeds); nothing is
 substituted (ADR 0064). When it cannot run and the call names no `backend`,
 the refusal says it is the model selected in Settings, names what is missing,
 and lists the options: repair or reselect it, a ready local engine to pass as
-`backend`, or an engine that uploads (`openai`, `byo_endpoint`) — only with the
-user's consent. An OpenAI key also enables
-`synthesize_speech`; TTS picks by preference, then a default order.
+`backend`, or an engine that uploads (`openai`, `elevenlabs`, `byo_endpoint`) —
+only with the user's consent. Voiceover runs the provider selected in
+Settings → Voiceover (OpenAI `tts-1` or ElevenLabs `eleven_multilingual_v2`),
+injected as `voiceover_backend`; none selected refuses naming that setting, and
+a key saved for transcription never selects it (ADR 0184).
 Unconfigured speech tools stay listed and refuse naming the Settings panel.
 
 - `transcribe_clip { layer_ids }` — one timeline-absolute envelope per layer,
@@ -1459,8 +1463,8 @@ Unconfigured speech tools stay listed and refuse naming the Settings panel.
   engine gets its primary subtag); a model whose catalog entry lists its
   languages (`paraformer-zh`: `zh`) refuses a requested or detected language
   outside them, `LanguageNotCovered`, with the ready engines that cover it.
-  Network engines get audio over 10 min in pieces cut at the quietest 200 ms
-  near each mark. `backend` is a **strict** override (that engine or an error
+  Network engines get long audio in pieces cut at the quietest 200 ms near
+  each mark: 10 min for `openai` and `byo_endpoint`, 24 min for `elevenlabs`. `backend` is a **strict** override (that engine or an error
   naming the missing piece). `word_timestamps` defaults to true;
   `normalize_audio` (default false) applies constant gain toward −3 dBFS
   (≤ +24 dB) to a private copy and reports it. A retry after a client timeout
@@ -1471,8 +1475,17 @@ Unconfigured speech tools stay listed and refuse naming the Settings panel.
   `t_start_us`/`t_end_us` and `src_in_us`/`src_out_us` with `rate {num, den}`,
   so offset `w` maps to `t_start_us + w / rate`. Resolves no backend, uploads nothing, needs
   nothing configured.
-- `synthesize_speech` — OpenAI tts-1, cached at `Cache/voiceover/<hash>.mp3`
-  and pooled as `Media/Voiceover/voiceover-<hash8>.mp3` (needs an open project;
+- `list_voices` — the selected voiceover provider's facts and voices:
+  `{ provider, model, max_chars, speed: { min, max, default } | null, format,
+  voices: [{ id, name, labels, preview_url }] }`. OpenAI's six voices are
+  static; ElevenLabs lists the account's (`GET /v2/voices`). The Voiceover
+  dialog reads the same through `list_voices_compute`.
+- `synthesize_speech { voice }` — `voice` is an id from `list_voices`, kept as
+  given; the provider refuses one it lacks, text over `max_chars` and a `speed`
+  outside its range (or any `speed` when it has none). Cached at
+  `Cache/voiceover/<hash>.<format>`, keyed by provider, model, voice, speed,
+  format and text, and pooled as `Media/Voiceover/voiceover-<hash8>.<format>`
+  (needs an open project;
   the same bytes reuse one file and one media item), placed as a voiceover Audio layer in `composition_id` (root by
   default; start: that composition's end; lane: `target_track_id`, else the
   topmost unlocked track whose audio lane is free across the clip, else a new

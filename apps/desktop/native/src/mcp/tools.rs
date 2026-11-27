@@ -1740,6 +1740,7 @@ mod tests {
 #[serde(rename_all = "snake_case")]
 pub(super) enum SpeechEngineArg {
     Openai,
+    Elevenlabs,
     WhisperCpp,
     Funasr,
     ByoEndpoint,
@@ -1750,6 +1751,7 @@ impl SpeechEngineArg {
     fn backend(self) -> speech::SpeechBackend {
         match self {
             Self::Openai => speech::SpeechBackend::OpenAi,
+            Self::Elevenlabs => speech::SpeechBackend::ElevenLabs,
             Self::WhisperCpp => speech::SpeechBackend::WhisperCpp,
             Self::Funasr => speech::SpeechBackend::FunAsr,
             Self::ByoEndpoint => speech::SpeechBackend::ByoEndpoint,
@@ -1786,7 +1788,7 @@ pub(super) struct TranscribeClipArgs {
     #[serde(default)]
     pub language: Option<String>,
     /// Strict engine override; that engine serves or the call errors.
-    /// `openai` and `byo_endpoint` upload the audio.
+    /// `openai`, `elevenlabs` and `byo_endpoint` upload the audio.
     #[serde(default)]
     pub backend: Option<SpeechEngineArg>,
     /// Injected by the TS MCP host from the user's Settings preferred-engine —
@@ -1838,11 +1840,13 @@ pub(super) struct TranscribeClipArgs {
 #[cfg(feature = "speech")]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SynthesizeSpeechArgs {
-    /// Text to synthesize. tts-1 caps at 4096 characters.
+    /// Text to speak, up to the active provider's `max_chars` (`list_voices`).
     pub text: String,
-    /// The tts-1 voice.
-    pub voice: VoiceArg,
-    /// 0.25..4.0 for tts-1. Omit to use the provider default (~1.0).
+    /// A voice `id` from `list_voices`, exactly as listed (ids are
+    /// case-sensitive). With OpenAI: alloy, echo, fable, onyx, nova or shimmer.
+    pub voice: String,
+    /// Within the active provider's `speed` range from `list_voices`; refused
+    /// when that is null. Omit for the provider default.
     #[serde(default)]
     pub speed: Option<f32>,
     /// A Group's composition to place in; omit for the root.
@@ -1877,38 +1881,92 @@ pub(crate) struct SynthesizeSpeechArgs {
     )]
     #[serde(default)]
     pub t_start_us: Option<i64>,
-    /// Injected by the TS host — see `TranscribeClipArgs::speech_config`. TTS
-    /// reads its OpenAI key from here. Never advertised.
+    /// Injected by the TS host — see `TranscribeClipArgs::speech_config`. The
+    /// selected provider's key is read from here. Never advertised.
     #[serde(default)]
     #[schemars(skip)]
     pub speech_config: std::collections::HashMap<String, speech::config::BackendConfig>,
+    /// Injected by the TS host: the provider selected in Settings → Voiceover,
+    /// by backend tag (`"openai"`, `"elevenlabs"`), or none. Never advertised.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub voiceover_backend: Option<String>,
 }
 
-/// The tts-1 voices `synthesize_speech { voice }` takes.
+/// `list_voices` takes nothing from the agent: the host injects the selected
+/// provider and its key, as for `synthesize_speech`.
 #[cfg(feature = "speech")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum VoiceArg {
-    Alloy,
-    Echo,
-    Fable,
-    Onyx,
-    Nova,
-    Shimmer,
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub(crate) struct ListVoicesArgs {
+    /// Injected — see `SynthesizeSpeechArgs::speech_config`.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub speech_config: std::collections::HashMap<String, speech::config::BackendConfig>,
+    /// Injected — see `SynthesizeSpeechArgs::voiceover_backend`.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub voiceover_backend: Option<String>,
+}
+
+/// The selected voiceover provider's synthesizer, or the refusal naming
+/// Settings → Voiceover. An unknown tag (a selection from another build) is
+/// refused, not ignored: ignoring it would read as "none selected".
+#[cfg(feature = "speech")]
+fn voiceover_synthesizer(
+    voiceover_backend: Option<&str>,
+    cfg: &std::collections::HashMap<String, speech::config::BackendConfig>,
+) -> Result<Box<dyn speech::Synthesizer>, McpToolError> {
+    use crate::inference::EngineTag;
+    let selected = match voiceover_backend {
+        None => None,
+        Some(tag) => Some(speech::SpeechBackend::from_tag(tag).ok_or_else(|| {
+            McpToolError::invalid_request(
+                format!(
+                    "The voiceover provider {tag:?} selected in Settings → Voiceover is unknown. Choose another there."
+                ),
+                None,
+            )
+        })?),
+    };
+    speech::resolve_synthesizer(selected, cfg).map_err(|m| McpToolError::invalid_request(m, None))
+}
+
+/// `list_voices`' result: the active voiceover provider's facts and voices.
+#[cfg(feature = "speech")]
+#[derive(Serialize)]
+pub(crate) struct VoiceList {
+    provider: &'static str,
+    model: &'static str,
+    max_chars: usize,
+    speed: Option<speech::synthesizer::SpeedRange>,
+    format: speech::synthesizer::AudioFormat,
+    voices: Vec<speech::synthesizer::Voice>,
+}
+
+/// Compute half of `list_voices`, shared with the host's Voiceover dialog
+/// (`list_voices_compute`).
+#[cfg(feature = "speech")]
+pub(crate) async fn list_voices_of(args: &ListVoicesArgs) -> Result<VoiceList, McpToolError> {
+    let synthesizer =
+        voiceover_synthesizer(args.voiceover_backend.as_deref(), &args.speech_config)?;
+    let facts = synthesizer.facts();
+    let voices = synthesizer.voices().await.map_err(map_speech_error)?;
+    Ok(VoiceList {
+        provider: facts.provider.as_str(),
+        model: facts.model,
+        max_chars: facts.max_chars,
+        speed: facts.speed,
+        format: facts.format,
+        voices,
+    })
 }
 
 #[cfg(feature = "speech")]
-impl VoiceArg {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Alloy => "alloy",
-            Self::Echo => "echo",
-            Self::Fable => "fable",
-            Self::Onyx => "onyx",
-            Self::Nova => "nova",
-            Self::Shimmer => "shimmer",
-        }
-    }
+pub(super) async fn list_voices(
+    _b: &Backend,
+    args: ListVoicesArgs,
+) -> Result<ToolResult, McpToolError> {
+    ToolResult::json(&list_voices_of(&args).await?)
 }
 
 /// Shared source-audio coordinates for transcription and model-free extraction.
@@ -2126,8 +2184,11 @@ fn map_speech_error(e: speech::SpeechError) -> McpToolError {
     use speech::SpeechError as E;
     let message = e.to_string();
     match e {
-        E::MissingKey { .. } | E::InvalidKey { .. } => McpToolError::invalid_request(message, None),
-        E::PayloadTooLarge { .. } | E::UploadRefused { .. } => {
+        E::MissingKey { .. }
+        | E::InvalidKey { .. }
+        | E::PermissionDenied { .. }
+        | E::QuotaExceeded { .. } => McpToolError::invalid_request(message, None),
+        E::PayloadTooLarge { .. } | E::UploadRefused { .. } | E::InvalidInput { .. } => {
             McpToolError::invalid_params(message, None)
         }
         E::RateLimited { .. } | E::Provider { .. } | E::Network(_) | E::EndpointTimeout { .. } => {
@@ -2288,8 +2349,11 @@ async fn transcribe_clip_job(
     // time base), then place the audio-slice-relative times on the timeline. A
     // network engine gets long audio in pieces cut at pauses (`speech::split`);
     // a local engine reads the whole file itself.
-    let mut transcript = if used_backend.locality().is_network() {
-        speech::split::transcribe_network(&*transcriber, request, &|phase| job.model(phase)).await
+    let mut transcript = if let Some(piece_secs) = speech::split::piece_secs(used_backend) {
+        speech::split::transcribe_network(&*transcriber, request, piece_secs, &|phase| {
+            job.model(phase)
+        })
+        .await
     } else {
         match transcriber
             .transcribe_observed(request, &|phase| job.model(phase))
@@ -2352,7 +2416,7 @@ fn language_not_covered(
         .get(used.as_str())
         .map(|l| l.join(", "))
         .unwrap_or_default();
-    let mut options: Vec<String> = speech::DEFAULT_ORDER
+    let mut options: Vec<String> = speech::SpeechBackend::ALL
         .iter()
         .copied()
         .filter(|b| {
@@ -2740,33 +2804,37 @@ pub(crate) async fn synthesize_speech_audio(
         )
     })?;
 
-    // `preferred: None` — TTS has one capable backend (OpenAI), so there is no
-    // preference to honor; the resolver's availability walk suffices.
-    let synthesizer = speech::resolve_synthesizer(None, &args.speech_config)
-        .ok_or_else(|| McpToolError::invalid_request(speech::NO_SYNTHESIZER_CONFIGURED, None))?;
-
-    let cache_key =
-        speech::backends::openai::tts_cache_key(&args.text, args.voice.as_str(), args.speed);
-    // Cache extension hardcoded "mp3": the only TTS provider pins
-    // `response_format=mp3`. The `debug_assert!` below trips in dev the first time
-    // a provider returns a different format — fix the extension-from-response here.
-    // TODO: pull extension from `resp.format` once a non-mp3 TTS provider lands.
-    let dest = b.cache.voiceover(&cache_key, "mp3");
+    let synthesizer =
+        voiceover_synthesizer(args.voiceover_backend.as_deref(), &args.speech_config)?;
+    let facts = synthesizer.facts();
+    let request = speech::SynthesizeRequest {
+        text: args.text.clone(),
+        voice: args.voice.clone(),
+        speed: args.speed,
+    };
+    // The path is chosen before the audio exists, so its extension is the
+    // format the provider declares; an answer in another one is refused rather
+    // than cached under the wrong name.
+    let ext = facts.format.extension();
+    let dest = b
+        .cache
+        .voiceover(&speech::synthesizer::cache_key(&facts, &request), ext);
     let cached = cached_ok(&dest);
     if !cached {
         let resp = synthesizer
-            .synthesize(speech::SynthesizeRequest {
-                text: args.text.clone(),
-                voice: args.voice.as_str().to_string(),
-                speed: args.speed,
-            })
+            .synthesize(request)
             .await
             .map_err(map_speech_error)?;
-        debug_assert_eq!(
-            resp.format,
-            speech::AudioFormat::Mp3,
-            "TTS cache extension assumes mp3 output; update it before adding non-mp3 providers",
-        );
+        if resp.format != facts.format {
+            return Err(McpToolError::internal_error(
+                format!(
+                    "{} answered {} audio, not the {ext} it declares",
+                    facts.provider.as_str(),
+                    resp.format.extension()
+                ),
+                None,
+            ));
+        }
         write_voiceover_atomic(&dest, &resp.audio)
             .await
             .map_err(|e| McpToolError::internal_error(format!("write voiceover: {e:#}"), None))?;
@@ -2775,7 +2843,7 @@ pub(crate) async fn synthesize_speech_audio(
     // Place the copy and probe it on a blocking thread. ffprobe is required
     // here — without duration we can't size the Audio layer correctly.
     let media_item = tokio::task::spawn_blocking(move || -> Result<MediaItem, String> {
-        let placed = place_voiceover(&dest, &workspace)?;
+        let placed = place_voiceover(&dest, &workspace, ext)?;
         let probe_path = placed.rel.to_native(&workspace);
         let metadata = probe::probe_metadata(&probe_path);
         if metadata.duration_us.is_none() {
@@ -2824,7 +2892,7 @@ struct PlacedVoiceover {
 }
 
 /// Copy the cached voiceover `cached` into
-/// `<workspace>/Media/Voiceover/voiceover-<first 8 hex of its blake3>.mp3`,
+/// `<workspace>/Media/Voiceover/voiceover-<first 8 hex of its blake3>.<ext>`,
 /// so the project folder holds every file it plays. A file already at that
 /// name with the same bytes is reused; one with other bytes passes the name on
 /// to the next `portable_file_name` suffix.
@@ -2832,6 +2900,7 @@ struct PlacedVoiceover {
 fn place_voiceover(
     cached: &std::path::Path,
     workspace: &std::path::Path,
+    ext: &str,
 ) -> Result<PlacedVoiceover, String> {
     use crate::state::project_path::{fold_case, portable_file_name, ProjectRelPath};
 
@@ -2849,7 +2918,7 @@ fn place_voiceover(
     let same_bytes = |name: &std::ffi::OsString| {
         std::fs::read(dir.join(name)).is_ok_and(|on_disk| on_disk == bytes)
     };
-    let name = portable_file_name(&format!("voiceover-{}.mp3", &hash[..8]), &|folded| {
+    let name = portable_file_name(&format!("voiceover-{}.{ext}", &hash[..8]), &|folded| {
         listing.get(folded).is_some_and(|name| !same_bytes(name))
     });
     let rel = folder.join(&name).map_err(|e| e.to_string())?;
@@ -3416,7 +3485,7 @@ mod voiceover_placement_tests {
         let cache = TempDir::new().unwrap();
         let source = cached(cache.path(), "request-key.mp3", b"spoken words");
 
-        let placed = place_voiceover(&source, ws.path()).unwrap();
+        let placed = place_voiceover(&source, ws.path(), "mp3").unwrap();
 
         let written = std::fs::read(placed.rel.to_native(ws.path())).unwrap();
         assert_eq!(written, b"spoken words");
@@ -3435,8 +3504,11 @@ mod voiceover_placement_tests {
         let ws = TempDir::new().unwrap();
         let cache = TempDir::new().unwrap();
         let source = cached(cache.path(), "a.mp3", b"spoken words");
-        let first = place_voiceover(&source, ws.path()).unwrap();
-        assert_eq!(place_voiceover(&source, ws.path()).unwrap().rel, first.rel);
+        let first = place_voiceover(&source, ws.path(), "mp3").unwrap();
+        assert_eq!(
+            place_voiceover(&source, ws.path(), "mp3").unwrap().rel,
+            first.rel
+        );
 
         // Another file already holds the name this voiceover would take.
         let other = cached(cache.path(), "b.mp3", b"other words");
@@ -3449,7 +3521,7 @@ mod voiceover_placement_tests {
         .unwrap();
         std::fs::write(squatter.to_native(ws.path()), b"not these bytes").unwrap();
 
-        let placed = place_voiceover(&other, ws.path()).unwrap();
+        let placed = place_voiceover(&other, ws.path(), "mp3").unwrap();
         assert_eq!(
             placed.rel.file_name(),
             format!("voiceover-{}-2.mp3", &other_hash[..8])
@@ -3462,6 +3534,55 @@ mod voiceover_placement_tests {
             std::fs::read(squatter.to_native(ws.path())).unwrap(),
             b"not these bytes"
         );
+    }
+
+    /// Nothing selected: both voiceover tools refuse naming the setting, even
+    /// with a key saved (it could be the transcription one).
+    #[tokio::test]
+    async fn voiceover_tools_refuse_without_a_selected_provider() {
+        let args: ListVoicesArgs = serde_json::from_value(serde_json::json!({
+            "speech_config": { "openai": { "kind": "api_key", "key": "sk-x" } }
+        }))
+        .unwrap();
+        let err = list_voices_of(&args).await.err().expect("refused");
+        assert!(matches!(err.code, McpErrorCode::InvalidRequest), "{err:?}");
+        assert_eq!(err.message, speech::NO_VOICEOVER_SELECTED);
+        let unknown: ListVoicesArgs =
+            serde_json::from_value(serde_json::json!({ "voiceover_backend": "nope" })).unwrap();
+        let err = list_voices_of(&unknown).await.err().expect("refused");
+        assert!(
+            err.message.contains("Settings → Voiceover"),
+            "{}",
+            err.message
+        );
+    }
+
+    /// The facts and voices the dialog and agents read, in their JSON shape.
+    #[tokio::test]
+    async fn list_voices_reports_the_selected_providers_facts_and_voices() {
+        let args: ListVoicesArgs = serde_json::from_value(serde_json::json!({
+            "speech_config": { "openai": { "kind": "api_key", "key": "sk-x" } },
+            "voiceover_backend": "openai",
+        }))
+        .unwrap();
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        let result = list_voices(&b, args).await.unwrap();
+        let crate::mcp::ContentBlock::Text { text } = &result.content[0] else {
+            panic!("expected text content");
+        };
+        let body: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(body["provider"], "openai");
+        assert_eq!(body["model"], "tts-1");
+        assert_eq!(body["max_chars"], 4096);
+        assert_eq!(body["format"], "mp3");
+        assert_eq!(
+            body["speed"],
+            serde_json::json!({ "min": 0.25, "max": 4.0, "default": 1.0 })
+        );
+        assert_eq!(body["voices"][0]["id"], "alloy");
+        assert_eq!(body["voices"][0]["name"], "Alloy");
+        assert_eq!(body["voices"].as_array().map(Vec::len), Some(6));
+        assert!(!text.contains("sk-x"), "the key never comes back");
     }
 
     #[tokio::test]

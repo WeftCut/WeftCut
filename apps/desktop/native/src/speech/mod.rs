@@ -11,11 +11,13 @@
 //! [`config::BackendConfig`], and [`config::availability`] decides whether it
 //! can run right now (cloud → key present; local → binary + model on disk).
 //!
-//! Transcription resolves only the selected model, without substituting another.
-//! Speech synthesis keeps its separate provider-selection policy.
+//! Transcription and voiceover each resolve only the backend selected for them
+//! in Settings, without substituting another; a key saved for one never
+//! selects the other.
 //!
-//! Design: `docs/adr/0036-pluggable-speech-backends-normalized-transcript.md`;
-//! `docs/mcp.md` "Speech".
+//! Design: `docs/adr/0036-pluggable-speech-backends-normalized-transcript.md`,
+//! `docs/adr/0184-voiceover-runs-on-a-selected-provider.md`; `docs/mcp.md`
+//! "Speech".
 
 use std::collections::HashMap;
 
@@ -31,7 +33,7 @@ pub mod synthesizer;
 pub mod transcriber;
 pub mod transcript;
 
-pub use backend::{SpeechBackend, DEFAULT_ORDER};
+pub use backend::SpeechBackend;
 pub use config::{availability, Availability, BackendConfig};
 pub use error::SpeechError;
 // `parse_raw` is the tool-layer chokepoint; `Segment`/`WordTiming` name the
@@ -39,7 +41,7 @@ pub use error::SpeechError;
 // vocabulary (RawTranscript, TranscriptFormat, TranscriptParser, Transcript,
 // Word) is reached via its module path by the backends that produce it.
 pub use parse::parse_raw;
-pub use synthesizer::{AudioFormat, SynthesizeRequest, Synthesizer};
+pub use synthesizer::{SynthesizeRequest, Synthesizer};
 pub use transcriber::{TranscribeRequest, Transcriber};
 pub use transcript::{Segment, WordTiming};
 
@@ -68,11 +70,9 @@ pub fn covers_language(langs: &ModelLanguages, backend: SpeechBackend, language:
         .is_none_or(|l| l.iter().any(|x| x.eq_ignore_ascii_case(language)))
 }
 
-/// Actionable "nothing can synthesize speech" message. TTS is cloud-only today
-/// (no local backend advertises `tts`), so this names just the API-key remedy.
-pub const NO_SYNTHESIZER_CONFIGURED: &str =
-    "no speech-synthesis backend available — add an OpenAI API key in Settings (local TTS \
-     engines are not supported yet)";
+/// The refusal of a voiceover call with no provider selected.
+pub const NO_VOICEOVER_SELECTED: &str =
+    "No voiceover provider is selected. Choose one in Settings → Voiceover.";
 
 /// Why `backend` cannot run right now, in the words a person acts on; `None`
 /// when it can.
@@ -108,7 +108,7 @@ pub fn resolve_selected_transcriber(
         }
     }
     let ready = |network: bool| -> Vec<String> {
-        DEFAULT_ORDER
+        SpeechBackend::ALL
             .iter()
             .filter(|b| {
                 Some(**b) != preferred
@@ -195,24 +195,35 @@ pub fn resolve_transcriber_exact(
     }
 }
 
-/// TTS-capable counterpart to [`resolve_transcriber`].
+/// The voiceover provider selected in Settings → Voiceover, strictly (ADR
+/// 0184): `None` is refused, and so is a selection that cannot run. Nothing is
+/// substituted — a key saved for transcription never picks the voice.
 pub fn resolve_synthesizer(
-    preferred: Option<SpeechBackend>,
+    selected: Option<SpeechBackend>,
     cfg: &HashMap<String, BackendConfig>,
-) -> Option<Box<dyn Synthesizer>> {
-    // Synthesis has its own capability; the transcription model is not a TTS choice.
-    let chosen = preferred
-        .into_iter()
-        .chain(DEFAULT_ORDER.iter().copied())
-        .find(|b| {
-            b.capabilities().tts && availability(*b, cfg.get(b.as_str())) == Availability::Available
-        })?;
-    construct_synthesizer(chosen, cfg.get(chosen.as_str()))
+) -> Result<Box<dyn Synthesizer>, String> {
+    let b = selected.ok_or(NO_VOICEOVER_SELECTED)?;
+    if !b.capabilities().tts {
+        return Err(format!(
+            "{} cannot synthesize speech. Choose a voiceover provider in Settings → Voiceover.",
+            b.as_str()
+        ));
+    }
+    if let Some(reason) = unavailable_reason(b, cfg) {
+        return Err(format!(
+            "The voiceover provider selected in Settings → Voiceover ({}) cannot run: {reason}. \
+             Add its key there, or choose another provider.",
+            b.as_str()
+        ));
+    }
+    construct_synthesizer(b, cfg.get(b.as_str()))
+        .ok_or_else(|| format!("{} is configured but could not be constructed", b.as_str()))
 }
 
 /// Build the concrete transcriber for an already-selected, `Available` backend.
-/// OpenAI (cloud), whisper.cpp and FunASR (local sidecars) and the
-/// OpenAI-compatible endpoint all have real `impl`s. FunASR additionally requires its `tokens.txt` to be present — the
+/// OpenAI and ElevenLabs (cloud), whisper.cpp and FunASR (local sidecars) and
+/// the OpenAI-compatible endpoint all have real `impl`s. FunASR additionally
+/// requires its `tokens.txt` to be present — the
 /// arm only matches `tokens: Some(_)`, mirroring [`availability`] (which reports
 /// `NeedsModel` without it), so a tokens-less FunASR config falls to `None`
 /// rather than constructing an engine that cannot run. Reaching a `None` arm
@@ -225,6 +236,9 @@ fn construct_transcriber(
     match (b, cfg) {
         (SpeechBackend::OpenAi, Some(BackendConfig::ApiKey(key))) => {
             Some(Box::new(backends::openai::OpenAiWhisper::new(key.clone())))
+        }
+        (SpeechBackend::ElevenLabs, Some(BackendConfig::ApiKey(key))) => {
+            Some(Box::new(backends::elevenlabs::ElevenLabs::new(key.clone())))
         }
         (
             SpeechBackend::WhisperCpp,
@@ -276,8 +290,8 @@ fn construct_transcriber(
     }
 }
 
-/// TTS counterpart to [`construct_transcriber`]. Only OpenAI advertises `tts`,
-/// so [`resolve_synthesizer`] only ever hands this `OpenAi`.
+/// TTS counterpart to [`construct_transcriber`], for the backends whose
+/// capabilities include `tts`.
 fn construct_synthesizer(
     b: SpeechBackend,
     cfg: Option<&BackendConfig>,
@@ -285,6 +299,9 @@ fn construct_synthesizer(
     match (b, cfg) {
         (SpeechBackend::OpenAi, Some(BackendConfig::ApiKey(key))) => {
             Some(Box::new(backends::openai::OpenAiTts::new(key.clone())))
+        }
+        (SpeechBackend::ElevenLabs, Some(BackendConfig::ApiKey(key))) => {
+            Some(Box::new(backends::elevenlabs::ElevenLabs::new(key.clone())))
         }
         _ => None,
     }
@@ -305,7 +322,7 @@ mod tests {
     fn empty_config_resolves_to_none() {
         let cfg = HashMap::new();
         assert!(resolve_selected_transcriber(None, &cfg).is_err());
-        assert!(resolve_synthesizer(None, &cfg).is_none());
+        assert!(resolve_synthesizer(None, &cfg).is_err());
     }
 
     #[test]
@@ -326,8 +343,60 @@ mod tests {
             err.contains("`backend: \"openai\"` (uploads the audio — needs the user's consent)"),
             "{err}"
         );
-        // OpenAI also serves TTS off the same key.
-        assert!(resolve_synthesizer(None, &cfg).is_some());
+        // The same key serves TTS once OpenAI is the voiceover selection.
+        assert!(resolve_synthesizer(Some(SpeechBackend::OpenAi), &cfg).is_ok());
+    }
+
+    fn synth_provider(
+        selected: Option<SpeechBackend>,
+        cfg: &HashMap<String, BackendConfig>,
+    ) -> Result<SpeechBackend, String> {
+        resolve_synthesizer(selected, cfg).map(|s| s.facts().provider)
+    }
+
+    /// With both keys saved, voiceover runs the selected provider and only
+    /// that one; with none selected, it refuses naming the setting.
+    #[test]
+    fn voiceover_runs_only_the_selected_provider() {
+        let cfg = cfg_with(&[
+            ("openai", BackendConfig::ApiKey("sk-x".into())),
+            ("elevenlabs", BackendConfig::ApiKey("xi-x".into())),
+        ]);
+        assert_eq!(
+            synth_provider(Some(SpeechBackend::ElevenLabs), &cfg),
+            Ok(SpeechBackend::ElevenLabs)
+        );
+        assert_eq!(
+            synth_provider(Some(SpeechBackend::OpenAi), &cfg),
+            Ok(SpeechBackend::OpenAi)
+        );
+        let none = synth_provider(None, &cfg).unwrap_err();
+        assert_eq!(none, NO_VOICEOVER_SELECTED);
+        assert!(none.contains("Settings → Voiceover"));
+    }
+
+    /// A key saved for transcription does not make its provider the voice:
+    /// the selection without its own key refuses rather than using another.
+    #[test]
+    fn a_selection_without_its_key_refuses_instead_of_using_another() {
+        let cfg = cfg_with(&[("openai", BackendConfig::ApiKey("sk-x".into()))]);
+        let err = synth_provider(Some(SpeechBackend::ElevenLabs), &cfg).unwrap_err();
+        assert!(
+            err.contains("Settings → Voiceover") && err.contains("elevenlabs"),
+            "{err}"
+        );
+        assert!(err.contains("no API key"), "{err}");
+        let err = synth_provider(Some(SpeechBackend::WhisperCpp), &cfg).unwrap_err();
+        assert!(err.contains("cannot synthesize"), "{err}");
+    }
+
+    #[test]
+    fn an_elevenlabs_key_resolves_scribe_strictly() {
+        let cfg = cfg_with(&[("elevenlabs", BackendConfig::ApiKey("xi-x".into()))]);
+        assert!(resolve_transcriber_exact(SpeechBackend::ElevenLabs, &cfg).is_ok());
+        let (b, _) = resolve_selected_transcriber(Some(SpeechBackend::ElevenLabs), &cfg)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(b, SpeechBackend::ElevenLabs);
     }
 
     /// NEW-8: an unavailable selection is refused as the SELECTED model, not

@@ -150,6 +150,7 @@ async fn live_endpoint_whisper_server_transcribes_short_and_long_audio() {
                 language: Some("en".into()),
                 want_word_timing: true,
             },
+            crate::speech::split::piece_secs(crate::speech::SpeechBackend::ByoEndpoint).unwrap(),
             &observe,
         )
         .await
