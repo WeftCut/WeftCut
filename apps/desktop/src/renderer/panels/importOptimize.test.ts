@@ -51,6 +51,19 @@ describe("importOptimizeStatus (frozen behavior, route-driven)", () => {
   it("proxy failed ⇒ failed", () =>
     expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null }), depsT({ ps: "failed" }))).toBe("failed"));
 
+  it("settles a decodable DirectExport source once its route decision started no quick proxy", () => {
+    const m = V({ route: "direct-export", quick_proxy: null });
+    const ok = new Map([["m1", "ok" as const]]);
+    // The decision's proxy_bypass events left ps "ready" and nothing started since.
+    expect(importOptimizeStatus(m, depsT({ memo: ok, ps: "ready" }))).toBe("direct");
+    // A quick proxy building (the import's own, Prefer Proxies, a per-clip override).
+    expect(importOptimizeStatus(m, depsT({ memo: ok, ps: "pending" }))).toBe("bridged");
+    // No decision reported yet this session.
+    expect(importOptimizeStatus(m, depsT({ memo: ok }))).toBe("bridged");
+    // Not proven decodable yet: still waits on the probe.
+    expect(importOptimizeStatus(m, depsT({ memo: new Map([["m1", "pending"]]), ps: "ready" }))).toBe("checking");
+    expect(importOptimizeStatus(m, depsT({ memo: ok, ps: "failed" }))).toBe("failed");
+  });
   it("keeps a decodable DirectExport source checking while its probe is in flight (memo pending)", () =>
     expect(importOptimizeStatus(V({ route: "direct-export", quick_proxy: null }), depsT({ memo: new Map([["m1", "pending"]]) }))).toBe("checking"));
   it("keeps a decodable full-proxy (10-bit) source bridged when only the quick proxy has landed", () =>

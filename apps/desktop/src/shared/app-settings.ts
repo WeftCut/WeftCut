@@ -106,6 +106,13 @@ export interface AppSettings {
   /// 12.44 MB per frame. Preview only — export always decodes full size.
   /// App-level, like `decode_engine`: it describes THIS machine's headroom.
   playback_resolution: PlaybackResolution;
+  /// Build the quick proxy at import for a `direct-export` source (H.264 past
+  /// the bypass limits, or 8-bit AV1). Off, such a clip gets one only when it
+  /// previews from proxy, through Prefer Proxies or its per-clip override
+  /// (docs/preview.md § Proxies). A source whose export needs an Export master
+  /// is proxied either way. App-level: it describes THIS machine's decode
+  /// headroom. Default true.
+  build_quick_proxies_on_import: boolean;
   /// Media-pool card arrangement (see MediaPoolLayout). App-level: it's a
   /// browsing preference of this user, not a property of any project.
   media_pool_layout: MediaPoolLayout;
@@ -198,6 +205,7 @@ export interface AppSettingsPatch {
   preview_effects_enabled?: boolean;
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
   playback_resolution?: PlaybackResolution;
+  build_quick_proxies_on_import?: boolean;
   media_pool_layout?: MediaPoolLayout;
   timeline_wheel_axis?: TimelineWheelAxis;
   timeline_follow_playhead?: boolean;
@@ -244,6 +252,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   preview_effects_enabled: true,
   decode_engine: "auto",
   playback_resolution: "full",
+  build_quick_proxies_on_import: true,
   media_pool_layout: "large",
   // Horizontal, matching Premiere's `Timeline Mouse Scrolling` default and
   // Resolve's Edit page. On a clip-along-time timeline the horizontal axis is

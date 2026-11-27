@@ -3,10 +3,11 @@
 // The background derivative jobs, as an agent reads them. A pool item's paths
 // say what is READY; what is being made, and what failed and why, only the
 // native job events say (`media:job_started` / `media:job_complete` /
-// `media:job_error`, `native/src/jobs/mod.rs`). Those events reach main and
-// the renderer, never an MCP session, so main keeps the last one per media and
-// job here. The media card, the `project://media` rows, `import_media` and
-// every `DerivativeNotReady` refusal read it (docs/mcp.md, constraint 4).
+// `media:job_error`, `native/src/jobs/mod.rs`), with each import's plan
+// (`import:diagnostic-plan`). None of them reaches an MCP session, so main
+// keeps the last of each per media here. The media card, the
+// `project://media` rows, `import_media` and every `DerivativeNotReady`
+// refusal read it (docs/mcp.md, constraint 4).
 //
 // Shot detection is not a job: `analyze_clip` and `auto_split_by_shot` run it
 // inside the call that needs it, so nothing waits on it and it has no state.
@@ -44,8 +45,19 @@ export function recordDerivativeJob(event: string, payload: unknown): void {
   }
 }
 
+/** Per item, whether its last import plan may still make a quick proxy: the
+ *  plan lists one, or its route decision is still to come. */
+const quickProxyPlanned = new Map<string, boolean>()
+
+/** Fold one native `import:diagnostic-plan` into the registry. */
+export function recordDerivativePlan(payload: unknown): void {
+  const p = payload as { media_id?: unknown; stages?: unknown; decision_pending?: unknown } | null
+  if (typeof p?.media_id !== 'string' || !Array.isArray(p.stages)) return
+  quickProxyPlanned.set(p.media_id, p.decision_pending === true || p.stages.includes('quick_proxy'))
+}
+
 /** A project switch: the jobs of the outgoing project no longer report. */
-export function resetDerivativeJobs(): void { jobs.clear() }
+export function resetDerivativeJobs(): void { jobs.clear(); quickProxyPlanned.clear() }
 
 function fromJobs(mediaId: string, ...kinds: string[]): DerivativeState {
   const states = kinds.map((k) => jobs.get(key(mediaId, k)))
@@ -57,7 +69,9 @@ function fromJobs(mediaId: string, ...kinds: string[]): DerivativeState {
 
 /** One state per derivative the item gets. A path on the item is ready;
  *  otherwise the last job event decides. A still or a subtitle file has none,
- *  and a source that plays as it is (decode route `bypass`) has no proxy. */
+ *  and a source that plays as it is (decode route `bypass`) has no proxy. Nor
+ *  has a `direct-export` source whose import planned no quick proxy
+ *  (`build_quick_proxies_on_import` off) until a job for one starts. */
 export function derivativeStates(item: MediaItem): DerivativeStates {
   const out: DerivativeStates = {}
   const audio = item.kind === 'Audio' || item.metadata.audio != null
@@ -68,7 +82,10 @@ export function derivativeStates(item: MediaItem): DerivativeStates {
   if (item.kind === 'Video') {
     out.thumbnails = item.thumbnails_dir ? 'ready' : fromJobs(item.id, 'thumbnails')
     const r = item.decode_route
-    if (r.route === 'direct-export') out.proxy = r.quick_proxy ? 'ready' : fromJobs(item.id, 'quick_proxy')
+    if (r.route === 'direct-export') {
+      if (r.quick_proxy) out.proxy = 'ready'
+      else if (quickProxyPlanned.get(item.id) !== false || jobs.has(key(item.id, 'quick_proxy'))) out.proxy = fromJobs(item.id, 'quick_proxy')
+    }
     else if (r.route !== 'bypass') out.proxy = r.full_proxy ? 'ready' : fromJobs(item.id, 'proxy', 'quick_proxy')
   }
   return out
