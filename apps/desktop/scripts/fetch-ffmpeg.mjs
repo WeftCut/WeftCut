@@ -20,12 +20,22 @@ import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 
 const FFMPEG_VERSION = '7.1.1'
-// SHA-256 of the version-pinned Windows archive (gyan 7.1.1 essentials build) —
-// verified, rejects a tampered/corrupt download. Linux (BtbN `n8.1` asset) is
-// ROLLING WITHIN its pinned major.minor line, so a pinned hash there would
-// break on every upstream rebuild; it stays size-validated only. macOS pins a
-// versioned martin-riedl build + hash (see FFMPEG_MAC_* below).
+// Every archive is pinned by version AND SHA-256, so a tampered, corrupt or
+// silently rebuilt download is rejected.
+// SHA-256 of the gyan 7.1.1 essentials build (Windows).
 const FFMPEG_WIN_SHA256 = '04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4'
+// Linux: one BtbN/FFmpeg-Builds release. Pin a month-end `autobuild-*` tag:
+// BtbN deletes its daily releases after about two weeks and keeps the
+// month-end ones. LANDMINE — keep BTBN_TAG and BTBN_BUILD equal to the pin in
+// fetch-ffmpeg-lgpl.mjs; each script holds its own copy because CI keys each
+// ffmpeg cache on that one script's hash, so a shared module would leave a
+// bumped pin behind a stale cache.
+// Bump: pick the newest month-end tag in `gh release list -R BtbN/FFmpeg-Builds`,
+// take the n8.1 build name from its asset names, and copy the linux64-gpl line
+// of its checksums.sha256 here (the lgpl-shared lines go to fetch-ffmpeg-lgpl.mjs).
+const BTBN_TAG = 'autobuild-2026-10-31-12-59'
+const BTBN_BUILD = 'n8.1.3-27-g8dca1586f4'
+const FFMPEG_LINUX_SHA256 = '41e9c565594c390622cf968d82fa4135d9e9a11d06c1515644288cbc844e3380'
 // macOS: martin-riedl.de arm64 static build, pinned by build id AND SHA-256
 // (the /download/<os>/<arch>/<id>/ URLs are stable, unlike evermeet's rolling
 // `getrelease`). arm64-only BY DESIGN — WeftCut supports Apple Silicon only.
@@ -39,10 +49,9 @@ const MIN_BINARY_BYTES  = 1 * 1024 * 1024   // 1 MB — incomplete-extract guard
 const MAX_ATTEMPTS = 3
 
 // GPLv3 §6 source pointers per OS, recorded into SOURCE-OFFER.txt. `upstream`
-// is the FFmpeg source for the pinned version (Linux is a rolling git snapshot
-// within n8.1 — the exact commit is embedded in the captured version string,
-// e.g. `n8.1.1-14-gXXXXXXX`); `builder` is where the binary provider publishes
-// its build scripts/configuration.
+// is the FFmpeg source for the pinned version (Linux's BtbN build is a git
+// snapshot of the 8.1 release branch, named by its commit); `builder` is where
+// the binary provider publishes its build scripts/configuration.
 const SOURCES = {
   win: {
     archiveUrl: `https://github.com/GyanD/codexffmpeg/releases/download/${FFMPEG_VERSION}/ffmpeg-${FFMPEG_VERSION}-essentials_build.zip`,
@@ -51,9 +60,10 @@ const SOURCES = {
     builder: 'https://www.gyan.dev/ffmpeg/builds/ (build provenance: https://github.com/GyanD/codexffmpeg)',
   },
   linux: {
-    archiveUrl: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz',
-    upstream: 'https://git.ffmpeg.org/ffmpeg.git (checkout the commit named in the version string above)',
-    builder: 'https://github.com/BtbN/FFmpeg-Builds (build scripts + per-release source snapshots)',
+    archiveUrl: `https://github.com/BtbN/FFmpeg-Builds/releases/download/${BTBN_TAG}/ffmpeg-${BTBN_BUILD}-linux64-gpl-8.1.tar.xz`,
+    archiveSha256: FFMPEG_LINUX_SHA256,
+    upstream: `https://git.ffmpeg.org/ffmpeg.git (commit ${BTBN_BUILD.replace(/^.*-g/, '')})`,
+    builder: `https://github.com/BtbN/FFmpeg-Builds (build scripts + per-release source snapshots; this build: release ${BTBN_TAG})`,
   },
   mac: {
     archiveUrl: `https://ffmpeg.martin-riedl.de/download/macos/arm64/${FFMPEG_MAC_BUILD}/ffmpeg.zip`,
@@ -113,7 +123,7 @@ function stageCompliance() {
     version,
     configuration,
     url: src.archiveUrl,
-    ...(src.archiveSha256 ? { sha256: src.archiveSha256 } : {}),
+    sha256: src.archiveSha256,
     source: { upstream: src.upstream, builder: src.builder },
     fetchedAt: new Date().toISOString(),
   }, null, 2))
@@ -139,11 +149,22 @@ above, open an issue at ${PROJECT_ISSUES_URL} and we will provide it.
   console.log(`ffmpeg sidecar compliance staged: ${manifestPath} (banner clean)`)
 }
 
+/** A tree staged from an archive other than the pinned one is fetched again,
+ *  so a bumped pin takes effect on an existing checkout too. */
+function dropStaleTree() {
+  const manifestPath = join(dest, 'manifest.json')
+  if (!existsSync(manifestPath)) return
+  const { url } = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  if (url === SOURCES[osDir].archiveUrl) return
+  console.log(`ffmpeg sidecar was staged from ${url}; fetching the pinned ${SOURCES[osDir].archiveUrl}`)
+  for (const file of [bin, probeBin, manifestPath, join(dest, 'SOURCE-OFFER.txt')]) rmSync(file, { force: true })
+}
+
 const tmp = tmpdir()
 
 /** Download `url` to `outPath`, retrying up to MAX_ATTEMPTS times. Validates the
- *  result is > MIN_ARCHIVE_BYTES and, when `expectedSha256` is given, that its
- *  SHA-256 matches — a tampered/corrupt CDN download is rejected then retried. */
+ *  result is > MIN_ARCHIVE_BYTES and that its SHA-256 is `expectedSha256` — a
+ *  tampered/corrupt CDN download is rejected then retried. */
 function downloadWithRetry(url, outPath, label, expectedSha256) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) {
@@ -164,18 +185,14 @@ function downloadWithRetry(url, outPath, label, expectedSha256) {
       console.warn(`Warning: ${msg} — will retry`)
       continue
     }
-    // Verify checksum when a hash is pinned (Windows + macOS pin a hash;
-    // Linux's rolling n8.1 asset does not)
-    if (expectedSha256) {
-      const got = createHash('sha256').update(readFileSync(outPath)).digest('hex')
-      if (got !== expectedSha256) {
-        const msg = `checksum mismatch for ${label}: expected ${expectedSha256}, got ${got}`
-        if (attempt === MAX_ATTEMPTS) throw new Error(msg)
-        console.warn(`Warning: ${msg} — will retry`)
-        continue
-      }
-      console.log(`checksum verified for ${label} (sha256 ${got.slice(0, 12)}…)`)
+    const got = createHash('sha256').update(readFileSync(outPath)).digest('hex')
+    if (got !== expectedSha256) {
+      const msg = `checksum mismatch for ${label}: expected ${expectedSha256}, got ${got}`
+      if (attempt === MAX_ATTEMPTS) throw new Error(msg)
+      console.warn(`Warning: ${msg} — will retry`)
+      continue
     }
+    console.log(`checksum verified for ${label} (sha256 ${got.slice(0, 12)}…)`)
     return   // success
   }
 }
@@ -196,6 +213,7 @@ function verifyBinary(binPath) {
 
 function main() {
   mkdirSync(dest, { recursive: true })
+  dropStaleTree()
   if (existsSync(bin) && existsSync(probeBin)) {
     console.log(`ffmpeg + ffprobe already present: ${bin}, ${probeBin}`)
     stageCompliance() // heal a tree fetched before compliance staging existed
@@ -238,24 +256,19 @@ function main() {
     rmSync(zipPath, { force: true })
 
   } else if (plat === 'linux') {
-    // BtbN/FFmpeg-Builds static GPL build (linux64) — GitHub CDN, reliable.
-    // Version-pinned to the `n8.1` asset (NOT `master`): `-vsync` still parses on
-    // the 8.1 line — the conformance e2e depends on it, and the macOS 8.1.2 build
-    // proves it out by passing those same specs — whereas master's avcodec 63 drops
-    // the flag outright. The GPL build also ships libsvtav1 (AV1 8/10-bit export),
-    // plus vaapi + ffnvcodec for the hardware lanes.
-    // This tracked `n7.1` until BtbN dropped that line from the rolling `latest`
-    // release on 2026-08-30, 404-ing the asset and taking Linux CI down with it;
-    // `latest` now carries only n8.1, n9.0 and master. Because the line is rolling,
-    // a whole major.minor can disappear like that — a 404 here means the line is
-    // gone, not that the download flaked, so check the release's asset list first.
-    // Archive layout: ffmpeg-n8.1-latest-linux64-gpl-8.1/bin/ffmpeg + ffprobe —
+    // BtbN/FFmpeg-Builds static GPL build (linux64), pinned by BTBN_TAG/BTBN_BUILD.
+    // Stays on the 8.1 line (NOT `master`): `-vsync` still parses on 8.1 — the
+    // conformance e2e depends on it, and the macOS 8.1.2 build proves it out by
+    // passing those same specs — whereas master's avcodec 63 drops the flag outright.
+    // The GPL build also ships libsvtav1 (AV1 8/10-bit export), plus vaapi +
+    // ffnvcodec for the hardware lanes.
+    // Archive layout: ffmpeg-<build>-linux64-gpl-8.1/bin/ffmpeg + ffprobe —
     // strip-components=2 drops both the top dir and bin/, leaving binaries in dest.
     const url = SOURCES.linux.archiveUrl
     const tarPath = join(tmp, 'ffmpeg-btbn-linux64-gpl.tar.xz')
 
     console.log('Downloading ffmpeg + ffprobe (Linux static amd64) from BtbN/FFmpeg-Builds (GitHub CDN)...')
-    downloadWithRetry(url, tarPath, 'Linux BtbN')
+    downloadWithRetry(url, tarPath, 'Linux BtbN', FFMPEG_LINUX_SHA256)
 
     if (!existsSync(bin)) {
       console.log('Extracting ffmpeg...')
