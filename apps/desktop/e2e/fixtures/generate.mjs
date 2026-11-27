@@ -48,7 +48,7 @@ const NOISY_SPEECH_TONE_HZ = 440
 /// Peak amplitude of the tone, 10^(-12/20) — a −12 dBFS peak, −15.05 dBFS RMS.
 /// Written as an explicit amplitude inside an `aevalsrc` expression rather than
 /// `sine` + `volume`: `sine` has no amplitude option and its own output level is
-/// a build detail (the shipped 7.1.1 emits ±0.125), which a fixture's measured
+/// a build detail (the shipped 8.1 builds emit ±0.125), which a fixture's measured
 /// contract cannot rest on.
 const NOISY_SPEECH_TONE_AMPLITUDE = '0.251189'
 /// Pink noise at this amplitude measures −40 dBFS RMS, 25 dB under the tone
