@@ -207,6 +207,8 @@ const zhCN: Resources = {
   models: {
     current_label: "当前模型", none_selected: "未选择", none_active: "尚未选择模型",
     switch_hint: "选择后自动检查并切换；需要下载或首次配置时会先提示。",
+    current_provider_label: "当前服务",
+    voiceover_switch_hint: "选择后先检查 API 密钥再切换。",
     needs_download: "需下载…", needs_configuration: "需配置…", setup_model: "准备使用 {{name}}",
     custom: "自定义", add_model: "添加自定义模型…", edit_model: "模型设置…",
     custom_type_hint: "选择与你的模型或服务匹配的适配方式。",

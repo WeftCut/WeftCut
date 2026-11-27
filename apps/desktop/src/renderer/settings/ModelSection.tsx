@@ -144,17 +144,19 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
       setPanel(null); setConfirmation(null);
     })}>{t("models.confirm_remove")}</Button><Button size="sm" variant="ghost" onClick={() => setConfirmation(null)}>{t("models.cancel")}</Button></div>
   </div>;
+  // A voiceover choice is an online service with nothing to download.
+  const currentLabel = family === "voiceover" ? "models.current_provider_label" : "models.current_label";
   return <section className="settings-section settings-model-section">
     <p className="settings-blurb">{t(blurbs[family])}</p>
     {keysUnencrypted && (
       <p className="settings-warn" data-testid="keys-unencrypted">{t("app_notice.keyring_unavailable.body")}</p>
     )}
     <div className="settings-model-selector">
-      <span className="settings-slider-label">{t("models.current_label")}</span>
-      <ModelPicker models={models} activeId={view.active[family]} disabled={submitting} preparing={preparing} onChoose={choose}
+      <span className="settings-slider-label">{t(currentLabel)}</span>
+      <ModelPicker label={t(currentLabel)} models={models} activeId={view.active[family]} disabled={submitting} preparing={preparing} onChoose={choose}
         {...(adapters[family].length > 0 ? { onAdd: () => { setDialogError(""); setConfirmation(null); setPanel({ kind: "add" }); } } : {})} />
     </div>
-    <p className="settings-toggle-hint">{t("models.switch_hint")}</p>
+    <p className="settings-toggle-hint">{t(family === "voiceover" ? "models.voiceover_switch_hint" : "models.switch_hint")}</p>
     <div className="settings-model-card settings-model-summary" data-testid="current-model-summary">
       {active ? <>
         <div className="settings-model-card-header"><strong>{name(active)}</strong><span className="settings-badge settings-badge-on">{t(active.locality === "local" ? "models.local" : "models.online")}</span></div>

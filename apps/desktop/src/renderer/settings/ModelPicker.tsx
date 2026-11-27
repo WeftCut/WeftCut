@@ -19,8 +19,10 @@ export function canSwitchModel(model: ModelView): boolean {
     : !!model.endpoint?.url && (model.family === "speech" || !!model.endpoint.model));
 }
 
-export function ModelPicker({ models, activeId, disabled, preparing, onChoose, onAdd }: {
+export function ModelPicker({ models, activeId, disabled, preparing, onChoose, onAdd, label }: {
   models: ModelView[];
+  /** The picker's accessible name, as the label beside it reads. */
+  label: string;
   activeId: string | null;
   disabled: boolean;
   preparing: boolean;
@@ -37,7 +39,7 @@ export function ModelPicker({ models, activeId, disabled, preparing, onChoose, o
     : m.locality === "local" && !m.custom && m.missingBytes > 0 && m.supported ? t("models.needs_download")
     : t("models.needs_configuration");
   return <Menu.Root>
-    <Menu.Trigger className="app-select settings-model-trigger" disabled={disabled} aria-label={t("models.current_label")}>
+    <Menu.Trigger className="app-select settings-model-trigger" disabled={disabled} aria-label={label}>
       <span>{active ? name(active) : t("models.none_selected")}</span>
       <AppIcon icon={ChevronDown} size="caption" aria-hidden="true" />
     </Menu.Trigger>

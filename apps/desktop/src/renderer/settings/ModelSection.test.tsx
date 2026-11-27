@@ -31,8 +31,8 @@ beforeEach(() => {
 });
 // Base UI's pointer-open path is timing-sensitive in jsdom (see CanvasSection
 // tests). Exercise keyboard opening here and real pointer input in Electron.
-async function openPicker(user: ReturnType<typeof userEvent.setup>) {
-  const trigger = await screen.findByRole("button", { name: "Current model" });
+async function openPicker(user: ReturnType<typeof userEvent.setup>, name = "Current model") {
+  const trigger = await screen.findByRole("button", { name });
   await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
   trigger.focus();
   await user.keyboard("{Enter}");
@@ -313,7 +313,7 @@ describe("endpoint request timeout", () => {
   it("offers only the built-in voiceover providers, set up with a key", async () => {
     const user = userEvent.setup(); render(<ModelSection family="voiceover" onError={vi.fn()} />);
     expect((await screen.findByTestId("current-model-summary")).textContent).toContain("No model selected");
-    await openPicker(user);
+    await openPicker(user, "Current provider");
     const offered = screen.getAllByRole("menuitemradio").map(item => item.textContent ?? "");
     expect(offered).toHaveLength(3);
     expect(offered[0]).toBe("None");
