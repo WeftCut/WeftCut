@@ -1,7 +1,7 @@
 import { ArrowUpDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { MODEL_EVENTS, type ModelBackend, type ModelFamily, type ModelOperation, type ModelsView, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
+import { isCloudBackend, MODEL_EVENTS, type ModelBackend, type ModelFamily, type ModelOperation, type ModelsView, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
 import { modelsList, modelsUse, modelsCancel, modelsUnselect, modelsClearDownloads, modelsRemoveCustom } from "../ipc";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,11 @@ const adapters: Record<ModelFamily, { id: string; backend: ModelBackend; label: 
     { id: "qwen3-vl-4b", backend: "minicpm_v", label: "MiniCPM-V · llama-mtmd" },
     { id: "vlm-online", backend: "byo_endpoint", label: "OpenAI-compatible" },
   ],
+  // Built-in providers only (ADR 0184).
+  voiceover: [],
+};
+const blurbs: Record<ModelFamily, string> = {
+  speech: "settings.speech_blurb", vlm: "settings.vlm_blurb", voiceover: "settings.voiceover_blurb",
 };
 export function ModelSection({ family, onError }: { family: ModelFamily; onError(msg: string): void }) {
   const { t } = useTranslation();
@@ -140,14 +145,14 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
     })}>{t("models.confirm_remove")}</Button><Button size="sm" variant="ghost" onClick={() => setConfirmation(null)}>{t("models.cancel")}</Button></div>
   </div>;
   return <section className="settings-section settings-model-section">
-    <p className="settings-blurb">{t(family === "speech" ? "settings.speech_blurb" : "settings.vlm_blurb")}</p>
+    <p className="settings-blurb">{t(blurbs[family])}</p>
     {keysUnencrypted && (
       <p className="settings-warn" data-testid="keys-unencrypted">{t("app_notice.keyring_unavailable.body")}</p>
     )}
     <div className="settings-model-selector">
       <span className="settings-slider-label">{t("models.current_label")}</span>
       <ModelPicker models={models} activeId={view.active[family]} disabled={submitting} preparing={preparing} onChoose={choose}
-        onAdd={() => { setDialogError(""); setConfirmation(null); setPanel({ kind: "add" }); }} />
+        {...(adapters[family].length > 0 ? { onAdd: () => { setDialogError(""); setConfirmation(null); setPanel({ kind: "add" }); } } : {})} />
     </div>
     <p className="settings-toggle-hint">{t("models.switch_hint")}</p>
     <div className="settings-model-card settings-model-summary" data-testid="current-model-summary">
@@ -182,7 +187,7 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
     {adding && <AppDialog title={t("models.add_model")} panelClassName="settings-panel settings-model-dialog" dismissOnPointerOutside={false} onClose={() => { setPanel(null); setDialogError(""); }}>
       <div className="settings-model-dialog-body">
         <DialogDescription className="settings-toggle-hint">{t(panel?.kind === "add" ? "models.custom_type_hint" : "models.editor_hint")}</DialogDescription>
-        {panel?.kind === "add" && <div className="settings-model-adapters">{adapters[family].map(a => <Button key={a.backend} variant="outline" onClick={() => setPanel({ kind: "editor", id: a.id, backend: a.backend, mode: "new" })}>{a.label}<span>{t(a.backend === "openai" || a.backend === "byo_endpoint" ? "models.online" : "models.local")}</span></Button>)}</div>}
+        {panel?.kind === "add" && <div className="settings-model-adapters">{adapters[family].map(a => <Button key={a.backend} variant="outline" onClick={() => setPanel({ kind: "editor", id: a.id, backend: a.backend, mode: "new" })}>{a.label}<span>{t(isCloudBackend(a.backend) || a.backend === "byo_endpoint" ? "models.online" : "models.local")}</span></Button>)}</div>}
         {renderEditor()}
         {dialogError && <p role="alert" className="settings-test-err">{dialogError}</p>}
       </div>

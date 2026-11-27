@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ENDPOINT_CONCURRENCY_MAX, ENDPOINT_CONCURRENCY_MIN, ENDPOINT_FRAMES_PER_REQUEST_MAX, ENDPOINT_FRAMES_PER_REQUEST_MIN, ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, type ModelBackend, type ModelEndpoint, type ModelLocalConfig, type ModelOperation, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
+import { ENDPOINT_CONCURRENCY_MAX, ENDPOINT_CONCURRENCY_MIN, ENDPOINT_FRAMES_PER_REQUEST_MAX, ENDPOINT_FRAMES_PER_REQUEST_MIN, ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, isCloudBackend, type ModelBackend, type ModelEndpoint, type ModelLocalConfig, type ModelOperation, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
 import { modelsInstallComponents } from "../ipc";
 import { open as openFileDialog } from "@/bridge/dialog";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ type Props = {
   onUse(request: ModelUseRequest): Promise<void>; onError(message: string): void; onCancel(): void;
 };
 const adapterNames: Record<ModelBackend, string> = {
-  whisper_cpp: "Whisper · whisper.cpp", funasr: "FunASR · sherpa-onnx", openai: "OpenAI Whisper · whisper-1",
+  whisper_cpp: "Whisper · whisper.cpp", funasr: "FunASR · sherpa-onnx", openai: "OpenAI Whisper · whisper-1", elevenlabs: "ElevenLabs",
   qwen3_vl: "Qwen3-VL · llama-mtmd", minicpm_v: "MiniCPM-V · llama-mtmd", byo_endpoint: "OpenAI-compatible",
 };
 export function ModelEditor({ model, name: displayName, mode, backendOverride, operation, submittingRequest, onUse, onError, onCancel, draft }: Props) {
@@ -41,7 +41,7 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
   // A transcription server usually serves the one model it loaded
   // (whisper-server ignores the field), so its model name is optional.
   const speechEndpoint = model.family === "speech" && backend === "byo_endpoint";
-  const canSubmit = (!requiresName || !!name.trim()) && (model.locality === "local" ? localComplete || awaitingFiles : backend === "openai" ? !!apiKey.trim() || !isNew && model.hasKey : !!endpoint.url.trim() && (speechEndpoint || !!endpoint.model.trim()));
+  const canSubmit = (!requiresName || !!name.trim()) && (model.locality === "local" ? localComplete || awaitingFiles : isCloudBackend(backend) ? !!apiKey.trim() || !isNew && model.hasKey : !!endpoint.url.trim() && (speechEndpoint || !!endpoint.model.trim()));
   const run = async (fn: () => Promise<void>) => {
     setBusyAction(true); onError("");
     try { await fn(); } catch (e) { onError(String(e)); }
@@ -111,7 +111,7 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
               onClear={() => setEndpoint(prev => { const next = { ...prev }; delete next.concurrency; return next; })} /></div>
           <p className="settings-toggle-hint">{t("models.endpoint_batching_hint")}</p>
         </>}
-      </> : <p className="settings-toggle-hint">{t("models.openai_speech_hint")}</p>}
+      </> : <p className="settings-toggle-hint">{t(backend === "elevenlabs" ? "models.elevenlabs_hint" : model.family === "voiceover" ? "models.openai_voiceover_hint" : "models.openai_speech_hint")}</p>}
       <div className="settings-key-input-row"><span className="settings-slider-label">API Key</span>
         <AppInput type="password" value={apiKey} autoComplete="off" spellCheck={false} ariaLabel="API Key" disabled={busy}
           placeholder={t(!isNew && model.hasKey ? "settings.placeholder_set" : backend === "byo_endpoint" ? "models.key_optional" : "settings.placeholder_unset")} onValueChange={setApiKey} />

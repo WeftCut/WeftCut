@@ -11,28 +11,6 @@
 
 import type { CompositionSummary, ProjectSummary, TrackSummary } from "../ipc";
 
-/// The voices the provider accepts, in the order the tool's own schema lists
-/// them. `alloy` is first and is the default for that reason — the tool names no
-/// preferred voice, so "the first one it lists" is the only honest choice.
-export const VOICEOVER_VOICES = [
-  "alloy",
-  "echo",
-  "fable",
-  "onyx",
-  "nova",
-  "shimmer",
-] as const;
-
-/// One call's script cap, in characters. Enforced in the field rather than after
-/// the request, so an over-long script costs nothing to discover.
-export const VOICEOVER_SCRIPT_MAX = 4096;
-
-/// The provider's speed range. 1.0 is the provider default, which is why it is
-/// also the field's.
-export const VOICEOVER_SPEED_MIN = 0.25;
-export const VOICEOVER_SPEED_MAX = 4.0;
-export const VOICEOVER_SPEED_DEFAULT = 1.0;
-
 /// Append at the end of the film, or start at the playhead. Two options and not
 /// a free time field: those are the two answers a human actually means, and a
 /// timecode entry would make the common case the laborious one.

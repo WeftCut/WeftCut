@@ -69,6 +69,20 @@ export function loadAllKeys(): Record<string, string> {
   return out
 }
 
+/// Whether a key is stored under `tag`, read without the keyring.
+export function hasStoredKey(tag: string): boolean {
+  return typeof readStored()[tag] === 'string'
+}
+
+/// Store `from`'s key under `to` as its encrypted blob, so the keyring is not
+/// asked: a safeStorage blob does not depend on the tag it is filed under.
+export function copyStoredKey(from: string, to: string): void {
+  const stored = readStored()
+  if (typeof stored[from] !== 'string') return
+  stored[to] = stored[from]
+  writeStored(stored)
+}
+
 /// Encrypt + persist one provider key. Trims; an empty key clears the entry.
 /// Throws, writing nothing, when no keyring can encrypt it.
 export function setKey(provider: string, key: string): void {

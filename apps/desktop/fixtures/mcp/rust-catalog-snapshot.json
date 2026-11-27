@@ -227,13 +227,14 @@
     },
     {
       "name": "transcribe_clip",
-      "description": "Transcribe the audio that plays on 1–20 VideoClip or Audio layers (a VideoClip through its linked Audio member). Returns `{ transcripts: [{ source: { layer_id, signature }, backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing }], failed? }`, one per layer in order, timeline µs; hand `transcripts` to `apply_transcripts` as is. Cut pauses first, caption after: a clip changed since is refused there. `failed` lists layers that refused, with why. `t_start_us`/`t_end_us` narrow one layer's window. `language` is BCP-47; a model that does not cover it, or the language it detects, refuses with options. `whisper_cpp` and `funasr` run on this machine; `openai` (cloud) and `byo_endpoint` (the user's server) UPLOAD the audio — name one in `backend` only with the user's consent. Without `backend` the model selected in Settings runs, never another; if it cannot, the refusal names what it lacks and the ready engines. A retry after a client timeout joins the running job.",
+      "description": "Transcribe the audio that plays on 1–20 VideoClip or Audio layers (a VideoClip through its linked Audio member). Returns `{ transcripts: [{ source: { layer_id, signature }, backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing }], failed? }`, one per layer in order, timeline µs; hand `transcripts` to `apply_transcripts` as is. Cut pauses first, caption after: a clip changed since is refused there. `failed` lists layers that refused, with why. `t_start_us`/`t_end_us` narrow one layer's window. `language` is BCP-47; a model that does not cover it, or the language it detects, refuses with options. `whisper_cpp` and `funasr` run on this machine; `openai`, `elevenlabs` (cloud) and `byo_endpoint` (the user's server) UPLOAD the audio — name one in `backend` only with the user's consent. Without `backend` the model selected in Settings runs, never another; if it cannot, the refusal names what it lacks and the ready engines. A retry after a client timeout joins the running job.",
       "inputSchema": {
         "properties": {
           "backend": {
-            "description": "Strict engine override; that engine serves or the call errors.\n`openai` and `byo_endpoint` upload the audio.",
+            "description": "Strict engine override; that engine serves or the call errors.\n`openai`, `elevenlabs` and `byo_endpoint` upload the audio.",
             "enum": [
               "openai",
+              "elevenlabs",
               "whisper_cpp",
               "funasr",
               "byo_endpoint"
@@ -283,7 +284,7 @@
     },
     {
       "name": "synthesize_speech",
-      "description": "Synthesize speech with the configured cloud TTS provider (OpenAI tts-1; the text is uploaded) and place it as a voiceover Audio layer, one placement or none: a refused placement adds nothing to the pool. `text` ≤ 4096 chars; `voice`; optional `speed` 0.25..4.0 (default ≈ 1.0); `composition_id` (default root); `t_start_us` (default: the composition's end); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. The MP3 is cached by `(model, voice, speed, text)`, so a repeat makes no API request; it is pooled in Media/Voiceover/ (needs an open project). Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.",
+      "description": "Speak text with the voiceover provider selected in Settings → Voiceover (uploads the text) and place it as a voiceover Audio layer, one placement or none: a refused placement adds nothing to the pool. `voice` is an id from `list_voices`, which also gives `text`'s cap and `speed`'s range. `composition_id` (default root); `t_start_us` (default: the composition's end); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. Cached by provider, model, voice, speed and text: a repeat makes no API request. Pooled in Media/Voiceover/ (needs an open project). Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.",
       "inputSchema": {
         "properties": {
           "composition_id": {
@@ -291,7 +292,7 @@
             "type": "string"
           },
           "speed": {
-            "description": "0.25..4.0 for tts-1. Omit to use the provider default (~1.0).",
+            "description": "Within the active provider's `speed` range from `list_voices`; refused\nwhen that is null. Omit for the provider default.",
             "type": "number"
           },
           "t_start_us": {
@@ -303,19 +304,11 @@
             "type": "string"
           },
           "text": {
-            "description": "Text to synthesize. tts-1 caps at 4096 characters.",
+            "description": "Text to speak, up to the active provider's `max_chars` (`list_voices`).",
             "type": "string"
           },
           "voice": {
-            "description": "The tts-1 voice.",
-            "enum": [
-              "alloy",
-              "echo",
-              "fable",
-              "onyx",
-              "nova",
-              "shimmer"
-            ],
+            "description": "A voice `id` from `list_voices`, exactly as listed (ids are\ncase-sensitive). With OpenAI: alloy, echo, fable, onyx, nova or shimmer.",
             "type": "string"
           }
         },
@@ -327,6 +320,18 @@
       },
       "annotations": {
         "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "list_voices",
+      "description": "The voiceover provider selected in Settings → Voiceover, and what `synthesize_speech` takes with it: `{ provider, model, max_chars, speed: { min, max, default } | null, format, voices: [{ id, name, labels, preview_url }] }`. Pass a voice's `id` as `voice`, exactly as listed. `speed: null` means the model has no speed control. ElevenLabs lists the account's own voices (a request to the provider); OpenAI's are fixed. With no provider selected it refuses naming the setting.",
+      "inputSchema": {
+        "description": "`list_voices` takes nothing from the agent: the host injects the selected\nprovider and its key, as for `synthesize_speech`.",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
         "openWorldHint": true
       }
     },
@@ -494,12 +499,12 @@
         },
         {
           "name": "voice",
-          "description": "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer.",
+          "description": "A voice id from `list_voices` (the provider selected in Settings → Voiceover).",
           "required": true
         },
         {
           "name": "speed",
-          "description": "Optional speech speed in [0.25, 4.0]. Omit for the provider default.",
+          "description": "Optional speech speed within the range `list_voices` reports. Omit for the provider default.",
           "required": false
         },
         {

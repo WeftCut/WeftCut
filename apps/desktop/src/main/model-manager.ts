@@ -1,4 +1,4 @@
-import { ENDPOINT_CONCURRENCY_MAX, ENDPOINT_CONCURRENCY_MIN, ENDPOINT_FRAMES_PER_REQUEST_MAX, ENDPOINT_FRAMES_PER_REQUEST_MIN, ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, isEndpointConcurrency, isEndpointFramesPerRequest, isEndpointTimeout, MODEL_DEFINITIONS, type ModelFamily, type ModelLocalConfig, type ModelOperation, type ModelProfile, type ModelsView, type ModelUseRequest } from "../shared/inference-models";
+import { ENDPOINT_CONCURRENCY_MAX, ENDPOINT_CONCURRENCY_MIN, ENDPOINT_FRAMES_PER_REQUEST_MAX, ENDPOINT_FRAMES_PER_REQUEST_MIN, ENDPOINT_TIMEOUT_MAX_S, ENDPOINT_TIMEOUT_MIN_S, isEndpointConcurrency, isEndpointFramesPerRequest, isCloudBackend, isEndpointTimeout, MODEL_DEFINITIONS, MODEL_FAMILIES, type ModelFamily, type ModelLocalConfig, type ModelOperation, type ModelProfile, type ModelsView, type ModelUseRequest } from "../shared/inference-models";
 import { cleanModelLocal, sameModelFiles, withKnownPaths, type ModelSettingsStore } from "./model-settings";
 
 export interface ModelManagerDeps {
@@ -127,6 +127,7 @@ export class ModelManager {
     const filesChanged = !!candidate.local && !!this.resolved(original).local && !sameModelFiles(candidate.local, this.resolved(original).local!);
     const endpointChanged = !!candidate.endpoint && (candidate.endpoint.model !== original.endpoint?.model || candidate.endpoint.url !== original.endpoint?.url);
     if (request.createCustom || !original.custom && (filesChanged || endpointChanged)) {
+      if (original.family === "voiceover") throw new Error("Voiceover runs only its built-in providers");
       if (!request.name?.trim()) throw new Error("Name the custom model");
       const id = `custom-${this.deps.uuid()}`;
       candidate = { ...candidate, id, custom: true, artifacts: [], name: request.name.trim().slice(0, 120), keyTag: `model-${id}` };
@@ -136,7 +137,7 @@ export class ModelManager {
         candidate.backend = request.backend;
       }
     } else if (original.custom && request.name?.trim()) candidate.name = request.name.trim().slice(0, 120);
-    if (candidate.backend === "openai" && !key) throw new Error("Enter an API key");
+    if (isCloudBackend(candidate.backend) && !key) throw new Error("Enter an API key");
     if (candidate.backend === "byo_endpoint" && !candidate.endpoint?.url) throw new Error("Configure the endpoint in advanced settings");
     // An explicit subsequent action cancels activation, not shared downloads.
     this.pending.get(original.family)?.controller.abort();
@@ -197,7 +198,7 @@ export class ModelManager {
   }
 
   unselect(family: ModelFamily): void {
-    if (family !== "speech" && family !== "vlm") throw new Error("Unknown model family");
+    if (!MODEL_FAMILIES.includes(family)) throw new Error("Unknown model family");
     const pending = this.pending.get(family);
     if (pending) this.cancel(pending.operation.id);
     const previous = this.deps.store.get();

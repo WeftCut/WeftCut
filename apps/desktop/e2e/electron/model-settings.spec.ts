@@ -104,7 +104,7 @@ test("model setup stays inline and the add dialog blocks the settings behind it"
     await expect(modal).toHaveCount(0);
     await expect(page.locator('.settings-panel--nav')).toBeVisible();
     const view = await page.evaluate(() => (window as any).api.backend.invoke("models_list")) as ModelsView;
-    expect(view.active).toEqual({ speech: null, vlm: null }); expect(view.operations).toEqual([]);
+    expect(view.active).toEqual({ speech: null, vlm: null, voiceover: null }); expect(view.operations).toEqual([]);
     expect(view.models.every(m => !m.downloadedBytes)).toBe(true);
   } finally { await app.close(); }
 });

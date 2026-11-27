@@ -443,10 +443,17 @@ _Avoid_: sensitivity in UI copy, granularity (minimum shot length)
 ## Inference models
 
 **Model profile**:
-A named speech or video-understanding model plus the configuration to run it.
-Replacing weights or an endpoint makes an independent custom profile.
-Credentials stay outside it.
+A named speech, video-understanding or voiceover model plus the configuration
+to run it. Replacing weights or an endpoint makes an independent custom
+profile; voiceover has built-in profiles only. Credentials stay outside it.
 _Avoid_: engine as the user's selection, automatic model
+
+**Voiceover provider**:
+The service that speaks a voiceover script, selected in Settings → Voiceover:
+OpenAI or ElevenLabs, or None. It declares its model, voices, character cap,
+speed range and output format; nothing above it keeps them. A key saved for
+transcription never selects one. See [ADR 0184](docs/adr/0184-voiceover-runs-on-a-selected-provider.md).
+_Avoid_: TTS engine, voice as a synonym for provider
 
 **Model preparation**:
 Installing a profile's files and validating it with a small inference; only

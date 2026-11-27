@@ -90,6 +90,7 @@ export type SettingsCategory =
   | "keyboard"
   | "speech"
   | "vlm"
+  | "voiceover"
   | "agent";
 
 /// Sidebar order. Every pane stays mounted (toggled via `hidden`) so
@@ -103,6 +104,7 @@ const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
   // Next to Transcription, not folded into it: both configure a model that
   // reads the footage, and a user looking for one will look beside the other.
   { id: "vlm", labelKey: "settings.cat_vlm" },
+  { id: "voiceover", labelKey: "settings.cat_voiceover" },
   { id: "agent", labelKey: "settings.cat_agent" },
 ];
 
@@ -417,6 +419,16 @@ export function SettingsPanel({
             className="settings-pane"
           >
             <VlmSection onError={setError} />
+          </div>
+
+          <div
+            role="tabpanel"
+            id="settings-panel-voiceover"
+            aria-labelledby="settings-tab-voiceover"
+            hidden={category !== "voiceover"}
+            className="settings-pane"
+          >
+            <ModelSection family="voiceover" onError={setError} />
           </div>
 
           <div

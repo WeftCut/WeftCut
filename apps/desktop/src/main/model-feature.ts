@@ -11,7 +11,7 @@ import { type ContentDeps, itemStatus } from "./contentDownload";
 import type { ContentQueue } from "./contentQueue";
 import type { SpeechConfigStore, SpeechConfigFs } from "./speech-config";
 import type { VlmConfigStore } from "./vlm-config";
-import { loadAllKeys, setKey } from "./keys";
+import { copyStoredKey, hasStoredKey, loadAllKeys, setKey } from "./keys";
 import { installModelComponents, missingModelComponents } from "./model-components";
 import { createModelDownloads } from "./model-downloads";
 import { assertModelsIdle, beginModelUse } from "./model-usage";
@@ -43,12 +43,11 @@ export function createModelFeature(deps: {
     setKey(tag, value);
     if (getKey(tag) !== value.trim()) throw new Error("Could not save the model credential");
   };
+  const storedKeys = { hasKey: hasStoredKey, copyKey: copyStoredKey };
   const store = createModelSettingsStore({
-    fs: deps.atomicFs, path: path.join(deps.dir, "model_settings.json"), dir: deps.dir,
+    fs: deps.atomicFs, path: path.join(deps.dir, "model_settings.json"), dir: deps.dir, keys: storedKeys,
     migrate: () => migrateModelSettings({ speech: deps.speech.get(), vlm: deps.vlm.get(), managedLocal,
-      exists: fs.existsSync, hasKey: tag => !!getKey(tag),
-      copyKey: (from, to) => { if (getKey(from)) persistKey(to, getKey(from)); },
-    }),
+      exists: fs.existsSync, keys: storedKeys }),
   });
   const applyActive = () => {
     const p = manager.active("speech");
@@ -56,7 +55,7 @@ export function createModelFeature(deps: {
       // A projection for existing IPC/readers; the model store owns the selection.
       // Nothing is pushed to native: each speech call's snapshot reads the
       // active profile, its key and this store then (ADR 0036).
-      deps.speech.apply({ preferred_engine: p.backend as "whisper_cpp" | "funasr" | "openai" | "byo_endpoint" });
+      deps.speech.apply({ preferred_engine: p.backend as "whisper_cpp" | "funasr" | "openai" | "elevenlabs" | "byo_endpoint" });
       if (p.local) deps.speech.apply({ local: { backend: p.backend, config: p.local } });
     }
     const v = manager.active("vlm");

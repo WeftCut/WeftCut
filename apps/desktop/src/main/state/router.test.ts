@@ -53,7 +53,7 @@ const ALL_CHANNELS: readonly string[] = [
   'analyze_shots', 'analyze_shots_floor', 'shot_floor_report_cached',
   'shot_floor_sensitivity', 'shot_default_opts', 'reduce_shot_report',
   'attach_shot_stats', 'get_media_frame',
-  'get_media_description',
+  'get_media_description', 'list_voices',
   // slice-injected native reads (receive their state slice as a call argument)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
   'generate_quick_proxy',

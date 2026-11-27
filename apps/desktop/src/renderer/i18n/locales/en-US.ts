@@ -242,6 +242,8 @@ const enUS = {
     active_remove_hint: "This model is currently selected. After removal, the selection will be None.",
     analysis_options: "Video analysis options",
     openai_speech_hint: "OpenAI Whisper uses the official OpenAI service and the fixed whisper-1 model. Only an API key is required; custom server addresses are not supported.",
+    openai_voiceover_hint: "Uses the official OpenAI service. One OpenAI API key serves transcription and voiceover.",
+    elevenlabs_hint: "One ElevenLabs API key serves transcription and voiceover. It needs the Text to Speech, Voices (read) and Speech to Text permissions.",
     vision_local_hint: "Use a compatible llama-mtmd executable, model GGUF and matching mmproj projector. Both model files are required.",
     funasr_hint: "Use a sherpa-onnx executable, compatible ONNX model and its tokens file.",
     whisper_hint: "Use a whisper.cpp executable and compatible Whisper model file.",
@@ -1574,6 +1576,7 @@ const enUS = {
     "detect_pauses": "Detect pauses",
     "import_media": "Import media",
     "synthesize_speech": "Synthesize speech",
+    "list_voices": "List voices",
     "apply_subtitles": "Apply subtitles",
     "auto_split_by_shot": "Split into shots",
     "remove_pauses": "Remove pauses",
@@ -2368,6 +2371,8 @@ const enUS = {
     cat_keyboard: "Keyboard",
     cat_speech: "Transcription",
     cat_vlm: "Video understanding",
+    // The Rust refusals name this tab: "Settings → Voiceover".
+    cat_voiceover: "Voiceover",
     cat_agent: "Agent",
     project_scope_blurb:
       "Settings on this page apply to the current project only and are saved with the project file.",
@@ -2450,6 +2455,8 @@ const enUS = {
     speech_browse: "Browse…",
     vlm_blurb:
       "Describe video frames to help AI understand and search your media. Supports local models and online services.",
+    voiceover_blurb:
+      "Speak a script as a voiceover clip, with the online service you choose here.",
     // Named for what it controls rather than for the wire field (`fps`): what a
     // user is choosing is how closely the model looks — so the unit has to ride
     // in the row, beside the number, or nothing on screen says what the count
@@ -3581,6 +3588,7 @@ const enUS = {
     // editor that spends money per use, and the cache is what makes a re-run of
     // the same script free.
     cost: "Generating new audio is a paid request. The same script, voice and speed reuses the audio already made, at no cost.",
+    no_voices: "This account has no voices. Add one with the provider, then open Voiceover again.",
     cancel: "Cancel",
     confirm: "Generate",
     running: "Generating…",

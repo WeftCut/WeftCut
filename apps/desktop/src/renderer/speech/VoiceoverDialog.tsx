@@ -9,18 +9,13 @@ import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
 import { formatTimecode } from "../frames";
-import { logEmit, synthesizeSpeech } from "../ipc";
+import { listVoices, logEmit, synthesizeSpeech, type Voice, type VoiceList } from "../ipc";
 import { trackDisplayName } from "../lib/trackName";
 import { usePlayheadTimeUs } from "../state/playheadStore";
 import { useProjectSummary } from "../state/projectStore";
 import {
   defaultVoiceoverTrackId,
   rootOrNull,
-  VOICEOVER_SCRIPT_MAX,
-  VOICEOVER_SPEED_DEFAULT,
-  VOICEOVER_SPEED_MAX,
-  VOICEOVER_SPEED_MIN,
-  VOICEOVER_VOICES,
   voiceoverStartUs,
   voiceoverTrackOptions,
   type VoiceoverPlacement,
@@ -28,6 +23,13 @@ import {
 import { closeVoiceoverPrompt, useVoiceoverPromptStore } from "./voiceoverPrompt";
 
 const PLACEMENTS: readonly VoiceoverPlacement[] = ["append", "playhead"];
+
+/// A voice's name, with the accent and gender the provider labels it with when
+/// it does (ElevenLabs), so voices with similar names can be told apart.
+function voiceLabel(voice: Voice): string {
+  const traits = [voice.labels.accent, voice.labels.gender].filter(Boolean);
+  return traits.length > 0 ? `${voice.name} · ${traits.join(", ")}` : voice.name;
+}
 
 /// Voiceover: synthesize a script and attach it as an Audio layer, in one commit
 /// — so one undo removes it.
@@ -39,6 +41,10 @@ const PLACEMENTS: readonly VoiceoverPlacement[] = ["append", "playhead"];
 /// `speed`, `target_track_id`) plus one addition, the placement choice: "at the
 /// playhead" is what a human usually means, and the tool's own default (append
 /// at the end) is what an agent gets.
+///
+/// The voices, the script cap and the speed range are the selected provider's
+/// (`list_voices`, read at each opening): none is kept here (ADR 0184). A
+/// provider without a speed range gets no speed field.
 ///
 /// The destination is STATED and then sent explicitly, `target_track_id`
 /// included even when it matches what the hybrid would have chosen on its own:
@@ -75,8 +81,10 @@ function VoiceoverDialogInner() {
   // it.
   const playheadUs = usePlayheadTimeUs();
   const [script, setScript] = useState("");
-  const [voice, setVoice] = useState<string>(VOICEOVER_VOICES[0]);
-  const [speed, setSpeed] = useState(VOICEOVER_SPEED_DEFAULT);
+  const [list, setList] = useState<VoiceList | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [voice, setVoice] = useState("");
+  const [speed, setSpeed] = useState<number | null>(null);
   const [placement, setPlacement] = useState<VoiceoverPlacement>("append");
   const [trackId, setTrackId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -100,6 +108,27 @@ function VoiceoverDialogInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The first voice listed is the default: no provider names a preferred one.
+  // A failure is the provider's own message, or the one naming Settings →
+  // Voiceover when none is selected.
+  useEffect(() => {
+    let live = true;
+    listVoices().then(
+      (next) => {
+        if (!live) return;
+        setList(next);
+        setVoice(next.voices[0]?.id ?? "");
+        setSpeed(next.speed?.default ?? null);
+      },
+      (err: unknown) => {
+        if (live) setLoadError(refusalText(err));
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+
   const trackOptions = useMemo(
     () =>
       tracks.map((track) => ({
@@ -110,16 +139,18 @@ function VoiceoverDialogInner() {
   );
 
   const chars = script.length;
-  const overBy = chars - VOICEOVER_SCRIPT_MAX;
+  const maxChars = list?.max_chars ?? Infinity;
+  const overBy = chars - maxChars;
   // Named so the reason can be SHOWN, not just used to grey the button: an
   // over-long script is refused in the field, before any request is made.
   const refusal =
     script.trim() === ""
       ? t("voiceover.script_empty")
       : overBy > 0
-        ? t("voiceover.script_too_long", { over: overBy, max: VOICEOVER_SCRIPT_MAX })
+        ? t("voiceover.script_too_long", { over: overBy, max: maxChars })
         : null;
-  const canConfirm = refusal === null && !generating;
+  const noVoices = list !== null && list.voices.length === 0;
+  const canConfirm = list !== null && voice !== "" && refusal === null && !generating;
 
   const startUs = voiceoverStartUs(placement, root, playheadUs);
   const timeAt = (p: VoiceoverPlacement): string =>
@@ -153,8 +184,8 @@ function VoiceoverDialogInner() {
         voice,
         // Omitted at the default so the request matches an agent's default-speed
         // call byte for byte: the TTS cache keys an absent speed apart from an
-        // explicit 1.0 (`ipc/index.ts` on `speed`).
-        ...(speed === VOICEOVER_SPEED_DEFAULT ? {} : { speed }),
+        // explicit one (`ipc/index.ts` on `speed`).
+        ...(speed === null || speed === list?.speed?.default ? {} : { speed }),
         // Explicit even when it equals the arm's own default — see the note on
         // stating the destination above. Omitted only when the project has no
         // track at all, which is the one case the arm has to answer itself.
@@ -176,9 +207,8 @@ function VoiceoverDialogInner() {
       });
       closeVoiceoverPrompt();
     } catch (err) {
-      // The resolver's own message, verbatim: "no TTS provider configured"
-      // already points at the key editor, and a generic failure would throw
-      // that away.
+      // The provider's own message, verbatim: a refused key or voice already
+      // says what to change, and a generic failure would throw that away.
       setError(refusalText(err));
       // Under the run's own `op_id`, so the Started row above closes as `Err`
       // instead of staying open in the console as a run still going.
@@ -206,38 +236,43 @@ function VoiceoverDialogInner() {
           onChange={(e) => setScript(e.target.value)}
         />
         {/* One line, two skins: the count is neutral information until it is
-            the reason the button is off, and only then does it turn red. */}
-        <span
-          className={
-            refusal !== null ? "new-project-validation" : "settings-toggle-hint"
-          }
-        >
-          {t("voiceover.script_count", { chars, max: VOICEOVER_SCRIPT_MAX })}
-          {refusal !== null ? ` — ${refusal}` : ""}
-        </span>
+            the reason the button is off, and only then does it turn red. The
+            cap is the provider's, so the line waits for it. */}
+        {list !== null && (
+          <span
+            className={
+              refusal !== null ? "new-project-validation" : "settings-toggle-hint"
+            }
+          >
+            {t("voiceover.script_count", { chars, max: maxChars })}
+            {refusal !== null ? ` — ${refusal}` : ""}
+          </span>
+        )}
       </label>
       <label className="new-project-row">
         <span>{t("voiceover.voice")}</span>
         <AppSelect
           value={voice}
           onValueChange={setVoice}
-          disabled={generating}
+          disabled={generating || list === null || noVoices}
           ariaLabel={t("voiceover.voice")}
-          options={VOICEOVER_VOICES.map((v) => ({ value: v, label: v }))}
+          options={(list?.voices ?? []).map((v) => ({ value: v.id, label: voiceLabel(v) }))}
         />
       </label>
-      <label className="new-project-row">
-        <span>{t("voiceover.speed")}</span>
-        <AppNumberField
-          value={speed}
-          onValueChange={setSpeed}
-          min={VOICEOVER_SPEED_MIN}
-          max={VOICEOVER_SPEED_MAX}
-          step={0.05}
-          disabled={generating}
-          ariaLabel={t("voiceover.speed")}
-        />
-      </label>
+      {list?.speed && speed !== null && (
+        <label className="new-project-row">
+          <span>{t("voiceover.speed")}</span>
+          <AppNumberField
+            value={speed}
+            onValueChange={setSpeed}
+            min={list.speed.min}
+            max={list.speed.max}
+            step={0.05}
+            disabled={generating}
+            ariaLabel={t("voiceover.speed")}
+          />
+        </label>
+      )}
       {trackOptions.length > 0 && (
         <label className="new-project-row">
           <span>{t("voiceover.track")}</span>
@@ -281,7 +316,10 @@ function VoiceoverDialogInner() {
         </RadioGroup>
       </div>
       <p className="settings-toggle-hint">{t("voiceover.cost")}</p>
-      {error !== "" && <p className="new-project-error">{error}</p>}
+      {noVoices && <p className="new-project-error">{t("voiceover.no_voices")}</p>}
+      {(error || loadError) !== "" && (
+        <p className="new-project-error">{error || loadError}</p>
+      )}
       <footer className="new-project-actions">
         <Button size="lg" disabled={generating} onClick={closeVoiceoverPrompt}>
           {t("voiceover.cancel")}

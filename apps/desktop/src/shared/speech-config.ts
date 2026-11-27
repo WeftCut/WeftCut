@@ -2,17 +2,18 @@
 // persistence, src/main/speech-config.ts) and the renderer (consumer via ipc).
 // One definition → no main↔renderer drift.
 //
-// Non-secret config only — the OpenAI API key lives in safeStorage
+// Non-secret config only — cloud API keys live in safeStorage
 // (main/keys.ts). See ADR 0036 "Config splits by secrecy".
 
 /// The engine the user prefers for transcription. `"auto"` lets the resolver
 /// pick by availability (its default order). The concrete tags mirror the Rust
 /// `SpeechBackend::as_str` wire contract.
-export type PreferredEngine = "auto" | "openai" | "whisper_cpp" | "funasr" | "byo_endpoint";
+export type PreferredEngine = "auto" | "openai" | "elevenlabs" | "whisper_cpp" | "funasr" | "byo_endpoint";
 
 export const PREFERRED_ENGINES: readonly PreferredEngine[] = [
   "auto",
   "openai",
+  "elevenlabs",
   "whisper_cpp",
   "funasr",
   // An OpenAI-compatible transcription server (whisper-server, speaches, …).
@@ -39,7 +40,7 @@ export interface LocalEngineConfig {
 export interface SpeechConfig {
   preferred_engine: PreferredEngine;
   /// Per-local-engine config, keyed by the backend tag (`"whisper_cpp"` /
-  /// `"funasr"`). Cloud backends (`"openai"`) configure their key via keys.ts,
+  /// `"funasr"`). Cloud backends (`"openai"`, `"elevenlabs"`) configure their key via keys.ts,
   /// never here, so they never appear in this map.
   local: Record<string, LocalEngineConfig>;
 }

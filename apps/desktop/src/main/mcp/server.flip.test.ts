@@ -188,6 +188,18 @@ describe('handleCallTool flip routing', () => {
     // The config rides in with the call: native holds none (ADR 0036).
     expect(sent.speech_config).toEqual({ whisper_cpp: { kind: 'local', binary: 'w', model: 'm' } })
   })
+  // ADR 0184: `list_voices` reads the provider selected in Settings →
+  // Voiceover, with that provider's key only; a host with none selected sends
+  // an explicit null, which Rust refuses naming the setting.
+  it('injects the selected voiceover provider into list_voices, or null without one', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn(okEnvelope)
+    const voiceover = () => ({ speech_config: { elevenlabs: { kind: 'api_key', key: 'key-x' } }, voiceover_backend: 'elevenlabs' })
+    await handleCallTool(fakeBackend(spy), () => ts, 'list_voices', {}, undefined, undefined, undefined, undefined, undefined, undefined, null, voiceover)
+    expect(JSON.parse(spy.mock.calls[0][1])).toEqual(voiceover())
+    await handleCallTool(fakeBackend(spy), () => ts, 'list_voices', {})
+    expect(JSON.parse(spy.mock.calls[1][1])).toEqual({ speech_config: {}, voiceover_backend: null })
+  })
   it('passes an explicit transcribe_clip backend through untouched and injects no preference', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
