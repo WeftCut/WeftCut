@@ -7,7 +7,6 @@
 // once.
 import { useEffect, useRef, useState } from "react";
 import { AppColorField } from "../components/AppColorField";
-import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { FontSelect } from "../components/FontSelect";
@@ -88,25 +87,12 @@ export function MotifPropField({
       }
       return (
         <PickerField label={label}>
-          {spec.multiline ? (
-            // Multi-line strings (e.g. a text block split on \n) need a
-            // textarea; the single-line AppInput can't hold newlines.
-            <textarea
-              className="app-input"
-              rows={3}
-              value={typeof value === "string" ? value : ""}
-              maxLength={spec.max_length}
-              aria-label={label}
-              onChange={(e) => commit.onChange(e.target.value)}
-            />
-          ) : (
-            <AppInput
-              value={typeof value === "string" ? value : ""}
-              maxLength={spec.max_length}
-              ariaLabel={label}
-              onValueChange={(v) => commit.onChange(v)}
-            />
-          )}
+          <MotifTextInput
+            spec={spec}
+            value={typeof value === "string" ? value : ""}
+            ariaLabel={label}
+            onChange={commit.onChange}
+          />
         </PickerField>
       );
     case "color":
@@ -305,46 +291,104 @@ export function StringPropField({
       cancelling.current = false;
       return;
     }
-    onCommit(text);
+    // A blur mid-composition commits before compositionend has cut it.
+    onCommit(clampToMaxLength(text, spec));
   };
   return (
     <Field label={label}>
-      {spec.multiline ? (
-        // Multi-line strings (a text block split on \n) need a textarea. Enter
-        // inserts a newline (don't blur-commit on it); commit on blur only.
-        <textarea
-          className="app-input"
-          rows={3}
-          value={text}
-          aria-label={label}
-          maxLength={spec.max_length}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={commitOnBlur}
-          onKeyDown={(e) => {
-            if (e.key !== "Escape") return;
+      <MotifTextInput
+        spec={spec}
+        value={text}
+        ariaLabel={label}
+        onChange={setText}
+        onBlur={commitOnBlur}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
             e.preventDefault();
             cancel();
-          }}
-        />
-      ) : (
-        <AppInput
-          value={text}
-          ariaLabel={label}
-          maxLength={spec.max_length}
-          onValueChange={setText}
-          onBlur={commitOnBlur}
-          onCancel={cancel}
-          // Enter = commit safeguard: blur the field so the single onBlur path
-          // commits (no separate commit call → no double undo entry).
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              e.currentTarget.blur();
-            }
-          }}
-        />
-      )}
+          } else if (e.key === "Enter" && !spec.multiline) {
+            // Blur so the single onBlur path commits: no second commit call,
+            // no second undo entry.
+            e.currentTarget.blur();
+          }
+        }}
+      />
     </Field>
+  );
+}
+
+/// `spec`'s text cut to its `max_length`, counted in Unicode scalar values as
+/// the validator counts them (`shared/motifs/catalog.ts`). The native
+/// `maxLength` counts UTF-16 units, so an emoji would stop the field two short
+/// of a limit the validator would still accept.
+function clampToMaxLength(
+  text: string,
+  spec: Extract<PropSpec, { type: "string" }>,
+): string {
+  if (spec.max_length == null) return text;
+  const chars = Array.from(text);
+  return chars.length > spec.max_length ? chars.slice(0, spec.max_length).join("") : text;
+}
+
+/// A string prop's text box on both surfaces: the value column's width and as
+/// tall as its text, so the value the Motif will draw is visible whole. A
+/// single-line prop is a textarea too (it wraps instead of scrolling sideways)
+/// but holds no newline: Enter is swallowed and a pasted one becomes a space.
+/// The limit is said only when it cut what was typed or pasted.
+function MotifTextInput({
+  spec,
+  value,
+  ariaLabel,
+  onChange,
+  onBlur,
+  onKeyDown,
+}: {
+  spec: Extract<PropSpec, { type: "string" }>;
+  value: string;
+  ariaLabel: string;
+  onChange: (next: string) => void;
+  onBlur?: () => void;
+  /// Runs before the single-line Enter guard.
+  onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+}) {
+  const { t } = useTranslation();
+  const [cut, setCut] = useState(false);
+  const shape = (raw: string) => (spec.multiline ? raw : raw.replace(/\r?\n/g, " "));
+  const take = (raw: string) => {
+    const kept = clampToMaxLength(raw, spec);
+    setCut(kept !== raw);
+    onChange(kept);
+  };
+  return (
+    <span className="motif-prop-text">
+      <textarea
+        className={spec.multiline ? "app-input motif-prop-text-box is-multiline" : "app-input motif-prop-text-box"}
+        rows={spec.multiline ? 3 : 1}
+        value={value}
+        aria-label={ariaLabel}
+        // An IME composition is never cut mid-word: the limit applies when it
+        // ends, which fires after its last change.
+        onChange={(e) => {
+          const raw = shape(e.target.value);
+          if ((e.nativeEvent as InputEvent).isComposing) onChange(raw);
+          else take(raw);
+        }}
+        onCompositionEnd={(e) => take(shape(e.currentTarget.value))}
+        onBlur={() => {
+          setCut(false);
+          onBlur?.();
+        }}
+        onKeyDown={(e) => {
+          onKeyDown?.(e);
+          if (e.key === "Enter" && !spec.multiline) e.preventDefault();
+        }}
+      />
+      {cut && spec.max_length != null ? (
+        <span className="motif-prop-limit" role="status">
+          {t("property_panel.motif_text_limit", { max: spec.max_length })}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

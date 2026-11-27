@@ -20,6 +20,7 @@ import type { LibraryMotifRow, MotifCatalog, MotifSummary, ProjectMotifRow } fro
 const ipcMocks = vi.hoisted(() => ({
   listMotifCatalog: vi.fn(),
   addMotif: vi.fn(),
+  createProjectMotif: vi.fn(),
   importMotif: vi.fn(),
   exportMotif: vi.fn(),
   deleteLibraryMotif: vi.fn(),
@@ -58,11 +59,14 @@ vi.mock("../render/motifs/host", () => ({ captureMotifFramePngBlob: capture }));
 import { MotifPicker } from "./MotifPicker";
 import { open, save } from "@/bridge/dialog";
 import { setProjectMotifs } from "../render/motifs/catalog";
+import { MOTIF_SECTION } from "../properties/MotifManagement";
+import { clearPropSectionMemory, PropSection } from "../properties/PropSection";
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   setProjectMotifs();
+  clearPropSectionMemory();
 });
 
 const MOTIF: MotifSummary = {
@@ -478,6 +482,23 @@ function colorReadout(swatch: HTMLInputElement): string {
   expect(code).toBeTruthy();
   return code!.textContent ?? "";
 }
+
+describe("New Motif", () => {
+  it("places the new Motif and opens the Motif section of the property panel it lands on", async () => {
+    ipcMocks.createProjectMotif.mockResolvedValue("untitled-motif");
+    await renderPicker();
+    await userEvent.click(screen.getByRole("button", { name: "New Motif" }));
+    await vi.waitFor(() => expect(onPlaced).toHaveBeenCalledWith("layer-new"));
+    cleanup();
+    // The panel mounts on the placed Motif layer after the picker closes.
+    render(
+      <PropSection layerKind="Motif" sectionId={MOTIF_SECTION} title="Motif" defaultCollapsed>
+        <p>folder</p>
+      </PropSection>,
+    );
+    expect(screen.getByRole("button", { name: "Motif" }).getAttribute("aria-expanded")).toBe("true");
+  });
+});
 
 describe("MotifPicker prop form", () => {
   it("buffers edits locally and submits the whole props object in one add", async () => {

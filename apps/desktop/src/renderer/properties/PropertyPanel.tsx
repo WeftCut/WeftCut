@@ -55,7 +55,7 @@ import { useTextFit } from "./useTextFit";
 // row (fades/flip/mute/content/font, Motif props) commits scalars through
 // `updateLayerParams`.
 import { getMotif, motifUnavailable, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
-import { MotifManagementRow, MotifSourcePanel } from "./MotifManagement";
+import { MOTIF_SECTION, MotifPackageRows } from "./MotifManagement";
 import { MotifProblem } from "../motifs/MotifProblem";
 import { MotifFontProblem, TextFontProblem } from "./FontProblem";
 import { openProjectTrustDialog } from "../motifs/projectTrust";
@@ -1156,23 +1156,26 @@ function MotifFields({
   return (
     <>
       <BakeStatusLine layerId={layer.id} />
-      {motif === null ? (
-        unavailable?.status === "untrusted" ? (
-          // Only the user trusts, the whole project at once (ADR 0182).
-          <>
-            <MotifProblem id={v.motif_id} status="untrusted" />
-            <Button size="sm" onClick={openProjectTrustDialog}>
-              {t("property_panel.motif_review_trust")}
-            </Button>
-          </>
-        ) : unavailable
-          ? <MotifProblem id={v.motif_id} status={unavailable.status} diagnostic={unavailable.diagnostic} />
-          : <p className="prop-hint">{t("property_panel.unknown_motif")}</p>
-      ) : motif.hasParamsUi ? (
-        // The Motif ships its own page — it owns the whole props surface,
-        // including labels, grouping and order. The fallback form below stays
-        // the default for every Motif that doesn't.
-        <PropSection layerKind={layer.kind} sectionId="props" title={t("property_panel.props")}>
+      {/* One section for everything about the Motif: this clip's props first,
+          then the Motif itself (its library state and its files), which every
+          clip of it shares. */}
+      <PropSection layerKind={layer.kind} sectionId={MOTIF_SECTION} title={t("property_panel.motif")}>
+        {motif === null ? (
+          unavailable?.status === "untrusted" ? (
+            // Only the user trusts, the whole project at once (ADR 0182).
+            <>
+              <MotifProblem id={v.motif_id} status="untrusted" />
+              <Button size="sm" onClick={openProjectTrustDialog}>
+                {t("property_panel.motif_review_trust")}
+              </Button>
+            </>
+          ) : unavailable
+            ? <MotifProblem id={v.motif_id} status={unavailable.status} diagnostic={unavailable.diagnostic} />
+            : <p className="prop-hint">{t("property_panel.unknown_motif")}</p>
+        ) : motif.hasParamsUi ? (
+          // The Motif ships its own page — it owns the whole props surface,
+          // including labels, grouping and order. The fallback form below stays
+          // the default for every Motif that doesn't.
           <MotifParamsFrame
             layerId={layer.id}
             motifId={v.motif_id}
@@ -1180,11 +1183,8 @@ function MotifFields({
             props={v.props}
             commit={(patch) => commit({ kind: "Motif", props: patch })}
           />
-          {fontProblem}
-        </PropSection>
-      ) : propEntries.length > 0 ? (
-        <PropSection layerKind={layer.kind} sectionId="props" title={t("property_panel.props")}>
-          {propEntries.map(([key, spec]) => (
+        ) : (
+          propEntries.map(([key, spec]) => (
             <MotifPropField
               key={key}
               propKey={key}
@@ -1197,18 +1197,11 @@ function MotifFields({
                   debouncedCommit({ kind: "Motif", props: { [key]: next } }),
               }}
             />
-          ))}
-          {fontProblem}
-        </PropSection>
-      ) : null}
-      <PropSection layerKind={layer.kind} sectionId="motif_management" title={t("property_panel.motif_management")} defaultCollapsed>
-        <MotifManagementRow motifId={v.motif_id} />
+          ))
+        )}
+        {fontProblem}
+        <MotifPackageRows motifId={v.motif_id} files={motif !== null} />
       </PropSection>
-      {motif ? (
-        <PropSection layerKind={layer.kind} sectionId="motif_source" title={t("property_panel.motif_source")} defaultCollapsed>
-          <MotifSourcePanel motifId={v.motif_id} />
-        </PropSection>
-      ) : null}
     </>
   );
 }

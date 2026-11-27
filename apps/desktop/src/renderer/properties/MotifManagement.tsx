@@ -1,23 +1,23 @@
-// The selected Motif layer's project Motif, managed from the property panel:
-// its state against the library with the same actions the Motifs panel's row
-// offers (motifs/motifRows.ts), and its source, edited in place. The project's
-// Motif is the one being edited: every clip of it changes, with no approval
-// (spec § Project Motifs, "Edited in place, no approval").
+// The selected Motif layer's project Motif itself, as rows of the property
+// panel's Motif section: its version against the library with the same actions
+// the Motifs panel's row offers (motifs/motifRows.ts), and the folder its
+// source is edited in. The project's Motif is the one being edited: every clip of it
+// changes, with no approval (spec § Project Motifs, "Edited in place, no
+// approval").
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { refusalText } from "../errors/tryMutate";
-import {
-  getMotifSource,
-  listMotifCatalog,
-  updateMotifSource,
-  updateProjectMotif,
-  type MotifCatalog,
-} from "../ipc";
-import { MotifProblem } from "../motifs/MotifProblem";
-import { canSaveToLibrary, libraryTake } from "../motifs/motifRows";
+import { open as openPath } from "@/bridge/shell";
+import { listMotifCatalog, updateProjectMotif, type MotifCatalog, type ProjectMotifRow } from "../ipc";
+import { canSaveToLibrary, libraryRowOf, libraryTake, versionGap, type VersionGap } from "../motifs/motifRows";
 import { useSaveToLibrary } from "../motifs/SaveToLibrary";
 import { motifCatalogRevision, subscribeMotifCatalog } from "../render/motifs/catalog";
+import { Field } from "./Field";
+
+/// The property panel section holding a Motif layer's props and these rows;
+/// "New Motif" opens it on the layer it places.
+export const MOTIF_SECTION = "motif";
 
 /// The panel's catalog, pulled again whenever the render catalog changes
 /// (every `motifs:changed` lands there first). Null until the first answer.
@@ -32,17 +32,42 @@ function useMotifCatalog(): MotifCatalog | null {
   return catalog;
 }
 
-/// Project Motif `motifId`'s state and what can be done with it. Removal is
-/// not offered here: the selected layer uses it, so it would be refused.
-export function MotifManagementRow({ motifId }: { motifId: string }) {
-  const { t } = useTranslation();
+/// Project Motif `motifId`'s Version row and, when `files`, its Source row.
+/// Why a Motif cannot render is said above these rows, by the section.
+export function MotifPackageRows({ motifId, files }: { motifId: string; files: boolean }) {
   const catalog = useMotifCatalog();
+  const row = catalog?.project.find((r) => r.id === motifId);
+  if (!row) return null;
+  return (
+    <div className="prop-motif-package">
+      <VersionRow
+        row={row}
+        gap={versionGap(row, libraryRowOf(row, catalog?.library ?? []))}
+        libraryName={(id) => catalog?.library.find((r) => r.id === id)?.motif.name}
+      />
+      {files ? <SourceRow path={row.path} /> : null}
+    </div>
+  );
+}
+
+/// This project's copy against the library's version of its lineage, and what
+/// can be done about it. Removal is not offered: the selected layer uses the
+/// Motif, so it would be refused.
+function VersionRow({
+  row,
+  gap,
+  libraryName,
+}: {
+  row: ProjectMotifRow;
+  /// How the two differ, said under the state when they do.
+  gap: VersionGap | null;
+  libraryName: (id: string) => string | undefined;
+}) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const save = useSaveToLibrary((id) => catalog?.library.find((r) => r.id === id)?.motif.name);
-  const row = catalog?.project.find((r) => r.id === motifId);
-  if (!row) return null;
+  const save = useSaveToLibrary(libraryName);
 
   const run = (fn: () => Promise<unknown>) => async () => {
     setBusy(true);
@@ -60,81 +85,70 @@ export function MotifManagementRow({ motifId }: { motifId: string }) {
   const state = row.status === "ok" ? row.state : row.status;
   const take = libraryTake(row);
   return (
-    <div className="prop-motif-lifecycle">
-      <span className={`motif-card-status status-${state}`}>{t(`motif_picker.status.${state}`)}</span>
-      {take && (
-        <Button size="sm" disabled={busy} title={t(`motif_picker.${take}_hint`)} onClick={run(async () => {
-          const { unfinished } = await updateProjectMotif(motifId);
-          if (unfinished) setNotice(t("motif_picker.unfinished_moved", { path: unfinished }));
-        })}>
-          {t(`motif_picker.${take}_button`)}
-        </Button>
-      )}
-      {canSaveToLibrary(row) && (
-        <Button size="sm" disabled={busy} onClick={run(() => save.start(motifId))}>
-          {t("motif_picker.save_button")}
-        </Button>
-      )}
-      {row.status !== "ok" && <MotifProblem id={row.id} status={row.status} diagnostic={row.diagnostic} />}
-      {err && <p className="settings-error">{err}</p>}
-      {notice && <p className="prop-hint" role="status">{notice}</p>}
-      {save.dialog}
-    </div>
+    <Field label={t("property_panel.motif_version")} hint={t("property_panel.motif_version_hint")} as="div">
+      <div className="prop-motif-version">
+        <span className="prop-motif-version-state">
+          <span className={`motif-card-status status-${state}`}>{t(`motif_picker.status.${state}`)}</span>
+        </span>
+        {gap && <p className="prop-motif-version-gap">{t(`property_panel.motif_version_${gap.kind}`, gap)}</p>}
+        {(take || canSaveToLibrary(row)) && (
+          <div className="prop-motif-actions">
+            {take && (
+              <Button size="sm" disabled={busy} title={t(`motif_picker.${take}_hint`)} onClick={run(async () => {
+                const { unfinished } = await updateProjectMotif(row.id);
+                if (unfinished) setNotice(t("motif_picker.unfinished_moved", { path: unfinished }));
+              })}>
+                {t(`motif_picker.${take}_button`)}
+              </Button>
+            )}
+            {canSaveToLibrary(row) && (
+              <Button size="sm" disabled={busy} onClick={run(() => save.start(row.id))}>
+                {t("motif_picker.save_button")}
+              </Button>
+            )}
+          </div>
+        )}
+        {err && <p className="settings-error">{err}</p>}
+        {notice && <p className="prop-hint" role="status">{notice}</p>}
+        {save.dialog}
+      </div>
+    </Field>
   );
 }
 
-/// In-app source editor for the selected layer's project Motif. See
-/// docs/motifs.md. Deliberately minimal: a plain textarea of the Motif's full
-/// composed source (manifest island + body). "Apply" writes it through
-/// `updateMotifSource`, refused when the folder changed since it was read;
-/// `motifs:changed` → the catalog resyncs (new content_hash) → the canvas
-/// preview re-captures.
-export function MotifSourcePanel({ motifId }: { motifId: string }) {
+/// The Motif's source: the folder it lives in, to edit with the user's own tools. Saving there is
+/// all an edit takes: the project's `Motifs/` is watched, and each save that
+/// leaves a valid package is one undo step (docs/motif-workspaces.md § Editing
+/// in place). The folder opens rather than a file in it: a `.html` file's
+/// default handler is a browser, not an editor.
+function SourceRow({ path }: { path: string }) {
   const { t } = useTranslation();
-  const [source, setSource] = useState<string | null>(null);
-  const [revision, setRevision] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Seed the textarea from the project folder whenever the Motif changes.
-  useEffect(() => {
-    let alive = true;
+  const openFolder = () => {
     setErr(null);
-    setSource(null);
-    getMotifSource(motifId)
-      .then((s) => { if (alive) { setSource(s.html); setRevision(s.revision); } })
-      .catch((e) => { if (alive) setErr(refusalText(e)); });
-    return () => { alive = false; };
-  }, [motifId]);
-
-  const apply = async () => {
-    if (source == null) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      setRevision(await updateMotifSource(motifId, source, revision));
-    } catch (e) {
-      setErr(refusalText(e));
-    } finally {
-      setBusy(false);
-    }
+    openPath(path).catch((e: unknown) => setErr(refusalText(e)));
+  };
+  const copyPath = () => {
+    navigator.clipboard.writeText(path).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }, (e: unknown) => setErr(refusalText(e)));
   };
 
   return (
-    <div className="prop-motif-source">
-      <p className="prop-hint">{t("property_panel.motif_source_hint")}</p>
-      <textarea
-        className="prop-motif-source-text"
-        aria-label={t("property_panel.motif_source")}
-        spellCheck={false}
-        value={source ?? ""}
-        disabled={source == null || busy}
-        onChange={(e) => setSource(e.target.value)}
-      />
-      <Button size="sm" disabled={busy || source == null} onClick={apply}>
-        {busy ? t("property_panel.motif_source_applying") : t("property_panel.motif_source_apply")}
-      </Button>
-      {err && <p className="settings-error">{err}</p>}
-    </div>
+    <Field label={t("property_panel.motif_source")} hint={t("property_panel.motif_source_hint")} as="div">
+      <div className="prop-motif-source">
+        <code className="prop-motif-source-path" title={path}>{path}</code>
+        <div className="prop-motif-actions">
+          <Button size="sm" onClick={openFolder}>{t("property_panel.motif_source_open")}</Button>
+          <Button size="sm" onClick={copyPath}>
+            {copied ? t("property_panel.motif_source_copied") : t("property_panel.motif_source_copy")}
+          </Button>
+        </div>
+        {err && <p className="settings-error">{err}</p>}
+      </div>
+    </Field>
   );
 }

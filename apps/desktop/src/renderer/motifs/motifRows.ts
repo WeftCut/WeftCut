@@ -76,3 +76,36 @@ export function matchRows<R extends MotifRow>(rows: readonly R[], query: string)
   if (q === "") return [...rows];
   return rows.filter((row) => rowName(row).toLowerCase().includes(q) || row.id.toLowerCase().includes(q));
 }
+
+/** The library row a project Motif is compared with: the library's current
+ *  Motif of its lineage. A built-in is that Motif even when an installed one
+ *  shares its lineage, as main decides (`libraryHeadOfLineage`). */
+export function libraryRowOf(row: ProjectMotifRow, library: readonly LibraryMotifRow[]): LibraryMotifRow | undefined {
+  const held = library.filter((r) => r.in_project === row.id);
+  return held.find((r) => r.status === "builtin") ?? held[0];
+}
+
+/** How a project copy and the library's version stand apart, by version
+ *  number, when they differ: the copy is an unchanged older version
+ *  (`behind`), was edited here while the library stayed at the version it
+ *  came from (`edited`), was edited here while the library moved on
+ *  (`diverged`: taking the library's version drops the edits), or differs
+ *  with no version it came from to name (`differs`). Null when they match,
+ *  when the library has no version of it, or when its folder cannot render
+ *  (the panel says why instead). */
+export type VersionGap =
+  | { kind: "behind"; ours: number; theirs: number }
+  | { kind: "edited"; base: number }
+  | { kind: "diverged"; base: number; theirs: number }
+  | { kind: "differs"; theirs: number };
+
+export function versionGap(row: ProjectMotifRow, library: LibraryMotifRow | undefined): VersionGap | null {
+  if (row.status === "missing" || row.status === "invalid") return null;
+  if (row.state !== "update_available" && row.state !== "modified") return null;
+  const theirs = library?.motif.version;
+  if (theirs === undefined) return null;
+  const base = row.from && row.from.uid === row.uid ? row.from.version : null;
+  if (base === null) return { kind: "differs", theirs };
+  if (row.state === "update_available") return { kind: "behind", ours: base, theirs };
+  return base < theirs ? { kind: "diverged", base, theirs } : { kind: "edited", base };
+}

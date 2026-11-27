@@ -39,17 +39,35 @@ GPU scenes are repeatable per machine only.
 
 ## Parameter UI
 
-The property panel shows either a form generated from `props_schema` or the
-Motif's own `params.html`; presence of that file beside `index.html` is the
-only switch.
+A Motif layer's property panel has one *Motif* section: the clip's props, then
+two rows for the Motif itself, which every clip of it shares. The props are a
+form generated from `props_schema` or the Motif's own `params.html`; presence
+of that file beside `index.html` is the only switch.
 
-**Generated form (default).** One row per prop by type — text (textarea when
-`multiline`), color swatch, number with steppers, `enum` dropdown — in the
-schema's authored key order, labelled with the key title-cased (`bg_color` →
-"Bg Color"). Labels are not localized: Motif keys are arbitrary. Each row
-commits one key per gesture; the color swatch is debounced so an OS color-dialog
-drag does not flood the serial capture queue. The picker's props form uses the
-same generator.
+**Generated form (default).** One row per prop by type — text, color swatch,
+number with steppers, `enum` dropdown — in the schema's authored key order,
+labelled with the key title-cased (`bg_color` → "Bg Color"). Labels are not
+localized: Motif keys are arbitrary. A text prop's box fills the value column
+and grows with its value, so the whole value shows; without `multiline` it
+holds no newline (Enter commits, a pasted one becomes a space). A
+`max_length` stops the text there, counted in Unicode scalar values as the
+validator counts; an IME composition is cut only when it ends, and the limit is
+named under the box only when it cut the input. Each row commits one key per
+gesture; the color swatch is debounced so an OS color-dialog drag does not
+flood the serial capture queue. The picker's props form uses the same
+generator.
+
+**The Motif's rows.** *Version* compares the project's copy with the library
+(*Same as library*, *Modified*, *Update available*, *Project only*) and offers
+its actions (below). When they differ, a note under the state names the
+versions: an unchanged copy behind the library's; a copy edited here since the
+library version it came from; the same while the library moved on, where
+updating replaces the edits made here; or, with no version it came from, the
+library version it differs from. *Source* shows the Motif's folder, with *Open folder* and
+*Copy path*: its files are edited there with the user's own tools
+([motif-workspaces.md](motif-workspaces.md#editing-in-place)). The folder
+opens, not `index.html`, whose default handler is a browser. *New Motif* opens
+the section on the layer it places.
 
 **`params.html`.** The catalog carries `has_params_ui`, which main derives by
 stat'ing the file (built-ins once at boot; project and saved Motifs on every

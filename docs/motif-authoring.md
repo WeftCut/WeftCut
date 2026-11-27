@@ -1,8 +1,8 @@
 # Motif authoring contract
 
 The rules a Motif document must satisfy to render correctly in WeftCut. This is
-the authoritative authoring spec: the in-app source panel, external editors, and
-MCP agents all write against it. It is self-contained on purpose — a copy ships
+the authoritative authoring spec: people editing a Motif's folder and MCP
+agents both write against it. It is self-contained on purpose — a copy ships
 with the app to agent clients, where no other WeftCut document is reachable.
 
 A Motif is one parameterized, time-varying overlay element (a lower-third, a
@@ -221,7 +221,7 @@ Exactly five variants exist, at most 64 props. Each prop MUST carry a
 
 | Variant | Constraints |
 |---|---|
-| `string` | optional `max_length` (counted in Unicode scalar values); optional `multiline` (renders a textarea) |
+| `string` | optional `max_length` (counted in Unicode scalar values); optional `multiline` (keeps newlines; without it the text is one line) |
 | `color` | hex string: `#rgb`, `#rgba`, `#rrggbb`, or `#rrggbbaa` |
 | `number` | optional `min` / `max`, both **inclusive**; values must be finite |
 | `enum` | `options`: the exhaustive string list; `default` must be one of them |

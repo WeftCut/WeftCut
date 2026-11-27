@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { composeMotifHtml } from '../../shared/motifs/catalog';
 const invoke = vi.fn();
 vi.mock('@/bridge/ipc', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@/bridge/events', () => ({ listen: vi.fn() }));
-import { getMotifSource, importMotif, listMotifCatalog, removeProjectMotif, saveToLibrary, updateMotifSource, updateProjectMotif } from './index';
+import { importMotif, listMotifCatalog, removeProjectMotif, saveToLibrary, updateProjectMotif } from './index';
 beforeEach(() => invoke.mockReset());
 
 describe('the Motif panel speaks the project/library channels', () => {
@@ -27,16 +26,6 @@ describe('the Motif panel speaks the project/library channels', () => {
     expect(invoke).toHaveBeenLastCalledWith('delete_motif', { motif_id: 'lower' });
     expect(await importMotif('C:/scene.zip')).toBe('scene');
     expect(invoke).toHaveBeenLastCalledWith('create_motif', { source: { kind: 'zip', path: 'C:/scene.zip' } });
-  });
-
-  it('edits a project Motif in place from the revision it read, in one manifest/HTML transaction', async () => {
-    const manifest = { id: 'a', name: 'A', version: 1, size: [64, 64] as [number, number], default_duration_s: 1, props_schema: {} };
-    const html = composeMotifHtml(manifest, '<body>hello</body>');
-    invoke.mockResolvedValueOnce({ manifest, text: html, revision: 'old' }).mockResolvedValueOnce({ revision: 'new' });
-    const source = await getMotifSource('a');
-    expect(invoke).toHaveBeenNthCalledWith(1, 'read_motif', { motif_id: 'a', path: 'index.html' });
-    expect(await updateMotifSource('a', source.html, source.revision)).toBe('new');
-    expect(invoke).toHaveBeenLastCalledWith('update_motif_files', expect.objectContaining({ motif_id: 'a', expected_revision: 'old', files: expect.arrayContaining([{ path: 'index.html', text: html }]) }));
   });
 
   it('splits list_motifs into its groups; an untrusted project Motif carries its manifest, a broken one none, a misnamed library folder its name', async () => {

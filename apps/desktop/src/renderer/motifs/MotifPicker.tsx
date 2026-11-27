@@ -43,6 +43,8 @@ import { addMotifIn } from "../ipc/compositionScoped";
 import { refusalText } from "../errors/tryMutate";
 import { trackDisplayName } from "../lib/trackName";
 import { MotifPropField } from "../properties/MotifPropFields";
+import { MOTIF_SECTION } from "../properties/MotifManagement";
+import { requestPropSectionExpand } from "../properties/PropSection";
 import { defaultPropsFor, MotifPreview, useDebounced } from "./MotifPreview";
 import { newMotifSource } from "../render/motifs/newMotifSource";
 import { syncProjectMotifsFromBackend } from "../render/motifs/syncCatalog";
@@ -55,8 +57,8 @@ interface Props {
   /// Fired after the picker places a layer, from "New Motif" or "Add to
   /// timeline". The App selects the layer and reveals its track: an
   /// auto-created overlay track has no role, so A/B Roll hides it until
-  /// revealed. "New Motif" lands the user in the property panel's source
-  /// editor this way (docs/motifs.md canvas-context editing).
+  /// revealed. "New Motif" lands the user on the property panel's Motif
+  /// section this way (docs/motifs.md § Parameter UI).
   onPlaced: (layerId: string) => void;
   /// The composition the picker is adding to — the timeline that holds the
   /// keyboard, resolved by the App when the dialog opens. The picker's tracks,
@@ -201,11 +203,13 @@ export function MotifPicker({
     // Keeps the picker useful if the auto-place below fails: the new card is
     // already selected and the error shows in place.
     setSelectedKey(rowKey({ group: "project", id }));
-    // Straight into the editing surface: place it at the playhead (default
-    // props/duration, fresh overlay track), hand the new layer to the App for
-    // select + reveal, and close the picker.
+    // Straight to where it is edited: place it at the playhead (default
+    // props/duration, fresh overlay track), open the property panel's Motif
+    // section (its Files row is where the new Motif is written), hand the new
+    // layer to the App for select + reveal, and close the picker.
     const layerId = await addMotifIn({ compositionId, motifId: id, tStartUs: currentTimeUs });
     await placed();
+    requestPropSectionExpand("Motif", MOTIF_SECTION);
     onPlaced(layerId);
     onClose();
   });

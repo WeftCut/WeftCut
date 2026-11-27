@@ -279,9 +279,9 @@ test('countdown keeps the generated fallback form — no params page', async () 
     await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
 
     // The generated form is live (Title Case labels off the bare prop keys).
-    // Scoped to the Props section: the layer's own name field is also called
+    // Scoped to the Motif section: the layer's own name field is also called
     // "Label", one section up.
-    const props = dockPanel(page, 'attribute').getByRole('region', { name: 'Props' })
+    const props = dockPanel(page, 'attribute').getByRole('region', { name: 'Motif', exact: true })
     const label = props.getByRole('textbox', { name: /^Label$/ })
     await expect(label).toBeVisible({ timeout: 30_000 })
     // No page was embedded, because countdown ships no params.html. Both paths

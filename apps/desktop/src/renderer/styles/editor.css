@@ -2593,34 +2593,59 @@
 .prop-bake-status.is-warming { color: var(--warning); }
 .prop-bake-status.is-preview_ready { color: var(--success); }
 .prop-bake-status.is-ready { color: var(--success); }
-.prop-motif-lifecycle { display: flex; align-items: center; gap: calc(8 * var(--ui-px)); margin: calc(6 * var(--ui-px)) 0; flex-wrap: wrap; }
-.prop-motif-source { margin: calc(8 * var(--ui-px)) 0; }
-/* Recessed code well (--surface-sunken per docs/ui-tokens.md "inset editors").
-   Without an explicit skin the Tailwind preflight leaves the textarea as a
-   borderless transparent box — raw source floating on the panel. */
-.prop-motif-source-text {
-  width: 100%;
-  box-sizing: border-box;
-  min-height: calc(160 * var(--ui-px));
-  margin: 0 0 calc(8 * var(--ui-px));
-  padding: calc(8 * var(--ui-px));
-  font-family: var(--mono, ui-monospace, monospace);
+/* The Motif's own rows (Version, Source) under the clip's props: every clip of
+   the Motif shares them, so a rule sets them apart. */
+.prop-motif-package {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--ui-px));
+  margin-top: calc(6 * var(--ui-px));
+  padding-top: calc(8 * var(--ui-px));
+  border-top: 1px solid var(--border-soft);
+}
+/* A value that runs to several lines (a wrapped string prop, a path over its
+   buttons) keeps its caption on its first line, not centred on the block. */
+.property-panel .prop-field:has(.motif-prop-text, .prop-motif-source, .prop-motif-version) {
+  align-items: start;
+}
+/* The Version row reads state, then the note on how the copy differs, then
+   its actions. Its first line is as tall as the caption's, so the small state
+   tag centres on the caption whatever follows it. */
+.prop-motif-version-state {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--font-size-body) * var(--line-height-body));
+}
+.prop-motif-version-gap {
   font-size: var(--font-size-caption);
   line-height: var(--line-height-body);
-  color: var(--foreground);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-control);
-  resize: vertical;
-  white-space: pre;
+  color: var(--muted-foreground);
 }
-.prop-motif-source-text:focus {
-  outline: none;
-  border-color: var(--ring);
+.property-panel .prop-field:has(.motif-prop-text) > .prop-field-label {
+  padding-top: calc(5 * var(--ui-px));
 }
-.prop-motif-source-text:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.property-panel .prop-field:has(.prop-motif-source) > .prop-field-label {
+  padding-top: calc(4 * var(--ui-px));
+}
+.prop-motif-version,
+.prop-motif-source {
+  display: flex;
+  align-items: flex-start;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: calc(6 * var(--ui-px));
+  min-width: 0;
+}
+.prop-motif-actions { display: flex; align-items: center; gap: calc(6 * var(--ui-px)); flex-wrap: wrap; }
+/* The folder path wraps anywhere: it is one long word, and cut off it would
+   hide the part that names the Motif. Selectable, so it can be copied by hand. */
+.prop-motif-source-path {
+  padding-top: calc(4 * var(--ui-px));
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 /* A Motif's own params page. Height is author-declared (clamped host-side) and
    set inline; the panel column already scrolls, so a tall page just extends it.
