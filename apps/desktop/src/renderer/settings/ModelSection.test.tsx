@@ -312,7 +312,7 @@ describe("endpoint request timeout", () => {
   // nothing but the provider's key.
   it("offers only the built-in voiceover providers, set up with a key", async () => {
     const user = userEvent.setup(); render(<ModelSection family="voiceover" onError={vi.fn()} />);
-    expect((await screen.findByTestId("current-model-summary")).textContent).toContain("No model selected");
+    expect((await screen.findByTestId("current-model-summary")).textContent).toContain("No provider selected");
     await openPicker(user, "Current provider");
     const offered = screen.getAllByRole("menuitemradio").map(item => item.textContent ?? "");
     expect(offered).toHaveLength(3);

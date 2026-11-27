@@ -166,7 +166,9 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
         {actions(active)}
         {inlineEditor && editor.id === active.id && <div className="settings-model-inline-editor">{renderEditor()}</div>}
         {confirm(active.id)}
-      </> : <><strong>{t("models.none_active")}</strong><p className="settings-toggle-hint">{t("models.empty_hint")}</p></>}
+      </> : family === "voiceover"
+        ? <><strong>{t("models.voiceover_none_active")}</strong><p className="settings-toggle-hint">{t("models.voiceover_empty_hint")}</p></>
+        : <><strong>{t("models.none_active")}</strong><p className="settings-toggle-hint">{t("models.empty_hint")}</p></>}
     </div>
     {inlineEditor && editor.id !== active?.id && <>
       {/* Between the two cards the arrow says what the setup card is for: the

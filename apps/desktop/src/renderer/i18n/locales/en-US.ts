@@ -215,6 +215,8 @@ const enUS = {
     switch_hint: "Select a model to switch automatically. Downloads and first-time setup require an extra step.",
     current_provider_label: "Current provider",
     voiceover_switch_hint: "Select a provider to switch. Its API key is checked first.",
+    voiceover_none_active: "No provider selected",
+    voiceover_empty_hint: "Voiceover is off until you choose a provider and enter its API key.",
     needs_download: "Download required…", needs_configuration: "Setup required…", setup_model: "Set up {{name}}",
     custom: "Custom", add_model: "Add custom model…", edit_model: "Model settings…",
     custom_type_hint: "Choose the adapter that matches your model or service.",

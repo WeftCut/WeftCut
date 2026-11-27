@@ -1812,8 +1812,9 @@ pub(super) struct TranscribeClipArgs {
     #[schemars(skip)]
     pub speech_config: std::collections::HashMap<String, speech::config::BackendConfig>,
     /// Ask for exact per-word times where the engine can emit them. Default
-    /// true; `false` forces SRT-style interpolated words. The result's
-    /// `word_timing` reports what you got.
+    /// true; `false` forces SRT-style interpolated words, except on
+    /// `elevenlabs`, which always times words. The result's `word_timing`
+    /// reports what you got.
     #[serde(default)]
     pub word_timestamps: Option<bool>,
     /// Explicit opt-in: normalize only the transcription copy toward -3 dBFS

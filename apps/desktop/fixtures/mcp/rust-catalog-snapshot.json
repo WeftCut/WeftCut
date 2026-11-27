@@ -268,7 +268,7 @@
             "type": "integer"
           },
           "word_timestamps": {
-            "description": "Ask for exact per-word times where the engine can emit them. Default\ntrue; `false` forces SRT-style interpolated words. The result's\n`word_timing` reports what you got.",
+            "description": "Ask for exact per-word times where the engine can emit them. Default\ntrue; `false` forces SRT-style interpolated words, except on\n`elevenlabs`, which always times words. The result's `word_timing`\nreports what you got.",
             "type": "boolean"
           }
         },
