@@ -113,8 +113,11 @@ gives copyTo-able I420P10.
 
 ### 5. ProRes range metadata
 
-FFmpeg n7.1.5's ProRes encoders wrote primaries/transfer/matrix to the MOV
-`colr` atom but no range; ffprobe reports `color_range=unknown`.
+With the export sink's arguments, FFmpeg 7.1's ProRes encoders wrote
+primaries/transfer/matrix but no range (`color_range=unknown`). The 8.1 builds
+every platform ships write the full bt709/`tv` tuple, as DNxHR, HEVC and H.264
+do, and the ProRes export e2e requires `tv`. A sidecar that drops back to an
+older line fails that cell instead of shipping untagged ProRes.
 
 ### 6. FFmpeg build identity matters
 
