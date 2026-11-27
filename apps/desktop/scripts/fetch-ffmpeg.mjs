@@ -19,11 +19,14 @@ import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 
-const FFMPEG_VERSION = '7.1.1'
+const FFMPEG_VERSION = '8.1.2'
 // Every archive is pinned by version AND SHA-256, so a tampered, corrupt or
 // silently rebuilt download is rejected.
-// SHA-256 of the gyan 7.1.1 essentials build (Windows).
-const FFMPEG_WIN_SHA256 = '04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4'
+// Windows: gyan essentials build, pinned by release tag AND SHA-256.
+// Bump: take the newest 8.1.x tag from https://github.com/GyanD/codexffmpeg/releases
+// and its essentials_build.zip digest (`gh release view <tag> -R GyanD/codexffmpeg
+// --json assets`); essentials ships libaom-av1 but not libsvtav1.
+const FFMPEG_WIN_SHA256 = 'db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec'
 // Linux: one BtbN/FFmpeg-Builds release. Pin a month-end `autobuild-*` tag:
 // BtbN deletes its daily releases after about two weeks and keeps the
 // month-end ones. LANDMINE — keep BTBN_TAG and BTBN_BUILD equal to the pin in
@@ -298,9 +301,8 @@ function main() {
     // hevc_videotoolbox cannot create a VT compression session: -12908,
     // issue #7 boundary #9). Version-pinned URL + SHA-256 (unlike evermeet's
     // rolling `getrelease`, so mac gets the same tamper check as Windows).
-    // Skew vs the pinned 7.1.1 Windows build (Linux is on the 8.1 line too):
-    // 8.1.2 — `-vsync` is deprecated but still accepted (verified; the preview
-    // conformance e2e relies on it) —
+    // 8.1.2, the line the other two platforms are on: `-vsync` is deprecated
+    // but still accepted (verified; the preview conformance e2e relies on it),
     // and unlike evermeet it SHIPS libsvtav1, so AV1 export probes select it
     // (encoder_registry.rs AV1_SOFTWARE) instead of falling back to libaom-av1.
     // ffmpeg and ffprobe are separate single-binary zips.
