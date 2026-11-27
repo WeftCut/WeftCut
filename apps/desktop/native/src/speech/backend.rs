@@ -56,6 +56,19 @@ impl Locality {
     }
 }
 
+/// The product name messages show the user, never the variant name.
+impl std::fmt::Display for SpeechBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SpeechBackend::OpenAi => "OpenAI",
+            SpeechBackend::WhisperCpp => "whisper.cpp",
+            SpeechBackend::FunAsr => "FunASR",
+            SpeechBackend::ByoEndpoint => "The transcription endpoint",
+            SpeechBackend::ElevenLabs => "ElevenLabs",
+        })
+    }
+}
+
 impl SpeechBackend {
     /// Every backend, for tag lookup and for the ready engines a refusal
     /// lists. The order chooses nothing: transcription and voiceover each run

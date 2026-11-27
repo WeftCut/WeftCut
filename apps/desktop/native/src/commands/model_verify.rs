@@ -265,7 +265,7 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
 /// voices and speak: they are separate key permissions (ADR 0184), so both are
 /// exercised — one short word with the first voice listed.
 async fn verify_voiceover(synthesizer: &dyn crate::speech::Synthesizer) -> Result<(), String> {
-    let provider = format!("{:?}", synthesizer.facts().provider);
+    let provider = synthesizer.facts().provider.to_string();
     let voices = synthesizer.voices().await.map_err(|e| e.to_string())?;
     let voice = voices.into_iter().next().ok_or_else(|| {
         format!("The {provider} account has no voices. Add one in {provider}, then verify again.")

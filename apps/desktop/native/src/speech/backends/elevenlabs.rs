@@ -217,6 +217,26 @@ struct WireVoice {
     labels: Option<BTreeMap<String, serde_json::Value>>,
     #[serde(default)]
     preview_url: Option<String>,
+    #[serde(default)]
+    voice_verification: Option<VoiceVerification>,
+}
+
+#[derive(Deserialize)]
+struct VoiceVerification {
+    #[serde(default)]
+    requires_verification: bool,
+    #[serde(default)]
+    is_verified: bool,
+}
+
+impl WireVoice {
+    /// A cloned voice awaiting its owner's voice verification is listed but
+    /// refused for speech (`voice_access_denied`), so it is no voice to offer.
+    fn speakable(&self) -> bool {
+        self.voice_verification
+            .as_ref()
+            .is_none_or(|v| !v.requires_verification || v.is_verified)
+    }
 }
 
 impl From<WireVoice> for Voice {
@@ -270,7 +290,12 @@ impl Synthesizer for ElevenLabs {
                     provider: PROVIDER,
                     message: format!("unreadable voice list: {e}"),
                 })?;
-            voices.extend(page.voices.into_iter().map(Voice::from));
+            voices.extend(
+                page.voices
+                    .into_iter()
+                    .filter(WireVoice::speakable)
+                    .map(Voice::from),
+            );
             match page.next_page_token.filter(|t| !t.is_empty()) {
                 Some(next) if page.has_more && token.as_ref() != Some(&next) => token = Some(next),
                 _ => break,
@@ -386,8 +411,18 @@ fn map_error(
             message: message(),
         };
     }
+    if let (true, Some(voice)) = (has("voice_access_denied"), voice) {
+        return SpeechError::InvalidInput {
+            provider: PROVIDER,
+            message: format!("ElevenLabs refused voice {voice:?}: {}", message()),
+        };
+    }
     match (status, voice) {
-        (StatusCode::UNAUTHORIZED, _) => SpeechError::InvalidKey { provider: PROVIDER },
+        // A 401 also carries authorization refusals (a voice, a feature);
+        // only `invalid_api_key`, or a 401 with no code at all, is the key.
+        (StatusCode::UNAUTHORIZED, _) if has("invalid_api_key") || d.codes.is_empty() => {
+            SpeechError::InvalidKey { provider: PROVIDER }
+        }
         (StatusCode::NOT_FOUND, Some(voice)) if has("voice_not_found") || d.codes.is_empty() => {
             SpeechError::InvalidInput {
                 provider: PROVIDER,
@@ -540,6 +575,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_voice_awaiting_verification_is_not_offered() {
+        let page = r#"{"voices":[
+            {"voice_id":"voice-a1","name":"Awaiting","category":"cloned",
+             "voice_verification":{"requires_verification":true,"is_verified":false}},
+            {"voice_id":"voice-b2","name":"Verified","category":"cloned",
+             "voice_verification":{"requires_verification":true,"is_verified":true}},
+            {"voice_id":"voice-c3","name":"Premade","category":"premade",
+             "voice_verification":{"requires_verification":false,"is_verified":false}}],
+            "has_more":false}"#;
+        let server = serve(vec![ok(page)]).await;
+        let voices = client(&server).voices().await.unwrap();
+        let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, ["voice-b2", "voice-c3"]);
+    }
+
+    #[tokio::test]
     async fn a_page_that_repeats_its_token_ends_the_walk() {
         let page = r#"{"voices":[{"voice_id":"voice-a1","name":"A"}],"has_more":true,"next_page_token":"t"}"#;
         let server = serve(vec![ok(page), ok(page), ok(page)]).await;
@@ -649,6 +700,33 @@ mod tests {
             ),
             SpeechError::PermissionDenied { .. }
         ));
+    }
+
+    #[test]
+    fn a_refused_voice_is_the_voice_not_the_key() {
+        let refused = err(
+            401,
+            r#"{"detail":{"type":"authorization_error","code":"voice_access_denied",
+                "status":"detected_captcha_voice","message":"This voice requires verification."}}"#,
+            Some("voice-a1"),
+        );
+        match refused {
+            SpeechError::InvalidInput { message, .. } => {
+                assert!(message.contains("voice-a1"), "{message}");
+                assert!(message.contains("requires verification"), "{message}");
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+        let other_refusal = err(
+            401,
+            r#"{"detail":{"type":"authorization_error","code":"feature_not_available","message":"Not on this plan."}}"#,
+            None,
+        );
+        assert!(
+            !matches!(other_refusal, SpeechError::InvalidKey { .. }),
+            "{other_refusal:?}"
+        );
+        assert!(other_refusal.to_string().contains("Not on this plan"));
     }
 
     #[test]

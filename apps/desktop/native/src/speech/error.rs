@@ -10,13 +10,13 @@ use super::backend::SpeechBackend;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpeechError {
-    #[error("no API key configured for {provider:?}; configure it in Settings → Transcription")]
+    #[error("no API key configured for {provider}; configure it in Settings → Transcription")]
     MissingKey { provider: SpeechBackend },
 
-    #[error("{provider:?} rejected the API key (401 unauthorized)")]
+    #[error("{provider} rejected the API key (401 unauthorized)")]
     InvalidKey { provider: SpeechBackend },
 
-    #[error("{provider:?} is rate-limited{}", retry_after_s.map(|s| format!(" (retry after {s}s)")).unwrap_or_default())]
+    #[error("{provider} is rate-limited{}", retry_after_s.map(|s| format!(" (retry after {s}s)")).unwrap_or_default())]
     RateLimited {
         provider: SpeechBackend,
         retry_after_s: Option<u64>,
@@ -28,13 +28,13 @@ pub enum SpeechError {
     /// An OpenAI-compatible server refused the upload with 413. Unlike
     /// [`Self::PayloadTooLarge`] the cap is the server's own and unknown here,
     /// so the message names the size that was refused and the remedy.
-    #[error("{provider:?} refused the {bytes}-byte audio upload as too large (413) — transcribe a shorter window, or raise the server's upload limit")]
+    #[error("{provider} refused the {bytes}-byte audio upload as too large (413) — transcribe a shorter window, or raise the server's upload limit")]
     UploadRefused { provider: SpeechBackend, bytes: u64 },
 
     /// The endpoint took the whole per-request timeout. Its own variant, not a
     /// `Network` error, because the remedy is the user's to apply: a slow
     /// self-hosted server needs a longer timeout on its model (#69).
-    #[error("{provider:?} did not answer within {secs}s — raise the model's request timeout in Settings → Transcription, or transcribe a shorter window")]
+    #[error("{provider} did not answer within {secs}s — raise the model's request timeout in Settings → Transcription, or transcribe a shorter window")]
     EndpointTimeout { provider: SpeechBackend, secs: u64 },
 
     /// A request the provider cannot serve as asked: a voice it does not have,
@@ -48,21 +48,19 @@ pub enum SpeechError {
 
     /// The key is valid but scoped without a permission this request needs.
     /// `message` is the provider's own, which names the permission.
-    #[error(
-        "{provider:?} refused the request: the API key lacks a permission it needs — {message}"
-    )]
+    #[error("{provider} refused the request: the API key lacks a permission it needs — {message}")]
     PermissionDenied {
         provider: SpeechBackend,
         message: String,
     },
 
-    #[error("{provider:?} refused the request: the account is out of credits or over its quota — {message}")]
+    #[error("{provider} refused the request: the account is out of credits or over its quota — {message}")]
     QuotaExceeded {
         provider: SpeechBackend,
         message: String,
     },
 
-    #[error("{provider:?} returned an error: {message}")]
+    #[error("{provider} returned an error: {message}")]
     Provider {
         provider: SpeechBackend,
         message: String,

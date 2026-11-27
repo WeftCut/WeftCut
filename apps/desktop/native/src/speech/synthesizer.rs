@@ -125,7 +125,7 @@ pub fn check_request(facts: &VoiceoverFacts, req: &SynthesizeRequest) -> Result<
         provider: facts.provider,
         message,
     };
-    let who = format!("{:?} {}", facts.provider, facts.model);
+    let who = format!("{} {}", facts.provider, facts.model);
     if req.text.trim().is_empty() {
         return Err(invalid(format!(
             "text is empty; {who} needs words to speak"
