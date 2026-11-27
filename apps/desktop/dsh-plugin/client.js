@@ -91,10 +91,11 @@ window.__ModuleLoader__.load({
     function Body({ useTabInfo, useSidebarMounted, connect, t }) {
       const { tab } = useTabInfo()
       const sessionId = useSidebarMounted((session) => session)
-      if (!tab.visible) return null
       const param = tab.navigation.params?.url
       const url = typeof param === 'string' && LINK.test(param) ? param : readLast()
-      if (url === undefined) return h(Connect, { t, sessionId, connect })
+      const reachable = useReachable(tab.visible ? url : undefined, tab.navigation.revision)
+      if (!tab.visible || reachable === 'checking') return null
+      if (url === undefined || reachable === 'down') return h(Connect, { t, sessionId, connect })
       return h('div', {
         style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 },
       }, h('iframe', {
@@ -108,7 +109,34 @@ window.__ModuleLoader__.load({
       }))
     }
 
-    /** No link known yet: one button that runs `/weftcut` on this Session. */
+    /** Whether the app behind `url` answers, asked each time the tab comes into
+     *  view. A remembered link outlives the app (closed, or restarted on
+     *  another port); framing it then shows the browser's error page, where
+     *  the connect panel can start WeftCut and get a new link. The page's own
+     *  routes need no key, and a no-cors answer is enough: only a refused
+     *  connection rejects. `revision` steps on every open: a restarted app
+     *  reuses its port, so its new link can equal the dead one. */
+    function useReachable(url, revision) {
+      const [state, setState] = React.useState({ key: undefined, value: 'checking' })
+      const key = url === undefined ? undefined : `${revision}|${url}`
+      React.useEffect(() => {
+        if (url === undefined) {
+          // Out of view: the next view asks again.
+          setState({ key: undefined, value: 'checking' })
+          return undefined
+        }
+        const abort = new AbortController()
+        setState({ key, value: 'checking' })
+        fetch(`${new URL(url).origin}/companion`, { mode: 'no-cors', cache: 'no-store', signal: abort.signal })
+          .then(() => { if (!abort.signal.aborted) setState({ key, value: 'up' }) })
+          .catch(() => { if (!abort.signal.aborted) setState({ key, value: 'down' }) })
+        return () => abort.abort()
+      }, [key])
+      if (url === undefined) return 'down'
+      return state.key === key ? state.value : 'checking'
+    }
+
+    /** No live link: one button that runs `/weftcut` on this Session. */
     function Connect({ t, sessionId, connect }) {
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState(null)

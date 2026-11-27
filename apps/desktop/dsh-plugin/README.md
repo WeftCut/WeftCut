@@ -19,7 +19,11 @@ so it always matches the WeftCut you have installed.
    it is started first.
 
 If you added a `weftcut` entry to a `cordis.patch.yml` by hand before, remove
-it: this plugin carries that entry.
+it: this plugin carries that entry, and the old one only logs an error at
+every start.
+
+After WeftCut updates, reload the Harness page; restart the Harness to pick up
+the `/weftcut` command's changes.
 
 ## Limits
 

@@ -67,9 +67,9 @@ function manifest(version: string): string {
 
 /// Two rows: the server, under the name the plugin's tool row and `/weftcut`
 /// command call it by, and the plugin itself. The server's row id differs from
-/// the `mcp-weftcut` id the older pasted entry used, so a profile that still
-/// holds that entry loads both rows; the second `weftcut` server then refuses
-/// its name and the first keeps serving.
+/// the `mcp-weftcut` id the older pasted entry used, so both rows load where
+/// that entry is still in the home patch: this row takes the name, and the
+/// pasted one fails with "already in use", which the Harness logs and boots past.
 function patch(cliPath: string): string {
   const entry = stdioEntry(cliPath)
   return [
@@ -103,7 +103,9 @@ export function dshPluginFiles(opts: { cliPath: string; version: string }): Map<
 
 /// Writes the plugin beside the binary's folder and returns that folder, or
 /// null when it could not be written. A file whose content is already right
-/// is left alone: the Harness reloads a plugin whose files change on disk.
+/// is left alone. A running Harness serves a rewritten browser half at its
+/// page's next load and runs a rewritten Host half from its next start; it
+/// does not restart the server for either.
 export function installDshPlugin(opts: { cliPath: string; version: string }): string | null {
   const dir = dshPluginDir(opts.cliPath)
   const tag = `${process.pid}-${Date.now().toString(36)}`

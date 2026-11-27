@@ -266,21 +266,28 @@ files whose content changed: a generated `package.json` at the app's version, a
 generated `cordis.patch.yml`, and plain JS the Harness loads as it is from
 `apps/desktop/dsh-plugin/`, bundled into main at build time. The user adds the
 folder once (`dsh plugin --profile <profile> add <folder>`, or Plugins → Add
-plugin); the Harness links it, so later starts update it in place.
+plugin); the Harness links it, so later starts update it in place. A running
+Harness serves a rewritten browser half at its page's next load and runs a
+rewritten Host half from its next start; neither restarts the server.
 
 - **The server.** The patch's `weftcut-mcp` row is the stdio entry, `serverName:
-  weftcut`, running the profile's binary. A profile that still holds the pasted
-  `mcp-weftcut` row from older versions loads both; the second `weftcut` server
-  refuses its name and the first keeps serving.
+  weftcut`, running the profile's binary. Where the pasted `mcp-weftcut` row
+  from older versions is still in the home patch, the plugin's row takes the
+  name and the pasted one fails with "already in use", which the Harness logs
+  and boots past.
 - **The tab.** A right-sidebar page tab frames the companion page, sandboxed to
   scripts only (see Sandboxed frames below), and only while the tab is in
   view: the Harness keeps a collapsed sidebar's tabs mounted. The link is kept
   in the Harness page's local storage, since a tab's parameters do not survive
-  a reload. The tab is on the sidebar's new-tab page as WeftCut side preview.
+  a reload. Each time the tab comes into view, or opens again, it first asks
+  the link's `/companion` (no-cors): a link whose app is closed or moved to
+  another port gets the Open WeftCut panel instead of a dead frame. The tab is
+  on the sidebar's new-tab page as WeftCut side preview.
 - **Opening it.** A fresh result of `mcp__weftcut__open_side_preview` opens the
   tab, and its row keeps an Open button. With no link known, the tab shows
   Open WeftCut, which runs `/weftcut`: the plugin's Host half calls
-  `open_side_preview` through the Harness's tool registry, with no model turn;
+  `open_side_preview` through the Harness's tool registry, with no model turn
+  and no approval;
   when the app is closed it calls `launch_weftcut` and retries until the app's
   tools arrive (30 s bound). The command answers `WeftCut side preview: <link>`,
   which the tab, and a `/weftcut` typed in the composer, open.

@@ -22,9 +22,13 @@ A Harness plugin can do more than a config entry. Read from the Harness
   registered tool through the tool registry, with no model turn and no
   approval: `open_side_preview` answers in milliseconds, and with the app
   closed `launch_weftcut` starts it.
-- The Harness reloads a plugin's files when they change on disk.
-- With two `weftcut` servers, the second refuses its name and the first keeps
-  serving.
+- A plugin added by path is linked, not copied. When its files change, the
+  running Harness serves the new browser half at the page's next load and
+  runs the new Host half from its next start; it does not restart the
+  plugin's server.
+- With the plugin's `weftcut` row and the pasted one in the home patch, the
+  plugin's takes the name; the pasted one fails with "already in use", which
+  the Harness logs and boots past.
 
 A plugin has to reach the user somehow, and ADR 0167 names the costs of a
 package handed to many machines: it cannot name the per-profile binary
@@ -66,10 +70,11 @@ Rejected:
 ## Consequences
 
 - One step connects the Harness and gives it the preview; the plugin then
-  follows the app's updates without the user. Host-half code changes load at
-  the Harness's next start.
+  follows the app's updates without the user: its page half at the Harness
+  page's next load, its Host half at the Harness's next start.
 - The plugin is not listed in any plugin market, and is added per machine.
-- A profile with the older pasted row loads both servers until the user
-  removes it; the panel and the plugin's page say so.
+- A profile with the older pasted row logs a failed second `weftcut` server
+  at every start until the user removes it; the panel and the plugin's page
+  say so.
 - It needs Harness 0.2.2-rc.5 or later in 0.2.x, the version its seams were
   run against.
