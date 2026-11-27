@@ -73,14 +73,17 @@ const BUILDS = {
   // --enable-gpl/--enable-nonfree), single-arch (host), and portable by
   // construction: only the SDK's libraries, built for the app's minimum macOS
   // (macConfigureArgs), checked on the result (macho-portability.mjs). The
-  // hard sha256 pin is the integrity gate (ffmpeg.org publishes only a GPG .asc), mirroring the
-  // LIBVA .deb pins below.
+  // hard sha256 pin is the integrity gate (ffmpeg.org publishes only a GPG .asc).
+  // Bump: take the newest ffmpeg-8.1.x.tar.xz from https://ffmpeg.org/releases/,
+  // check its .asc against the FFmpeg release signing key
+  // (https://ffmpeg.org/ffmpeg-devel.asc, fingerprint FCF9 86EA 15E6 E293 A564
+  // 4F10 B432 2F04 D676 58D8), then record the tarball's sha256 here.
   mac: {
     source: {
-      asset: 'ffmpeg-8.1.tar.xz',
-      inner: 'ffmpeg-8.1',
-      url: 'https://ffmpeg.org/releases/ffmpeg-8.1.tar.xz',
-      sha256: 'b072aed6871998cce9b36e7774033105ca29e33632be5b6347f3206898e0756a',
+      asset: 'ffmpeg-8.1.3.tar.xz',
+      inner: 'ffmpeg-8.1.3',
+      url: 'https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz',
+      sha256: '7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3',
     },
     exes: [], // no bin/ is staged, so the cached-manifest heal is a no-op
     libDir: 'lib', // *.dylib live in lib/ (resolved at runtime via @loader_path)
