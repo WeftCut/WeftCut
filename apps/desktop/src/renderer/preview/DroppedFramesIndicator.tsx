@@ -21,14 +21,16 @@ export function DroppedFramesIndicator() {
   const droppedFrames = useUnderrunDroppedFrames();
   const lateFrames = useUnderrunLateFrames();
   if (droppedFrames === 0 && lateFrames === 0) return null;
+  const counted: string[] = [];
   const causes: string[] = [];
   if (droppedFrames > 0) {
-    causes.push(t("transport.dropped_frames", { count: droppedFrames }));
+    counted.push(t("transport.dropped_frames", { count: droppedFrames }));
+    causes.push(t("transport.dropped_frames_cause"));
   }
   if (lateFrames > 0) {
-    causes.push(t("transport.late_frames", { count: lateFrames }));
+    counted.push(t("transport.late_frames", { count: lateFrames }));
+    causes.push(t("transport.late_frames_cause"));
   }
-  const label = causes.join(" · ");
   const text =
     droppedFrames > 0 && lateFrames > 0
       ? `${droppedFrames}/${lateFrames}`
@@ -39,8 +41,11 @@ export function DroppedFramesIndicator() {
         active ? "dropped-frames-indicator is-active" : "dropped-frames-indicator"
       }
       role="status"
-      title={label}
-      aria-label={label}
+      // No counts in the tooltip: they change several times a second while
+      // playback is behind, and Chromium never shows a native tooltip whose
+      // text keeps changing under the pointer.
+      title={causes.join(" · ")}
+      aria-label={counted.join(" · ")}
     >
       <span className="dropped-frames-dot" aria-hidden />
       {text}

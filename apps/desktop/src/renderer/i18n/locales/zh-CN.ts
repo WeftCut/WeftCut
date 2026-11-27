@@ -1750,6 +1750,8 @@ const zhCN: Resources = {
     dropped_frames_other: "播放期间丢帧 {{count}} 帧——解码速度未跟上",
     late_frames_one: "播放期间有 {{count}} 帧渲染超时——渲染循环卡顿",
     late_frames_other: "播放期间有 {{count}} 帧渲染超时——渲染循环卡顿",
+    dropped_frames_cause: "播放期间丢帧——解码速度未跟上",
+    late_frames_cause: "播放期间有帧渲染超时——渲染循环卡顿",
   },
   export: {
     cancelling: "正在取消导出…",
