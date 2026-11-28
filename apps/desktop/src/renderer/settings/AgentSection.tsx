@@ -16,31 +16,22 @@ import {
   type McpInfoView,
   type SkillsInstallView,
 } from "../ipc";
-import { reveal as revealInShell } from "@/bridge/shell";
+import { open as openInShell, reveal as revealInShell } from "@/bridge/shell";
 import { AppInput } from "../components/AppInput";
 import { Button } from "@/components/ui/button";
 import { AppIcon } from "@/components/AppIcon";
-import { rendererOS, type RendererOS } from "../platform";
 import {
   AGENT_HOSTS,
   httpCommand,
   httpSnippet as hostHttpSnippet,
-  placePath,
   stdioCommand,
   stdioEntry,
   stdioSnippet as hostStdioSnippet,
   type AgentHost,
-  type AgentHostOs,
 } from "../../shared/agentHosts";
 
 const REFRESH_INTERVAL_MS = 1000;
 const MASKED_TOKEN = "••••••••••••••••";
-
-const HOST_OS: Record<RendererOS, AgentHostOs> = {
-  mac: "mac",
-  windows: "windows",
-  linux: "linux",
-};
 
 /// The staged skill folder — the thing that gets copied, named by both the
 /// install prompt and the manual block. The separator is inferred from the
@@ -218,6 +209,16 @@ export function AgentSection() {
     });
   };
 
+  /// Open the Claude Desktop extension with the OS, which hands a `.mcpb` to
+  /// Claude's install preview. Logged on failure like the reveal above: the
+  /// path is on screen beside the button.
+  const openExtension = () => {
+    if (!stdio) return;
+    void openInShell(hostStdioSnippet(host, stdio)).catch((e: unknown) => {
+      console.warn("open Claude Desktop extension failed:", e);
+    });
+  };
+
   /// Re-run the install and take whatever it found. The poll above stopped at
   /// the first `info`, so the new state has to be spliced in here; the main
   /// process separately re-broadcasts the notice list, which is what clears the
@@ -277,9 +278,11 @@ export function AgentSection() {
   /// OS. A host with none (Generic) is told to follow its own docs.
   const hint = () => {
     if (host.format === "dsh-plugin") return t("connect.dsh_plugin_hint");
+    if (host.format === "claude-extension")
+      return t("connect.claude_extension_hint");
     if (host.places.length === 0) return t("connect.hint_facts");
     const places = host.places.map((place) => {
-      const path = placePath(place, HOST_OS[rendererOS]);
+      const path = place.path;
       return place.scope === "project"
         ? t("connect.place_project", { path })
         : path;
@@ -399,8 +402,8 @@ export function AgentSection() {
     </div>
   );
 
-  /// A host whose config cannot name an HTTP endpoint gets a line saying so
-  /// in place of the snippet.
+  /// A host that connects through something the app writes gets a line
+  /// pointing at it in place of the snippet.
   const httpSnippetBlock = (section: string) => (
     <div
       className="connect-panel"
@@ -411,9 +414,9 @@ export function AgentSection() {
       {httpSnippet === null ? (
         <p className="settings-blurb">
           {t(
-            host.format === "dsh-plugin"
-              ? "connect.http_plugin"
-              : "connect.http_unsupported",
+            host.format === "claude-extension"
+              ? "connect.http_extension"
+              : "connect.http_plugin",
             { host: host.name },
           )}
         </p>
@@ -489,17 +492,51 @@ export function AgentSection() {
               id="connect-snippet-panel-stdio"
               aria-labelledby={`connect-tab-stdio-${host.id}`}
             >
-              <div className="connect-snippet">
-                <div className="connect-snippet-header">
-                  <span>{hint()}</span>
-                  <div className="connect-snippet-actions">
-                    {copyButton("stdio", () => void copyStdio())}
+              {host.format === "claude-extension" ? (
+                // One file to act on, not a blob to paste: the skill
+                // folder's path row below, with Open in place of Browse.
+                <div className="connect-path-block">
+                  <div className="connect-snippet-header">
+                    <span>{hint()}</span>
+                    <div className="connect-snippet-actions">
+                      {copyButton(
+                        "stdio",
+                        () => void copyStdio(),
+                        t("connect.copy_path"),
+                      )}
+                    </div>
                   </div>
+                  <div className="connect-path">
+                    <AppInput
+                      value={stdioSnippet}
+                      onValueChange={() => {}}
+                      readOnly
+                      mono
+                      title={stdioSnippet}
+                      className="connect-path-input"
+                      ariaLabel={t("connect.claude_extension_file")}
+                    />
+                    <Button onClick={openExtension}>
+                      {t("connect.open_in_claude")}
+                    </Button>
+                  </div>
+                  <p className="settings-blurb">
+                    {t("connect.claude_extension_pasted")}
+                  </p>
                 </div>
-                <pre>
-                  <code>{stdioSnippet}</code>
-                </pre>
-              </div>
+              ) : (
+                <div className="connect-snippet">
+                  <div className="connect-snippet-header">
+                    <span>{hint()}</span>
+                    <div className="connect-snippet-actions">
+                      {copyButton("stdio", () => void copyStdio())}
+                    </div>
+                  </div>
+                  <pre>
+                    <code>{stdioSnippet}</code>
+                  </pre>
+                </div>
+              )}
               {cliBlock(stdioCli, "stdio-cli", () => void copyStdioCli())}
             </div>
           </>

@@ -2095,7 +2095,13 @@ const zhCN: Resources = {
     place_project: "项目的 {{path}}",
     place_or: " 或 ",
     hint_facts: "连接信息，请参照具体客户端文档填写对应值",
-    http_unsupported: "{{host}} 只支持本地命令，请通过 stdio 配置连接。",
+    claude_extension_hint:
+      "在 Claude Desktop 中打开并安装这个文件。它由 WeftCut 为这台电脑生成。",
+    claude_extension_file: "Claude Desktop 扩展",
+    open_in_claude: "在 Claude Desktop 中打开",
+    claude_extension_pasted:
+      "如果之前在 claude_desktop_config.json 里手动粘贴过 weftcut 配置，请删掉：它会顶替这个扩展运行。",
+    http_extension: "{{host}} 通过上面的扩展连接，由扩展运行本机的 weftcut 程序。",
     dsh_plugin_hint:
       "在 DeepSeek Harness 0.2.2-rc.5 或更新版本里添加这个文件夹：插件 → 添加插件。WeftCut 会自动更新它。插件出现在插件页后，再删掉之前手动粘贴进 cordis.patch.yml 的 weftcut 配置。",
     http_plugin: "{{host}} 通过上面的插件连接，由插件运行本机的 weftcut 程序。",

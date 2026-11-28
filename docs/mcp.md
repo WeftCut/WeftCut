@@ -161,7 +161,7 @@ and its expected side is the text to paste.
 |---|---|---|---|
 | ChatGPT / Codex | `~/.codex/config.toml` | yes | side panel |
 | Claude Code | `~/.claude.json`; project: `.mcp.json` | yes | side browser |
-| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\claude_desktop_config.json`, Linux `~/.config/Claude/claude_desktop_config.json` | no | none |
+| Claude Desktop | none: an extension WeftCut writes | no | none |
 | DeepSeek Harness | none: a plugin WeftCut writes | no | side browser |
 | Cursor | `~/.cursor/mcp.json`; project: `.cursor/mcp.json` | yes | side browser |
 | Generic | the client's own docs | yes | none |
@@ -199,17 +199,10 @@ Or in a terminal: `claude mcp remove weftcut -s user; claude mcp add weftcut -s 
 
 **Claude Desktop**
 
-```json
-{
-  "mcpServers": {
-    "weftcut": {
-      "command": "<userData>/cli/weftcut",
-      "args": [
-        "mcp"
-      ]
-    }
-  }
-}
+The extension file, whose manifest carries the stdio entry; open it in Claude Desktop:
+
+```text
+<userData>/claude-desktop/weftcut.mcpb
 ```
 
 **DeepSeek Harness**
@@ -294,6 +287,34 @@ rewritten Host half from its next start; neither restarts the server.
 - `main/mcp/dshPluginInstall.test.ts` holds the folder, the patch's command,
   rewrite-only-on-change, the names the tool row and command call the tools
   by, the link pattern, and the manifest dsh validates.
+
+**The Claude Desktop extension** (ADR 0187) is what the Claude Desktop tab
+hands over instead of a `claude_desktop_config.json` entry. At every start the
+app writes `<userData>/claude-desktop/weftcut.mcpb`
+(`main/mcp/claudeExtensionInstall.ts`), rewriting it only when its bytes
+change: a zip of a generated `manifest.json` and the icon from
+`apps/desktop/claude-extension/`, nothing executable. The tab's Open in Claude
+Desktop button opens the file with the OS, which starts Claude's install
+preview; once installed, the extension connects without a restart. Claude
+installs a copy, so a rewritten bundle reaches it only when the user opens the
+file again.
+
+- **The server.** The manifest's `server.mcp_config` is the stdio entry: the
+  profile's binary and `mcp`, which is also its `entry_point`. Its `name` is
+  `weftcut` and it has no `display_name`, since Claude keys the server by
+  `display_name || name`. A pasted `weftcut` entry in
+  `claude_desktop_config.json` therefore takes the extension's slot rather
+  than running a second server, and the extension does nothing until that
+  entry is removed; the tab says so.
+- **The id and version.** Claude knows the extension as
+  `local.mcpb.<author.name>.<name>` (`WeftCut`, `weftcut`), and offers Update
+  for a bundle with the same id and another version. The version is
+  `1.0.0-c` and 12 hex digits of a hash over the manifest without its version
+  and the icon, so it changes with the content and never with an app release
+  alone. The zip has fixed timestamps and entry order, so equal content is
+  equal bytes.
+- `main/mcp/claudeExtensionInstall.test.ts` holds the name, author, command,
+  version rule, the bundle's two files, and rewrite-only-on-change.
 
 ### Companion page
 

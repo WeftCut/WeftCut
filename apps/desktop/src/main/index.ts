@@ -1525,11 +1525,15 @@ app.whenReady().then(async () => {
       version: app.getVersion(),
     }),
   })
-  // Refresh <userData>/dsh-plugin/: the DeepSeek Harness plugin whose entry
-  // runs the binary above (ADR 0183). Without a binary it would name nothing.
+  // Refresh <userData>/dsh-plugin/ and <userData>/claude-desktop/weftcut.mcpb:
+  // the DeepSeek Harness plugin and the Claude Desktop extension whose entries
+  // run the binary above (ADRs 0183, 0187). Without a binary they would name
+  // nothing.
   if (cliPath !== null) {
     const { installDshPlugin } = await import('./mcp/dshPluginInstall.js')
     installDshPlugin({ cliPath, version: app.getVersion() })
+    const { installClaudeExtension } = await import('./mcp/claudeExtensionInstall.js')
+    installClaudeExtension({ cliPath })
   }
   // An AppImage registers its own file types; the deb, NSIS and the macOS
   // bundle are registered by installing them (ADR 0181).

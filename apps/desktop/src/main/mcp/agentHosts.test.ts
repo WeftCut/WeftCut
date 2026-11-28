@@ -7,10 +7,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   AGENT_HOSTS,
+  claudeExtensionPath,
   dshPluginDir,
   httpCommand,
   httpSnippet,
-  placePath,
   stdioCommand,
   stdioEntry,
   stdioSnippet,
@@ -41,9 +41,10 @@ describe('agent host snippets', () => {
   })
 
   it('every stdio snippet runs the profile binary with `mcp` and sets no environment', () => {
-    // The dsh plugin's entry is written by the app; its tests hold it
-    // (dshPluginInstall.test.ts).
-    for (const host of AGENT_HOSTS.filter((h) => h.format !== 'dsh-plugin')) {
+    // The dsh plugin's and the Claude Desktop extension's entries are written
+    // by the app; their tests hold them (dshPluginInstall.test.ts,
+    // claudeExtensionInstall.test.ts).
+    for (const host of AGENT_HOSTS.filter((h) => h.format !== 'dsh-plugin' && h.format !== 'claude-extension')) {
       const text = stdioSnippet(host, stdioEntry(WIN_PATH))
       // The path as the format encodes it: JSON escapes, which TOML and YAML
       // double-quoted strings share; the facts block prints it raw.
@@ -79,6 +80,14 @@ describe('agent host snippets', () => {
     expect(stdioSnippet(dsh, stdioEntry(WIN_PATH))).toBe(dir)
     expect(dshPluginDir(WIN_PATH)).toBe(dir)
     expect(stdioCommand(dsh, stdioEntry(WIN_PATH))).toBe(`dsh plugin --profile web add '${dir}'`)
+  })
+
+  it('Claude Desktop is handed the extension the app writes, by path, and no terminal command', () => {
+    const claude = AGENT_HOSTS.find((h) => h.format === 'claude-extension')!
+    const file = 'C:\\Users\\u\\AppData\\Roaming\\WeftCut\\claude-desktop\\weftcut.mcpb'
+    expect(stdioSnippet(claude, stdioEntry(WIN_PATH))).toBe(file)
+    expect(claudeExtensionPath(WIN_PATH)).toBe(file)
+    expect(stdioCommand(claude, stdioEntry(WIN_PATH))).toBeNull()
   })
 
   it('host ids are unique, so tab ids and test lookups are too', () => {
@@ -120,6 +129,7 @@ const FENCE: Record<AgentConfigFormat, string> = {
   'claude-code-json': 'json',
   'mcp-servers-json': 'json',
   'dsh-plugin': 'text',
+  'claude-extension': 'text',
   facts: 'text',
 }
 
@@ -129,21 +139,12 @@ const SURFACE: Record<AgentHostSurface, string> = {
   none: 'none',
 }
 
-const OS_NAME = { mac: 'macOS', windows: 'Windows', linux: 'Linux' } as const
-
 function docPlaces(host: AgentHost): string {
   if (host.format === 'dsh-plugin') return 'none: a plugin WeftCut writes'
+  if (host.format === 'claude-extension') return 'none: an extension WeftCut writes'
   if (host.places.length === 0) return "the client's own docs"
   return host.places
-    .map((place) => {
-      const paths =
-        typeof place.path === 'string'
-          ? `\`${place.path}\``
-          : (Object.keys(OS_NAME) as (keyof typeof OS_NAME)[])
-              .map((os) => `${OS_NAME[os]} \`${placePath(place, os)}\``)
-              .join(', ')
-      return place.scope === 'project' ? `project: ${paths}` : paths
-    })
+    .map((place) => (place.scope === 'project' ? `project: \`${place.path}\`` : `\`${place.path}\``))
     .join('; ')
 }
 
@@ -157,6 +158,9 @@ function renderHostBlock(): string {
       `**${h.name}**`,
       '',
       ...(h.format === 'dsh-plugin' ? ['The plugin folder, whose patch carries the stdio entry:', ''] : []),
+      ...(h.format === 'claude-extension'
+        ? ['The extension file, whose manifest carries the stdio entry; open it in Claude Desktop:', '']
+        : []),
       '```' + FENCE[h.format],
       stdioSnippet(h, DOC_ENTRY),
       '```',

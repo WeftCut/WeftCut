@@ -2341,8 +2341,14 @@ const enUS = {
     place_or: " or ",
     hint_facts:
       "Connection details — refer to your client's own docs to fill in each value.",
-    http_unsupported:
-      "{{host}} takes local commands only, so it connects through the stdio configuration.",
+    claude_extension_hint:
+      "Open this file in Claude Desktop and install it. WeftCut writes it for this computer.",
+    claude_extension_file: "Claude Desktop extension",
+    open_in_claude: "Open in Claude Desktop",
+    claude_extension_pasted:
+      "If you pasted a weftcut entry into claude_desktop_config.json before, remove it: it runs in place of the extension.",
+    http_extension:
+      "{{host}} connects through the extension above, which runs the binary.",
     dsh_plugin_hint:
       "Add this folder in DeepSeek Harness 0.2.2-rc.5 or later: Plugins → Add plugin. WeftCut keeps it up to date. Once the plugin shows on the Plugins page, remove any weftcut entry you pasted into a cordis.patch.yml before.",
     http_plugin:
