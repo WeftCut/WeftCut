@@ -2344,7 +2344,7 @@ const enUS = {
     http_unsupported:
       "{{host}} takes local commands only, so it connects through the stdio configuration.",
     dsh_plugin_hint:
-      "Add this folder in DeepSeek Harness: Plugins → Add plugin. WeftCut keeps it up to date. Remove any weftcut entry you pasted into a cordis.patch.yml before.",
+      "Add this folder in DeepSeek Harness 0.2.2-rc.5 or later: Plugins → Add plugin. WeftCut keeps it up to date. Once the plugin shows on the Plugins page, remove any weftcut entry you pasted into a cordis.patch.yml before.",
     http_plugin:
       "{{host}} connects through the plugin above, which runs the binary.",
   },

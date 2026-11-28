@@ -22,8 +22,10 @@ import { SERVER_NAME, dshPluginDir, stdioEntry } from '../../shared/agentHosts'
 export const DSH_PLUGIN_NAME = '@weftcut/dsh'
 
 /// The Harness versions whose client seams the plugin was run against:
-/// `sidebarRightTabs`, `tool.call.toolview`, `ctx.remote.commands`.
-const DSH_ENGINES = '>=0.2.2-rc.5 <0.3.0'
+/// `sidebarRightTabs`, `tool.call.toolview`, `ctx.remote.commands`. The Harness
+/// checks the range with prereleases included, so `-0` keeps 0.3.0's
+/// prereleases out as well.
+const DSH_ENGINES = '>=0.2.2-rc.5 <0.3.0-0'
 
 /// JSON.stringify doubles as the YAML string encoder: a double-quoted YAML
 /// scalar accepts every JSON escape, so a Windows backslash path survives.

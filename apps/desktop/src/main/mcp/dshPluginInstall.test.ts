@@ -84,7 +84,12 @@ describe('the plugin\'s files', () => {
     const index = file('index.js')
     expect(constant(client, 'TOOL')).toBe(`'mcp__${SERVER_NAME}__${OPEN_COMPANION}'`)
     expect(constant(index, 'SERVER')).toBe(`'${SERVER_NAME}'`)
-    expect(index).toContain('`mcp__${SERVER}__open_side_preview`')
+    expect(constant(index, 'OPEN')).toBe(`\`mcp__\${SERVER}__${OPEN_COMPANION}\``)
+    // The binary answers launch_weftcut itself; its name lives in the Go source.
+    const tools = fs.readFileSync(path.resolve(__dirname, '../../../cli/tools.go'), 'utf8')
+    const launch = /^\s*toolLaunch\s*=\s*"([^"]+)"/m.exec(tools)?.[1]
+    expect(launch).toBeDefined()
+    expect(constant(index, 'LAUNCH')).toBe(`\`mcp__\${SERVER}__${launch}\``)
     expect(constant(client, 'COMMAND')).toBe("'weftcut'")
     expect(index).toContain("name: 'weftcut',")
   })

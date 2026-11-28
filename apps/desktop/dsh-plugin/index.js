@@ -29,8 +29,10 @@ export function apply(ctx) {
       const unknown = (result) => result.isError && result.error?.info?.code === 'UNKNOWN_TOOL'
 
       let result = await call(OPEN)
-      if (unknown(result)) {
-        // The app is closed: only the binary's own tools are listed.
+      if (result.isError) {
+        // The app is closed, or quitting: only the binary's own tools are
+        // listed, or the binary still lists the app's and answers that the app
+        // is not running. `launch_weftcut` is safe on a running app.
         const launched = await call(LAUNCH)
         if (unknown(launched)) {
           return { kind: 'error', text: 'The weftcut server is not connected. Open WeftCut once, then reload this page.' }
@@ -38,7 +40,7 @@ export function apply(ctx) {
         if (launched.isError) return { kind: 'error', text: textOf(launched) }
         const deadline = Date.now() + TOOLS_DEADLINE_MS
         result = await call(OPEN)
-        while (unknown(result) && Date.now() < deadline) {
+        while (result.isError && Date.now() < deadline) {
           await sleep(RETRY_MS, signal)
           result = await call(OPEN)
         }
