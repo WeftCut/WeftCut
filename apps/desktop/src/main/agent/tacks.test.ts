@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentActivityService } from './activity'
-import { TackError, type TackInput } from './tacks'
+import { TackError, userTackText, type TackInput } from './tacks'
 import { createActor } from '../state/actor'
 import { blankProject, rootComposition } from '../state/model'
 import { seededGen } from '../state/ids'
 import { applyAddLayer } from '../state/mutations/add'
 import { mediaItemTemplate, videoClipParams } from '../state/mutations/media'
 import { withGroup } from '../state/__tests__/fixtures/project'
-import { AGENT_ACTIVITY_EVENT, type AgentActivityUpdate } from '../../shared/agent-activity'
+import { AGENT_ACTIVITY_EVENT, TACK_REPLY_LIMIT, USER_TACK_LABEL_LENGTH, type AgentActivityUpdate } from '../../shared/agent-activity'
 
 const MEDIA = '00000000-0000-0000-0000-0000000000cc'
 const stops: Array<() => void> = []
@@ -89,10 +89,10 @@ describe('tack records', () => {
     const session = await s.run('one', () => s.service.begin('Batch'))
     const ours = await s.create([s.input(), s.input()])
     const [theirs] = await s.create([s.input()], 'two')
-    expect(s.service.tacks.update(ours[0]!, { status: 'resolved', label: 'Done' })).toMatchObject({ status: 'resolved', label: 'Done', kind: 'note' })
-    expect(() => s.service.tacks.delete({ tack_ids: [theirs!, '00000000-0000-7000-8000-00000000dead'] })).toThrow(/not found/)
+    expect(s.service.tacks.update(ours[0]!, { status: 'resolved', label: 'Done' }, 'agent')).toMatchObject({ status: 'resolved', label: 'Done', kind: 'note' })
+    expect(() => s.service.tacks.delete({ tack_ids: [theirs!, '00000000-0000-7000-8000-00000000dead'] }, 'agent')).toThrow(/not found/)
     expect(s.service.tacks.size).toBe(3)
-    expect(s.service.tacks.delete({ session_id: session.id }).sort()).toEqual([...ours].sort())
+    expect(s.service.tacks.delete({ session_id: session.id }, 'agent').sort()).toEqual([...ours].sort())
     expect(s.service.tacks.views().map(t => t.id)).toEqual([theirs])
   })
 })
@@ -189,8 +189,8 @@ describe('independence from history', () => {
     stops.push(s.actor.subscribe(events))
     s.actor.lockHistory('batch')
     const [id] = await s.create([s.input()])
-    s.service.tacks.update(id!, { status: 'dismissed' })
-    s.service.tacks.delete({ tack_ids: [id!] })
+    s.service.tacks.update(id!, { status: 'dismissed' }, 'agent')
+    s.service.tacks.delete({ tack_ids: [id!] }, 'agent')
     expect(s.actor.snapshot()).toBe(before)
     expect(s.actor.historyStatus().len).toBe(len)
     expect(events).not.toHaveBeenCalled()
@@ -238,7 +238,7 @@ describe('delta publication', () => {
     expect(moved.from_revision).toBe(created.revision)
     expect(moved.tacks).toEqual([expect.objectContaining({ id: a, t_us: 3_000_000 })])
 
-    s.service.tacks.delete({ tack_ids: [b!] })
+    s.service.tacks.delete({ tack_ids: [b!] }, 'agent')
     await flush()
     expect(s.updates().at(-1)).toMatchObject({ tacks: [], removed_tack_ids: [b] })
 
@@ -396,8 +396,112 @@ describe('feedback for the creating client', () => {
     m.mcp('delete_layers', { layer_ids: [m.c.D] })
     expect(m.service.tacks.affectedSince(again)).toEqual([{ tack_id: id, label: 'x', change: 'outdated' }])
     expect(m.service.tacks.toReview('client-one')).toEqual([{ tack_id: id, label: 'x' }])
-    m.service.tacks.update(id, { status: 'resolved' })
+    m.service.tacks.update(id, { status: 'resolved' }, 'agent')
     expect(m.service.tacks.watch('client-one')).toBeNull()
     expect(m.service.tacks.toReview('client-one')).toEqual([])
+  })
+})
+
+describe('tack conversations (ADR 0185)', () => {
+  const userTack = (s: ReturnType<typeof setup>, text = 'Tighten this pause') =>
+    s.service.tacks.createByUser({ composition_id: s.root().id, t_us: 2_000_000, end_t_us: 3_000_000, text })
+  const refusal = (fn: () => unknown) => { try { fn() } catch (e) { return e instanceof TackError ? e.error : e } return null }
+
+  it('open a user tack with no session, client or kind, waiting on the agents', () => {
+    const s = setup()
+    const id = userTack(s)
+    expect(s.view(id)).toMatchObject({
+      author: 'user', session_id: null, connection_id: null, client: null, activity_id: null, kind: null,
+      label: 'Tighten this pause', body: '', status: 'open', awaiting: 'agent', seen_at: null, replies: [],
+      range: { composition_id: s.root().id, t_us: 2_000_000, end_t_us: 3_000_000 }, follows: { layer_id: s.clip },
+    })
+  })
+
+  it('label a user tack by its first line, cut to the label length, and keep the whole text as its body', () => {
+    expect(userTackText('  Too slow  ')).toEqual({ label: 'Too slow', body: '' })
+    expect(userTackText('Too slow\nCut a beat earlier')).toEqual({ label: 'Too slow', body: 'Too slow\nCut a beat earlier' })
+    const long = userTackText('x'.repeat(USER_TACK_LABEL_LENGTH + 5))
+    expect(long.label.length).toBe(USER_TACK_LABEL_LENGTH)
+    expect(long.label.endsWith('…')).toBe(true)
+    expect(long.body.length).toBe(USER_TACK_LABEL_LENGTH + 5)
+  })
+
+  it('refuse a blank user tack and a blank reply before anything changes', () => {
+    const s = setup()
+    expect(refusal(() => userTack(s, '   '))).toBe('InvalidArgument')
+    expect(s.service.tacks.size).toBe(0)
+    const id = userTack(s)
+    expect(refusal(() => s.service.tacks.reply(id, 'user', ' \n '))).toBe('InvalidArgument')
+    expect(s.view(id).replies).toEqual([])
+  })
+
+  it('hand the move to the side that did not write last', async () => {
+    const s = setup()
+    const id = userTack(s)
+    const answered = await s.run('one', () => s.service.tacks.reply(id, 'agent', 'Cut it to 0.3 s'))
+    expect(answered).toMatchObject({ awaiting: 'user', replies: [{ author: 'agent', client: 'client-one', body: 'Cut it to 0.3 s', seen_at: null }] })
+    expect(s.service.tacks.reply(id, 'user', 'Still long')).toMatchObject({ awaiting: 'agent', replies: [{ author: 'agent' }, { author: 'user', client: null }] })
+    const [theirs] = await s.create([s.input()])
+    expect(s.view(theirs!).awaiting).toBe('user')
+    expect(s.service.tacks.reply(theirs!, 'user', 'Keep it').awaiting).toBe('agent')
+  })
+
+  it("reopen a closed tack on the user's reply, never on an agent's", async () => {
+    const s = setup()
+    const id = userTack(s)
+    s.service.tacks.update(id, { status: 'resolved' }, 'user')
+    const replied = await s.run('one', () => s.service.tacks.reply(id, 'agent', 'Done'))
+    expect(replied).toMatchObject({ status: 'resolved', awaiting: null })
+    expect(s.service.tacks.reply(id, 'user', 'Not quite')).toMatchObject({ status: 'open', awaiting: 'agent' })
+  })
+
+  it('refuse an agent reply outside an MCP call', () => {
+    const s = setup()
+    const id = userTack(s)
+    expect(refusal(() => s.service.tacks.reply(id, 'agent', 'Done'))).toBe('NoCurrentCall')
+    expect(s.view(id).replies).toEqual([])
+  })
+
+  it('refuse a reply past the reply limit', () => {
+    const s = setup()
+    const id = userTack(s)
+    for (let i = 0; i < TACK_REPLY_LIMIT; i++) s.service.tacks.reply(id, 'user', `more ${i}`)
+    expect(refusal(() => s.service.tacks.reply(id, 'user', 'one more'))).toBe('ReplyLimit')
+    expect(s.view(id).replies.length).toBe(TACK_REPLY_LIMIT)
+  })
+
+  it("leave the user's tacks to the user: an agent cannot change or remove one", () => {
+    const s = setup()
+    const id = userTack(s)
+    expect(refusal(() => s.service.tacks.update(id, { status: 'resolved' }, 'agent'))).toBe('UserTack')
+    expect(refusal(() => s.service.tacks.update(id, { label: 'Mine now' }, 'agent'))).toBe('UserTack')
+    expect(refusal(() => s.service.tacks.delete({ tack_ids: [id] }, 'agent'))).toBe('UserTack')
+    expect(s.view(id)).toMatchObject({ status: 'open', label: 'Tighten this pause' })
+    expect(s.service.tacks.update(id, { status: 'dismissed' }, 'user').status).toBe('dismissed')
+    expect(s.service.tacks.delete({ tack_ids: [id] }, 'user')).toEqual([id])
+  })
+
+  it("mark the user's messages seen, and only theirs", async () => {
+    const s = setup()
+    const id = userTack(s)
+    await s.run('one', () => s.service.tacks.reply(id, 'agent', 'On it'))
+    s.service.tacks.reply(id, 'user', 'Thanks')
+    s.service.tacks.markSeen([id])
+    const seen = s.view(id)
+    expect(seen.seen_at).not.toBeNull()
+    expect(seen.replies.map(r => [r.author, r.seen_at !== null])).toEqual([['agent', false], ['user', true]])
+    // A later read keeps the stamp it found.
+    s.service.tacks.markSeen([id])
+    expect(s.view(id).seen_at).toBe(seen.seen_at)
+  })
+
+  it('never report a user tack to an agent as one of its own', async () => {
+    const s = setup()
+    const id = userTack(s)
+    s.mcp('delete_layers', { layer_ids: [s.clip] })
+    await flush()
+    expect(s.view(id).outdated).toBe(true)
+    expect(s.service.tacks.watch('client-one')).toBeNull()
+    expect(s.service.tacks.toReview('client-one')).toEqual([])
   })
 })

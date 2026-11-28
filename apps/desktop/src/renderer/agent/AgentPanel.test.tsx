@@ -252,11 +252,11 @@ describe('AgentPanel — per-activity highlight', () => {
   })
 })
 
-function tack(patch: Partial<TackView> = {}): TackView {
-  return { id: 't1', session_id: 'work', connection_id: 'c', client: 'Test client', activity_id: 'a', kind: 'issue', label: 'Long pause',
+function tack({ awaiting, ...patch }: Partial<TackView> = {}): TackView {
+  return { id: 't1', session_id: 'work', connection_id: 'c', client: 'Test client', activity_id: 'a', author: 'agent', seen_at: null, replies: [], kind: 'issue', label: 'Long pause',
     body: 'Keep the breath?', status: 'open', range: { composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000 },
     created_at: '', composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000,
-    outdated: false, follows: null, ...patch }
+    outdated: false, follows: null, ...patch, awaiting: awaiting !== undefined ? awaiting : (patch.status ?? 'open') === 'open' ? 'user' : null }
 }
 const work = { id: 'work', connection_id: 'c', client: 'Client', reason: 'Review pauses', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
 const calls = (channel: string) => mocks.invoke.mock.calls.filter(([c]) => c === channel).map(([, args]) => args)
@@ -270,12 +270,13 @@ describe('AgentPanel Tacks tab', () => {
     expect(screen.getByRole('tab', { name: 'Activity' }).getAttribute('aria-selected')).toBe('true')
     const tab = screen.getByRole('tab', { name: /Tacks/ })
     expect(tab.textContent).toBe('Tacks1')
-    expect(tab.title).toBe('Notes the agent tacked on for your review')
+    expect(tab.title).toBe('Notes between you and the agent, on the timeline')
     openTacks()
     // The badge holds the count and the tab's title the subtitle: neither repeats above a list.
-    expect(screen.queryByText('Notes the agent tacked on for your review')).toBeNull()
-    // Clearing is tidying up inside a group, not a tab-wide last step: no toolbar.
-    expect(document.querySelector('.agent-tacks .agent-activity-toolbar')).toBeNull()
+    expect(screen.queryByText('Notes between you and the agent, on the timeline')).toBeNull()
+    // Clearing is tidying up inside a group, not a tab-wide last step: the
+    // toolbar holds only the way to open a tack of the user's own.
+    expect(document.querySelector('.agent-tacks .agent-activity-toolbar')?.textContent).toBe('New tack')
     expect(screen.getByText('Review pauses')).toBeTruthy()
     expect(screen.getByText('Long pause')).toBeTruthy()
     // A group with nothing open starts collapsed; its heading still says why.
@@ -289,7 +290,7 @@ describe('AgentPanel Tacks tab', () => {
     const view = render(<AgentPanel />)
     openTacks()
     const empty = document.querySelector<HTMLElement>('.agent-tacks .agent-empty')!
-    expect(within(empty).getByText('Tacks an agent leaves for your review will appear here.')).toBeTruthy()
+    expect(within(empty).getByText('Tacks an agent leaves for your review, and the ones you add for the agent, will appear here.')).toBeTruthy()
     expect(within(empty).queryByText('Notes the agent tacked on for your review')).toBeNull()
     expect(within(empty).getByText('Tacks last for this project opening only. They are never saved or exported.')).toBeTruthy()
     expect(document.querySelector('.agent-tacks .agent-list-footnote')).toBeNull()
@@ -432,9 +433,48 @@ describe('AgentPanel Tacks tab', () => {
     seed([], { sessions: [work], tacks: [tack()] })
     const { container } = render(<AgentPanel />)
     fireEvent.click(screen.getByRole('tab', { name: /批注/ }))
-    expect(screen.getByRole('tab', { name: /批注/ }).title).toBe('代理留下、供你审阅的批注')
+    expect(screen.getByRole('tab', { name: /批注/ }).title).toBe('你和代理在时间线上的批注')
     expect(screen.getByText('批注只保留在本次打开的项目中，不会保存或导出。')).toBeTruthy()
     expect(container.textContent).not.toMatch(/tack/i)
+  })
+
+  // ADR 0185: the user's own tacks and the conversation on any tack.
+  const mine = (patch: Partial<TackView> = {}) => tack({ id: 'u1', author: 'user', session_id: null, connection_id: null, client: null,
+    activity_id: null, kind: null, label: 'Too slow', body: '', awaiting: 'agent', ...patch })
+
+  it("lists the user's tacks in a group of their own, saying whether an agent has read them, off the badge", () => {
+    seed([], { sessions: [work], tacks: [tack(), mine()] })
+    render(<AgentPanel />)
+    // Only the agent's tack waits on the user.
+    expect(screen.getByRole('tab', { name: /Tacks/ }).textContent).toBe('Tacks1')
+    openTacks()
+    expect(screen.getByText('Your tacks')).toBeTruthy()
+    const row = tackRow('u1')
+    expect(row.textContent).toContain('Agent has not read it yet')
+    expect(row.querySelector('[aria-label="Your tack"]')).toBeTruthy()
+  })
+
+  it('opens to the conversation, and the reply box sends the draft and keeps a refused one', async () => {
+    seed([], { sessions: [work], tacks: [mine({ seen_at: 'then', awaiting: 'user', replies: [
+      { author: 'agent', body: 'Cut it to 0.3 s', at: '', client: 'Test client', seen_at: null },
+    ] })] })
+    render(<AgentPanel />)
+    openTacks()
+    const row = tackRow('u1')
+    expect(row.textContent).toContain('Agent replied')
+    fireEvent.click(within(row).getByText('Too slow'))
+    const thread = row.querySelector('.agent-tack-thread')!
+    expect([...thread.querySelectorAll('li')].map(li => li.textContent)).toEqual(['You · seen by the agentToo slow', 'Test clientCut it to 0.3 s'])
+    const box = within(row).getByTestId('tack-reply-text') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'Better, one more frame' } })
+    fireEvent.click(within(row).getByRole('button', { name: 'Send' }))
+    await vi.waitFor(() => expect(calls('agent_tacks_reply')).toEqual([{ tack_id: 'u1', body: 'Better, one more frame' }]))
+    await vi.waitFor(() => expect(box.value).toBe(''))
+    mocks.invoke.mockRejectedValueOnce(new Error('refused'))
+    fireEvent.change(box, { target: { value: 'Kept' } })
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true })
+    await vi.waitFor(() => expect(calls('agent_tacks_reply')).toHaveLength(2))
+    expect(box.value).toBe('Kept')
   })
 })
 

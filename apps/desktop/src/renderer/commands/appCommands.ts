@@ -38,6 +38,7 @@ import {
   toggleTailSnap,
 } from "../settings/appSettingsStore";
 import { useAgentActivity } from "../agent/activityStore";
+import { openTackCompose } from "../agent/tackCompose";
 import { linkOverrideOn } from "../state/linkOverrideStore";
 import { focusedPlayheadUs } from "../state/playheadProjection";
 import { hasMarkedRange } from "../state/rangeStore";
@@ -217,6 +218,10 @@ const SELF_CONTAINED_COMMAND_IDS = [
   // it shows. A no-binding command for the strip button and the palette — never
   // a switch on the lane itself, which a switched-off overlay has removed.
   "toggleReviewOverlay",
+  // The user's own tack (ADR 0185): a located request for the agents, at the
+  // marked range or the playhead. No binding for the key-budget reason above;
+  // the ruler menu, the Tacks tab and the palette are its homes.
+  "addTack",
   // Preview playback resolution, in two shapes because two surfaces want
   // different things. The three ABSOLUTE setters are what the search palette
   // needs: idempotent, individually nameable, and one step from any current
@@ -256,6 +261,7 @@ const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
   centerVertically: "actions.center_vertically",
   toggleTailSnap: "actions.toggle_tail_snap",
   toggleReviewOverlay: "actions.toggle_review_overlay",
+  addTack: "actions.add_tack",
   setPlaybackResolutionFull: "actions.playback_resolution_full",
   setPlaybackResolutionHalf: "actions.playback_resolution_half",
   setPlaybackResolutionQuarter: "actions.playback_resolution_quarter",
@@ -619,6 +625,10 @@ export function buildAppCommands(
     toggleReviewOverlay: {
       run: () => useAgentActivity.setState((s) => ({ reviewOverlay: !s.reviewOverlay })),
       checked: () => useAgentActivity.getState().reviewOverlay,
+    },
+    addTack: {
+      run: openTackCompose,
+      enabled: () => currentOpenComposition() !== null,
     },
     // `checked`, not `enabled`: the current value is always re-selectable, and
     // a greyed-out "Full" would say the mode is unavailable rather than

@@ -683,6 +683,8 @@ One line per tool with a near neighbour: why both exist (convention 6).
   a review mark of this opening, recorded nowhere.
 - `update_tack` vs `delete_tacks`: text, kind and status vs place (a tack's
   place is fixed; delete and re-create to move one).
+- `reply_tack` vs `update_tack`: a new message in the tack's conversation vs
+  rewriting your own tack (the user's are refused: reply, the user closes).
 - `apply_transcripts` vs `apply_subtitles`: an engine's transcript with word
   timing vs a `Subtitle` item's cues as authored.
 - `transcribe_clip` vs `extract_clip_audio`: the app's engine transcribes vs
@@ -1171,7 +1173,17 @@ a project clears them. It comments on **what plays in its range** on every
 track and is either current or `outdated`, derived on read; the range moves
 with its content (ADR 0117). A read gives the stored record (keyed
 `tack_id`) plus `composition_id`, `t_us`, `t_end_us` (null only when its composition is gone),
-`outdated` and `follows` (the layer the range moves with now, or null).
+`outdated`, `follows` (the layer the range moves with now, or null) and
+`awaiting` (whose move: the side that did not write last, null once closed).
+
+Either side opens a tack and either replies (ADR 0185). The user's own has
+`author: "user"`, no session, client or kind, and asks for a change; agents
+reply to it and never update or delete it (`UserTack`). `replies` lists the
+messages after the opening, oldest first. Delivery is pull only: an agent
+reads the tacks when the user asks it to check them. A read answers first,
+then stamps the user's messages in it `seen_at`, so a message with
+`seen_at: null` is one no agent had read before this read; the panel shows the
+user that an agent has read it.
 
 - `create_tacks` — a validated batch (all or none; refusals name the index);
   `label` ≤ 200 chars, `body` ≤ 4000, `kind` `note`/`issue`/`question`; times
@@ -1181,6 +1193,8 @@ with its content (ADR 0117). A read gives the stored record (keyed
   per opening (`TackLimit`; nothing is evicted).
 - `update_tack` — label, body, kind, `status` (`open`/`resolved`/`dismissed`).
   A tack's place is fixed; delete and re-create to move one.
+- `reply_tack` — one message (`body` ≤ 4000) on any tack; at most 100 per
+  tack (`ReplyLimit`). The user's reply reopens a closed tack; yours does not.
 - `delete_tacks` — by ids or by `session_id`.
 
 After a committing call, the caller's own open tacks it moved or outdated ride
@@ -1403,8 +1417,8 @@ lives only in `structuredContent`.
   name (`invalid_params`), or a folder that cannot be opened here
   (`ProjectSchemaTooNew`, `ProjectInvalid`, …; `invalid_request`, so a client
   that retries on `invalid_params` does not loop); the tack store's
-  `TackLimit` / `NoCurrentCall` (`invalid_request`) and `TackNotFound` plus
-  argument errors (`invalid_params`).
+  `TackLimit` / `ReplyLimit` / `NoCurrentCall` / `UserTack` (`invalid_request`)
+  and `TackNotFound` plus argument errors (`invalid_params`).
 - One mapper at the boundary: every refusal, from any route (TS, Rust,
   export, render, Motif, file IO), leaves through `toolErrorResult`
   (`main/mcp/toolResult.ts`). It rewrites foreign text (`main/mcp/faultText.ts`):

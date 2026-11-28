@@ -15,9 +15,11 @@ import { useReviewFocus } from "../agent/reviewFocus";
 /// command registry — the safety net `CommandContextItem`'s untyped `id`
 /// trades away (see its docstring).
 ///
-/// Two families, separated: the in/out range, then the markers. Both are
-/// playhead operations, which is why they share a menu at all; they are
-/// different objects, which is why they don't share a section.
+/// Three families, separated: the in/out range, the markers, then a tack for
+/// the agents. All are playhead operations, which is why they share a menu at
+/// all; they are different objects, which is why they don't share a section.
+/// The tack row sits last because it reads both families above it: it covers
+/// the marked range when there is one (`newTackPlace`).
 ///
 /// The marker section runs author, walk, then display — the walk rows sit with
 /// the marks they move between rather than with the seeks, because this menu is
@@ -32,6 +34,8 @@ export const RULER_MENU_COMMAND_IDS = [
   "seekPrevMarker",
   "seekNextMarker",
   "toggleMarkersVisible",
+  "---",
+  "addTack",
 ] as const;
 
 /// A third family, only while a changed range is focused — which a right

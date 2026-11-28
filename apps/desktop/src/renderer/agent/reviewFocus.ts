@@ -30,7 +30,7 @@ import { parseEntityKey, type Change, type ChangedRange, type EntityKey, type En
 import { useProjectStore } from '../state/projectStore'
 import { shownTimelineId, useCompositionAnchorStore } from '../state/compositionAnchorStore'
 import { useAgentActivity } from './activityStore'
-import { tackClosedKey, tackGroupKey, tackRowKey } from './expansion'
+import { tackClosedKey, tackGroupKey, tackGroupOf, tackRowKey } from './expansion'
 import { entityIdOf, groupChanges } from './changeModel'
 import { listedChanges, useReview } from './reviewStore'
 
@@ -177,8 +177,9 @@ export function selectTack(id: string): void {
   const a = useAgentActivity.getState()
   const tack = a.snapshot?.tacks.find(t => t.id === id)
   if (!tack) return
-  const closed = tack.status === 'open' ? {} : { [tackClosedKey(tack.session_id)]: true }
-  useAgentActivity.setState({ tab: 'tacks', expanded: { ...a.expanded, [tackGroupKey(tack.session_id)]: true, ...closed, [tackRowKey(id)]: true } })
+  const group = tackGroupOf(tack)
+  const closed = tack.status === 'open' ? {} : { [tackClosedKey(group)]: true }
+  useAgentActivity.setState({ tab: 'tacks', expanded: { ...a.expanded, [tackGroupKey(group)]: true, ...closed, [tackRowKey(id)]: true } })
   setReviewFocus({ kind: 'tack', id })
 }
 

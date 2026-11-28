@@ -873,9 +873,12 @@ work session, operation, state, duration, error, history IDs. Not persisted.
 _Avoid_: log entry, history entry, transcript
 
 **Tack**:
-A time range an agent points the user at for review. Moves with the content it
-covered; current while that range plays as it did, else outdated (内容已修改).
-Runtime-only, never in the project. UI word: Tack / 批注. See ADR 0115, ADR 0117.
+A time range one side points the other at: an agent for the user's review, or
+the user for an agent to change. Holds a conversation both sides reply in;
+whose move it is follows who wrote last. Moves with the content it covered;
+current while that range plays as it did, else outdated (内容已修改; on the
+user's own, 已改动). Runtime-only, never in the project. UI word: Tack / 批注.
+See ADR 0115, ADR 0117, ADR 0185.
 _Avoid_: annotation, agent marker, review marker, comment; 标注, 备注; stale or hibernating tack
 
 **Review lane**:

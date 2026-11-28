@@ -3,7 +3,7 @@ import type { AgentActivity, AgentWorkSession, TackStatus, TackView } from '../.
 import { settleExpanded, tackClosedKey, tackGroupKey, tackRowKey } from './expansion'
 
 const tack = (id: string, status: TackStatus = 'open', session_id: string | null = 'w'): TackView => ({
-  id, session_id, status, connection_id: 'c', client: 'Client', activity_id: 'a', kind: 'note', label: id, body: '',
+  id, session_id, status, connection_id: 'c', client: 'Client', activity_id: 'a', author: 'agent', seen_at: null, replies: [], awaiting: status === 'open' ? 'user' : null, kind: 'note', label: id, body: '',
   range: { composition_id: 'root', t_us: 0, end_t_us: null }, created_at: '', composition_id: 'root', t_us: 0, end_t_us: null,
   outdated: false, follows: null,
 })

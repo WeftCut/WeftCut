@@ -2464,7 +2464,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { tacks: list.map((v, i) => parseTackInput(v, `tacks[${i}]`)) }
     } },
   { name: 'update_tack', exec: 'dedicated', annotations: ANN_SET,
-    description: "Change a tack's label, body, kind or status — `resolved` once you fixed what it pointed at, `dismissed` when it no longer matters, `open` to raise it again. At least one field. Its place is fixed at creation; to move one, delete and create it again. Returns the tack as project://tacks reads it. Unrecorded.",
+    description: "Change your tack's label, body, kind or status — `resolved` once you fixed what it pointed at, `dismissed` when it no longer matters, `open` to raise it again. At least one field. Its place is fixed at creation; to move one, delete and create it again. A tack the user opened (`author: \"user\"`) is refused (`UserTack`): reply_tack, and the user closes it. Returns the tack as project://tacks reads it. Unrecorded.",
     inputSchema: { type: 'object', properties: {
       tack_id: ID_SCHEMA('Tack'),
       patch: { type: 'object', additionalProperties: false, description: 'Only the fields you set apply.', properties: {
@@ -2475,8 +2475,15 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       } },
     }, required: ['tack_id', 'patch'] },
     parseDedicated: (a) => ({ tack_id: parseUuid(a.tack_id, 'tack_id'), patch: parseTackPatch(a.patch) }) },
+  { name: 'reply_tack', exec: 'dedicated', annotations: ANN_WRITE,
+    description: "Add a message to a tack's conversation. The user opens tacks on the timeline to ask for a change and replies to yours; an open tack whose `awaiting` is \"agent\" waits on you, and a user message with `seen_at: null` is one no agent had read before this read. Answer each: say what you changed, or ask what you need. Appends one message (`replies`); returns the tack as project://tacks reads it. Leave the user's tacks for them to close. `ReplyLimit` past 100. Unrecorded; works while history is locked.",
+    inputSchema: { type: 'object', properties: {
+      tack_id: ID_SCHEMA('Tack'),
+      body: { type: 'string', maxLength: TACK_BODY_LIMIT, description: 'Plain text: what you did or what you need to know.' },
+    }, required: ['tack_id', 'body'] },
+    parseDedicated: (a) => ({ tack_id: parseUuid(a.tack_id, 'tack_id'), body: parseTackBody(a.body, 'body') }) },
   { name: 'delete_tacks', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Remove tacks: the listed `tack_ids` (every one must exist, or none is removed), or every tack created in work session `session_id`. Exactly one of the two. Returns `{ deleted_tack_ids }`. Unrecorded.",
+    description: "Remove tacks: the listed `tack_ids` (every one must exist, or none is removed), or every tack created in work session `session_id`. Exactly one of the two. A tack the user opened is refused (`UserTack`); only the user removes it. Returns `{ deleted_tack_ids }`. Unrecorded.",
     inputSchema: { type: 'object', properties: {
       tack_ids: { type: 'array', items: { type: 'string', description: 'Tack id.' }, minItems: 1, description: 'The tacks to remove.' },
       session_id: { type: 'string', description: 'A work session id (project://session); removes every tack created in it.' },

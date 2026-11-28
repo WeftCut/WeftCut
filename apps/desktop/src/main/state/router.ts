@@ -205,11 +205,14 @@ export function routeChannel(channel: string): Route {
     case 'review_activity_view':
     case 'review_approve_all':
     case 'review_revert_all': return { kind: 'review' }
-    // The user's tack actions (resolve / dismiss / reopen / clear). Served by
-    // the TackStore beside agent activity, like the MCP tack verbs: not project
-    // content, so not a command, never recorded, not under the history lock.
+    // The user's tack actions (open / reply / resolve / dismiss / reopen /
+    // clear). Served by the TackStore beside agent activity, like the MCP tack
+    // verbs: not project content, so not a command, never recorded, not under
+    // the history lock.
     case 'agent_tacks_set_status':
-    case 'agent_tacks_delete': return { kind: 'tacks' }
+    case 'agent_tacks_delete':
+    case 'agent_tacks_create':
+    case 'agent_tacks_reply': return { kind: 'tacks' }
     case 'project_open': return { kind: 'open' }
     case 'project_save_as': return { kind: 'saveAs' }
     case 'project_new_workspace': return { kind: 'newWorkspace' }

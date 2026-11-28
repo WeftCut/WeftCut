@@ -30,7 +30,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe', 'set_param_track',
   'update_link', 'read_project',
   'create_checkpoint', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session', 'export_captions', 'open_project', 'create_project', 'open_side_preview',
-  'create_tacks', 'update_tack', 'delete_tacks', 'check_composition', 'restyle_to_taste',
+  'create_tacks', 'update_tack', 'reply_tack', 'delete_tacks', 'check_composition', 'restyle_to_taste',
   'apply_subtitles', 'auto_split_by_shot', 'remove_pauses',
 ])
 
@@ -63,7 +63,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(28)
+    expect(dedicated.length).toBe(29)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }

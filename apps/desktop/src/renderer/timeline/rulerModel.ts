@@ -8,7 +8,7 @@ import {
 } from "../frames";
 import { formatRulerLabel } from "./geometry";
 import { UI_METRICS } from "../settings/uiMetrics";
-import type { TackKind } from "../../shared/agent-activity";
+import { tackMark, type TackAuthor, type TackKind, type TackMark } from "../../shared/agent-activity";
 
 /// View model for the two rows that measure TIME rather than content — the
 /// ruler's ticks and the marker lane's glyphs — for one (rate, zoom, viewport)
@@ -394,13 +394,15 @@ export function computeLaneMarkers(input: LaneMarkerInput): LaneMarker[] {
 /// px — two chips edge to edge read as one.
 export const TACK_CHIP_GAP_PX = 2;
 
-/// Which kind a group chip wears: the one asking most of the user.
-const KIND_WEIGHT: Record<TackKind, number> = { issue: 2, question: 1, note: 0 };
+/// Which mark a group chip wears: the one asking most of the user. The user's
+/// own tack asks them nothing.
+const KIND_WEIGHT: Record<TackMark, number> = { issue: 2, question: 1, note: 0, user: -1 };
 
 /// The fields of a placed tack this model reads (a `TackView` that is visible).
 export interface LaneTackSource {
   id: string;
-  kind: TackKind;
+  author: TackAuthor;
+  kind: TackKind | null;
   t_us: number | null;
   end_t_us: number | null;
   label: string;
@@ -409,7 +411,7 @@ export interface LaneTackSource {
 /// One placed tack, in the same row coordinates as `LaneMarker`.
 export interface LaneTack {
   id: string;
-  kind: TackKind;
+  kind: TackMark;
   xPx: number;
   /// The tack's own PAINTED width — the range's, or `minChipPx` when the range
   /// is narrower (a point tack has none) — so a click target never shrinks to
@@ -424,8 +426,8 @@ export interface LaneTack {
 export interface LaneTackGroup {
   /// Start order, id on a tie. One member is a plain chip.
   members: LaneTack[];
-  /// The single member's kind, or the group's most pressing (`KIND_WEIGHT`).
-  kind: TackKind;
+  /// The single member's mark, or the group's most pressing (`KIND_WEIGHT`).
+  kind: TackMark;
   xPx: number;
   /// Painted width: the members' union, and for a group at least
   /// `minGroupPx`, room for its kind icon and count.
@@ -463,7 +465,7 @@ export function groupLaneTacks(input: {
     const rangePx = endTUs === null ? 0 : ((endTUs - t.t_us) / US_PER_SEC) * pxPerSec;
     placed.push({
       id: t.id,
-      kind: t.kind,
+      kind: tackMark(t),
       xPx,
       widthPx: Math.max(rangePx, minChipPx),
       label: t.label,

@@ -15,7 +15,7 @@ const index: LocateIndex = {
 const change = (patch: Partial<Change> & Pick<Change, 'id'>): Change => ({ class: 'modified', details: [], composition_id: ROOT_ID, ranges: [], ...patch })
 const at = (composition_id: string, t: number) => [{ composition_id, track_id: null, t_start_us: t, t_end_us: t + S }]
 const tack = (patch: Partial<TackView> = {}): TackView => ({
-  id: 't', session_id: null, connection_id: 'c', client: 'C', activity_id: 'a', kind: 'note', label: 'L', body: 'B', status: 'open',
+  id: 't', session_id: null, connection_id: 'c', client: 'C', activity_id: 'a', author: 'agent', seen_at: null, replies: [], awaiting: 'user', kind: 'note', label: 'L', body: 'B', status: 'open',
   range: { composition_id: ROOT_ID, t_us: 0, end_t_us: null }, created_at: '',
   composition_id: ROOT_ID, t_us: 2 * S, end_t_us: null, outdated: false, follows: null, ...patch,
 })

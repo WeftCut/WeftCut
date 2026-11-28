@@ -185,7 +185,7 @@ describe("Review overlay clip decorations", () => {
 
 describe("Review focus on the editor timeline", () => {
   const tack = (patch: Partial<TackView> = {}): TackView => ({
-    id: "t1", session_id: null, connection_id: "c", client: "C", activity_id: "a", kind: "issue", label: "Pause", body: "", status: "open",
+    id: "t1", session_id: null, connection_id: "c", client: "C", activity_id: "a", author: "agent", seen_at: null, replies: [], awaiting: "user", kind: "issue", label: "Pause", body: "", status: "open",
     range: { composition_id: ROOT_ID, t_us: S, end_t_us: 2 * S }, created_at: "",
     composition_id: ROOT_ID, t_us: S, end_t_us: 2 * S, outdated: false, follows: { layer_id: "edited", src_us: 0, t_us: S }, ...patch,
   });
