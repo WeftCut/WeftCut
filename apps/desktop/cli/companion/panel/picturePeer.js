@@ -2,20 +2,22 @@
 // set up over the view's tool calls, carrying the framed chunks the companion
 // page reads from `/companion/video` (`../ui/pictureChunks.js`). The panel
 // cannot reach loopback over HTTP; a peer connection to the app's 127.0.0.1
-// candidate it can. The app answers with that candidate only
-// (`renderer/companion/picturePeers.ts`).
+// candidate it can. The app answers with that candidate only, ignores the
+// candidates this offer names, and sends nothing to a channel whose pair is
+// not on its loopback socket (`renderer/companion/picturePeers.ts`).
 import { frameSplitter, pictureDecoder } from '../ui/pictureChunks.js'
 import { RETRY_FIRST_MS, RETRY_MAX_MS } from '../ui/transportLoopback.js'
 
-/** How long an answered connection may go without a frame drawn before the
- *  view says the picture cannot reach it here. The editor sends its last
- *  keyframe to a channel the moment it opens, so a working link draws well
- *  within this. */
+/** How long an answered connection may take to open its channel before the
+ *  view says the picture cannot reach it here. A channel that opened stays,
+ *  frames or none: the editor may have nothing to send (an export holds the
+ *  picture, a first frame is still encoding), and the view shows that from the
+ *  app's state. */
 export const PICTURE_CONNECT_MS = 5000
 
 /** The longest the view waits for its own candidates before it sends the
- *  offer as it stands. The app's checks reach the view whatever it lists, so
- *  a short wait loses nothing. */
+ *  offer as it stands. The app reads none of them: the view's checks to the
+ *  app's candidate form the pair, so a short wait loses nothing. */
 export const GATHER_MAX_MS = 1500
 
 /** Connection states after which the channel carries nothing more. */
@@ -34,9 +36,10 @@ const ENDED = new Set(['failed', 'disconnected', 'closed'])
  *   "signal" }`): `ok` with its answer, `not_ready` while no editor can take
  *   it, anything else when it will not come.
  * @param {{ mount: HTMLElement, shown(): void, failed(): void, blocked(): void }} view
- *   `blocked` is called when a connection draws nothing within
- *   `PICTURE_CONNECT_MS`, or fails before it drew: the picture cannot reach
- *   this view. The view keeps trying, and the next frame drawn calls `shown`.
+ *   `blocked` is called when a connection's channel does not open within
+ *   `PICTURE_CONNECT_MS`, or the connection ends before it drew (the app
+ *   closes a channel off loopback as it opens): the picture cannot reach this
+ *   view. The view keeps trying, and the next frame drawn calls `shown`.
  * @returns {{ close(): void }}
  */
 export function openPeerPicture({ signal, codecs, Peer, doc, clock, timers = globalThis }, view) {
@@ -87,7 +90,14 @@ export function openPeerPicture({ signal, codecs, Peer, doc, clock, timers = glo
       if (!drawn) blocked()
       finish()
     }
-    channel.onclose = () => finish()
+    channel.onopen = () => {
+      clearDeadline()
+      selected(pc)
+    }
+    channel.onclose = () => {
+      if (!drawn) blocked()
+      finish()
+    }
     await pc.setLocalDescription(await pc.createOffer())
     await gathered(pc)
     let wait = RETRY_FIRST_MS
@@ -96,8 +106,8 @@ export function openPeerPicture({ signal, codecs, Peer, doc, clock, timers = glo
       const reply = await signal(pc.localDescription.sdp).catch(() => ({ outcome: 'offline' }))
       if (closed) return
       if (reply.outcome === 'ok' && typeof reply.answer === 'string') {
-        // A connection that draws nothing in time is given up and tried
-        // anew: one stuck checking would otherwise never end.
+        // A connection whose channel does not open in time is given up and
+        // tried anew: one stuck checking would otherwise never end.
         deadline = timers.setTimeout(() => { blocked(); finish() }, PICTURE_CONNECT_MS)
         await pc.setRemoteDescription({ type: 'answer', sdp: reply.answer })
         break
@@ -138,6 +148,20 @@ export function openPeerPicture({ signal, codecs, Peer, doc, clock, timers = glo
       decoder.close()
       canvas.remove()
     },
+  }
+
+  /** Marks the canvas with the addresses of the pair `pc` selected, as
+   *  `data-pair-local` (this view's end) and `data-pair-remote` (the app's),
+   *  for a test to read from outside the frame. */
+  function selected(pc) {
+    pc.getStats().then((report) => {
+      const stats = [...report.values()]
+      const id = stats.find((s) => s.type === 'transport' && s.selectedCandidatePairId)?.selectedCandidatePairId
+      const pair = id ? report.get(id) : stats.find((s) => s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded')
+      if (!pair) return
+      canvas.dataset.pairLocal = report.get(pair.localCandidateId)?.address ?? ''
+      canvas.dataset.pairRemote = report.get(pair.remoteCandidateId)?.address ?? ''
+    }, () => {})
   }
 
   /** Resolves once `pc` has gathered its candidates, or at `GATHER_MAX_MS`. */

@@ -335,8 +335,12 @@ func (s *server) clientRequest(r *request) {
 				s.launchCall(r)
 				return
 			case panel.toolName:
-				s.write(resultMessage(r.rawID, panelCallResult()))
-				return
+				// To a client that shows no views the entry does not exist:
+				// the app refuses it as it refuses any unknown name.
+				if s.ui {
+					s.write(resultMessage(r.rawID, panelCallResult()))
+					return
+				}
 			}
 		}
 		if r.method == methodResourcesRead && uriOf(r.params) == panel.uri {

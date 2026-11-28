@@ -356,9 +356,10 @@ loopback over HTTP. Why tool calls and a data channel: ADR 0186.
   declares `capabilities.extensions["io.modelcontextprotocol/ui"]` with
   `text/html;profile=mcp-app` among its `mimeTypes`. Such a client is listed
   the entry `side_preview_panel`, the view's resource and `side_preview_sync`,
-  all ahead of the rest; any other client sees none of them. Whether ChatGPT
-  desktop declares the capability for a `config.toml` server is not yet
-  verified (see the landmine on `declaresMcpAppsUi`).
+  all ahead of the rest; any other client sees none of them, and a call of
+  either tool by name is refused as an unknown tool. Whether ChatGPT desktop
+  declares the capability for a `config.toml` server is not documented (ADR
+  0186, Consequences).
 - **The entry** `side_preview_panel {}` is hidden from the model
   (`_meta.ui.visibility: ["app"]`), names the view in `_meta.ui.resourceUri`
   and carries ChatGPT's thread entrypoint (`_meta["openai/ui"]`), so the host
@@ -395,12 +396,17 @@ loopback over HTTP. Why tool calls and a data channel: ADR 0186.
   encoder. The view offers; the editor answers with its `127.0.0.1` host
   candidates only (Chromium gathers them under
   `allow-loopback-in-peer-connection`) and no STUN or TURN server, so no
-  address of the machine's networks is signaled. Frames above 64 KB go as
-  several messages; a channel more than 2 MB behind waits for a keyframe; an
-  open channel counts as a page showing the picture. A connection that draws
-  nothing within 5 s after its answer, or fails before it drew, says the
-  picture cannot reach the panel and points at the side preview, and the view
-  keeps trying.
+  address of the machine's networks is signaled. The editor applies the
+  offer without its candidates, and when a channel opens it sends frames only
+  if its own end of the selected pair is its `127.0.0.1` candidate (and the
+  remote end, where the stats give it, is `127.0.0.1` too); otherwise it
+  closes the connection. Frames above 64 KB go as several messages; a channel
+  more than 2 MB behind waits for a keyframe; an open channel counts as a page
+  showing the picture. A connection whose channel does not open within 5 s
+  after its answer, or that ends before it drew, says the picture cannot
+  reach the panel and points at the side preview, and the view keeps trying;
+  an open channel with nothing to carry yet (an export, a first encode)
+  stays.
 
 ## Multi-agent semantics
 

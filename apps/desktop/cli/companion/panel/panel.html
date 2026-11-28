@@ -1540,7 +1540,14 @@ ${timecode(c.t_start_us, fps())} – ${timecode(c.t_end_us, fps())}`;
         if (!drawn) blocked();
         finish();
       };
-      channel.onclose = () => finish();
+      channel.onopen = () => {
+        clearDeadline();
+        selected(pc);
+      };
+      channel.onclose = () => {
+        if (!drawn) blocked();
+        finish();
+      };
       await pc.setLocalDescription(await pc.createOffer());
       await gathered(pc);
       let wait = RETRY_FIRST_MS;
@@ -1589,6 +1596,17 @@ ${timecode(c.t_start_us, fps())} – ${timecode(c.t_end_us, fps())}`;
         canvas.remove();
       }
     };
+    function selected(pc) {
+      pc.getStats().then((report) => {
+        const stats = [...report.values()];
+        const id = stats.find((s) => s.type === "transport" && s.selectedCandidatePairId)?.selectedCandidatePairId;
+        const pair = id ? report.get(id) : stats.find((s) => s.type === "candidate-pair" && s.nominated && s.state === "succeeded");
+        if (!pair) return;
+        canvas.dataset.pairLocal = report.get(pair.localCandidateId)?.address ?? "";
+        canvas.dataset.pairRemote = report.get(pair.remoteCandidateId)?.address ?? "";
+      }, () => {
+      });
+    }
     function gathered(pc) {
       if (pc.iceGatheringState === "complete") return Promise.resolve();
       return new Promise((resolve) => {

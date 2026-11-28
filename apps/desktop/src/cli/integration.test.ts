@@ -979,6 +979,17 @@ describe('weftcut mcp over real stdio + HTTP', () => {
         const shimmed = await sdkClient(target, appData, capabilities)
         for (const [method, params] of asks) expect.soft(await outcome(shimmed, method, params), `${method} ${JSON.stringify(capabilities)}`).toEqual(await outcome(direct, method, params))
       }
+      // To a client that shows no views, the view's tools are no tools: a call
+      // by name is refused as an unknown name is, through the shim and over HTTP.
+      const plainDirect = await directClient()
+      const plainShimmed = await sdkClient(target, appData)
+      const unknown = await outcome(plainDirect, 'tools/call', { name: 'no_such_tool', arguments: {} })
+      expect(unknown).toHaveProperty('error')
+      for (const name of [PANEL_ENTRY_TOOL.name, PANEL_SYNC_TOOL.name]) {
+        const params = { name, arguments: { op: 'state' } }
+        expect(await outcome(plainDirect, 'tools/call', params), name).toEqual(unknown)
+        expect(await outcome(plainShimmed, 'tools/call', params), name).toEqual(unknown)
+      }
       const direct = await directClient(SHOWS_VIEWS)
       const shimmed = await sdkClient(target, appData, SHOWS_VIEWS)
       const listed = await outcome(direct, 'tools/list', {}) as { result: { tools: Array<{ name: string }> } }

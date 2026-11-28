@@ -61,10 +61,12 @@ export function panelEntryResult(): { content: Array<{ type: 'text'; text: strin
 
 /** Whether a client's `initialize` capabilities say it shows MCP Apps views:
  *  the extension, naming the view's MIME type. Only such a client is listed
- *  the entry, the view and the sync tool.
- *  LANDMINE: whether ChatGPT desktop declares this for a `config.toml` server
- *  is not documented, and not yet seen. If it does not, these must be listed
- *  without this gate (and the same in `cli/panel.go` `declaresUI`). */
+ *  the entry, the view and the sync tool; any other client gets neither them
+ *  nor an answer to their names.
+ *  LANDMINE: a host that shows views but does not declare this capability is
+ *  never listed the entry, so its panel has nothing to open. The gate and its
+ *  twin `declaresUI` in `cli/panel.go` change together; see docs/adr/0186,
+ *  Consequences. */
 export function declaresMcpAppsUi(capabilities: unknown): boolean {
   const ui = (capabilities as { extensions?: Record<string, { mimeTypes?: unknown }> } | undefined)?.extensions?.[entry.extension]
   return Array.isArray(ui?.mimeTypes) && ui.mimeTypes.includes(entry.mimeType)

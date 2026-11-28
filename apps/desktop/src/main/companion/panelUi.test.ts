@@ -261,9 +261,21 @@ describe('toolcallTransport', () => {
 class ViewChannel {
   binaryType = ''
   onmessage: ((e: { data: ArrayBuffer }) => void) | null = null
+  onopen: (() => void) | null = null
   onclose: (() => void) | null = null
   deliver(bytes: Uint8Array) { this.onmessage?.({ data: bytes.slice().buffer }) }
+  open() { this.onopen?.() }
+  close() { this.onclose?.() }
 }
+
+/** What `getStats` gives once the view's channel opened: the pair it selected
+ *  joins a host candidate of the view to the app's 127.0.0.1 one. */
+const SELECTED_PAIR = new Map<string, Record<string, unknown>>([
+  ['T1', { type: 'transport', selectedCandidatePairId: 'P1' }],
+  ['P1', { type: 'candidate-pair', localCandidateId: 'L1', remoteCandidateId: 'R1', nominated: true, state: 'succeeded' }],
+  ['L1', { type: 'local-candidate', candidateType: 'host', address: '192.168.1.20' }],
+  ['R1', { type: 'remote-candidate', candidateType: 'host', address: '127.0.0.1' }],
+])
 
 class ViewPeer {
   static made: ViewPeer[] = []
@@ -285,6 +297,7 @@ class ViewPeer {
   }
   async setRemoteDescription(d: { type: string; sdp: string }) { this.remote = d }
   close() { this.closed = true }
+  async getStats() { return SELECTED_PAIR }
   fail() { this.connectionState = 'failed'; this.onconnectionstatechange?.() }
 }
 
@@ -302,8 +315,8 @@ function fakeDecoding() {
     readonly type: string
     constructor(init: { type: string }) { this.type = init.type }
   }
-  const canvas = { width: 0, height: 0, getContext: () => ({ drawImage() {} }), remove() {} }
-  return { decoded, codecs: { VideoDecoder, EncodedVideoChunk }, doc: { createElement: () => canvas } }
+  const canvas = { width: 0, height: 0, dataset: {} as Record<string, string>, getContext: () => ({ drawImage() {} }), remove() {} }
+  return { decoded, canvas, codecs: { VideoDecoder, EncodedVideoChunk }, doc: { createElement: () => canvas } }
 }
 
 /** Runs what is queued without moving the fake clock, until `holds`. */
@@ -353,7 +366,7 @@ describe('openPeerPicture', () => {
     expect(ViewPeer.made[0]!.closed).toBe(true)
   })
 
-  it('says the picture cannot reach the view when an answered connection draws nothing in time, and tries anew', async () => {
+  it('says the picture cannot reach the view when an answered connection opens no channel in time, and tries anew', async () => {
     const d = fakeDecoding()
     const p = pictureView()
     const clock = { sleep: async () => {} }
@@ -383,6 +396,48 @@ describe('openPeerPicture', () => {
     await settle(() => p.said.length === 2)
     expect(ViewPeer.made).toHaveLength(2)
     expect(p.said).toEqual(['blocked', 'blocked'])
+    picture.close()
+  })
+
+  it('keeps a channel that opened and carries nothing yet: an export holds the picture, or its first frame is still encoding', async () => {
+    const d = fakeDecoding()
+    const p = pictureView()
+    const clock = { sleep: async () => {} }
+    const picture = openPeerPicture({ signal: async () => ({ outcome: 'ok', answer: 'a' }), codecs: d.codecs, Peer: ViewPeer, doc: d.doc, clock }, p.view)
+    await settle(() => ViewPeer.made[0]?.remote != null)
+    ViewPeer.made[0]!.channel!.open()
+    await vi.advanceTimersByTimeAsync(PICTURE_CONNECT_MS * 4)
+    expect(p.said).toEqual([])
+    // One connection, still held: the editor's encoder is not restarted by a retry.
+    expect(ViewPeer.made).toHaveLength(1)
+    expect(ViewPeer.made[0]!.closed).toBe(false)
+    picture.close()
+  })
+
+  it('says so when the app closes a channel before anything drew, as it does one off loopback', async () => {
+    const d = fakeDecoding()
+    const p = pictureView()
+    let waits = 0
+    const clock = { sleep: () => (++waits === 1 ? Promise.resolve() : new Promise<void>(() => {})) }
+    const picture = openPeerPicture({ signal: async () => ({ outcome: 'ok', answer: 'a' }), codecs: d.codecs, Peer: ViewPeer, doc: d.doc, clock }, p.view)
+    await settle(() => ViewPeer.made[0]?.remote != null)
+    const channel = ViewPeer.made[0]!.channel!
+    channel.open()
+    channel.close()
+    expect(p.said).toEqual(['blocked'])
+    await settle(() => ViewPeer.made.length === 2)
+    expect(ViewPeer.made[0]!.closed).toBe(true)
+    picture.close()
+  })
+
+  it("marks the canvas with the selected pair's addresses once the channel opens", async () => {
+    const d = fakeDecoding()
+    const p = pictureView()
+    const picture = openPeerPicture({ signal: async () => ({ outcome: 'ok', answer: 'a' }), codecs: d.codecs, Peer: ViewPeer, doc: d.doc, clock: { sleep: async () => {} } }, p.view)
+    await settle(() => ViewPeer.made[0]?.remote != null)
+    ViewPeer.made[0]!.channel!.open()
+    await settle(() => d.canvas.dataset.pairRemote !== undefined)
+    expect(d.canvas.dataset).toEqual({ pairLocal: '192.168.1.20', pairRemote: '127.0.0.1' })
     picture.close()
   })
 })

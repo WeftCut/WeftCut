@@ -166,6 +166,20 @@ func TestTheShimAnswersTheEntryAndTheViewWithTheAppClosed(t *testing.T) {
 	}
 }
 
+func TestTheEntryIsNoToolOfAClientThatShowsNoViews(t *testing.T) {
+	s, out := panelServer(t, `{}`)
+	ask(s, `1`, methodToolsCall, `{"name":"`+panel.toolName+`","arguments":{}}`)
+	ask(s, `2`, methodToolsCall, `{"name":"no_such_tool","arguments":{}}`)
+	got := written(t, s, out)
+	// Both wait on the app, which answers them alike: neither is its tool.
+	if len(got) != 0 {
+		t.Errorf("the shim answered for the app: %v", got)
+	}
+	if len(s.waiters) != 2 || s.waiters[0].req.key != idKey(json.RawMessage(`1`)) {
+		t.Errorf("waiters %+v", s.waiters)
+	}
+}
+
 func TestTheAppsCopiesOfTheEntryAndTheViewAreDropped(t *testing.T) {
 	s, out := panelServer(t, uiCapabilities)
 	for id, method := range map[string]string{`1`: methodToolsList, `2`: methodResourcesList} {

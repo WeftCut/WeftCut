@@ -79,10 +79,11 @@ func panelURI(template string, html []byte) string {
 
 // declaresUI reports whether a client's `initialize` capabilities say it
 // shows MCP Apps views: the extension, naming the view's MIME type. Only such
-// a client is listed the entry and its view.
-// LANDMINE: whether ChatGPT desktop declares this for a config.toml server is
-// not documented, and not yet seen. If it does not, the entry must be listed
-// without this gate (and the same in main/companion/panelEntry.ts).
+// a client is listed the entry and its view, and answered the entry's name.
+// LANDMINE: a host that shows views but does not declare this capability is
+// never listed the entry, so its panel has nothing to open. The gate and its
+// twin declaresMcpAppsUi in main/companion/panelEntry.ts change together; see
+// docs/adr/0186, Consequences.
 func declaresUI(capabilities json.RawMessage) bool {
 	var c struct {
 		Extensions map[string]struct {

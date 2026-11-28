@@ -50,7 +50,10 @@ capability before it lists UI tools.
   them.
 - **Listed by capability, not by host.** Only a client that declares
   `io.modelcontextprotocol/ui` with `text/html;profile=mcp-app` is listed the
-  entry, the view and the sync tool. The only host-specific datum is the
+  entry, the view and the sync tool. To any other client the two tools are not
+  tools: a call by name is logged, recorded and refused as an unknown name, by
+  the binary and the app alike, so a model cannot drive the player or the
+  picture's connections unrecorded. The only host-specific datum is the
   thread entrypoint in the entry's `_meta`.
 - **State, events and control over one app-only tool**, `side_preview_sync`.
   Events come from a polled viewer in the hub: a poll is held at most a second,
@@ -69,9 +72,23 @@ capability before it lists UI tools.
   An offer before the editor's bridge attached, or one it leaves unanswered
   for 5 s, is answered `not_ready`, and the view asks again. An open channel
   counts as a page showing the picture, so an export still holds it.
-- **A blocked picture says so**: a connection that draws nothing within 5 s of
-  its answer, or fails first, ends in a message that points at the side
-  preview, never a black frame.
+- **Loopback on the editor's side, whatever the offer says.** The editor drops
+  every candidate from an offer before it applies it, so its agent starts no
+  check of its own: the view's checks to the answer's `127.0.0.1` candidate
+  form the pair. It still answers a check that reaches any of its sockets,
+  which is why the pair is checked too. When a channel opens, the editor reads the selected
+  pair from `getStats()` and sends frames only when its own end is the
+  `127.0.0.1` host candidate; otherwise it closes the connection. That end is
+  the decisive one, since a socket bound to loopback exchanges packets with
+  this machine only. The remote end is peer-reflexive, and the stats leave its
+  address out (webrtc-stats, `RTCIceCandidateStats.address`); one they do give
+  must be `127.0.0.1` as well.
+- **A blocked picture says so**: a connection whose channel does not open
+  within 5 s of its answer, or that ends before it drew, ends in a message
+  that points at the side preview, never a black frame. A channel that opened
+  stays, frames or none: an export or a first encode has nothing to send yet,
+  and the view shows that from the app's state rather than reconnecting, which
+  would restart the encoder each time.
 - **With the app closed** the view offers to start it (`launch_weftcut`), and
   on the start screen to open the most recent project; both through tools the
   model has too.
@@ -95,9 +112,10 @@ Rejected:
 
 ## Consequences
 
-- Whether ChatGPT desktop declares the UI capability for a `config.toml`
-  server is not documented. If it does not, the gate must go, in the binary and
-  the app alike.
+- A host that shows views but does not declare the UI capability is never
+  listed the entry, and its panel has nothing to open. Whether ChatGPT desktop
+  declares it for a `config.toml` server is not documented; if it does not, the
+  gate goes, in the binary and the app alike.
 - A session that starts with the app closed lists the sync tool only after the
   app's `tools/list_changed`; the view reaches it by calling, not by listing.
 - The view's `launch_weftcut`, `read_project` and `open_project` calls are
@@ -106,5 +124,9 @@ Rejected:
   what it can no longer reach.
 - The data channel is new in real ChatGPT: the prototype carried a media track
   there. A host that refuses data channels shows the blocked message.
+- The prototype connected with the editor's candidates limited to loopback,
+  but with the view's candidates applied. That a pair forms from the view's
+  checks alone, with a peer-reflexive remote end whose address the stats hide,
+  is what the end-to-end case and a run in a real host confirm.
 - A change anywhere in the companion UI is a new view address, so a host
   reloads the view after any app update that touched it.

@@ -98,6 +98,20 @@ describe('the side-panel view over MCP', () => {
     expect(logged()).toContain('open_side_preview')
   })
 
+  it('to a client that shows no views, answers both tools as any unknown name, and records the call as the agent\'s', async () => {
+    const panelSync = vi.fn(async () => ({}))
+    const { client, agent, logged } = await connect({}, { panelSync })
+    const refusal = (name: string) => client.callTool({ name, arguments: { op: 'state' } }).then(
+      () => { throw new Error(`${name} was answered`) },
+      (e: { code: number; message: string }) => ({ code: e.code, message: e.message.replace(name, '<name>') }),
+    )
+    const unknown = await refusal('no_such_tool')
+    for (const name of VIEW_TOOLS) expect(await refusal(name), name).toEqual(unknown)
+    expect(panelSync).not.toHaveBeenCalled()
+    expect(logged()).toEqual(expect.arrayContaining(VIEW_TOOLS))
+    expect(agent.snapshot().activities.map((a) => a.tool)).toEqual(expect.arrayContaining(VIEW_TOOLS))
+  })
+
   it('answers an op the view never sends as invalid params', async () => {
     const { client } = await connect(UI, { panelSync: async () => { throw new PanelSyncArgError('op must be one of …') } })
     const out = await client.callTool({ name: PANEL_SYNC_TOOL.name, arguments: { op: 'nope' } })

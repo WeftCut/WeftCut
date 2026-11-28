@@ -203,7 +203,7 @@ describe("installCompanionBridge", () => {
     // The open channel is what main counts as the picture's demand.
     const channel = FakePeer.made[0]!.channel();
     channel.open();
-    expect(sentOn(COMPANION_PEERS)).toEqual([{ token: tokenOf(), open: 1 }]);
+    await vi.waitFor(() => expect(sentOn(COMPANION_PEERS)).toEqual([{ token: tokenOf(), open: 1 }]));
     tell(COMPANION_DEMAND_EVENT, { token: tokenOf(), watch: true, picture: true });
     await vi.waitFor(() => expect(log.captures).toBe(1));
     paint(640, 360);

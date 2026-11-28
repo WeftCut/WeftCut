@@ -1186,10 +1186,13 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   const connectionId = opts.connectionId ?? randomUUID()
   // The side-panel view's tools (`companion/panelEntry.ts`): listed only to a
   // client that shows MCP Apps views, and answered here rather than by the
-  // project's dispatcher, so they answer with no project open.
+  // project's dispatcher, so they answer with no project open. To any other
+  // client they do not exist: a call by name goes to the dispatcher and is
+  // logged and refused as any unknown name is, so a model cannot drive the
+  // player, hold watch demand or evict a view's picture unrecorded.
   const viewTools = [PANEL_ENTRY_TOOL, ...(opts.panelSync ? [PANEL_SYNC_TOOL] : [])]
   const showsViews = (): boolean => declaresMcpAppsUi(server.getClientCapabilities())
-  const viewTool = (name: string) => viewTools.find((d) => d.name === name)
+  const viewTool = (name: string) => (showsViews() ? viewTools.find((d) => d.name === name) : undefined)
   const callViewTool = async (name: string, args: Record<string, unknown>): Promise<ServerResult> => {
     if (name === PANEL_ENTRY_TOOL.name) return panelEntryResult() as ServerResult
     try {

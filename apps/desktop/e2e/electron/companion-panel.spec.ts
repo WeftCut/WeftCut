@@ -2,8 +2,9 @@
 // listed only to a client that declares the UI capability, loaded from the
 // `weftcut` binary over stdio, drawn in a sandboxed frame that may fetch
 // nothing, driving the editor through tool calls, decoding the picture from a
-// data channel whose answer names only 127.0.0.1, and offering to start the
-// app, and reopen its project, after it quit.
+// data channel whose answer names only 127.0.0.1 and whose pair ends on the
+// app's 127.0.0.1 candidate, and offering to start the app, and reopen its
+// project, after it quit.
 //
 // The host is played by a page of a separate Electron process (it must outlive
 // the app under test), served from 127.0.0.1 so its frame is a secure context
@@ -176,12 +177,17 @@ test('the side-panel view follows the editor over tool calls, shows the picture 
 
     // The picture: `live` is set by the view's decoder drawing a frame that
     // came over the data channel. The answer it was given names no address
-    // of this machine's networks.
+    // of this machine's networks. The editor sends a channel frames only once
+    // its own end of the selected pair is its 127.0.0.1 socket, so `live`
+    // stands for that end; the view's stats give the other side of the pair,
+    // the app's candidate it reached, which must be 127.0.0.1 too. The view's
+    // own end is whatever its host gathered (this host has no loopback switch).
     await view.locator('.cw-show-picture').click()
     const stage = view.locator('.cw-stage')
     await expect(stage).toHaveAttribute('data-picture', 'live', { timeout: 60_000 })
     expect(answers.length).toBeGreaterThan(0)
     for (const answer of answers) expect(new Set(addresses(answer))).toEqual(new Set(['127.0.0.1']))
+    await expect(view.locator('.cw-picture canvas')).toHaveAttribute('data-pair-remote', '127.0.0.1')
 
     // The app quits: the view says so and offers to start it.
     await app.close()

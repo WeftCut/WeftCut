@@ -1,12 +1,15 @@
 // The editor's answers to side-panel views: an answer that names no address
-// but 127.0.0.1, channels that get the picture as pages do, in pieces a
-// channel takes, and connections that count only while their channel is open.
+// but 127.0.0.1, an offer whose candidates are never tried, channels that get
+// the picture as pages do only on a loopback pair, in pieces a channel takes,
+// and connections that count only while their channel is open.
 import { beforeEach, describe, expect, it } from "vitest";
 import { MIRROR_FRAME_CONFIG, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES, PICTURE_MESSAGE_MAX_BYTES } from "../../shared/companion";
-import { PEERS_MAX, PicturePeers, loopbackOnly } from "./picturePeers";
-import { FakePeer, GATHERED_ANSWER } from "./testing/fakePeers";
+import { PEERS_MAX, PicturePeers, loopbackOnly, onLoopbackPair, withoutCandidates } from "./picturePeers";
+import { FakePeer, GATHERED_ANSWER, LOOPBACK_PAIR, pairStats } from "./testing/fakePeers";
 
 const OFFER = "v=0\r\no=- 9 2 IN IP4 127.0.0.1\r\ns=-\r\n";
+/** Lets a channel's open run its stats check. */
+const opened = () => new Promise((resolve) => { setTimeout(resolve, 0); });
 
 function peers() {
   const counts: number[] = [];
@@ -48,6 +51,34 @@ describe("loopbackOnly", () => {
   });
 });
 
+describe("withoutCandidates", () => {
+  it("leaves out every candidate, loopback ones too, and the rest of the offer untouched", () => {
+    const sdp = withoutCandidates(GATHERED_ANSWER);
+    expect(sdp).not.toMatch(/^a=(candidate:|end-of-candidates)/m);
+    expect(sdp.split("\r\n").filter((l) => l !== "")).toEqual(
+      GATHERED_ANSWER.split("\r\n").filter((l) => l !== "" && !l.startsWith("a=candidate:") && l !== "a=end-of-candidates"),
+    );
+    expect(withoutCandidates(OFFER)).toBe(OFFER);
+  });
+});
+
+describe("onLoopbackPair", () => {
+  const LOOPBACK_HOST = { candidateType: "host", address: "127.0.0.1" };
+  it("takes a pair on the editor's 127.0.0.1 socket, whose remote end is loopback or left out of the stats", () => {
+    expect(onLoopbackPair(LOOPBACK_PAIR)).toBe(true);
+    expect(onLoopbackPair(pairStats(LOOPBACK_HOST, { candidateType: "prflx", address: "" }))).toBe(true);
+    expect(onLoopbackPair(pairStats(LOOPBACK_HOST, { candidateType: "prflx", address: "127.0.0.1" }))).toBe(true);
+  });
+
+  it("refuses a pair on another socket of the editor's, toward another address, or none at all", () => {
+    expect(onLoopbackPair(pairStats({ candidateType: "host", address: "192.168.1.20" }, LOOPBACK_HOST))).toBe(false);
+    expect(onLoopbackPair(pairStats({ candidateType: "srflx", address: "127.0.0.1" }, LOOPBACK_HOST))).toBe(false);
+    expect(onLoopbackPair(pairStats(LOOPBACK_HOST, { candidateType: "host", address: "203.0.113.7" }))).toBe(false);
+    expect(onLoopbackPair(pairStats(LOOPBACK_HOST, { candidateType: "prflx", address: "192.168.1.20" }))).toBe(false);
+    expect(onLoopbackPair(new Map() as unknown as RTCStatsReport)).toBe(false);
+  });
+});
+
 describe("PicturePeers", () => {
   it("answers an offer with the loopback candidate only", async () => {
     const { p } = peers();
@@ -56,6 +87,39 @@ describe("PicturePeers", () => {
     expect(FakePeer.made[0]!.remoteDescription).toEqual({ type: "offer", sdp: OFFER });
     // No STUN or TURN server: no address is asked of the network either.
     expect(FakePeer.made[0]!.config).toEqual({ iceServers: [] });
+  });
+
+  it("tries none of the candidates an offer names: the view's checks form the pair", async () => {
+    const { p } = peers();
+    await p.answer(GATHERED_ANSWER.replace("a=sctp-port:5000", "a=setup:actpass"));
+    const remote = FakePeer.made[0]!.remoteDescription!.sdp;
+    expect(remote).not.toMatch(/^a=(candidate:|end-of-candidates)/m);
+    expect(remote).toContain("a=setup:actpass");
+  });
+
+  it("closes a connection whose channel opened on a pair off loopback, and sends it nothing", async () => {
+    const { p, counts, joins } = peers();
+    p.stream.configure({ codec: "vp8", coded_width: 640, coded_height: 360 });
+    FakePeer.stats = pairStats({ candidateType: "host", address: "192.168.1.20" }, { candidateType: "prflx", address: null });
+    await p.answer(OFFER);
+    const channel = FakePeer.made[0]!.channel();
+    channel.open();
+    await opened();
+    expect(FakePeer.made[0]!.closed).toBe(true);
+    expect(channel.sent).toEqual([]);
+    expect(counts).toEqual([]);
+    expect(joins()).toBe(0);
+  });
+
+  it("closes a connection whose stats cannot be read", async () => {
+    const { p, counts } = peers();
+    await p.answer(OFFER);
+    const pc = FakePeer.made[0]!;
+    pc.getStats = () => Promise.reject(new Error("closed"));
+    pc.channel().open();
+    await opened();
+    expect(pc.closed).toBe(true);
+    expect(counts).toEqual([]);
   });
 
   it("refuses to answer when it gathered no loopback candidate, and closes the connection", async () => {
@@ -73,6 +137,7 @@ describe("PicturePeers", () => {
     const channel = FakePeer.made[0]!.channel();
     expect(counts).toEqual([]);
     channel.open();
+    await opened();
     expect(counts).toEqual([1]);
     expect(joins()).toBe(1);
     expect(channel.sent.map((m) => m[0])).toEqual([MIRROR_FRAME_CONFIG, MIRROR_FRAME_KEY]);
@@ -84,6 +149,7 @@ describe("PicturePeers", () => {
     await p.answer(OFFER);
     const channel = FakePeer.made[0]!.channel();
     channel.open();
+    await opened();
     p.stream.configure({ codec: "vp8", coded_width: 640, coded_height: 360 });
     const big = new Uint8Array(PICTURE_MESSAGE_MAX_BYTES * 2 + 10).map((_, i) => i % 251);
     channel.sent.length = 0;
@@ -105,7 +171,9 @@ describe("PicturePeers", () => {
     const a = first.channel();
     const b = second.channel();
     a.open();
+    await opened();
     b.open();
+    await opened();
     a.close();
     second.fail();
     expect(counts).toEqual([1, 2, 1, 0]);

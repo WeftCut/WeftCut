@@ -1,6 +1,7 @@
 // A stand-in for Chromium's RTCPeerConnection as `picturePeers.ts` uses it:
 // the answer it makes carries the candidates a machine with a LAN, a VPN and
-// loopback gathers, and a test opens and closes its data channels by hand.
+// loopback gathers, its stats name the pair a test chooses, and a test opens
+// and closes its data channels by hand.
 
 /** What `createAnswer` gives: a host candidate per interface, a reflexive one,
  *  and the loopback one `allow-loopback-in-peer-connection` adds. */
@@ -20,6 +21,20 @@ export const GATHERED_ANSWER = [
   "a=sctp-port:5000",
   "",
 ].join("\r\n");
+
+/** A stats report whose selected pair joins these two candidates. */
+export function pairStats(local: Record<string, unknown>, remote: Record<string, unknown>): RTCStatsReport {
+  return new Map<string, Record<string, unknown>>([
+    ["T1", { id: "T1", type: "transport", selectedCandidatePairId: "P1" }],
+    ["P1", { id: "P1", type: "candidate-pair", localCandidateId: "L1", remoteCandidateId: "R1", nominated: true, state: "succeeded" }],
+    ["L1", { id: "L1", type: "local-candidate", ...local }],
+    ["R1", { id: "R1", type: "remote-candidate", ...remote }],
+  ]) as unknown as RTCStatsReport;
+}
+
+/** The pair a view's checks form: the editor's 127.0.0.1 socket, and the
+ *  view's end as the checks revealed it, its address left out of the stats. */
+export const LOOPBACK_PAIR = pairStats({ candidateType: "host", address: "127.0.0.1" }, { candidateType: "prflx", address: null });
 
 export class FakeChannel {
   readyState: RTCDataChannelState = "connecting";
@@ -45,6 +60,8 @@ export class FakePeer {
   static made: FakePeer[] = [];
   /** What the next `createAnswer` gives. */
   static answerSdp = GATHERED_ANSWER;
+  /** What `getStats` gives. */
+  static stats: RTCStatsReport = LOOPBACK_PAIR;
   connectionState: RTCPeerConnectionState = "new";
   iceGatheringState: RTCIceGatheringState = "new";
   localDescription: { type: string; sdp: string } | null = null;
@@ -76,6 +93,9 @@ export class FakePeer {
     this.closed = true;
     this.connectionState = "closed";
   }
+  async getStats(): Promise<RTCStatsReport> {
+    return FakePeer.stats;
+  }
 
   /** The view opens its channel; the connection hands it over. */
   channel(): FakeChannel {
@@ -92,5 +112,6 @@ export class FakePeer {
   static reset(): void {
     FakePeer.made = [];
     FakePeer.answerSdp = GATHERED_ANSWER;
+    FakePeer.stats = LOOPBACK_PAIR;
   }
 }
