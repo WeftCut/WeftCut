@@ -15,6 +15,10 @@ export type AgentHostSurface = "panel" | "browser" | "none";
 /// - `dsh-plugin`: no config entry. The app writes a DeepSeek Harness plugin
 ///   that carries the entry and the side preview (`main/mcp/dshPluginInstall.ts`,
 ///   ADR 0183); the user adds its folder to the Harness once.
+/// - `claude-extension`: no config entry. The app writes a Claude Desktop
+///   extension (`.mcpb`) whose manifest carries the entry
+///   (`main/mcp/claudeExtensionInstall.ts`, ADR 0187); the user opens it in
+///   Claude Desktop once.
 /// - `facts`: the connection facts with no wrapper, for a client this table
 ///   does not know. MCP standardises the protocol, never the config file.
 export type AgentConfigFormat =
@@ -22,14 +26,13 @@ export type AgentConfigFormat =
   | "claude-code-json"
   | "mcp-servers-json"
   | "dsh-plugin"
+  | "claude-extension"
   | "facts";
-
-export type AgentHostOs = "mac" | "windows" | "linux";
 
 /// One file a host reads its MCP entries from. `user` files apply everywhere,
 /// `project` files to one project folder.
 export interface AgentConfigPlace {
-  path: string | Readonly<Record<AgentHostOs, string>>;
+  path: string;
   scope: "user" | "project";
 }
 
@@ -40,10 +43,11 @@ export interface AgentHost {
   name: string;
   format: AgentConfigFormat;
   /// Empty for `facts`, whose client's own docs say where its config goes, and
-  /// for `dsh-plugin`, which writes no config file of the host's.
+  /// for `dsh-plugin` and `claude-extension`, which write no config file of
+  /// the host's.
   places: readonly AgentConfigPlace[];
   /// Whether the host's config can name a Streamable HTTP endpoint with a
-  /// literal header. Claude Desktop's file takes local commands only.
+  /// literal header.
   http: boolean;
   /// The host's own terminal command that writes the entry (or, for
   /// `dsh-plugin`, adds the plugin), if it has one.
@@ -81,17 +85,9 @@ export const AGENT_HOSTS: readonly AgentHost[] = [
   {
     id: "claude-desktop",
     name: "Claude Desktop",
-    format: "mcp-servers-json",
-    places: [
-      {
-        path: {
-          mac: "~/Library/Application Support/Claude/claude_desktop_config.json",
-          windows: "%APPDATA%\\Claude\\claude_desktop_config.json",
-          linux: "~/.config/Claude/claude_desktop_config.json",
-        },
-        scope: "user",
-      },
-    ],
+    format: "claude-extension",
+    places: [],
+    // An extension runs a local command only.
     http: false,
     cli: null,
     surface: "none",
@@ -146,22 +142,30 @@ export function stdioEntry(cliPath: string): StdioEntry {
 }
 
 /// The name every snippet registers the server under. The dsh plugin's row
-/// keys its tool row to it too (`mcp__weftcut__open_side_preview`).
+/// keys its tool row to it too (`mcp__weftcut__open_side_preview`), and the
+/// Claude Desktop extension is named it, as Claude keys its server by that name.
 export const SERVER_NAME = "weftcut";
 const SERVER = SERVER_NAME;
 
-/// The folder the app writes the DeepSeek Harness plugin to: `dsh-plugin`
-/// beside the binary's `cli` folder in the profile. Derived from the binary's
-/// path so the panel and the writer (`main/mcp/dshPluginInstall.ts`) cannot
-/// disagree; either separator, as the path is the main process's.
-export function dshPluginDir(cliPath: string): string {
+/// A path in the profile, beside the binary's `cli` folder. Derived from the
+/// binary's path so the panel and the main-process writers cannot disagree;
+/// either separator, as the path is the main process's.
+function profilePath(cliPath: string, ...parts: string[]): string {
   const m = /^(.*)([\\/])cli\2[^\\/]+$/.exec(cliPath);
   if (m === null) throw new Error(`not a profile binary path: ${cliPath}`);
-  return `${m[1]}${m[2]}dsh-plugin`;
+  return [m[1], ...parts].join(m[2]);
 }
 
-export function placePath(place: AgentConfigPlace, os: AgentHostOs): string {
-  return typeof place.path === "string" ? place.path : place.path[os];
+/// The folder the app writes the DeepSeek Harness plugin to
+/// (`main/mcp/dshPluginInstall.ts`).
+export function dshPluginDir(cliPath: string): string {
+  return profilePath(cliPath, "dsh-plugin");
+}
+
+/// The Claude Desktop extension the app writes
+/// (`main/mcp/claudeExtensionInstall.ts`).
+export function claudeExtensionPath(cliPath: string): string {
+  return profilePath(cliPath, "claude-desktop", "weftcut.mcpb");
 }
 
 /// `key: value` rows with the values column-aligned. One row per arg, so a
@@ -208,6 +212,9 @@ export function stdioSnippet(host: AgentHost, entry: StdioEntry): string {
     case "dsh-plugin":
       // What the user hands the Harness: the plugin's folder.
       return dshPluginDir(entry.command);
+    case "claude-extension":
+      // What the user opens in Claude Desktop: the extension's file.
+      return claudeExtensionPath(entry.command);
     case "claude-code-json":
     case "mcp-servers-json": {
       const server = { command: entry.command, args: entry.args };
@@ -242,6 +249,7 @@ export function httpSnippet(
         `http_headers = { "Authorization" = ${q(auth)} }`,
       ].join("\n");
     case "dsh-plugin":
+    case "claude-extension":
       return null;
     case "claude-code-json":
     case "mcp-servers-json": {

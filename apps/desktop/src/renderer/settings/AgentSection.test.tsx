@@ -33,7 +33,12 @@ vi.mock("../ipc", async (importActual) => {
 
 import i18n from "../i18n";
 import { AgentSection } from "./AgentSection";
-import { AGENT_HOSTS, dshPluginDir, stdioSnippet } from "../../shared/agentHosts";
+import {
+  AGENT_HOSTS,
+  claudeExtensionPath,
+  dshPluginDir,
+  stdioSnippet,
+} from "../../shared/agentHosts";
 
 /// No binary installed → the HTTP-primary layout (an unpackaged run before
 /// `build:cli`). Its skill state matches: a dev tree before `build:skills`
@@ -54,7 +59,10 @@ const INFO_CLI = {
 };
 
 const clipboard = vi.hoisted(() => ({ writeText: vi.fn() }));
-const shell = vi.hoisted(() => ({ reveal: vi.fn(async () => {}) }));
+const shell = vi.hoisted(() => ({
+  open: vi.fn(async () => {}),
+  reveal: vi.fn(async () => {}),
+}));
 
 vi.mock("@/bridge/shell", () => shell);
 
@@ -65,6 +73,7 @@ beforeEach(async () => {
   ipc.resetMcpToken.mockReset();
   ipc.reinstallSkills.mockReset();
   clipboard.writeText.mockReset().mockResolvedValue(undefined);
+  shell.open.mockReset().mockResolvedValue(undefined);
   shell.reveal.mockReset().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", {
     value: clipboard,
@@ -196,13 +205,13 @@ describe("AgentSection", () => {
     );
   });
 
-  it("says so instead of a snippet for a host whose config takes no HTTP entry", async () => {
+  it("points at what the app writes instead of an HTTP snippet for a host that connects through it", async () => {
     render(<AgentSection />);
     await snippetText();
     await userEvent.click(screen.getByRole("tab", { name: "Claude Desktop" }));
     const panel = await screen.findByRole("tabpanel");
     expect(panel.querySelector("pre")).toBeNull();
-    expect(panel.textContent).toContain("Claude Desktop takes local commands only");
+    expect(panel.textContent).toContain("Claude Desktop connects through the extension above");
     expect(screen.queryByRole("button", { name: "Copy config" })).toBeNull();
   });
 
@@ -359,6 +368,30 @@ describe("AgentSection with the weftcut binary installed", () => {
     expect(panel.textContent).toContain("Plugins → Add plugin");
     expect(await cliText()).toContain(`dsh plugin --profile web add`);
     expect(await cliText()).toContain(dir);
+  });
+
+  it("the Claude Desktop tab hands over the extension the app writes, opened with the OS, and no config to paste", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    await userEvent.click(screen.getByRole("tab", { name: "Claude Desktop" }));
+    const panel = await screen.findByRole("tabpanel");
+    const file = claudeExtensionPath(INFO_CLI.cli_path);
+    expect(panel.querySelector("pre")).toBeNull();
+    expect(panel.textContent).not.toContain("mcpServers");
+    const field = screen.getByRole("textbox", {
+      name: "Claude Desktop extension",
+    }) as HTMLInputElement;
+    expect(field.value).toBe(file);
+    expect(field.readOnly).toBe(true);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open in Claude Desktop" }),
+    );
+    // Opened, not revealed: the OS hands a .mcpb to Claude's install preview.
+    expect(shell.open).toHaveBeenCalledWith(file);
+    expect(shell.reveal).not.toHaveBeenCalled();
+    // A pasted entry would take the extension's place; the tab says to remove it.
+    expect(panel.textContent).toContain("claude_desktop_config.json");
   });
 
   it("the Generic tab shows the command and its argument with no config wrapper", async () => {
