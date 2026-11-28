@@ -12,9 +12,15 @@ import {
   COMPANION_MIRROR_CHUNK,
   COMPANION_MIRROR_CONFIG,
   COMPANION_MIRROR_FAILED,
+  COMPANION_PEERS,
+  COMPANION_SIGNAL_ANSWER,
+  COMPANION_SIGNAL_EVENT,
   COMPANION_TRANSPORT,
+  MIRROR_FRAME_CONFIG,
+  MIRROR_FRAME_KEY,
 } from "../../shared/companion";
 import { codecGlobals, fakeCapture, log, paint, resetCodecs, support } from "./testing/fakeCodecs";
+import { FakePeer } from "./testing/fakePeers";
 
 const mocks = vi.hoisted(() => ({
   calls: [] as Array<[string, Record<string, unknown> | undefined]>,
@@ -27,9 +33,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../bridge/ipc", () => {
   const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     mocks.calls.push([cmd, args]);
-    // The attach is answered only once both listeners exist, as main relies on.
+    // The attach is answered only once every listener exists, as main relies on.
     if (cmd === COMPANION_ATTACH) {
-      expect([...mocks.listeners.keys()].sort()).toEqual([COMPANION_CONTROL_EVENT, COMPANION_DEMAND_EVENT].sort());
+      expect([...mocks.listeners.keys()].sort()).toEqual([COMPANION_CONTROL_EVENT, COMPANION_DEMAND_EVENT, COMPANION_SIGNAL_EVENT].sort());
       return mocks.attachReply;
     }
     return null;
@@ -63,7 +69,9 @@ beforeEach(() => {
   mocks.pause.mockReset();
   setPlayheadTimeUs(0);
   resetCodecs();
+  FakePeer.reset();
   for (const [name, value] of Object.entries(codecGlobals)) vi.stubGlobal(name, value);
+  vi.stubGlobal("RTCPeerConnection", FakePeer);
   // The editor's preview, as the encoder finds it.
   const canvas = document.createElement("canvas");
   canvas.captureStream = fakeCapture;
@@ -178,6 +186,33 @@ describe("installCompanionBridge", () => {
     expect(mocks.pause).toHaveBeenCalledTimes(1);
     expect(seeks).toEqual([3_000_000]);
     dispose();
+  });
+
+  it("answers a view's offer to its own token, and sends an open channel the frames it encodes", async () => {
+    const dispose = installCompanionBridge(() => {});
+    await vi.waitFor(() => expect(sentOn(COMPANION_ATTACH)).toHaveLength(1));
+    tell(COMPANION_SIGNAL_EVENT, { token: "someone-else", request_id: "s0", offer: "v=0" });
+    tell(COMPANION_SIGNAL_EVENT, { token: tokenOf(), request_id: "s1", offer: "v=0" });
+    await vi.waitFor(() => expect(sentOn(COMPANION_SIGNAL_ANSWER)).toHaveLength(1));
+    const [answered] = sentOn(COMPANION_SIGNAL_ANSWER) as [{ token: string; request_id: string; answer: string }];
+    expect(answered).toMatchObject({ token: tokenOf(), request_id: "s1" });
+    expect(answered.answer).toContain(" 127.0.0.1 ");
+    expect(answered.answer).not.toContain("192.168.");
+    expect(FakePeer.made).toHaveLength(1);
+
+    // The open channel is what main counts as the picture's demand.
+    const channel = FakePeer.made[0]!.channel();
+    channel.open();
+    expect(sentOn(COMPANION_PEERS)).toEqual([{ token: tokenOf(), open: 1 }]);
+    tell(COMPANION_DEMAND_EVENT, { token: tokenOf(), watch: true, picture: true });
+    await vi.waitFor(() => expect(log.captures).toBe(1));
+    paint(640, 360);
+    await vi.waitFor(() => expect(sentOn(COMPANION_MIRROR_CHUNK)).toHaveLength(1));
+    // The same encoder's output: its config, then its first frame, a keyframe.
+    expect(channel.sent.map((m) => m[0])).toEqual([MIRROR_FRAME_CONFIG, MIRROR_FRAME_KEY]);
+
+    dispose();
+    expect(FakePeer.made[0]!.closed).toBe(true);
   });
 
   it("detaches with the token it attached with, and stops watching", async () => {

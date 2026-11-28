@@ -1,10 +1,12 @@
-// The picture's bytes on their way to pages: what a new viewer starts from,
+// The picture's bytes on their way to viewers: what a new viewer starts from,
 // and what a viewer too slow to take them is spared.
 import { describe, expect, it } from 'vitest'
-import { PictureStream, frame, type PictureSink } from './pictureStream'
+import { PictureStream, frame, type PictureSink } from './companionPicture'
 import {
   MIRROR_FRAME_CONFIG, MIRROR_FRAME_DELTA, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES, VIEWER_BUFFER_BYTES,
-} from '../../shared/companion'
+} from './companion'
+
+const head = (b: Uint8Array) => new DataView(b.buffer, b.byteOffset, b.byteLength)
 
 /** A response whose unsent bytes the test controls: `drain()` sends them all. */
 function viewer() {
@@ -12,7 +14,7 @@ function viewer() {
   let buffered = 0
   const sink: PictureSink = {
     write: (b) => {
-      frames.push({ kind: b.readUInt8(0), ts: b.readDoubleLE(1), bufferedBefore: buffered })
+      frames.push({ kind: head(b).getUint8(0), ts: head(b).getFloat64(1, true), bufferedBefore: buffered })
       buffered += b.length
     },
     get writableLength() { return buffered },
@@ -21,13 +23,13 @@ function viewer() {
 }
 
 const CONFIG = { codec: 'vp8', coded_width: 640, coded_height: 360 }
-const payload = (bytes: number) => Buffer.alloc(bytes, 7)
+const payload = (bytes: number) => new Uint8Array(bytes).fill(7)
 
 describe('frame', () => {
   it('lays out kind, timestamp and length ahead of the payload', () => {
-    const b = frame(MIRROR_FRAME_KEY, 1_500_000, Buffer.from([9, 8, 7]))
+    const b = frame(MIRROR_FRAME_KEY, 1_500_000, new Uint8Array([9, 8, 7]))
     expect(b.length).toBe(MIRROR_HEADER_BYTES + 3)
-    expect([b.readUInt8(0), b.readDoubleLE(1), b.readUInt32LE(9)]).toEqual([MIRROR_FRAME_KEY, 1_500_000, 3])
+    expect([head(b).getUint8(0), head(b).getFloat64(1, true), head(b).getUint32(9, true)]).toEqual([MIRROR_FRAME_KEY, 1_500_000, 3])
     expect([...b.subarray(MIRROR_HEADER_BYTES)]).toEqual([9, 8, 7])
   })
 })

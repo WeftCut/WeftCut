@@ -279,7 +279,8 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   open, and the same over `weftcut mcp` as over HTTP. The name and description
   start from what the user says ("open the preview") and rule out opening the
   app: a host that found no match started another WeftCut install on its own.
-  With the app closed only the binary's two tools are listed; `launch_weftcut`
+  With the app closed only the binary's two tools are listed (and the
+  side-panel view's entry, to a client that shows views); `launch_weftcut`
   brings this one in through `tools/list_changed`.
 - **Served by the app** on the MCP listener (`main/companion/`). The page's
   files are plain ES modules in `apps/desktop/cli/companion/`, with no build
@@ -344,6 +345,62 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   opens it anew); WeftCut is minimized, so the picture updates
   about once a second ([Show WeftCut]); starting; live. The stage carries the
   state as `data-picture`. It speaks the app's UI language.
+
+### Side-panel view
+
+The same UI as the companion page, as an MCP Apps view (extension
+`io.modelcontextprotocol/ui`) in a host's side panel, which cannot reach
+loopback over HTTP. Why tool calls and a data channel: ADR 0186.
+
+- **Listed only to a client that shows views**: one whose `initialize`
+  declares `capabilities.extensions["io.modelcontextprotocol/ui"]` with
+  `text/html;profile=mcp-app` among its `mimeTypes`. Such a client is listed
+  the entry `side_preview_panel`, the view's resource and `side_preview_sync`,
+  all ahead of the rest; any other client sees none of them. Whether ChatGPT
+  desktop declares the capability for a `config.toml` server is not yet
+  verified (see the landmine on `declaresMcpAppsUi`).
+- **The entry** `side_preview_panel {}` is hidden from the model
+  (`_meta.ui.visibility: ["app"]`), names the view in `_meta.ui.resourceUri`
+  and carries ChatGPT's thread entrypoint (`_meta["openai/ui"]`), so the host
+  lists it in the conversation's side panel for the user to open. Both are
+  defined once, in `apps/desktop/cli/companion/panel/entry.json`.
+- **The view** is `ui://weftcut/side-preview-<hash>.html`, `<hash>` the first
+  12 hex digits of the SHA-256 of its HTML: a host keeps a view by its
+  address, so a new view has a new one. It is one self-contained document,
+  `cli/companion/panel/panel.html`, generated from the page's modules by
+  `node scripts/build-side-panel.mjs` (in `apps/desktop`) and committed;
+  `npm run test:scripts` fails while it is stale. It loads nothing: the
+  host's default view CSP refuses every request.
+- **The `weftcut` binary answers the entry and the view itself**, with the app
+  running or not, and leaves the app's copies of both out of its listings;
+  with the app closed the view offers [Start WeftCut] (`launch_weftcut`),
+  and on the app's start screen it offers the most recent project
+  (`read_project { view: "session" }`, then `open_project`). Over `weftcut mcp`
+  and over HTTP a session sees the same entry, view and sync tool.
+- **`side_preview_sync { op }`**, the view's own channel, also hidden from the
+  model and answered by the app: `state` is `/companion/state`; `events
+  { since, stream }` answers the events after `since`, holding a poll with
+  nothing new for at most 1 s, and `reset: true` when the view lost its place
+  (a first poll, another app run, more than 256 events behind), after which it
+  reads the state again; `control { action, t_us }` answers `{ outcome }` as
+  `/companion/control` does (`ok`, `not_ready`, `invalid`); `signal { offer }`
+  answers `{ outcome: "ok", answer }`, or `not_ready` (no editor attached, or
+  no answer in 5 s: the view asks again), `failed` or `invalid`. A polled view
+  counts as watching until 30 s after its last poll. Neither tool's calls are
+  agent activity or request-log rows: a tool whose `_meta.ui.visibility`
+  leaves out `model` is called by a view, and a held poll would otherwise
+  show in the status bar as a slow agent call.
+- **The picture** is a WebRTC data channel from the view to the editor
+  window, carrying the same framed chunks as `/companion/video` from the same
+  encoder. The view offers; the editor answers with its `127.0.0.1` host
+  candidates only (Chromium gathers them under
+  `allow-loopback-in-peer-connection`) and no STUN or TURN server, so no
+  address of the machine's networks is signaled. Frames above 64 KB go as
+  several messages; a channel more than 2 MB behind waits for a keyframe; an
+  open channel counts as a page showing the picture. A connection that draws
+  nothing within 5 s after its answer, or fails before it drew, says the
+  picture cannot reach the panel and points at the side preview, and the view
+  keeps trying.
 
 ## Multi-agent semantics
 

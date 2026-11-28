@@ -51,6 +51,8 @@ import { argProblemMessage } from './argCheck.js'
 import { importRecord, shapeHybridResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
 import { OPEN_COMPANION, runOpenCompanion } from './companionTool.js'
+import { PANEL_ENTRY_TOOL, PANEL_RESOURCE, PANEL_SYNC_TOOL, PANEL_URI, declaresMcpAppsUi, hiddenFromModel, panelEntryResult, readPanelResource } from '../companion/panelEntry.js'
+import { PanelSyncArgError } from '../companion/panelSync.js'
 import { EditorNotReadyError } from './playheadView.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES, mediaResourceDefs } from './hostResources.js'
@@ -1151,6 +1153,9 @@ export interface McpServerOptions {
   /** The companion page's link, key included, that `open_side_preview` answers
    *  with; `startMcpHost` builds it from its own URL. Omitted → refused. */
   companionLink?: string
+  /** Answers the side-panel view's `side_preview_sync` (`companion/panelSync.ts`).
+   *  Omitted → the tool is not served. */
+  panelSync?: (args: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
 
 export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): Server {
@@ -1179,6 +1184,21 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   const clientInfo = (): { name: string; version?: string } | undefined => server.getClientVersion()
 
   const connectionId = opts.connectionId ?? randomUUID()
+  // The side-panel view's tools (`companion/panelEntry.ts`): listed only to a
+  // client that shows MCP Apps views, and answered here rather than by the
+  // project's dispatcher, so they answer with no project open.
+  const viewTools = [PANEL_ENTRY_TOOL, ...(opts.panelSync ? [PANEL_SYNC_TOOL] : [])]
+  const showsViews = (): boolean => declaresMcpAppsUi(server.getClientCapabilities())
+  const viewTool = (name: string) => viewTools.find((d) => d.name === name)
+  const callViewTool = async (name: string, args: Record<string, unknown>): Promise<ServerResult> => {
+    if (name === PANEL_ENTRY_TOOL.name) return panelEntryResult() as ServerResult
+    try {
+      return toolRecord(await opts.panelSync!(args)) as unknown as ServerResult
+    } catch (e) {
+      if (e instanceof PanelSyncArgError) return toolErrorResult({ code: 'invalid_params', message: e.message })
+      return toolErrorResult(thrownToToolError(e, 'internal', name))
+    }
+  }
   // Read or write is the catalog's own `readOnlyHint` — the one statement of
   // the split, so the agent panel's read rows and the annotations a
   // client sees cannot disagree. A non-tool method (a list, a resource read)
@@ -1199,7 +1219,9 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // tool logged with nothing to remember. See `docs/status-log.md`.
   server.setRequestHandler(ListToolsRequestSchema, track('tools/list', async () => {
     const rust = (await rustCatalog(backend)).tools
-    return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS, ...EXPORT_TOOL_DEFS]) } as unknown as ServerResult
+    // The view's tools first: the `weftcut` binary lists its own copy of the
+    // entry first too, and its listing must equal this one.
+    return { tools: [...(showsViews() ? viewTools : []), ...mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS, ...EXPORT_TOOL_DEFS])] } as unknown as ServerResult
   }, log, clientInfo))
   // A clip-compute call also gets its registry caller (ADR 0121), built here
   // because only this closure holds the session: its transport is what tells a
@@ -1207,25 +1229,35 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // Synchronous, so the LANDMINE in `handleCallTool` holds.
   const callTool = track('tools/call', async (req: CallToolRequest, extra: unknown) => {
     const name = req.params.name
+    if (viewTool(name)) return callViewTool(name, (req.params.arguments ?? {}) as Record<string, unknown>)
     const client = clientInfo()?.name
     const compute = COMPUTE_TOOLS.has(name)
       ? mcpComputeCaller({ extra, client: client ?? 'MCP', closed: () => server.transport === undefined, onPhase: activityPhase(getTsHost) })
       : undefined
     return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng, opts.companionLink ?? null)
   }, log, clientInfo)
-  server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
-    callTool(req, extra))
+  // A tool hidden from the model is called by a view, not by the agent: its
+  // calls are neither agent activity nor request-log rows. The view polls:
+  // recorded as activity, each call would wake its next poll with an event of
+  // its own; logged, each held poll would cross the slow-op threshold and
+  // show in the status bar as an agent call.
+  server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) => {
+    const view = viewTool(req.params.name)
+    return view && hiddenFromModel(view)
+      ? callViewTool(req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>)
+      : callTool(req, extra)
+  })
   server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {
     const cat = await rustCatalog(backend)
     const tsHost = getTsHost()
     const media = tsHost && !noProjectOpen(tsHost) ? mediaResourceDefs(tsHost.actor.snapshot().media_pool) : []
-    return { resources: [...mergeMcpResources(cat.resources, [...MOTIF_RESOURCE_DEFS, ...HOST_RESOURCE_DEFS]), ...skillResourceDefs(), ...media] } as unknown as ServerResult
+    return { resources: [...(showsViews() ? [PANEL_RESOURCE] : []), ...mergeMcpResources(cat.resources, [...MOTIF_RESOURCE_DEFS, ...HOST_RESOURCE_DEFS]), ...skillResourceDefs(), ...media] } as unknown as ServerResult
   }, log, clientInfo))
   server.setRequestHandler(ListResourceTemplatesRequestSchema, track('resources/templates/list', async () => {
     return { resourceTemplates: HOST_RESOURCE_TEMPLATES } as unknown as ServerResult
   }, log, clientInfo))
   server.setRequestHandler(ReadResourceRequestSchema, track('resources/read', async (req: ReadResourceRequest) =>
-    handleReadResource(backend, getTsHost, req.params.uri, getVlm),
+    req.params.uri === PANEL_URI ? readPanelResource() as ServerResult : handleReadResource(backend, getTsHost, req.params.uri, getVlm),
   log, clientInfo))
   server.setRequestHandler(ListPromptsRequestSchema, track('prompts/list', async () => {
     return { prompts: JSON.parse(await backend.mcpListPrompts()) } as unknown as ServerResult

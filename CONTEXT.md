@@ -861,6 +861,14 @@ agents call it the side preview, hence the tool's name. See ADR 0168,
 [mcp.md](docs/mcp.md#companion-page).
 _Avoid_: widget, card, dashboard
 
+**Side-panel view**:
+The companion page's UI as an MCP Apps view in a host's side panel beside the
+chat, opened by the user from the entry `side_preview_panel`. It reaches the
+app only through tool calls, and its picture over a loopback data channel. The
+`weftcut` binary serves it, so it also opens while the app is closed. See
+ADR 0186, [mcp.md](docs/mcp.md#side-panel-view).
+_Avoid_: widget, panel page
+
 **Page key**:
 The secret in a companion link's fragment that opens the companion page's
 data routes and nothing else. Not the MCP bearer; kept in the profile, never

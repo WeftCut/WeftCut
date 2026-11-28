@@ -76,6 +76,9 @@ export const editorEnv: MirrorEnv = {
 export interface Mirror {
   /** Ends the capture's tracks and closes the encoder. */
   stop(): void;
+  /** Makes the next frame a keyframe: a viewer just joined, and decodes
+   *  nothing before one. */
+  requestKey(): void;
 }
 
 export function startMirror(send: MirrorSend, env: MirrorEnv = editorEnv): Mirror {
@@ -111,6 +114,10 @@ class Encoder implements Mirror {
     this.unsubscribe = env.onPlayheadMove(() => {
       if (!env.playing()) this.fullRateUntil = env.now() + SEEK_FULL_RATE_MS;
     });
+  }
+
+  requestKey(): void {
+    this.forceKey = true;
   }
 
   stop(): void {
