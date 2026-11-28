@@ -18,43 +18,41 @@ use crate::speech::backends::openai::trim_body;
 use crate::speech::error::SpeechError;
 use crate::speech::parse::{RawTranscript, TranscriptFormat};
 use crate::speech::synthesizer::{
-    check_request, AudioFormat, SpeedRange, SynthesizeRequest, SynthesizeResponse, Synthesizer,
-    Voice, VoiceoverFacts,
+    check_request, AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer, Voice,
+    VoiceoverFacts,
 };
 use crate::speech::transcriber::{TranscribeRequest, Transcriber};
 
 const PROVIDER: SpeechBackend = SpeechBackend::ElevenLabs;
 const API_BASE: &str = "https://api.elevenlabs.io";
 
-/// `eleven_multilingual_v2` because it applies `voice_settings.speed` (newer
-/// models accept and ignore it), with that model's per-request cap and the
-/// speed range the API enforces (a value outside it is a 400).
-const TTS_FACTS: VoiceoverFacts = VoiceoverFacts {
-    provider: PROVIDER,
-    model: "eleven_multilingual_v2",
-    max_chars: 10_000,
-    speed: Some(SpeedRange {
-        min: 0.7,
-        max: 1.2,
-        default: 1.0,
-    }),
-    format: AudioFormat::Mp3,
-};
-/// Must name the same container as `TTS_FACTS.format`: the cache path's
-/// extension is chosen from the facts before the audio exists.
+/// The text-to-speech models a voiceover profile may name, `(model id,
+/// per-request character cap)`. Settings → Voiceover lists one entry per model
+/// and the host injects its id as `voiceover_model`; an id outside this table
+/// is refused.
+pub(crate) const TTS_MODELS: &[(&str, usize)] = &[
+    ("eleven_v4", 100_000),
+    ("eleven_multilingual_v2", 10_000),
+    ("eleven_flash_v2_5", 40_000),
+];
+const TTS_FORMAT: AudioFormat = AudioFormat::Mp3;
+/// Must name the same container as `TTS_FORMAT`: the cache path's extension
+/// is chosen from the facts before the audio exists.
 const TTS_OUTPUT_FORMAT: &str = "mp3_44100_128";
 const STT_MODEL: &str = "scribe_v3";
 
-/// Ten minutes of speech is well under a minute of synthesis; the ceiling
-/// only stops a wedged request holding the tool.
-const TTS_TIMEOUT: Duration = Duration::from_secs(300);
+/// The ceiling only stops a wedged request holding the tool, so it grows with
+/// the script: each 10 000 characters (about ten minutes of speech) gets this
+/// much, well over what synthesizing them takes.
+const TTS_TIMEOUT_PER_10K_CHARS: Duration = Duration::from_secs(300);
 const VOICES_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bounds the `/v2/voices` walk (100 a page) against a server that keeps
 /// answering `has_more`.
 const MAX_VOICE_PAGES: usize = 50;
 
 /// One client for all three endpoints, carrying the key resolved from the
-/// in-memory cache at construction time.
+/// in-memory cache at construction time. Transcribes as is; speaks as an
+/// [`ElevenLabsTts`], which adds the model.
 pub struct ElevenLabs {
     key: String,
     base: String,
@@ -183,17 +181,46 @@ impl Transcriber for ElevenLabs {
 // Text-to-speech + voices
 // ============================================================
 
+/// ElevenLabs as a voiceover provider: the client plus the model the selected
+/// voiceover profile names.
+pub struct ElevenLabsTts {
+    api: ElevenLabs,
+    facts: VoiceoverFacts,
+}
+
+impl ElevenLabsTts {
+    /// `model` is the injected `voiceover_model`, one of [`TTS_MODELS`];
+    /// anything else, or none, is refused naming the setting that chooses it.
+    pub fn new(api: ElevenLabs, model: Option<&str>) -> Result<Self, String> {
+        let model = model.ok_or(
+            "No ElevenLabs voiceover model is selected. Choose an ElevenLabs entry in Settings → Voiceover.",
+        )?;
+        let (model, max_chars) = TTS_MODELS
+            .iter()
+            .copied()
+            .find(|(id, _)| *id == model)
+            .ok_or_else(|| {
+                format!(
+                    "ElevenLabs voiceover model {model:?} is unknown. Choose an ElevenLabs entry in Settings → Voiceover."
+                )
+            })?;
+        Ok(Self {
+            api,
+            facts: VoiceoverFacts {
+                provider: PROVIDER,
+                model,
+                max_chars,
+                format: TTS_FORMAT,
+            },
+        })
+    }
+}
+
+/// No `voice_settings` are sent (ADR 0184: voiceover has no speed).
 #[derive(Serialize)]
 struct TtsBody<'a> {
     text: &'a str,
     model_id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    voice_settings: Option<VoiceSettings>,
-}
-
-#[derive(Serialize)]
-struct VoiceSettings {
-    speed: f32,
 }
 
 #[derive(Deserialize)]
@@ -262,16 +289,17 @@ impl From<WireVoice> for Voice {
 }
 
 #[async_trait]
-impl Synthesizer for ElevenLabs {
+impl Synthesizer for ElevenLabsTts {
     fn facts(&self) -> VoiceoverFacts {
-        TTS_FACTS
+        self.facts
     }
 
     async fn voices(&self) -> Result<Vec<Voice>, SpeechError> {
+        let api = &self.api;
         let mut voices = Vec::new();
         let mut token: Option<String> = None;
         for _ in 0..MAX_VOICE_PAGES {
-            let mut url = self.url(&["v2", "voices"])?;
+            let mut url = api.url(&["v2", "voices"])?;
             url.query_pairs_mut().append_pair("page_size", "100");
             if let Some(t) = &token {
                 url.query_pairs_mut().append_pair("next_page_token", t);
@@ -279,9 +307,9 @@ impl Synthesizer for ElevenLabs {
             let make = || {
                 shared_client()
                     .get(url.clone())
-                    .header("xi-api-key", &self.key)
+                    .header("xi-api-key", &api.key)
             };
-            let response = self
+            let response = api
                 .send(make, VOICES_TIMEOUT, "ElevenLabs voices", None)
                 .await?;
             let body = response.text().await?;
@@ -305,7 +333,7 @@ impl Synthesizer for ElevenLabs {
     }
 
     async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResponse, SpeechError> {
-        check_request(&TTS_FACTS, &req)?;
+        check_request(&self.facts, &req)?;
         // The API answers an unknown id with `voice_not_found`; only ids that
         // are no path segment at all are refused here.
         if matches!(req.voice.trim(), "" | "." | "..") {
@@ -317,26 +345,27 @@ impl Synthesizer for ElevenLabs {
                 ),
             });
         }
-        let mut url = self.url(&["v1", "text-to-speech", &req.voice])?;
+        let api = &self.api;
+        let mut url = api.url(&["v1", "text-to-speech", &req.voice])?;
         url.query_pairs_mut()
             .append_pair("output_format", TTS_OUTPUT_FORMAT);
         let body = TtsBody {
             text: &req.text,
-            model_id: TTS_FACTS.model,
-            voice_settings: req.speed.map(|speed| VoiceSettings { speed }),
+            model_id: self.facts.model,
         };
         let make = || {
             shared_client()
                 .post(url.clone())
-                .header("xi-api-key", &self.key)
+                .header("xi-api-key", &api.key)
                 .json(&body)
         };
-        let response = self
-            .send(make, TTS_TIMEOUT, "ElevenLabs TTS", Some(&req.voice))
+        let timeout = TTS_TIMEOUT_PER_10K_CHARS * req.text.chars().count().div_ceil(10_000) as u32;
+        let response = api
+            .send(make, timeout, "ElevenLabs TTS", Some(&req.voice))
             .await?;
         Ok(SynthesizeResponse {
             audio: response.bytes().await?.to_vec(),
-            format: TTS_FACTS.format,
+            format: self.facts.format,
         })
     }
 }
@@ -466,77 +495,91 @@ mod tests {
         raw.lines().next().unwrap_or_default()
     }
 
-    fn tts(voice: &str, speed: Option<f32>) -> SynthesizeRequest {
+    /// A voiceover client on the first listed model.
+    fn speaker(server: &TestServer) -> ElevenLabsTts {
+        ElevenLabsTts::new(client(server), Some(TTS_MODELS[0].0)).unwrap()
+    }
+
+    fn tts(voice: &str) -> SynthesizeRequest {
+        tts_text("Hello there.", voice)
+    }
+
+    fn tts_text(text: &str, voice: &str) -> SynthesizeRequest {
         SynthesizeRequest {
-            text: "Hello there.".into(),
+            text: text.into(),
             voice: voice.into(),
-            speed,
         }
     }
 
+    /// Each selectable model is the one the request names, and no
+    /// `voice_settings` ride along to override the voice's own.
     #[tokio::test]
-    async fn tts_posts_the_voice_model_and_speed_with_the_key_header() {
-        let server = serve(vec![ok("fake-mp3"), ok("fake-mp3")]).await;
-        let resp = client(&server)
-            .synthesize(tts("voice-a1", Some(0.9)))
-            .await
-            .unwrap();
-        assert_eq!(resp.audio, b"fake-mp3");
-        assert_eq!(resp.format, AudioFormat::Mp3);
-        let sent = &server.requests()[0];
-        assert_eq!(
-            request_line(sent),
-            "POST /v1/text-to-speech/voice-a1?output_format=mp3_44100_128 HTTP/1.1"
-        );
-        assert!(
-            sent.to_ascii_lowercase().contains("xi-api-key: key-x"),
-            "{sent}"
-        );
-        assert!(
-            sent.contains(r#""model_id":"eleven_multilingual_v2""#),
-            "{sent}"
-        );
-        assert!(sent.contains(r#""voice_settings":{"speed":0.9}"#), "{sent}");
-        assert!(sent.contains(r#""text":"Hello there.""#), "{sent}");
+    async fn tts_posts_the_profiles_model_and_voice_with_the_key_header() {
+        let server = serve(TTS_MODELS.iter().map(|_| ok("fake-mp3")).collect()).await;
+        for (i, (model, _)) in TTS_MODELS.iter().enumerate() {
+            let speaker = ElevenLabsTts::new(client(&server), Some(model)).unwrap();
+            assert_eq!(speaker.facts().model, *model);
+            let resp = speaker.synthesize(tts("voice-a1")).await.unwrap();
+            assert_eq!(resp.audio, b"fake-mp3");
+            assert_eq!(resp.format, speaker.facts().format);
+            let sent = &server.requests()[i];
+            assert_eq!(
+                request_line(sent),
+                "POST /v1/text-to-speech/voice-a1?output_format=mp3_44100_128 HTTP/1.1"
+            );
+            assert!(
+                sent.to_ascii_lowercase().contains("xi-api-key: key-x"),
+                "{sent}"
+            );
+            assert!(sent.contains(&format!(r#""model_id":"{model}""#)), "{sent}");
+            assert!(sent.contains(r#""text":"Hello there.""#), "{sent}");
+            assert!(!sent.contains("voice_settings"), "{sent}");
+        }
+    }
 
-        // No speed: the provider's default, no settings object at all.
-        client(&server)
-            .synthesize(tts("voice-a1", None))
-            .await
-            .unwrap();
-        assert!(!server.requests()[1].contains("voice_settings"));
+    #[test]
+    fn a_model_outside_the_table_or_none_is_refused_naming_the_setting() {
+        for model in [None, Some("eleven_unknown"), Some("ELEVEN_V4")] {
+            let err = ElevenLabsTts::new(ElevenLabs::new("k".into()), model)
+                .err()
+                .unwrap_or_else(|| panic!("{model:?} was accepted"));
+            assert!(err.contains("Settings → Voiceover"), "{err}");
+        }
+    }
+
+    /// Each model's own cap, refused before anything is sent.
+    #[tokio::test]
+    async fn text_over_the_models_cap_is_refused_before_sending() {
+        let server = serve(TTS_MODELS.iter().map(|_| ok("fake-mp3")).collect()).await;
+        for (model, cap) in TTS_MODELS {
+            let speaker = ElevenLabsTts::new(client(&server), Some(model)).unwrap();
+            assert_eq!(speaker.facts().max_chars, *cap);
+            let err = speaker
+                .synthesize(tts_text(&"a".repeat(cap + 1), "voice-a1"))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains(&format!("at most {cap}")), "{err}");
+            assert!(speaker
+                .synthesize(tts_text("  ", "voice-a1"))
+                .await
+                .is_err());
+        }
+        assert_eq!(server.hits(), 0);
     }
 
     #[tokio::test]
     async fn a_voice_id_cannot_leave_its_path_segment() {
         let server = serve(vec![ok("fake-mp3")]).await;
-        client(&server)
-            .synthesize(tts("a/b?c", None))
-            .await
-            .unwrap();
+        speaker(&server).synthesize(tts("a/b?c")).await.unwrap();
         assert!(
             request_line(&server.requests()[0])
                 .starts_with("POST /v1/text-to-speech/a%2Fb%3Fc?output_format="),
             "{}",
             request_line(&server.requests()[0])
         );
-        let err = client(&server)
-            .synthesize(tts("..", None))
-            .await
-            .unwrap_err();
+        let err = speaker(&server).synthesize(tts("..")).await.unwrap_err();
         assert!(matches!(err, SpeechError::InvalidInput { .. }), "{err:?}");
         assert_eq!(server.hits(), 1, "a refused id sends nothing");
-    }
-
-    #[tokio::test]
-    async fn speed_outside_the_model_range_is_refused_before_sending() {
-        let server = serve(vec![]).await;
-        let err = client(&server)
-            .synthesize(tts("voice-a1", Some(1.5)))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("[0.7, 1.2]"), "{err}");
-        assert_eq!(server.hits(), 0);
     }
 
     #[tokio::test]
@@ -549,7 +592,7 @@ mod tests {
         let second = r#"{"voices":[{"voice_id":"voice-c3","name":"Voice C","labels":{"category":"own"}}],
             "has_more":false,"next_page_token":null}"#;
         let server = serve(vec![ok(first), ok(second)]).await;
-        let voices = client(&server).voices().await.unwrap();
+        let voices = speaker(&server).voices().await.unwrap();
         let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
         assert_eq!(ids, ["voice-a1", "Voice-B2", "voice-c3"]);
         assert_eq!(voices[0].labels["accent"], "neutral");
@@ -585,7 +628,7 @@ mod tests {
              "voice_verification":{"requires_verification":false,"is_verified":false}}],
             "has_more":false}"#;
         let server = serve(vec![ok(page)]).await;
-        let voices = client(&server).voices().await.unwrap();
+        let voices = speaker(&server).voices().await.unwrap();
         let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
         assert_eq!(ids, ["voice-b2", "voice-c3"]);
     }
@@ -594,7 +637,7 @@ mod tests {
     async fn a_page_that_repeats_its_token_ends_the_walk() {
         let page = r#"{"voices":[{"voice_id":"voice-a1","name":"A"}],"has_more":true,"next_page_token":"t"}"#;
         let server = serve(vec![ok(page), ok(page), ok(page)]).await;
-        let voices = client(&server).voices().await.unwrap();
+        let voices = speaker(&server).voices().await.unwrap();
         assert_eq!(server.hits(), 2);
         assert_eq!(voices.len(), 2);
     }
@@ -759,8 +802,8 @@ mod tests {
                 .into(),
         ))])
         .await;
-        let e = client(&server)
-            .synthesize(tts("voice-zz", None))
+        let e = speaker(&server)
+            .synthesize(tts("voice-zz"))
             .await
             .unwrap_err();
         assert!(matches!(e, SpeechError::InvalidInput { .. }), "{e:?}");

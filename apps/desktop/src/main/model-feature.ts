@@ -105,8 +105,9 @@ export function createModelFeature(deps: {
       // An absent key must stay absent: the endpoint describer sends an
       // `Authorization` header for any `Some(_)`, so `""` would verify a
       // self-hosted server with a bare `Bearer ` that the real run never sends.
+      // A voiceover entry's model is the one its calls inject (`toVoiceoverArgs`).
       const release = beginModelUse();
-      try { result = await deps.backend.invoke("settings_verify_model", JSON.stringify({ requestId, family: p.family, backend: p.backend, local: p.local, endpoint: p.endpoint, ...(key ? { apiKey: key } : {}) })); }
+      try { result = await deps.backend.invoke("settings_verify_model", JSON.stringify({ requestId, family: p.family, backend: p.backend, local: p.local, endpoint: p.endpoint, ...(key ? { apiKey: key } : {}), ...(p.ttsModel ? { model: p.ttsModel } : {}) })); }
       finally { release(); signal.removeEventListener("abort", cancel); }
       const verified = JSON.parse(result) as { device: "cpu" | "auto" | "fixed" };
       if (bundledSpeech) verified.device = "cpu";

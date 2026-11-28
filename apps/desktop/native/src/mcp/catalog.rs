@@ -156,9 +156,9 @@ tool_table! {
     #[cfg(feature = "speech")]
     "transcribe_clip" => ("Transcribe the audio that plays on 1–20 VideoClip or Audio layers (a VideoClip through its linked Audio member). Returns `{ transcripts: [{ source: { layer_id, signature }, backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing }], failed? }`, one per layer in order, timeline µs; hand `transcripts` to `apply_transcripts` as is. Cut pauses first, caption after: a clip changed since is refused there. `failed` lists layers that refused, with why. `t_start_us`/`t_end_us` narrow one layer's window. `language` is BCP-47; a model that does not cover it, or the language it detects, refuses with options. `whisper_cpp` and `funasr` run on this machine; `openai`, `elevenlabs` (cloud) and `byo_endpoint` (the user's server) UPLOAD the audio — name one in `backend` only with the user's consent. Without `backend` the model selected in Settings runs, never another; if it cannot, the refusal names what it lacks and the ready engines. A retry after a client timeout joins the running job.", tools::TranscribeClipArgs, tools::transcribe_clip, ToolAnnotations::READ_OPEN),
     #[cfg(feature = "speech")]
-    "synthesize_speech" => ("Speak text with the voiceover provider selected in Settings → Voiceover (uploads the text) and place it as a voiceover Audio layer, one placement or none: a refused placement adds nothing to the pool. `voice` is an id from `list_voices`, which also gives `text`'s cap and `speed`'s range. `composition_id` (default root); `t_start_us` (default: the composition's end); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. Cached by provider, model, voice, speed and text: a repeat makes no API request. Pooled in Media/Voiceover/ (needs an open project). Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech, ToolAnnotations::WRITE_OPEN),
+    "synthesize_speech" => ("Speak text with the voiceover provider selected in Settings → Voiceover (uploads the text) and place it as an Audio layer; a refused placement adds nothing to the pool. `voice` is an id from `list_voices`, which also gives `text`'s cap. For pace, `retime_layers` the layer (keeps pitch). `composition_id` (default root); `t_start_us` (default: the composition's end); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. A repeat of provider, model, voice and text is cached: no API request. Pooled in Media/Voiceover/ (needs an open project). Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech, ToolAnnotations::WRITE_OPEN),
     #[cfg(feature = "speech")]
-    "list_voices" => ("The voiceover provider selected in Settings → Voiceover, and what `synthesize_speech` takes with it: `{ provider, model, max_chars, speed: { min, max, default } | null, format, voices: [{ id, name, labels, preview_url }] }`. Pass a voice's `id` as `voice`, exactly as listed. `speed: null` means the model has no speed control. ElevenLabs lists the account's own voices (a request to the provider); OpenAI's are fixed. With no provider selected it refuses naming the setting.", tools::ListVoicesArgs, tools::list_voices, ToolAnnotations::READ_OPEN),
+    "list_voices" => ("The voiceover provider selected in Settings → Voiceover, and what `synthesize_speech` takes with it: `{ provider, model, max_chars, format, voices: [{ id, name, labels, preview_url }] }`. Pass a voice's `id` as `voice`, exactly as listed. ElevenLabs lists the account's own voices (a request to the provider); OpenAI's are fixed. With no provider selected it refuses naming the setting.", tools::ListVoicesArgs, tools::list_voices, ToolAnnotations::READ_OPEN),
     #[cfg(feature = "speech")]
     "describe_clip" => ("Describe a video's visual content as timestamped segments with a video-understanding model (local Qwen3-VL / MiniCPM-V, or an OpenAI-compatible endpoint). Name a pooled item by `media_id` (placed or not; the whole source by default) or a VideoClip by `layer_id` (the source it plays, plus its `mapping`, as `analyze_clip`'s). Samples the window at `fps` (default 1.0), ≤3600 frames per call. Returns `{ backend, model, summary?, media_id, mapping?, segments: [{ src_start_us, src_end_us, text, tags }] }`, source µs; `text` is prose, `tags` short visual keywords; long windows add a `summary`. Cached per source range, so a retry after a client timeout or an interruption resumes; `refresh` re-describes. `src_start_us`/`src_end_us` (e.g. a shot's) narrow the window; `focus` steers `tags`; `language` is BCP-47 (default: UI language). `qwen3_vl` and `minicpm_v` run on this machine; `byo_endpoint` UPLOADS frames — name it only with the user's consent. `backend` REQUIRES that engine, never substituting; omitted: the selected engine, then availability (local first).", tools::DescribeClipArgs, tools::describe_clip, ToolAnnotations::READ_OPEN),
 }
@@ -283,14 +283,16 @@ mod tests {
         assert!(!transcribe.contains_key("model_languages"));
         assert!(!props("describe_clip").contains_key("purpose"));
         // Voiceover carries the same injected config and the selected
-        // provider; `list_voices` takes nothing else.
+        // provider and model; `list_voices` takes nothing else.
         for name in ["synthesize_speech", "list_voices"] {
             let advertised = props(name);
-            assert!(!advertised.contains_key("speech_config"), "{name}");
-            assert!(!advertised.contains_key("voiceover_backend"), "{name}");
+            for injected in ["speech_config", "voiceover_backend", "voiceover_model"] {
+                assert!(!advertised.contains_key(injected), "{name}: {injected}");
+            }
         }
         assert!(props("list_voices").is_empty());
         assert!(props("synthesize_speech").contains_key("voice"));
+        assert!(!props("synthesize_speech").contains_key("speed"));
     }
 
     #[cfg(feature = "speech")]

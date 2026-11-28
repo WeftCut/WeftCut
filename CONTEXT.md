@@ -450,8 +450,8 @@ _Avoid_: engine as the user's selection, automatic model
 
 **Voiceover provider**:
 The service that speaks a voiceover script, selected in Settings → Voiceover:
-OpenAI or ElevenLabs, or None. It declares its model, voices, character cap,
-speed range and output format; nothing above it keeps them. A key saved for
+OpenAI or one of the ElevenLabs models, or None. It declares its model, voices,
+character cap and output format; nothing above it keeps them. A key saved for
 transcription never selects one. See [ADR 0184](docs/adr/0184-voiceover-runs-on-a-selected-provider.md).
 _Avoid_: TTS engine, voice as a synonym for provider
 

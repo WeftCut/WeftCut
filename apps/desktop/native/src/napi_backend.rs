@@ -760,9 +760,9 @@ impl Backend {
     }
 
     /// The Voiceover dialog's read of the selected provider: the same args
-    /// (`{ speech_config, voiceover_backend }`) and JSON as the `list_voices`
-    /// tool — `{ provider, model, max_chars, speed: { min, max, default } |
-    /// null, format, voices: [{ id, name, labels, preview_url }] }`.
+    /// (`{ speech_config, voiceover_backend, voiceover_model }`) and JSON as the
+    /// `list_voices` tool — `{ provider, model, max_chars, format, voices: [{
+    /// id, name, labels, preview_url }] }`.
     #[napi]
     pub async fn list_voices_compute(&self, args_json: String) -> napi::Result<String> {
         let args: crate::mcp::ListVoicesArgs =

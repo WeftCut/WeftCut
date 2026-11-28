@@ -40,7 +40,6 @@ function voiceList(over: Partial<VoiceList> = {}): VoiceList {
     provider: "provider-a",
     model: "model-a",
     max_chars: 64,
-    speed: { min: 0.5, max: 2, default: 1 },
     format: "mp3",
     voices: [
       { id: "voice-a1", name: "Narrator A", labels: {}, preview_url: null },
@@ -172,22 +171,21 @@ describe("VoiceoverDialog", () => {
     });
   });
 
-  // Absent at the provider's default and present otherwise: the TTS cache keys
-  // an absent speed apart from an explicit one, so the default has to travel as
-  // absence for a human's re-run of an agent's default-speed script to hit the
-  // same entry.
-  it("omits the speed at the provider default and sends any other value", async () => {
-    const user = userEvent.setup();
-    await opened();
-    fireEvent.change(script(), { target: { value: SCRIPT } });
-    // Base UI's NumberField appends unless cleared first; `onValueChange` is
-    // live, so no blur is needed before the click.
-    const speed = screen.getByLabelText("Speed");
-    await user.clear(speed);
-    await user.type(speed, "1.5");
-    fireEvent.click(generate());
-    await waitFor(() => expect(mocks.synthesizeSpeech).toHaveBeenCalled());
-    expect(mocks.synthesizeSpeech.mock.calls[0]![0]).toMatchObject({ speed: 1.5 });
+  // ADR 0184: pace is the placed clip's retime, for every provider, so the
+  // dialog has no speed control and sends no speed.
+  it("has no speed control for any provider and sends no speed", async () => {
+    for (const provider of ["openai", "elevenlabs"]) {
+      mocks.synthesizeSpeech.mockClear();
+      mocks.listVoices.mockResolvedValue(voiceList({ provider }));
+      const view = await opened();
+      expect(screen.queryByRole("spinbutton")).toBeNull();
+      expect(screen.queryByLabelText(/speed/i)).toBeNull();
+      fireEvent.change(script(), { target: { value: SCRIPT } });
+      fireEvent.click(generate());
+      await waitFor(() => expect(mocks.synthesizeSpeech).toHaveBeenCalled());
+      expect(mocks.synthesizeSpeech.mock.calls[0]![0]).not.toHaveProperty("speed");
+      view.unmount();
+    }
   });
 
   it("starts at the playhead when that placement is chosen", async () => {
@@ -317,15 +315,19 @@ describe("VoiceoverDialog", () => {
     expect(mocks.synthesizeSpeech.mock.calls[0]![0]).toMatchObject({ voice: "voice-b2" });
   });
 
-  // A model without speed control gets no field, and no speed is sent.
-  it("shows no speed field when the provider has no speed range", async () => {
-    mocks.listVoices.mockResolvedValue(voiceList({ speed: null }));
-    await opened();
-    expect(screen.queryByLabelText("Speed")).toBeNull();
+  // The cap is whatever the selected provider's model declares: the same
+  // script fits one model and is refused in the field for another.
+  it("enforces the selected provider's own character cap", async () => {
+    const cap = SCRIPT.length - 1;
+    mocks.listVoices.mockResolvedValue(voiceList({ max_chars: cap }));
+    openVoiceoverPrompt();
+    render(<VoiceoverDialog />);
+    await screen.findByText(new RegExp(` / ${cap} characters`));
     fireEvent.change(script(), { target: { value: SCRIPT } });
-    fireEvent.click(generate());
-    await waitFor(() => expect(mocks.synthesizeSpeech).toHaveBeenCalled());
-    expect(mocks.synthesizeSpeech.mock.calls[0]![0]).not.toHaveProperty("speed");
+    expect(screen.getByText(new RegExp(`1 over the ${cap}-character limit`))).toBeTruthy();
+    expect(generate().disabled).toBe(true);
+    fireEvent.change(script(), { target: { value: SCRIPT.slice(0, cap) } });
+    expect(generate().disabled).toBe(false);
   });
 
   it("keeps Generate off until the provider has answered", async () => {

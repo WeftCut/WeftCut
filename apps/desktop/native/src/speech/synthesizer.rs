@@ -1,8 +1,8 @@
 //! `Synthesizer` capability surface — text in, audio bytes out — and the
 //! voiceover facts each provider declares (ADR 0184): its model, voices,
-//! per-request character cap, speed range and output format. The Voiceover
-//! dialog and the MCP tools read these; no layer above the provider keeps a
-//! voice list or a limit.
+//! per-request character cap and output format. The Voiceover dialog and the
+//! MCP tools read these; no layer above the provider keeps a voice list or a
+//! limit.
 //!
 //! Bytes (not paths) on the way out: the `synthesize_speech` tool
 //! content-addresses the result, which means it needs the bytes in hand to
@@ -52,34 +52,14 @@ impl Serialize for AudioFormat {
     }
 }
 
-/// The speeds a provider's model applies, `1.0` = its natural pace.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct SpeedRange {
-    #[serde(serialize_with = "shortest_decimal")]
-    pub min: f32,
-    #[serde(serialize_with = "shortest_decimal")]
-    pub max: f32,
-    #[serde(serialize_with = "shortest_decimal")]
-    pub default: f32,
-}
-
-/// An `f32` as the decimal it was written as: widening `0.7f32` to `f64`
-/// prints `0.699999988079071`, and a range read off `list_voices` must accept
-/// its own bounds.
-fn shortest_decimal<S: Serializer>(v: &f32, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_f64(v.to_string().parse().unwrap_or(f64::from(*v)))
-}
-
-/// What a voiceover provider's model is and takes.
+/// What a voiceover provider's model is and takes. No speed: pace is changed
+/// on the placed clip (ADR 0184).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VoiceoverFacts {
     pub provider: SpeechBackend,
     pub model: &'static str,
     /// Per-request cap on `text`, in characters.
     pub max_chars: usize,
-    /// `None`: the model ignores speed, so a `speed` is refused rather than
-    /// silently dropped.
-    pub speed: Option<SpeedRange>,
     pub format: AudioFormat,
 }
 
@@ -98,8 +78,6 @@ pub struct SynthesizeRequest {
     pub text: String,
     /// A voice id from the provider's [`Synthesizer::voices`], as given.
     pub voice: String,
-    /// `None` lets the provider use its default without sending the parameter.
-    pub speed: Option<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -138,33 +116,18 @@ pub fn check_request(facts: &VoiceoverFacts, req: &SynthesizeRequest) -> Result<
             facts.max_chars
         )));
     }
-    match (req.speed, facts.speed) {
-        (Some(s), Some(r)) if !(r.min..=r.max).contains(&s) => Err(invalid(format!(
-            "speed {s} is outside {who}'s range [{}, {}]",
-            r.min, r.max
-        ))),
-        (Some(_), None) => Err(invalid(format!("{who} has no speed control; omit `speed`"))),
-        _ => Ok(()),
-    }
+    Ok(())
 }
 
 /// Content address of one synthesis: every input that changes the audio —
-/// provider, model, voice id (as given, never case-folded), speed, output
-/// format and text — each length-prefixed so no two requests share a key.
-///
-/// `speed: None` and `Some(1.0)` are different keys on purpose: an omitted
-/// parameter is the provider's untouched default, which a provider may shape
-/// differently from an explicit 1.0.
+/// provider, model, voice id (as given, never case-folded), output format and
+/// text — each length-prefixed so no two requests share a key.
 pub fn cache_key(facts: &VoiceoverFacts, req: &SynthesizeRequest) -> String {
-    let speed = req
-        .speed
-        .map_or_else(|| "default".to_string(), |s| s.to_string());
     let mut hasher = blake3::Hasher::new();
     for field in [
         facts.provider.as_str(),
         facts.model,
         &req.voice,
-        &speed,
         facts.format.extension(),
         &req.text,
     ] {
@@ -182,19 +145,13 @@ mod tests {
         provider: SpeechBackend::ElevenLabs,
         model: "model-a",
         max_chars: 10,
-        speed: Some(SpeedRange {
-            min: 0.7,
-            max: 1.2,
-            default: 1.0,
-        }),
         format: AudioFormat::Mp3,
     };
 
-    fn req(text: &str, voice: &str, speed: Option<f32>) -> SynthesizeRequest {
+    fn req(text: &str, voice: &str) -> SynthesizeRequest {
         SynthesizeRequest {
             text: text.into(),
             voice: voice.into(),
-            speed,
         }
     }
 
@@ -204,79 +161,64 @@ mod tests {
         assert_eq!(AudioFormat::Wav.extension(), "wav");
         assert_eq!(AudioFormat::Opus.extension(), "opus");
         assert_eq!(AudioFormat::Flac.extension(), "flac");
+        assert_eq!(
+            serde_json::to_string(&AudioFormat::Mp3).unwrap(),
+            r#""mp3""#
+        );
     }
 
     #[test]
     fn requests_outside_the_facts_are_refused_as_invalid_input() {
-        let refused = |r: SynthesizeRequest, facts: &VoiceoverFacts| match check_request(facts, &r)
-        {
+        let refused = |r: SynthesizeRequest| match check_request(&FACTS, &r) {
             Err(SpeechError::InvalidInput { message, .. }) => message,
             other => panic!("expected InvalidInput, got {other:?}"),
         };
-        assert!(refused(req("  ", "v", None), &FACTS).contains("empty"));
-        assert!(refused(req("12345678901", "v", None), &FACTS).contains("at most 10"));
+        let at_cap = "a".repeat(FACTS.max_chars);
+        assert!(refused(req("  ", "v")).contains("empty"));
+        assert!(check_request(&FACTS, &req(&at_cap, "v")).is_ok());
+        assert!(refused(req(&format!("{at_cap}a"), "v"))
+            .contains(&format!("at most {}", FACTS.max_chars)));
         // The cap counts characters, not bytes.
-        assert!(check_request(&FACTS, &req("你好你好你好你好你好", "v", None)).is_ok());
-        assert!(refused(req("hi", "v", Some(1.3)), &FACTS).contains("[0.7, 1.2]"));
-        let no_speed = VoiceoverFacts {
-            speed: None,
-            ..FACTS
-        };
-        assert!(refused(req("hi", "v", Some(1.0)), &no_speed).contains("omit `speed`"));
-        assert!(check_request(&no_speed, &req("hi", "v", None)).is_ok());
-        // The bounds themselves are inside the range.
-        assert!(check_request(&FACTS, &req("hi", "v", Some(0.7))).is_ok());
-        assert!(check_request(&FACTS, &req("hi", "v", Some(1.2))).is_ok());
+        assert!(check_request(&FACTS, &req(&"你".repeat(FACTS.max_chars), "v")).is_ok());
     }
 
     #[test]
     fn the_cache_key_separates_every_input_and_keeps_voice_case() {
-        let base = cache_key(&FACTS, &req("hello", "voice-a1", None));
-        assert_eq!(base, cache_key(&FACTS, &req("hello", "voice-a1", None)));
+        let base = cache_key(&FACTS, &req("hello", "voice-a1"));
+        assert_eq!(base, cache_key(&FACTS, &req("hello", "voice-a1")));
         let differs = [
             cache_key(
                 &VoiceoverFacts {
                     provider: SpeechBackend::OpenAi,
                     ..FACTS
                 },
-                &req("hello", "voice-a1", None),
+                &req("hello", "voice-a1"),
             ),
             cache_key(
                 &VoiceoverFacts {
                     model: "model-b",
                     ..FACTS
                 },
-                &req("hello", "voice-a1", None),
+                &req("hello", "voice-a1"),
             ),
             cache_key(
                 &VoiceoverFacts {
                     format: AudioFormat::Wav,
                     ..FACTS
                 },
-                &req("hello", "voice-a1", None),
+                &req("hello", "voice-a1"),
             ),
-            cache_key(&FACTS, &req("hello", "voice-b2", None)),
-            cache_key(&FACTS, &req("hello", "Voice-A1", None)),
-            cache_key(&FACTS, &req("hello", "voice-a1", Some(1.0))),
-            cache_key(&FACTS, &req("hello!", "voice-a1", None)),
+            cache_key(&FACTS, &req("hello", "voice-b2")),
+            cache_key(&FACTS, &req("hello", "Voice-A1")),
+            cache_key(&FACTS, &req("hello!", "voice-a1")),
         ];
         for (i, k) in differs.iter().enumerate() {
             assert_ne!(&base, k, "variant {i} shares the base key");
         }
         // A field boundary cannot be moved between voice and text.
         assert_ne!(
-            cache_key(&FACTS, &req("b", "a", None)),
-            cache_key(&FACTS, &req("", "ab", None))
-        );
-    }
-
-    #[test]
-    fn a_speed_range_serializes_as_the_decimals_it_was_written_as() {
-        let json = serde_json::to_string(&FACTS.speed).unwrap();
-        assert_eq!(json, r#"{"min":0.7,"max":1.2,"default":1.0}"#);
-        assert_eq!(
-            serde_json::to_string(&AudioFormat::Mp3).unwrap(),
-            r#""mp3""#
+            cache_key(&FACTS, &req("b", "a")),
+            cache_key(&FACTS, &req("", "ab"))
         );
     }
 }

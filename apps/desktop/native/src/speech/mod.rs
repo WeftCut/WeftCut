@@ -198,8 +198,13 @@ pub fn resolve_transcriber_exact(
 /// The voiceover provider selected in Settings → Voiceover, strictly (ADR
 /// 0184): `None` is refused, and so is a selection that cannot run. Nothing is
 /// substituted — a key saved for transcription never picks the voice.
+///
+/// `model` is the selected profile's model id, for a provider with several
+/// (ElevenLabs, which refuses one it does not list); OpenAI runs its one model
+/// and ignores it.
 pub fn resolve_synthesizer(
     selected: Option<SpeechBackend>,
+    model: Option<&str>,
     cfg: &HashMap<String, BackendConfig>,
 ) -> Result<Box<dyn Synthesizer>, String> {
     let b = selected.ok_or(NO_VOICEOVER_SELECTED)?;
@@ -216,8 +221,7 @@ pub fn resolve_synthesizer(
             b.as_str()
         ));
     }
-    construct_synthesizer(b, cfg.get(b.as_str()))
-        .ok_or_else(|| format!("{} is configured but could not be constructed", b.as_str()))
+    construct_synthesizer(b, model, cfg.get(b.as_str()))
 }
 
 /// Build the concrete transcriber for an already-selected, `Available` backend.
@@ -294,16 +298,23 @@ fn construct_transcriber(
 /// capabilities include `tts`.
 fn construct_synthesizer(
     b: SpeechBackend,
+    model: Option<&str>,
     cfg: Option<&BackendConfig>,
-) -> Option<Box<dyn Synthesizer>> {
+) -> Result<Box<dyn Synthesizer>, String> {
     match (b, cfg) {
         (SpeechBackend::OpenAi, Some(BackendConfig::ApiKey(key))) => {
-            Some(Box::new(backends::openai::OpenAiTts::new(key.clone())))
+            Ok(Box::new(backends::openai::OpenAiTts::new(key.clone())))
         }
         (SpeechBackend::ElevenLabs, Some(BackendConfig::ApiKey(key))) => {
-            Some(Box::new(backends::elevenlabs::ElevenLabs::new(key.clone())))
+            Ok(Box::new(backends::elevenlabs::ElevenLabsTts::new(
+                backends::elevenlabs::ElevenLabs::new(key.clone()),
+                model,
+            )?))
         }
-        _ => None,
+        _ => Err(format!(
+            "{} is configured but could not be constructed",
+            b.as_str()
+        )),
     }
 }
 
@@ -322,7 +333,7 @@ mod tests {
     fn empty_config_resolves_to_none() {
         let cfg = HashMap::new();
         assert!(resolve_selected_transcriber(None, &cfg).is_err());
-        assert!(resolve_synthesizer(None, &cfg).is_err());
+        assert!(resolve_synthesizer(None, None, &cfg).is_err());
     }
 
     #[test]
@@ -344,14 +355,46 @@ mod tests {
             "{err}"
         );
         // The same key serves TTS once OpenAI is the voiceover selection.
-        assert!(resolve_synthesizer(Some(SpeechBackend::OpenAi), &cfg).is_ok());
+        assert!(resolve_synthesizer(Some(SpeechBackend::OpenAi), None, &cfg).is_ok());
     }
+
+    /// An ElevenLabs model the provider's table lists, for the resolutions
+    /// that are not about the model.
+    const ELEVEN_MODEL: Option<&str> = Some(backends::elevenlabs::TTS_MODELS[0].0);
 
     fn synth_provider(
         selected: Option<SpeechBackend>,
         cfg: &HashMap<String, BackendConfig>,
     ) -> Result<SpeechBackend, String> {
-        resolve_synthesizer(selected, cfg).map(|s| s.facts().provider)
+        resolve_synthesizer(selected, ELEVEN_MODEL, cfg).map(|s| s.facts().provider)
+    }
+
+    /// The injected model is the one ElevenLabs runs; it must be one it lists.
+    /// OpenAI has one model, whatever is injected.
+    #[test]
+    fn the_injected_model_picks_the_elevenlabs_model_and_is_checked() {
+        let cfg = cfg_with(&[
+            ("openai", BackendConfig::ApiKey("sk-x".into())),
+            ("elevenlabs", BackendConfig::ApiKey("xi-x".into())),
+        ]);
+        for (model, cap) in backends::elevenlabs::TTS_MODELS {
+            let facts = resolve_synthesizer(Some(SpeechBackend::ElevenLabs), Some(model), &cfg)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .facts();
+            assert_eq!((facts.model, facts.max_chars), (*model, *cap));
+        }
+        for model in [None, Some("eleven_unknown")] {
+            let Err(err) = resolve_synthesizer(Some(SpeechBackend::ElevenLabs), model, &cfg) else {
+                panic!("{model:?} was accepted");
+            };
+            assert!(err.contains("Settings → Voiceover"), "{err}");
+        }
+        let openai = |model| {
+            resolve_synthesizer(Some(SpeechBackend::OpenAi), model, &cfg)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .facts()
+        };
+        assert_eq!(openai(None), openai(Some("eleven_v4")));
     }
 
     /// With both keys saved, voiceover runs the selected provider and only

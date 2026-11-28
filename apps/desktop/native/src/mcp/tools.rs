@@ -1846,10 +1846,6 @@ pub(crate) struct SynthesizeSpeechArgs {
     /// A voice `id` from `list_voices`, exactly as listed (ids are
     /// case-sensitive). With OpenAI: alloy, echo, fable, onyx, nova or shimmer.
     pub voice: String,
-    /// Within the active provider's `speed` range from `list_voices`; refused
-    /// when that is null. Omit for the provider default.
-    #[serde(default)]
-    pub speed: Option<f32>,
     /// A Group's composition to place in; omit for the root.
     #[cfg_attr(
         not(feature = "test-noop"),
@@ -1892,10 +1888,16 @@ pub(crate) struct SynthesizeSpeechArgs {
     #[serde(default)]
     #[schemars(skip)]
     pub voiceover_backend: Option<String>,
+    /// Injected by the TS host: the model the selected voiceover profile names
+    /// (`eleven_v4`, …), or none for a provider with one model. Never
+    /// advertised.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub voiceover_model: Option<String>,
 }
 
 /// `list_voices` takes nothing from the agent: the host injects the selected
-/// provider and its key, as for `synthesize_speech`.
+/// provider, its model and its key, as for `synthesize_speech`.
 #[cfg(feature = "speech")]
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub(crate) struct ListVoicesArgs {
@@ -1907,6 +1909,10 @@ pub(crate) struct ListVoicesArgs {
     #[serde(default)]
     #[schemars(skip)]
     pub voiceover_backend: Option<String>,
+    /// Injected — see `SynthesizeSpeechArgs::voiceover_model`.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub voiceover_model: Option<String>,
 }
 
 /// The selected voiceover provider's synthesizer, or the refusal naming
@@ -1915,6 +1921,7 @@ pub(crate) struct ListVoicesArgs {
 #[cfg(feature = "speech")]
 fn voiceover_synthesizer(
     voiceover_backend: Option<&str>,
+    voiceover_model: Option<&str>,
     cfg: &std::collections::HashMap<String, speech::config::BackendConfig>,
 ) -> Result<Box<dyn speech::Synthesizer>, McpToolError> {
     use crate::inference::EngineTag;
@@ -1929,7 +1936,8 @@ fn voiceover_synthesizer(
             )
         })?),
     };
-    speech::resolve_synthesizer(selected, cfg).map_err(|m| McpToolError::invalid_request(m, None))
+    speech::resolve_synthesizer(selected, voiceover_model, cfg)
+        .map_err(|m| McpToolError::invalid_request(m, None))
 }
 
 /// `list_voices`' result: the active voiceover provider's facts and voices.
@@ -1939,7 +1947,6 @@ pub(crate) struct VoiceList {
     provider: &'static str,
     model: &'static str,
     max_chars: usize,
-    speed: Option<speech::synthesizer::SpeedRange>,
     format: speech::synthesizer::AudioFormat,
     voices: Vec<speech::synthesizer::Voice>,
 }
@@ -1948,15 +1955,17 @@ pub(crate) struct VoiceList {
 /// (`list_voices_compute`).
 #[cfg(feature = "speech")]
 pub(crate) async fn list_voices_of(args: &ListVoicesArgs) -> Result<VoiceList, McpToolError> {
-    let synthesizer =
-        voiceover_synthesizer(args.voiceover_backend.as_deref(), &args.speech_config)?;
+    let synthesizer = voiceover_synthesizer(
+        args.voiceover_backend.as_deref(),
+        args.voiceover_model.as_deref(),
+        &args.speech_config,
+    )?;
     let facts = synthesizer.facts();
     let voices = synthesizer.voices().await.map_err(map_speech_error)?;
     Ok(VoiceList {
         provider: facts.provider.as_str(),
         model: facts.model,
         max_chars: facts.max_chars,
-        speed: facts.speed,
         format: facts.format,
         voices,
     })
@@ -2805,13 +2814,15 @@ pub(crate) async fn synthesize_speech_audio(
         )
     })?;
 
-    let synthesizer =
-        voiceover_synthesizer(args.voiceover_backend.as_deref(), &args.speech_config)?;
+    let synthesizer = voiceover_synthesizer(
+        args.voiceover_backend.as_deref(),
+        args.voiceover_model.as_deref(),
+        &args.speech_config,
+    )?;
     let facts = synthesizer.facts();
     let request = speech::SynthesizeRequest {
         text: args.text.clone(),
         voice: args.voice.clone(),
-        speed: args.speed,
     };
     // The path is chosen before the audio exists, so its extension is the
     // format the provider declares; an answer in another one is refused rather
@@ -3558,6 +3569,27 @@ mod voiceover_placement_tests {
         );
     }
 
+    /// ElevenLabs runs the model the host injects, so one it does not list
+    /// (or none) is refused before any request, naming the setting.
+    #[tokio::test]
+    async fn an_elevenlabs_selection_needs_a_model_it_lists() {
+        for model in [serde_json::Value::Null, serde_json::json!("eleven_unknown")] {
+            let args: ListVoicesArgs = serde_json::from_value(serde_json::json!({
+                "speech_config": { "elevenlabs": { "kind": "api_key", "key": "xi-x" } },
+                "voiceover_backend": "elevenlabs",
+                "voiceover_model": model,
+            }))
+            .unwrap();
+            let err = list_voices_of(&args).await.err().expect("refused");
+            assert!(matches!(err.code, McpErrorCode::InvalidRequest), "{err:?}");
+            assert!(
+                err.message.contains("Settings → Voiceover"),
+                "{}",
+                err.message
+            );
+        }
+    }
+
     /// The facts and voices the dialog and agents read, in their JSON shape.
     #[tokio::test]
     async fn list_voices_reports_the_selected_providers_facts_and_voices() {
@@ -3576,10 +3608,14 @@ mod voiceover_placement_tests {
         assert_eq!(body["model"], "tts-1");
         assert_eq!(body["max_chars"], 4096);
         assert_eq!(body["format"], "mp3");
-        assert_eq!(
-            body["speed"],
-            serde_json::json!({ "min": 0.25, "max": 4.0, "default": 1.0 })
-        );
+        let mut keys: Vec<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["format", "max_chars", "model", "provider", "voices"]);
         assert_eq!(body["voices"][0]["id"], "alloy");
         assert_eq!(body["voices"][0]["name"], "Alloy");
         assert_eq!(body["voices"].as_array().map(Vec::len), Some(6));

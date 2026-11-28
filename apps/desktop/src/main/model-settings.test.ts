@@ -138,8 +138,10 @@ describe("model settings migration", () => {
     expect(restored.profiles.find(p => p.id === "vlm-online")?.keyTag).toBe("vlm_endpoint");
     const tagOf = (id: string) => restored.profiles.find(p => p.id === id)?.keyTag;
     expect(tagOf("openai-tts")).toBe(tagOf("openai-whisper"));
-    expect(tagOf("elevenlabs-tts")).toBe(tagOf("elevenlabs-scribe"));
-    expect(tagOf("elevenlabs-tts")).not.toBe(tagOf("openai-tts"));
+    for (const id of ["elevenlabs-tts-v4", "elevenlabs-tts-multilingual-v2", "elevenlabs-tts-flash-v2-5"]) {
+      expect(tagOf(id)).toBe(tagOf("elevenlabs-scribe"));
+      expect(tagOf(id)).not.toBe(tagOf("openai-tts"));
+    }
   });
   // Catalog entries reach a settings file written before they existed: the
   // store starts from the catalog and overlays what is on disk.
@@ -178,6 +180,17 @@ describe("model settings migration", () => {
       fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } }).get();
     expect(restored.profiles.some(p => p.custom)).toBe(false);
     expect(restored.active).toEqual({ speech: null, vlm: null, voiceover: null });
+  });
+  // A selection naming an id this build does not have (another build's entry)
+  // reads as None, not as a crash or a substitute; the stored `voiceover` is a
+  // choice already made, so the migration does not pick one either.
+  it("reads a voiceover selection of an id it does not know as None", () => {
+    const files = new Map<string, string>([["/config/models.json", JSON.stringify({ version: 1, active: { speech: null, vlm: null, voiceover: "elevenlabs-tts" },
+      profiles: [{ id: "elevenlabs-tts", name: "ElevenLabs", family: "voiceover", backend: "elevenlabs", verified: true }] })]]);
+    const restored = createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys: ALL_KEYS,
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } }).get();
+    expect(restored.active.voiceover).toBeNull();
+    expect(restored.profiles.map(p => p.id)).not.toContain("elevenlabs-tts");
   });
 });
 

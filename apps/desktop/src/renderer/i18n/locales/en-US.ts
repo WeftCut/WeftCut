@@ -3581,7 +3581,6 @@ const enUS = {
     script_empty: "type the script to be spoken",
     script_too_long: "{{over}} over the {{max}}-character limit for one voiceover",
     voice: "Voice",
-    speed: "Speed",
     track: "Track",
     placement: "Where it lands",
     placement_append: "After everything else",
@@ -3591,7 +3590,7 @@ const enUS = {
     // Said before the button, not after the bill: this is the only entry in the
     // editor that spends money per use, and the cache is what makes a re-run of
     // the same script free.
-    cost: "Generating new audio is a paid request. The same script, voice and speed reuses the audio already made, at no cost.",
+    cost: "Generating new audio is a paid request. The same script and voice reuses the audio already made, at no cost.",
     no_voices: "This account has no voices. Add one with the provider, then open Voiceover again.",
     cancel: "Cancel",
     confirm: "Generate",

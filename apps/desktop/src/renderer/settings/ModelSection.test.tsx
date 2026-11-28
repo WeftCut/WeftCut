@@ -314,20 +314,21 @@ describe("endpoint request timeout", () => {
     const user = userEvent.setup(); render(<ModelSection family="voiceover" onError={vi.fn()} />);
     expect((await screen.findByTestId("current-model-summary")).textContent).toContain("No provider selected");
     await openPicker(user, "Current provider");
-    const offered = screen.getAllByRole("menuitemradio").map(item => item.textContent ?? "");
-    expect(offered).toHaveLength(3);
-    expect(offered[0]).toBe("None");
-    expect(offered[1]).toMatch(/^OpenAI/);
-    expect(offered[2]).toMatch(/^ElevenLabs/);
+    // None, OpenAI, then one entry per ElevenLabs model, newest first.
+    // Each option reads its name, then its locality and state.
+    const offered = screen.getAllByRole("menuitemradio").map(item => (item.textContent ?? "").replace(/Online.*$/, ""));
+    expect(offered).toEqual([
+      "None", "OpenAI", "ElevenLabs v4", "ElevenLabs Multilingual v2", "ElevenLabs Flash v2.5",
+    ]);
     expect(screen.queryByRole("menuitem", { name: "Add custom model…" })).toBeNull();
-    await user.click(screen.getByRole("menuitemradio", { name: /ElevenLabs/ }));
+    await user.click(screen.getByRole("menuitemradio", { name: /ElevenLabs Flash v2\.5/ }));
     expect(screen.getByText(/serves transcription and voiceover/)).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "URL" })).toBeNull();
     const use = screen.getByRole("button", { name: "Configure and use" }) as HTMLButtonElement;
     expect(use.disabled).toBe(true);
     await user.type(screen.getByLabelText("API Key"), "key-x");
     await user.click(use);
-    expect(ipc.modelsUse).toHaveBeenCalledWith({ id: "elevenlabs-tts", apiKey: "key-x" });
+    expect(ipc.modelsUse).toHaveBeenCalledWith({ id: "elevenlabs-tts-flash-v2-5", apiKey: "key-x" });
   });
   // A cloud provider needs its key and nothing else: ElevenLabs is not an
   // endpoint, so a verified profile with its key switches without setup.

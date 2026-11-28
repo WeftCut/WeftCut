@@ -5,7 +5,6 @@ import { RadioGroup } from "@base-ui/react/radio-group";
 
 import { Button } from "@/components/ui/button";
 import { AppDialog } from "../components/AppDialog";
-import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
 import { formatTimecode } from "../frames";
@@ -38,13 +37,13 @@ function voiceLabel(voice: Voice): string {
 /// not a clip action: this operation has no scope. It needs a script.
 ///
 /// Every field comes from the authored `voiceover` prompt (`script`, `voice`,
-/// `speed`, `target_track_id`) plus one addition, the placement choice: "at the
+/// `target_track_id`) plus one addition, the placement choice: "at the
 /// playhead" is what a human usually means, and the tool's own default (append
-/// at the end) is what an agent gets.
+/// at the end) is what an agent gets. Pace is the placed clip's retime, not a
+/// field here (ADR 0184).
 ///
-/// The voices, the script cap and the speed range are the selected provider's
-/// (`list_voices`, read at each opening): none is kept here (ADR 0184). A
-/// provider without a speed range gets no speed field.
+/// The voices and the script cap are the selected provider's (`list_voices`,
+/// read at each opening): none is kept here (ADR 0184).
 ///
 /// The destination is STATED and then sent explicitly, `target_track_id`
 /// included even when it matches what the hybrid would have chosen on its own:
@@ -84,7 +83,6 @@ function VoiceoverDialogInner() {
   const [list, setList] = useState<VoiceList | null>(null);
   const [loadError, setLoadError] = useState("");
   const [voice, setVoice] = useState("");
-  const [speed, setSpeed] = useState<number | null>(null);
   const [placement, setPlacement] = useState<VoiceoverPlacement>("append");
   const [trackId, setTrackId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -118,7 +116,6 @@ function VoiceoverDialogInner() {
         if (!live) return;
         setList(next);
         setVoice(next.voices[0]?.id ?? "");
-        setSpeed(next.speed?.default ?? null);
       },
       (err: unknown) => {
         if (live) setLoadError(refusalText(err));
@@ -176,16 +173,12 @@ function VoiceoverDialogInner() {
       op_state: { state: "Started" },
       // The script is NOT here, and neither is anything that could reconstruct
       // it. Length and voice identify the run; the words are the user's.
-      details: { context: "synthesize_speech", chars, voice, speed },
+      details: { context: "synthesize_speech", chars, voice },
     });
     try {
       const result = await synthesizeSpeech({
         text: script,
         voice,
-        // Omitted at the default so the request matches an agent's default-speed
-        // call byte for byte: the TTS cache keys an absent speed apart from an
-        // explicit one (`ipc/index.ts` on `speed`).
-        ...(speed === null || speed === list?.speed?.default ? {} : { speed }),
         // Explicit even when it equals the arm's own default — see the note on
         // stating the destination above. Omitted only when the project has no
         // track at all, which is the one case the arm has to answer itself.
@@ -259,20 +252,6 @@ function VoiceoverDialogInner() {
           options={(list?.voices ?? []).map((v) => ({ value: v.id, label: voiceLabel(v) }))}
         />
       </label>
-      {list?.speed && speed !== null && (
-        <label className="new-project-row">
-          <span>{t("voiceover.speed")}</span>
-          <AppNumberField
-            value={speed}
-            onValueChange={setSpeed}
-            min={list.speed.min}
-            max={list.speed.max}
-            step={0.05}
-            disabled={generating}
-            ariaLabel={t("voiceover.speed")}
-          />
-        </label>
-      )}
       {trackOptions.length > 0 && (
         <label className="new-project-row">
           <span>{t("voiceover.track")}</span>

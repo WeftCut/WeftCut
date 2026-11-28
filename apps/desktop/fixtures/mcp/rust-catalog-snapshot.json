@@ -284,16 +284,12 @@
     },
     {
       "name": "synthesize_speech",
-      "description": "Speak text with the voiceover provider selected in Settings → Voiceover (uploads the text) and place it as a voiceover Audio layer, one placement or none: a refused placement adds nothing to the pool. `voice` is an id from `list_voices`, which also gives `text`'s cap and `speed`'s range. `composition_id` (default root); `t_start_us` (default: the composition's end); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. Cached by provider, model, voice, speed and text: a repeat makes no API request. Pooled in Media/Voiceover/ (needs an open project). Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.",
+      "description": "Speak text with the voiceover provider selected in Settings → Voiceover (uploads the text) and place it as an Audio layer; a refused placement adds nothing to the pool. `voice` is an id from `list_voices`, which also gives `text`'s cap. For pace, `retime_layers` the layer (keeps pitch). `composition_id` (default root); `t_start_us` (default: the composition's end); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. A repeat of provider, model, voice and text is cached: no API request. Pooled in Media/Voiceover/ (needs an open project). Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.",
       "inputSchema": {
         "properties": {
           "composition_id": {
             "description": "A Group's composition to place in; omit for the root.",
             "type": "string"
-          },
-          "speed": {
-            "description": "Within the active provider's `speed` range from `list_voices`; refused\nwhen that is null. Omit for the provider default.",
-            "type": "number"
           },
           "t_start_us": {
             "description": "Timeline start, µs. Defaults to the composition's `duration_us`, so\nthe voiceover appends at the end.",
@@ -325,9 +321,9 @@
     },
     {
       "name": "list_voices",
-      "description": "The voiceover provider selected in Settings → Voiceover, and what `synthesize_speech` takes with it: `{ provider, model, max_chars, speed: { min, max, default } | null, format, voices: [{ id, name, labels, preview_url }] }`. Pass a voice's `id` as `voice`, exactly as listed. `speed: null` means the model has no speed control. ElevenLabs lists the account's own voices (a request to the provider); OpenAI's are fixed. With no provider selected it refuses naming the setting.",
+      "description": "The voiceover provider selected in Settings → Voiceover, and what `synthesize_speech` takes with it: `{ provider, model, max_chars, format, voices: [{ id, name, labels, preview_url }] }`. Pass a voice's `id` as `voice`, exactly as listed. ElevenLabs lists the account's own voices (a request to the provider); OpenAI's are fixed. With no provider selected it refuses naming the setting.",
       "inputSchema": {
-        "description": "`list_voices` takes nothing from the agent: the host injects the selected\nprovider and its key, as for `synthesize_speech`.",
+        "description": "`list_voices` takes nothing from the agent: the host injects the selected\nprovider, its model and its key, as for `synthesize_speech`.",
         "type": "object"
       },
       "annotations": {
@@ -501,11 +497,6 @@
           "name": "voice",
           "description": "A voice id from `list_voices` (the provider selected in Settings → Voiceover).",
           "required": true
-        },
-        {
-          "name": "speed",
-          "description": "Optional speech speed within the range `list_voices` reports. Omit for the provider default.",
-          "required": false
         },
         {
           "name": "track",

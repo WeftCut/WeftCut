@@ -117,7 +117,7 @@ const NO_SPEECH: SpeechProvider = () => ({ config: {}, preferred: null })
  *  here; `synthesize_speech` at the host's compute facade, from the same
  *  provider. */
 export type VoiceoverProvider = () => VoiceoverArgs
-const NO_VOICEOVER: VoiceoverProvider = () => ({ speech_config: {}, voiceover_backend: null })
+const NO_VOICEOVER: VoiceoverProvider = () => ({ speech_config: {}, voiceover_backend: null, voiceover_model: null })
 
 /** Per-call VLM config provider (describe_clip + media://{id}/description): the
  *  merged backend-config snapshot the stateless resolver reads (ADR 0024) keyed

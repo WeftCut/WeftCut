@@ -15,8 +15,8 @@ use crate::speech::backend::SpeechBackend;
 use crate::speech::error::SpeechError;
 use crate::speech::parse::RawTranscript;
 use crate::speech::synthesizer::{
-    check_request, AudioFormat, SpeedRange, SynthesizeRequest, SynthesizeResponse, Synthesizer,
-    Voice, VoiceoverFacts,
+    check_request, AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer, Voice,
+    VoiceoverFacts,
 };
 use crate::speech::transcriber::{TranscribeRequest, Transcriber};
 
@@ -119,17 +119,12 @@ async fn ok_or_speech_error(response: reqwest::Response) -> Result<reqwest::Resp
 
 const TTS_ENDPOINT: &str = "https://api.openai.com/v1/audio/speech";
 
-/// tts-1's voiceover facts: OpenAI's documented per-request input cap and
-/// speed range; it answers the mp3 this client asks for.
+/// tts-1's voiceover facts: OpenAI's documented per-request input cap; it
+/// answers the mp3 this client asks for.
 const TTS_FACTS: VoiceoverFacts = VoiceoverFacts {
     provider: SpeechBackend::OpenAi,
     model: "tts-1",
     max_chars: 4096,
-    speed: Some(SpeedRange {
-        min: 0.25,
-        max: 4.0,
-        default: 1.0,
-    }),
     format: AudioFormat::Mp3,
 };
 
@@ -162,8 +157,6 @@ struct TtsBody<'a> {
     input: &'a str,
     voice: &'a str,
     response_format: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    speed: Option<f32>,
 }
 
 #[async_trait]
@@ -205,7 +198,6 @@ impl Synthesizer for OpenAiTts {
             input: &req.text,
             voice: &req.voice,
             response_format: TTS_FACTS.format.extension(),
-            speed: req.speed,
         };
         let auth = bearer_auth(&self.key);
         let make = || {
@@ -341,11 +333,10 @@ mod tests {
         }
     }
 
-    fn tts_req(text: &str, voice: &str, speed: Option<f32>) -> SynthesizeRequest {
+    fn tts_req(text: &str, voice: &str) -> SynthesizeRequest {
         SynthesizeRequest {
             text: text.into(),
             voice: voice.into(),
-            speed,
         }
     }
 
@@ -358,26 +349,23 @@ mod tests {
 
     #[tokio::test]
     async fn tts_refuses_what_its_facts_rule_out_before_sending() {
-        assert!(refused(tts_req("", "alloy", None)).await.contains("empty"));
+        assert!(refused(tts_req("", "alloy")).await.contains("empty"));
         let too_long = "a".repeat(TTS_FACTS.max_chars + 1);
-        assert!(refused(tts_req(&too_long, "alloy", None))
+        assert!(refused(tts_req(&too_long, "alloy"))
             .await
-            .contains("at most 4096"));
-        assert!(refused(tts_req("hello", "alloy", Some(5.0)))
-            .await
-            .contains("speed 5"));
+            .contains(&format!("at most {}", TTS_FACTS.max_chars)));
     }
 
     /// Voice ids are exact: a different case is another id, which the cache
     /// would otherwise key apart from the voice it plays.
     #[tokio::test]
     async fn tts_takes_only_the_voice_ids_it_lists() {
-        let msg = refused(tts_req("hello", "no-such-voice", None)).await;
+        let msg = refused(tts_req("hello", "no-such-voice")).await;
         assert!(
             msg.contains("no voice") && msg.contains("list_voices"),
             "{msg}"
         );
-        assert!(refused(tts_req("hello", "Alloy", None))
+        assert!(refused(tts_req("hello", "Alloy"))
             .await
             .contains("no voice"));
         let voices = OpenAiTts::new("k".into()).voices().await.unwrap();

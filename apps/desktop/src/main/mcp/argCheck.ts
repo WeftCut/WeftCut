@@ -81,6 +81,7 @@ const REPLACED_ARGS: Readonly<Record<string, Readonly<Record<string, string>>>> 
   detect_pauses: { threshold_amp: 'send threshold_db (dBFS)', bridge_us: 'the bridge is fixed at 80 ms' },
   describe_clip: { purpose: 'it is not an MCP argument' },
   import_media: { path: 'send paths: [..]' },
+  synthesize_speech: { speed: 'retime the placed layer with retime_layers, which keeps its pitch' },
   transcribe_clip: { layer_id: 'send layer_ids: [..]' },
 }
 

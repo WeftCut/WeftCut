@@ -39,6 +39,10 @@ pub struct VerifyModelArgs {
     local: Option<LocalConfig>,
     endpoint: Option<EndpointConfig>,
     api_key: Option<String>,
+    /// Voiceover only: the profile's model id, the one its calls will inject
+    /// as `voiceover_model`.
+    #[serde(default)]
+    model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -188,7 +192,7 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
                 a.backend,
                 BackendConfig::ApiKey(a.api_key.unwrap_or_default()),
             )]);
-            let synthesizer = speech::resolve_synthesizer(Some(backend), &cfg)?;
+            let synthesizer = speech::resolve_synthesizer(Some(backend), a.model.as_deref(), &cfg)?;
             verify_voiceover(&*synthesizer).await?;
             Ok(VerifyResult { device: "auto" })
         }
@@ -274,7 +278,6 @@ async fn verify_voiceover(synthesizer: &dyn crate::speech::Synthesizer) -> Resul
         .synthesize(crate::speech::SynthesizeRequest {
             text: "OK".into(),
             voice: voice.id,
-            speed: None,
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -332,13 +335,60 @@ mod tests {
             .contains("Missing local"));
     }
 
-    fn eleven(
+    use crate::speech::backends::elevenlabs::{ElevenLabs, ElevenLabsTts, TTS_MODELS};
+
+    /// A voiceover client on `model`, against the loopback `server`.
+    fn eleven_on(
         server: &crate::inference::http::test_server::TestServer,
-    ) -> crate::speech::backends::elevenlabs::ElevenLabs {
-        crate::speech::backends::elevenlabs::ElevenLabs::with_base(
-            "key-x",
-            server.url.trim_end_matches("/v1/test"),
+        model: &str,
+    ) -> ElevenLabsTts {
+        let api = ElevenLabs::with_base("key-x", server.url.trim_end_matches("/v1/test"));
+        ElevenLabsTts::new(api, Some(model)).unwrap()
+    }
+
+    fn eleven(server: &crate::inference::http::test_server::TestServer) -> ElevenLabsTts {
+        eleven_on(server, TTS_MODELS[0].0)
+    }
+
+    /// The test word is spoken by the profile's own model, so a model the
+    /// key cannot use fails verification rather than its first real call.
+    #[tokio::test]
+    async fn verification_speaks_with_the_profiles_model() {
+        let voices = r#"{"voices":[{"voice_id":"voice-a1","name":"A"}],"has_more":false}"#;
+        let server = crate::inference::http::test_server::serve(
+            TTS_MODELS
+                .iter()
+                .flat_map(|_| {
+                    [
+                        Some((200, "", voices.to_string())),
+                        Some((200, "", "fake-mp3".to_string())),
+                    ]
+                })
+                .collect(),
         )
+        .await;
+        for (i, (model, _)) in TTS_MODELS.iter().enumerate() {
+            verify_voiceover(&eleven_on(&server, model)).await.unwrap();
+            let spoken = &server.requests()[2 * i + 1];
+            assert!(
+                spoken.contains(&format!(r#""model_id":"{model}""#)),
+                "{spoken}"
+            );
+        }
+    }
+
+    /// The model rides in the verify request; without one the ElevenLabs
+    /// profile is refused naming the setting, before any request.
+    #[tokio::test]
+    async fn an_elevenlabs_voiceover_without_a_listed_model_is_refused() {
+        for model in [serde_json::Value::Null, serde_json::json!("eleven_unknown")] {
+            let args = serde_json::from_value(serde_json::json!({
+                "family": "voiceover", "backend": "elevenlabs", "apiKey": "k", "model": model,
+            }))
+            .unwrap();
+            let err = verify_model(args).await.unwrap_err();
+            assert!(err.contains("Settings → Voiceover"), "{err}");
+        }
     }
 
     /// Both permissions the dialog needs are exercised: the voice list, then

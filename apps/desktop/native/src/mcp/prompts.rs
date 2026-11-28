@@ -105,14 +105,6 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
                     required: true,
                 },
                 PromptArgDef {
-                    name: "speed".into(),
-                    description: Some(
-                        "Optional speech speed within the range `list_voices` reports. Omit for the provider default."
-                            .into(),
-                    ),
-                    required: false,
-                },
-                PromptArgDef {
                     name: "track".into(),
                     description: Some(
                         "Optional track to place it on, by its name. Omit for the default lane."
@@ -247,13 +239,9 @@ fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, M
     // Required here because `synthesize_speech` requires it: a prompt that
     // promised a default voice would write a call the tool refuses.
     let voice = require_str(args, "voice")?;
-    let speed = optional_str(args, "speed");
     let track = optional_str(args, "track");
 
     let mut extra = format!(", `voice: \"{voice}\"`");
-    if let Some(s) = &speed {
-        extra.push_str(&format!(", `speed: {s}`"));
-    }
     let mut steps: Vec<String> = vec![format!(
         "Call `list_voices`. If no voice's `id` is exactly \"{voice}\", show the user the voices (names and labels) and ask which to use."
     )];

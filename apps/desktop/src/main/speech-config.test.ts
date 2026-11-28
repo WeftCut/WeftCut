@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createSpeechConfigStore, toSpeechBackendSnapshot, toVoiceoverArgs, type SpeechConfigFs } from "./speech-config";
+import { freshModelSettings } from "./model-settings";
 
 const PATH = "/cfg/speech_config.json";
 const DIR = "/cfg";
@@ -186,15 +187,26 @@ describe("toSpeechBackendSnapshot", () => {
 // selected nothing does — no key stands in for a selection.
 describe("toVoiceoverArgs", () => {
   const keys = { openai: "sk-a", elevenlabs: "xi-b" };
-  it("carries only the selected provider and its key", () => {
-    expect(toVoiceoverArgs({ backend: "elevenlabs", keyTag: "elevenlabs" }, keys)).toEqual({
+  const builtin = (id: string) => freshModelSettings().profiles.find(p => p.id === id)!;
+  it("carries only the selected provider, its entry's model and its key", () => {
+    expect(toVoiceoverArgs(builtin("elevenlabs-tts-flash-v2-5"), keys)).toEqual({
       speech_config: { elevenlabs: { kind: "api_key", key: "xi-b" } }, voiceover_backend: "elevenlabs",
+      voiceover_model: "eleven_flash_v2_5",
     });
-    expect(toVoiceoverArgs({ backend: "openai", keyTag: "openai" }, keys)).toEqual({
-      speech_config: { openai: { kind: "api_key", key: "sk-a" } }, voiceover_backend: "openai",
+    // OpenAI runs its one model: nothing to name.
+    expect(toVoiceoverArgs(builtin("openai-tts"), keys)).toEqual({
+      speech_config: { openai: { kind: "api_key", key: "sk-a" } }, voiceover_backend: "openai", voiceover_model: null,
     });
   });
+  // One key per provider: the ElevenLabs entries differ in model only.
+  it("gives every ElevenLabs entry the one ElevenLabs key and its own model", () => {
+    const eleven = freshModelSettings().profiles.filter(p => p.family === "voiceover" && p.backend === "elevenlabs");
+    const args = eleven.map(p => toVoiceoverArgs(p, keys));
+    expect(new Set(args.map(a => JSON.stringify(a.speech_config)))).toEqual(new Set([JSON.stringify({ elevenlabs: { kind: "api_key", key: "xi-b" } })]));
+    expect(args.map(a => a.voiceover_model)).toEqual(eleven.map(p => p.ttsModel));
+    expect(new Set(args.map(a => a.voiceover_model)).size).toBe(eleven.length);
+  });
   it("selects nothing without a selection, whatever keys are saved", () => {
-    expect(toVoiceoverArgs(null, keys)).toEqual({ speech_config: {}, voiceover_backend: null });
+    expect(toVoiceoverArgs(null, keys)).toEqual({ speech_config: {}, voiceover_backend: null, voiceover_model: null });
   });
 });

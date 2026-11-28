@@ -186,18 +186,20 @@ export function toSpeechBackendSnapshot(src: SpeechSnapshotSources): Record<stri
 
 /// The arguments a voiceover call carries besides the caller's
 /// (`synthesize_speech`, `list_voices`): the provider selected in Settings →
-/// Voiceover, `null` for none, and only that provider's key. Nothing else rides
-/// along, so a key saved for transcription never picks the voiceover engine
-/// (ADR 0184).
+/// Voiceover and the model its entry names, `null` for none, and only that
+/// provider's key. Nothing else rides along, so a key saved for transcription
+/// never picks the voiceover engine (ADR 0184).
 export interface VoiceoverArgs {
   speech_config: Record<string, unknown>;
   voiceover_backend: string | null;
+  voiceover_model: string | null;
 }
 
-export function toVoiceoverArgs(profile: Pick<ModelProfile, "backend" | "keyTag"> | null, keys: Record<string, string>): VoiceoverArgs {
-  if (!profile || !isCloudBackend(profile.backend)) return { speech_config: {}, voiceover_backend: null };
+export function toVoiceoverArgs(profile: Pick<ModelProfile, "backend" | "keyTag" | "ttsModel"> | null, keys: Record<string, string>): VoiceoverArgs {
+  if (!profile || !isCloudBackend(profile.backend)) return { speech_config: {}, voiceover_backend: null, voiceover_model: null };
   return {
     speech_config: toSpeechBackendSnapshot({ local: {}, apiKeys: { [profile.backend]: keys[profile.keyTag ?? ""] } }),
     voiceover_backend: profile.backend,
+    voiceover_model: profile.ttsModel ?? null,
   };
 }

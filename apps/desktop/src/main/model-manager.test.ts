@@ -143,14 +143,16 @@ describe("model preparation and activation", () => {
     manager.use({ id: "openai-whisper", apiKey: "sk-a" }); await settle();
     expect(manager.active("speech")?.id).toBe("openai-whisper");
     expect(manager.active("voiceover")).toBeNull();
-    expect(() => manager.use({ id: "elevenlabs-tts" })).toThrow("Enter an API key");
-    manager.use({ id: "elevenlabs-tts", apiKey: "xi-b" }); await settle();
-    expect(deps.verify).toHaveBeenLastCalledWith(expect.objectContaining({ family: "voiceover", backend: "elevenlabs" }), "xi-b", expect.anything());
-    expect(manager.active("voiceover")?.id).toBe("elevenlabs-tts");
+    expect(() => manager.use({ id: "elevenlabs-tts-v4" })).toThrow("Enter an API key");
+    manager.use({ id: "elevenlabs-tts-v4", apiKey: "xi-b" }); await settle();
+    expect(deps.verify).toHaveBeenLastCalledWith(expect.objectContaining({ family: "voiceover", backend: "elevenlabs", ttsModel: "eleven_v4" }), "xi-b", expect.anything());
+    expect(manager.active("voiceover")?.id).toBe("elevenlabs-tts-v4");
     expect(manager.active("speech")?.id).toBe("openai-whisper");
     // One key per provider: the ElevenLabs transcription profile reads it too.
     expect(keys.get("elevenlabs")).toBe("xi-b");
     expect(manager.view().models.find(m => m.id === "elevenlabs-scribe")?.hasKey).toBe(true);
+    // Each model verifies on its own: the key is shared, the verification is not.
+    expect(manager.view().models.find(m => m.id === "elevenlabs-tts-flash-v2-5")).toMatchObject({ hasKey: true, verified: false });
     manager.unselect("voiceover");
     expect(manager.active("voiceover")).toBeNull();
     expect(manager.active("speech")?.id).toBe("openai-whisper");

@@ -2543,12 +2543,6 @@ export interface SynthesizeSpeechArgs {
   text: string;
   /// A voice `id` from `listVoices`, as listed.
   voice: string;
-  /// Playback rate within the provider's `speed` range. Omitted at the
-  /// provider default rather than sent as that number: the TTS cache keys an
-  /// absent speed apart from an explicit one, so sending it would bill a fresh
-  /// request for a script an agent's default-speed call already produced, and
-  /// vice versa.
-  speed?: number;
   /// The Audio track the layer lands on. Passed explicitly by the dialog even
   /// when it matches the default the hybrid would have picked, so where the
   /// audio goes is never a hidden decision.
@@ -2558,7 +2552,7 @@ export interface SynthesizeSpeechArgs {
 }
 
 /// What one synthesis produced. `cached` is true when the request hit the
-/// content-addressed cache — same provider, model, voice, speed and text, so
+/// content-addressed cache — same provider, model, voice and text, so
 /// no API call was billed.
 export interface SynthesizeSpeechResult {
   layer_id: string;
@@ -2594,13 +2588,11 @@ export interface Voice {
 }
 
 /// The voiceover provider selected in Settings → Voiceover and what a request
-/// to it may carry — the `list_voices` tool's answer. `speed: null` means the
-/// model has no speed control.
+/// to it may carry — the `list_voices` tool's answer.
 export interface VoiceList {
   provider: string;
   model: string;
   max_chars: number;
-  speed: { min: number; max: number; default: number } | null;
   format: string;
   voices: Voice[];
 }

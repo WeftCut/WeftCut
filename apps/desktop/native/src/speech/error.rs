@@ -38,7 +38,7 @@ pub enum SpeechError {
     EndpointTimeout { provider: SpeechBackend, secs: u64 },
 
     /// A request the provider cannot serve as asked: a voice it does not have,
-    /// a speed outside its range, text over its per-request cap. The message
+    /// text over its per-request cap. The message
     /// names the limit and where to read it; the caller fixes its arguments.
     #[error("{message}")]
     InvalidInput {

@@ -21,14 +21,19 @@ offers both text-to-speech and transcription (Scribe), and its facts differ
 on every one of those points, so a second provider does not fit without
 changing them.
 
-Measured against the live API before deciding:
+Measured against the live API and its documentation before deciding:
 
 - Voices belong to the account (`GET /v2/voices`, paged): premade, cloned and
   library voices, identified by case-sensitive ids. Premade ids are being
   retired, so no voice id can be built in.
-- Speed is a per-model fact. `eleven_multilingual_v2` and `eleven_flash_v2_5`
-  apply `voice_settings.speed` and refuse values outside 0.7–1.2;
-  `eleven_v3` and `eleven_v4` accept any value and ignore it.
+- Speed is a per-model fact, and the newest models have none.
+  `eleven_multilingual_v2` and `eleven_flash_v2_5` apply
+  `voice_settings.speed` within 0.7–1.2; `eleven_v3` accepted any value and
+  ignored it; the `eleven_v4` documentation states "Style and Speed sliders
+  are not available in Eleven v4"
+  (<https://elevenlabs.io/docs/overview/capabilities/text-to-speech/eleven-v4>).
+- The per-request character cap is per model: 100 000 for `eleven_v4`,
+  40 000 for `eleven_flash_v2_5`, 10 000 for `eleven_multilingual_v2`.
 - API keys are scoped: a key may lack `user_read` and still synthesize and
   transcribe, so only a real inference proves a key works for a feature.
 - Scribe accepts whole files of hours (5 GB, 15 h) and chunks them itself in
@@ -47,29 +52,41 @@ Measured against the live API before deciding:
   selected it fails naming Settings → Voiceover. A key saved for
   transcription never selects a voiceover provider. `DEFAULT_ORDER` stops
   being an order: what remains is the backend catalog tags resolve against.
-- **Built-in voiceover profiles**: OpenAI (`tts-1`) and ElevenLabs
-  (`eleven_multilingual_v2`, chosen because it honours speed; v4 is newer but
-  ignores it). Verification synthesizes one short word, and for ElevenLabs
-  first lists the account's voices: the two are separate key permissions and
-  the dialog needs both. A permission error names the missing permission; only
-  `invalid_api_key` means the key is wrong.
+- **Built-in voiceover profiles**, in this order: OpenAI (`tts-1`), then one
+  entry per ElevenLabs model: ElevenLabs v4 (`eleven_v4`), ElevenLabs
+  Multilingual v2 (`eleven_multilingual_v2`) and ElevenLabs Flash v2.5
+  (`eleven_flash_v2_5`). The model is the user's choice, made by picking the
+  entry; each entry names its model id statically, the host injects it as
+  `voiceover_model`, and native keeps the table of models it accepts with
+  their caps, refusing any other id naming Settings → Voiceover. OpenAI has
+  one model and ignores the field. Verification synthesizes one short word
+  with the entry's own model, and for ElevenLabs first lists the account's
+  voices: the two are separate key permissions and the dialog needs both. A
+  permission error names the missing permission; only `invalid_api_key` means
+  the key is wrong.
+- **Voiceover has no speed**, for any provider: no dialog field, no
+  `synthesize_speech { speed }`, no `voice_settings` sent. `eleven_v4` has no
+  speed control at all and `eleven_v3` ignored one, so a speed setting would
+  work on some entries and silently do nothing on others. The editor already
+  changes a clip's pace with its pitch kept (`retime_layers`, whose
+  `preserve_pitch` defaults to true), on any provider's audio and after the
+  fact, so pace is set on the placed layer. A `speed` from an agent is refused
+  as an argument that no longer exists, pointing at `retime_layers`.
 - **A provider declares its voiceover facts**: model, voices, per-request
-  character cap, speed range (or none) and output format. OpenAI's voices are
-  static; ElevenLabs lists the account's on request. The Voiceover dialog and
-  the MCP tools read these facts; no layer above the provider keeps a voice
-  list or a limit. A provider without a speed range shows no speed control and
-  `synthesize_speech` refuses a `speed`.
+  character cap and output format. OpenAI's voices are static; ElevenLabs
+  lists the account's on request. The Voiceover dialog and the MCP tools read
+  these facts; no layer above the provider keeps a voice list or a limit.
 - **MCP**: `synthesize_speech { voice }` is a string the active provider
   validates, and `list_voices` returns the active provider, its model, limits
   and voices. Voice ids are kept as given, never case-folded.
-- **The cache key covers provider, model, voice id, speed, output format and
+- **The cache key covers provider, model, voice id, output format and
   text**, and the file extension comes from the provider's format. OpenAI
   entries written under the old key miss once and are re-synthesized.
 - **One key per provider, shared by its features.** The `elevenlabs`
-  safeStorage tag serves the Scribe transcription profile and the ElevenLabs
-  voiceover profile, as `openai` already serves Whisper and `tts-1`. Each
-  profile verifies on its own; re-keying through one profile does not
-  re-verify the other, which reports a bad key on its next call.
+  safeStorage tag serves the Scribe transcription profile and the three
+  ElevenLabs voiceover profiles, as `openai` already serves Whisper and
+  `tts-1`. Each profile verifies on its own; re-keying through one profile
+  does not re-verify the others, which report a bad key on their next call.
 - **Migration, once**: settings saved before this change gain a voiceover
   selection of OpenAI when voiceover worked for them, that is, a key under the
   `openai` tag or under the active cloud transcription profile's tag. In the
@@ -90,14 +107,21 @@ Measured against the live API before deciding:
 
 - Adding a voiceover provider is a backend, its facts and a profile; the
   dialog and MCP tools need no change.
-- `synthesize_speech`'s `voice` is no longer an enum, a published MCP
-  contract change; the six OpenAI names stay valid for the OpenAI profile.
+- `synthesize_speech`'s `voice` is no longer an enum and its `speed` is gone,
+  both published MCP contract changes; the six OpenAI names stay valid for
+  the OpenAI profile.
 - An agent must call `list_voices` before choosing an ElevenLabs voice.
 - A voiceover profile's verification spends a few characters of the
   provider's quota.
+- Adding an ElevenLabs model is a row in native's model table and a built-in
+  profile naming it.
 
-Rejected: keeping the default-order fallback (a key chose the engine);
-`eleven_v4` without speed; a built-in default ElevenLabs voice (ids are
+Rejected: keeping the default-order fallback (a key chose the engine); a
+speed setting offered only where the model honours it (a control that
+appears and disappears with the model, for what a retime already does on
+every provider); a user-editable model field (each model has its own cap,
+so native accepts only those in its table, and a free field would offer ids
+that cannot run); a built-in default ElevenLabs voice (ids are
 per-account and premade ones expire); validating every ElevenLabs voice id
 against a fresh list per call (an unknown id comes back as the provider's own
 `voice_not_found`); sending a whole long clip to Scribe in one request (one

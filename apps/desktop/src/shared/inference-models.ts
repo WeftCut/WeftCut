@@ -69,6 +69,10 @@ export interface ModelDefinition {
    *  Absent: any (a multilingual model, or one the user serves). Transcription
    *  refuses a clip in a language outside it rather than return garbage. */
   languages?: readonly string[];
+  /** Voiceover only: the model id a provider with several runs for this
+   *  entry, injected as `voiceover_model`. Absent for a provider with one
+   *  model (OpenAI `tts-1`). Fixed per built-in entry, never user-edited. */
+  ttsModel?: string;
 }
 /** The languages a speech profile covers, from its catalog entry; `null` when
  *  unknown (a custom profile, or a multilingual model). */
@@ -89,9 +93,13 @@ export const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   // An entry point for the existing compatible-endpoint adapter, not a new provider preset.
   { id: "vlm-online", name: "Online model", family: "vlm", backend: "byo_endpoint", locality: "online", artifacts: [] },
   // Voiceover runs only these: no custom profiles, no local engine. Each
-  // provider declares its own model, voices and limits (`list_voices`).
+  // provider declares its voices and limits (`list_voices`). The ElevenLabs
+  // entries share one key and differ only in model; native refuses a
+  // `ttsModel` outside its table (`speech::backends::elevenlabs::TTS_MODELS`).
   { id: "openai-tts", name: "OpenAI", family: "voiceover", backend: "openai", locality: "online", artifacts: [] },
-  { id: "elevenlabs-tts", name: "ElevenLabs", family: "voiceover", backend: "elevenlabs", locality: "online", artifacts: [] },
+  { id: "elevenlabs-tts-v4", name: "ElevenLabs v4", family: "voiceover", backend: "elevenlabs", locality: "online", artifacts: [], ttsModel: "eleven_v4" },
+  { id: "elevenlabs-tts-multilingual-v2", name: "ElevenLabs Multilingual v2", family: "voiceover", backend: "elevenlabs", locality: "online", artifacts: [], ttsModel: "eleven_multilingual_v2" },
+  { id: "elevenlabs-tts-flash-v2-5", name: "ElevenLabs Flash v2.5", family: "voiceover", backend: "elevenlabs", locality: "online", artifacts: [], ttsModel: "eleven_flash_v2_5" },
 ];
 export interface ModelProfile extends ModelDefinition {
   custom?: boolean;

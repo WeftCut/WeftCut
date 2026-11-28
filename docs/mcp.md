@@ -1289,7 +1289,7 @@ in its description (convention 5).
 - `/auto-caption { clip?, language? }` — `transcribe_clip` →
   `apply_transcripts` with its `transcripts` as they came; never an uploading
   `backend` without the user's consent.
-- `/voiceover { script, voice, speed?, track? }` — `list_voices` to check the
+- `/voiceover { script, voice, track? }` — `list_voices` to check the
   voice, then `synthesize_speech`, splitting a script over `max_chars` at
   paragraphs.
 
@@ -1447,9 +1447,10 @@ the refusal says it is the model selected in Settings, names what is missing,
 and lists the options: repair or reselect it, a ready local engine to pass as
 `backend`, or an engine that uploads (`openai`, `elevenlabs`, `byo_endpoint`) —
 only with the user's consent. Voiceover runs the provider selected in
-Settings → Voiceover (OpenAI `tts-1` or ElevenLabs `eleven_multilingual_v2`),
-injected as `voiceover_backend`; none selected refuses naming that setting, and
-a key saved for transcription never selects it (ADR 0184).
+Settings → Voiceover (OpenAI `tts-1`, or ElevenLabs `eleven_v4`,
+`eleven_multilingual_v2` or `eleven_flash_v2_5`, one entry each), injected as
+`voiceover_backend` and `voiceover_model`; none selected refuses naming that
+setting, and a key saved for transcription never selects it (ADR 0184).
 Unconfigured speech tools stay listed and refuse naming the Settings panel.
 
 - `transcribe_clip { layer_ids }` — one timeline-absolute envelope per layer,
@@ -1476,15 +1477,16 @@ Unconfigured speech tools stay listed and refuse naming the Settings panel.
   so offset `w` maps to `t_start_us + w / rate`. Resolves no backend, uploads nothing, needs
   nothing configured.
 - `list_voices` — the selected voiceover provider's facts and voices:
-  `{ provider, model, max_chars, speed: { min, max, default } | null, format,
-  voices: [{ id, name, labels, preview_url }] }`. OpenAI's six voices are
+  `{ provider, model, max_chars, format, voices: [{ id, name, labels,
+  preview_url }] }`. OpenAI's six voices are
   static; ElevenLabs lists the account's (`GET /v2/voices`). The Voiceover
   dialog reads the same through `list_voices_compute`.
 - `synthesize_speech { voice }` — `voice` is an id from `list_voices`, kept as
-  given; the provider refuses one it lacks, text over `max_chars` and a `speed`
-  outside its range (or any `speed` when it has none). Cached at
-  `Cache/voiceover/<hash>.<format>`, keyed by provider, model, voice, speed,
-  format and text, and pooled as `Media/Voiceover/voiceover-<hash8>.<format>`
+  given; the provider refuses one it lacks and text over `max_chars`. It takes
+  no `speed`: pace is set on the placed layer with `retime_layers`, which keeps
+  pitch, on every provider (`eleven_v4` has no speed control). Cached at
+  `Cache/voiceover/<hash>.<format>`, keyed by provider, model, voice, format
+  and text, and pooled as `Media/Voiceover/voiceover-<hash8>.<format>`
   (needs an open project;
   the same bytes reuse one file and one media item), placed as a voiceover Audio layer in `composition_id` (root by
   default; start: that composition's end; lane: `target_track_id`, else the

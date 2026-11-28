@@ -3222,7 +3222,6 @@ const zhCN: Resources = {
     script_empty: "输入要朗读的文稿",
     script_too_long: "超出单次配音 {{max}} 字符上限 {{over}} 个",
     voice: "声音",
-    speed: "语速",
     track: "轨道",
     placement: "落在哪里",
     placement_append: "接在所有内容之后",
@@ -3231,7 +3230,7 @@ const zhCN: Resources = {
     placement_playhead_desc: "从 {{time}} 开始。",
     // 话说在按钮之前，而不是账单之后：这是编辑器里唯一按次计费的功能，而缓存正
     // 是让同一份文稿重跑一次不花钱的东西。
-    cost: "生成新音频是一次付费请求。文稿、声音、语速都相同时会复用已生成的音频，不产生费用。",
+    cost: "生成新音频是一次付费请求。文稿和声音都相同时会复用已生成的音频，不产生费用。",
     no_voices: "该账户没有可用的声音。请先在服务商处添加，再重新打开配音。",
     cancel: "取消",
     confirm: "生成",

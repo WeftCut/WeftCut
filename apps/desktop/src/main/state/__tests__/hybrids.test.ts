@@ -220,7 +220,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const trackId = addTrackR.value as string
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
-    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', target_track_id: trackId }, deps)
     expect(actor.snapshot().media_pool[AUDIO_MID]).toBeTruthy()
     expect(actor.snapshot().media_pool[AUDIO_MID].kind).toBe('Audio')
   })
@@ -235,7 +235,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
     const snap0 = actor.snapshot()
     const tStart = root(snap0).duration_us
-    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', target_track_id: trackId }, deps)
     const snap = actor.snapshot()
     const track = root(snap).tracks.find((t) => t.id === trackId)!
     expect(track).toBeTruthy()
@@ -258,7 +258,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     // history entry), and target_track_id is given (no ensureAudioTrack commit),
     // so the only recorded entry from the write-tail is the layer add.
     const lenBefore = actor.historyStatus().len
-    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', target_track_id: trackId }, deps)
     const lenAfter = actor.historyStatus().len
     expect(lenAfter - lenBefore).toBe(1)
     const snap = actor.snapshot()
@@ -275,7 +275,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const trackId = addTrackR.value as string
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload(true))
-    const result = await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    const result = await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', target_track_id: trackId }, deps)
     // Must be a JSON STRING (not an object) — server.ts wraps with String(result).
     expect(typeof result).toBe('string')
     const parsed = JSON.parse(result as string) as { layer_id: string; media_id: string; t_start_us: number; t_end_us: number; cached: boolean }
@@ -294,7 +294,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const trackId = addTrackR.value as string
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
-    const result = await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId, t_start_us: 5_000_000 }, deps)
+    const result = await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', target_track_id: trackId, t_start_us: 5_000_000 }, deps)
     const parsed = JSON.parse(result as string) as { t_start_us: number; t_end_us: number }
     expect(parsed.t_start_us).toBe(5_000_000)
     expect(parsed.t_end_us).toBe(5_000_000 + DURATION_US)
@@ -305,7 +305,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () =>
       JSON.stringify({ media_item: audioMediaItem(), duration_us: 1_008_000, cached: false }))
-    const parsed = JSON.parse(await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, t_start_us: 1_010_000 }, deps) as string) as
+    const parsed = JSON.parse(await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', t_start_us: 1_010_000 }, deps) as string) as
       { layer_id: string; t_start_us: number; t_end_us: number }
     const layer = root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === parsed.layer_id)!
     expect(layer.t_start_us).not.toBe(1_010_000)
@@ -320,7 +320,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const trackId = addTrackR.value as string
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
-    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', target_track_id: trackId }, deps)
     expect(deps._enqueueDerivatives).toHaveBeenCalledTimes(1)
     const arg = deps._enqueueDerivatives.mock.calls[0][0] as import('../model').MediaItem[]
     expect(arg[0].id).toBe(AUDIO_MID)
@@ -332,7 +332,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const actor = freshActor()
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
-    const parsed = JSON.parse(await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1 }, deps) as string) as { track_id: string }
+    const parsed = JSON.parse(await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy' }, deps) as string) as { track_id: string }
     const tracks = root(actor.snapshot()).tracks
     expect(tracks).toHaveLength(2)
     expect(parsed.track_id).toBe(tracks[tracks.length - 1].id)
@@ -347,7 +347,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     actor.dispatch('add_media', { id: BUSY, kind: 'Audio', duration_us: 4_000_000 })
     expect(actor.dispatch('add_layer', { track, kind: 'audio', media: BUSY, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }).ok).toBe(true)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
-    await expect(runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: track, t_start_us: 1_000_000 }, deps)).rejects.toThrow()
+    await expect(runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', target_track_id: track, t_start_us: 1_000_000 }, deps)).rejects.toThrow()
     expect(actor.snapshot().media_pool[AUDIO_MID]).toBeUndefined()
     expect(deps._enqueueDerivatives).not.toHaveBeenCalled()
   })
@@ -358,7 +358,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const POOLED = '00000000-0000-0000-0000-0000000000cc'
     expect(actor.dispatch('add_media_item', { media: { ...audioMediaItem(), id: POOLED } }).ok).toBe(true)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload(true))
-    const parsed = JSON.parse(await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1 }, deps) as string) as { layer_id: string; media_id: string }
+    const parsed = JSON.parse(await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy' }, deps) as string) as { layer_id: string; media_id: string }
     expect(parsed.media_id).toBe(POOLED)
     expect(Object.keys(actor.snapshot().media_pool)).toEqual([POOLED])
     const placed = root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === parsed.layer_id)!
@@ -375,7 +375,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     actor.dispatch('add_media', { id: BUSY, kind: 'Audio', duration_us: 4_000_000 })
     expect(actor.dispatch('add_layer', { track, kind: 'audio', media: BUSY, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }).ok).toBe(true)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
-    await expect(runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: track, t_start_us: 1_000_000 }, deps)).rejects.toThrow()
+    await expect(runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', target_track_id: track, t_start_us: 1_000_000 }, deps)).rejects.toThrow()
     expect(actor.snapshot().media_pool[POOLED]).toBeTruthy()
   })
 
