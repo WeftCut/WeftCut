@@ -1525,6 +1525,12 @@ app.whenReady().then(async () => {
       version: app.getVersion(),
     }),
   })
+  // Refresh <userData>/dsh-plugin/: the DeepSeek Harness plugin whose entry
+  // runs the binary above (ADR 0183). Without a binary it would name nothing.
+  if (cliPath !== null) {
+    const { installDshPlugin } = await import('./mcp/dshPluginInstall.js')
+    installDshPlugin({ cliPath, version: app.getVersion() })
+  }
   // An AppImage registers its own file types; the deb, NSIS and the macOS
   // bundle are registered by installing them (ADR 0181).
   if (app.isPackaged && process.platform === 'linux') {

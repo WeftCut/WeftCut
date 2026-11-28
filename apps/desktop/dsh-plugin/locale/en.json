@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WeftCut",
+    "description": "Connects WeftCut's MCP server and shows WeftCut's side preview in a right-sidebar tab: the timeline, player controls, export progress and, on request, a live picture of the edit. Open it from the sidebar's new-tab page, with /weftcut, or by asking the agent; WeftCut is started if it is closed. WeftCut writes this plugin into its profile and keeps it up to date. The page reads the project and drives the player; it never edits."
+  }
+}

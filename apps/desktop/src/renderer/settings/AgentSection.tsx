@@ -276,6 +276,7 @@ export function AgentSection() {
   /// Where the selected host's snippet goes, from the table's places on this
   /// OS. A host with none (Generic) is told to follow its own docs.
   const hint = () => {
+    if (host.format === "dsh-plugin") return t("connect.dsh_plugin_hint");
     if (host.places.length === 0) return t("connect.hint_facts");
     const places = host.places.map((place) => {
       const path = placePath(place, HOST_OS[rendererOS]);
@@ -409,7 +410,12 @@ export function AgentSection() {
     >
       {httpSnippet === null ? (
         <p className="settings-blurb">
-          {t("connect.http_unsupported", { host: host.name })}
+          {t(
+            host.format === "dsh-plugin"
+              ? "connect.http_plugin"
+              : "connect.http_unsupported",
+            { host: host.name },
+          )}
         </p>
       ) : (
         <div className="connect-snippet">
