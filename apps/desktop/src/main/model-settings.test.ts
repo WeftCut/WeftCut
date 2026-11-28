@@ -1,42 +1,44 @@
 import { describe, expect, it } from "vitest";
-import { builtinKeyTag, createModelSettingsStore, freshModelSettings, migrateModelSettings, verifiedIdentity } from "./model-settings";
+import { builtinKeyTag, createModelSettingsStore, freshModelSettings, migrateModelSettings, verifiedIdentity, type StoredKeys } from "./model-settings";
 import { modelProfileToVlmSnapshot } from "./vlm-config";
 import { VLM_CONFIG_DEFAULTS } from "../shared/vlm-config";
 
 const managed = (id: string) => ({ binary: `C:/managed/${id}/run.exe`, model: `C:/managed/${id}/model` });
+const NO_KEYS: StoredKeys = { hasKey: () => false, copyKey: () => {} };
+const ALL_KEYS: StoredKeys = { hasKey: () => true, copyKey: () => {} };
 describe("model settings migration", () => {
   it("persists an explicit None across restart even when verified profiles remain", () => {
     const files = new Map<string, string>();
-    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys: NO_KEYS,
       fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
     const store = factory(), state = store.get();
     state.profiles[0]!.verified = true;
     state.active.speech = "whisper-base"; store.set(state);
     state.active.speech = null; store.set(state);
     const restored = factory().get();
-    expect(restored.active).toEqual({ speech: null, vlm: null });
+    expect(restored.active).toEqual({ speech: null, vlm: null, voiceover: null });
     expect(restored.profiles[0]?.verified).toBe(true);
   });
   it("keeps a fresh installation inactive", () => {
     const next = migrateModelSettings({ speech: { preferred_engine: "auto", local: {} }, vlm: VLM_CONFIG_DEFAULTS,
-      managedLocal: managed, exists: () => true, hasKey: () => false, copyKey: () => {} });
-    expect(next.active).toEqual({ speech: null, vlm: null });
+      managedLocal: managed, exists: () => true, keys: NO_KEYS });
+    expect(next.active).toEqual({ speech: null, vlm: null, voiceover: null });
   });
   it("preserves manual model paths and resolves legacy auto only once", () => {
     const next = migrateModelSettings({ speech: { preferred_engine: "auto", local: { whisper_cpp: { binary: "C:/my/run.exe", model: "D:/my/model.bin" } } },
-      vlm: VLM_CONFIG_DEFAULTS, managedLocal: managed, exists: () => true, hasKey: () => true, copyKey: () => {} });
+      vlm: VLM_CONFIG_DEFAULTS, managedLocal: managed, exists: () => true, keys: ALL_KEYS });
     expect(next.active.speech).toBe("openai-whisper");
     expect(next.profiles.find(p => p.id === "custom-legacy-whisper_cpp")?.local?.model).toBe("D:/my/model.bin");
     expect(next.profiles.find(p => p.id === "whisper-base")?.custom).toBeUndefined();
   });
   it("keeps an explicit unavailable selection instead of switching to a cloud key", () => {
     const next = migrateModelSettings({ speech: { preferred_engine: "whisper_cpp", local: {} }, vlm: VLM_CONFIG_DEFAULTS,
-      managedLocal: managed, exists: () => false, hasKey: () => true, copyKey: () => {} });
+      managedLocal: managed, exists: () => false, keys: ALL_KEYS });
     expect(next.active.speech).toBe("whisper-base");
   });
   it("recognizes managed files and retains their tuning", () => {
     const next = migrateModelSettings({ speech: { preferred_engine: "whisper_cpp", local: { whisper_cpp: { ...managed("whisper-base"), threads: 8 } } },
-      vlm: VLM_CONFIG_DEFAULTS, managedLocal: managed, exists: () => true, hasKey: () => false, copyKey: () => {} });
+      vlm: VLM_CONFIG_DEFAULTS, managedLocal: managed, exists: () => true, keys: NO_KEYS });
     expect(next.active.speech).toBe("whisper-base");
     expect(next.profiles.find(p => p.id === "whisper-base")?.local?.threads).toBe(8);
   });
@@ -44,7 +46,7 @@ describe("model settings migration", () => {
     const copies: string[][] = [];
     const next = migrateModelSettings({ speech: { preferred_engine: "auto", local: {} },
       vlm: { ...VLM_CONFIG_DEFAULTS, preferred_engine: "byo_endpoint", endpoint: { url: "http://localhost/v1/chat/completions", model: "my-model" } },
-      managedLocal: managed, exists: () => true, hasKey: () => false, copyKey: (a, b) => { copies.push([a, b]); } });
+      managedLocal: managed, exists: () => true, keys: { hasKey: () => false, copyKey: (a, b) => { copies.push([a, b]); } } });
     expect(next.active.vlm).toBe("custom-legacy-endpoint");
     expect(copies).toEqual([["vlm_endpoint", "model-custom-legacy-endpoint"]]);
     expect(next.profiles.find(p => p.id === next.active.vlm)?.name).toBe("my-model");
@@ -62,7 +64,8 @@ describe("model settings migration", () => {
     const store = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json",
       migrate: () => migrateModelSettings({ speech: { preferred_engine: "auto", local: {} },
         vlm: { ...VLM_CONFIG_DEFAULTS, preferred_engine: "qwen3_vl", local: { qwen3_vl: { binary: "C:/my/llama.exe", model: "C:/my/q.gguf", mmproj: "" } } },
-        managedLocal: managed, exists: () => true, hasKey: () => false, copyKey: () => {} }),
+        managedLocal: managed, exists: () => true, keys: NO_KEYS }),
+      keys: NO_KEYS,
       fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
     expect(store().get().active.vlm).toBe("custom-legacy-qwen3_vl");
     const reloaded = store().get();
@@ -75,7 +78,7 @@ describe("model settings migration", () => {
   });
   it("round-trips an endpoint's request timeout and drops one out of range", () => {
     const files = new Map<string, string>();
-    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys: NO_KEYS,
       fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
     const store = factory(); const state = store.get();
     const ep = (id: string, timeout_s: number) => ({ id, name: id, family: "vlm" as const, backend: "byo_endpoint" as const, locality: "online" as const,
@@ -89,7 +92,7 @@ describe("model settings migration", () => {
   });
   it("round-trips a vision endpoint's batching and drops values out of range", () => {
     const files = new Map<string, string>();
-    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys: NO_KEYS,
       fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
     const store = factory(); const state = store.get();
     const ep = (id: string, frames_per_request: number, concurrency: number) => ({ id, name: id, family: "vlm" as const, backend: "byo_endpoint" as const,
@@ -121,14 +124,24 @@ describe("model settings migration", () => {
     expect(builtinKeyTag("vlm", "byo_endpoint")).toBe("vlm_endpoint");
     expect(builtinKeyTag("speech", "byo_endpoint")).toBe("speech_endpoint");
     expect(builtinKeyTag("speech", "openai")).toBe("openai");
+    // One key per provider, whichever family reads it (ADR 0184).
+    expect(builtinKeyTag("voiceover", "openai")).toBe("openai");
+    expect(builtinKeyTag("speech", "elevenlabs")).toBe("elevenlabs");
+    expect(builtinKeyTag("voiceover", "elevenlabs")).toBe("elevenlabs");
     expect(builtinKeyTag("speech", "whisper_cpp")).toBeUndefined();
     const files = new Map<string, string>();
-    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys: NO_KEYS,
       fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
     factory().set(freshModelSettings());
     const restored = factory().get();
     expect(restored.profiles.find(p => p.id === "speech-online")?.keyTag).toBe("speech_endpoint");
     expect(restored.profiles.find(p => p.id === "vlm-online")?.keyTag).toBe("vlm_endpoint");
+    const tagOf = (id: string) => restored.profiles.find(p => p.id === id)?.keyTag;
+    expect(tagOf("openai-tts")).toBe(tagOf("openai-whisper"));
+    for (const id of ["elevenlabs-tts-v4", "elevenlabs-tts-multilingual-v2", "elevenlabs-tts-flash-v2-5"]) {
+      expect(tagOf(id)).toBe(tagOf("elevenlabs-scribe"));
+      expect(tagOf(id)).not.toBe(tagOf("openai-tts"));
+    }
   });
   // Catalog entries reach a settings file written before they existed: the
   // store starts from the catalog and overlays what is on disk.
@@ -136,7 +149,7 @@ describe("model settings migration", () => {
     const files = new Map<string, string>([["/config/models.json", JSON.stringify({ version: 1, active: { speech: "whisper-base", vlm: null },
       profiles: [{ id: "whisper-base" }, { id: "custom-stt", name: "Intranet", family: "speech", backend: "byo_endpoint", custom: true,
         endpoint: { url: "http://10.0.0.5:8080/inference", model: "", timeout_s: 1200 } }] })]]);
-    const store = createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+    const store = createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys: NO_KEYS,
       fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
     const state = store.get();
     expect(state.profiles.find(p => p.id === "speech-online")).toMatchObject({ family: "speech", backend: "byo_endpoint", locality: "online" });
@@ -146,7 +159,7 @@ describe("model settings migration", () => {
   });
   it("reloads custom models while refusing forged catalog and credential references", () => {
     const files = new Map<string, string>();
-    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys: NO_KEYS,
       fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
     const store = factory(); const state = store.get();
     state.profiles.push({ id: "custom-legacy-qwen3_vl", name: "Own model", family: "vlm", backend: "byo_endpoint", locality: "online", custom: true,
@@ -156,5 +169,95 @@ describe("model settings migration", () => {
     expect(restored.active.vlm).toBe("custom-legacy-qwen3_vl");
     const custom = restored.profiles.find(p => p.id === "custom-legacy-qwen3_vl")!;
     expect(custom.artifacts).toEqual([]); expect(custom.keyTag).toBe("model-custom-legacy-qwen3_vl");
+  });
+  // Voiceover runs only its built-in providers, and an ElevenLabs profile
+  // reads the provider's one key: neither has a custom profile to reload.
+  it("drops a custom voiceover or ElevenLabs profile on reload", () => {
+    const files = new Map<string, string>([["/config/models.json", JSON.stringify({ version: 1, active: { speech: "custom-eleven", vlm: null, voiceover: "custom-voice" },
+      profiles: [{ id: "custom-eleven", name: "A", family: "speech", backend: "elevenlabs", custom: true },
+        { id: "custom-voice", name: "B", family: "voiceover", backend: "openai", custom: true }] })]]);
+    const restored = createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys: ALL_KEYS,
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } }).get();
+    expect(restored.profiles.some(p => p.custom)).toBe(false);
+    expect(restored.active).toEqual({ speech: null, vlm: null, voiceover: null });
+  });
+  // A selection naming an id this build does not have (another build's entry)
+  // reads as None, not as a crash or a substitute; the stored `voiceover` is a
+  // choice already made, so the migration does not pick one either.
+  it("reads a voiceover selection of an id it does not know as None", () => {
+    const files = new Map<string, string>([["/config/models.json", JSON.stringify({ version: 1, active: { speech: null, vlm: null, voiceover: "elevenlabs-tts" },
+      profiles: [{ id: "elevenlabs-tts", name: "ElevenLabs", family: "voiceover", backend: "elevenlabs", verified: true }] })]]);
+    const restored = createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys: ALL_KEYS,
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } }).get();
+    expect(restored.active.voiceover).toBeNull();
+    expect(restored.profiles.map(p => p.id)).not.toContain("elevenlabs-tts");
+  });
+});
+
+/** ADR 0184's one-shot migration: settings saved before voiceover was a family
+ *  select OpenAI voiceover exactly when voiceover worked for them. */
+describe("voiceover selection migration", () => {
+  /** A settings file as an earlier build wrote it: no `voiceover` in `active`. */
+  function earlier(active: { speech: string | null }, profiles: unknown[] = []) {
+    return new Map<string, string>([["/config/models.json", JSON.stringify({ version: 1, active: { ...active, vlm: null }, profiles })]]);
+  }
+  function keyring(tags: string[]) {
+    const held = new Set(tags);
+    const copies: string[][] = [];
+    const keys: StoredKeys = { hasKey: tag => held.has(tag), copyKey: (from, to) => { copies.push([from, to]); held.add(to); } };
+    return { held, copies, keys };
+  }
+  function storeOver(files: Map<string, string>, keys: StoredKeys) {
+    return createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings, keys,
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
+  }
+  const savedVoiceover = (files: Map<string, string>) => (JSON.parse(files.get("/config/models.json")!) as { active: Record<string, unknown> }).active.voiceover;
+
+  it("selects OpenAI for a key under the openai tag, whatever transcribes, and saves the choice", () => {
+    const files = earlier({ speech: "whisper-base" });
+    const { keys, copies } = keyring(["openai"]);
+    expect(storeOver(files, keys).get().active.voiceover).toBe("openai-tts");
+    expect(savedVoiceover(files)).toBe("openai-tts");
+    expect(copies).toEqual([]);
+  });
+
+  it("selects OpenAI for the active custom OpenAI transcription profile's key, copied to openai", () => {
+    const files = earlier({ speech: "custom-mine" }, [{ id: "custom-mine", name: "Mine", family: "speech", backend: "openai", custom: true }]);
+    const { keys, copies } = keyring(["model-custom-mine"]);
+    expect(storeOver(files, keys).get().active.voiceover).toBe("openai-tts");
+    expect(copies).toEqual([["model-custom-mine", "openai"]]);
+  });
+
+  // The custom profile's key served voiceover only while it was the selected
+  // transcription model.
+  it("leaves voiceover at None for an inactive custom profile's key or another provider's", () => {
+    const files = earlier({ speech: "whisper-base" }, [{ id: "custom-mine", name: "Mine", family: "speech", backend: "openai", custom: true }]);
+    const { keys, copies } = keyring(["model-custom-mine", "elevenlabs", "speech_endpoint"]);
+    expect(storeOver(files, keys).get().active.voiceover).toBeNull();
+    expect(copies).toEqual([]);
+    expect(savedVoiceover(files)).toBeNull();
+  });
+
+  it("runs once: a saved None stays None after a key appears", () => {
+    const files = earlier({ speech: null });
+    const ring = keyring([]);
+    expect(storeOver(files, ring.keys).get().active.voiceover).toBeNull();
+    ring.held.add("openai");
+    expect(storeOver(files, ring.keys).get().active.voiceover).toBeNull();
+  });
+
+  it("runs once: a saved selection survives the key leaving", () => {
+    const files = earlier({ speech: null });
+    const ring = keyring(["openai"]);
+    expect(storeOver(files, ring.keys).get().active.voiceover).toBe("openai-tts");
+    ring.held.clear();
+    expect(storeOver(files, ring.keys).get().active.voiceover).toBe("openai-tts");
+  });
+
+  it("gives settings migrated from the legacy stores the same rule", () => {
+    const legacy = (keys: StoredKeys) => migrateModelSettings({ speech: { preferred_engine: "whisper_cpp", local: {} }, vlm: VLM_CONFIG_DEFAULTS,
+      managedLocal: managed, exists: () => true, keys });
+    expect(legacy(keyring(["openai"]).keys).active.voiceover).toBe("openai-tts");
+    expect(legacy(keyring(["elevenlabs"]).keys).active.voiceover).toBeNull();
   });
 });

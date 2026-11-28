@@ -1,7 +1,7 @@
 // Speech-backend config persisted at <userData>/speech_config.json, owned by
 // the Electron main process. NON-secret: the preferred engine + each local
-// engine's binary/model paths (device/threads hints). The OpenAI API KEY is
-// secret and lives in safeStorage (keys.ts / cloud_keys.json) — NEVER here.
+// engine's binary/model paths (device/threads hints). Cloud API KEYS are
+// secret and live in safeStorage (keys.ts / cloud_keys.json) — NEVER here.
 // (ADR 0036 "Config splits by secrecy".)
 //
 // The on-disk file path + JSON field names are a COMPATIBILITY SURFACE: once
@@ -9,6 +9,7 @@
 // without a migration. Bad-config recovery: a missing / empty / corrupt file,
 // or one written by an older build that lacks a field, degrades to defaults.
 
+import { isCloudBackend, type CloudBackend, type ModelProfile } from "../shared/inference-models";
 import {
   SPEECH_CONFIG_DEFAULTS,
   PREFERRED_ENGINES,
@@ -136,10 +137,8 @@ export type SpeechBackendConfigJson =
 export interface SpeechSnapshotSources {
   /// The store's local engines (`speech_config.json`), keyed by backend tag.
   local: Record<string, LocalEngineConfig>;
-  /// The OpenAI key from safeStorage: the active cloud profile's own key when
-  /// that is the selection, else the `openai` tag's — TTS needs it even while
-  /// transcription runs on a local engine.
-  openaiKey?: string | null;
+  /// Cloud provider keys from safeStorage, by backend tag.
+  apiKeys?: Partial<Record<CloudBackend, string | null | undefined>>;
   /// The active speech profile's endpoint, when it is one, and its key.
   endpoint?: { url: string; model?: string; timeout_s?: number } | null;
   endpointKey?: string | null;
@@ -147,8 +146,8 @@ export interface SpeechSnapshotSources {
 
 /// Merge the non-secret store config + the secrets into the
 /// `Record<backendTag, BackendConfig>` snapshot every speech call carries
-/// (`speech_config` on `transcribe_clip` / `synthesize_speech`, `speechConfig`
-/// on the speech Settings commands; ADR 0036). Pure — the twin of
+/// (`speech_config` on `transcribe_clip`, `synthesize_speech` and `list_voices`;
+/// ADR 0036). Pure — the twin of
 /// `modelProfileToVlmSnapshot`. Built per call, so a key saved or a model
 /// switched a moment ago is what the next call sees, with nothing to push.
 ///
@@ -156,8 +155,10 @@ export interface SpeechSnapshotSources {
 /// as configured, and the endpoint would send a bare `Bearer ` for one.
 export function toSpeechBackendSnapshot(src: SpeechSnapshotSources): Record<string, SpeechBackendConfigJson> {
   const out: Record<string, SpeechBackendConfigJson> = {};
-  const openaiKey = src.openaiKey?.trim() ?? "";
-  if (openaiKey !== "") out.openai = { kind: "api_key", key: openaiKey };
+  for (const [tag, raw] of Object.entries(src.apiKeys ?? {})) {
+    const key = raw?.trim() ?? "";
+    if (key !== "") out[tag] = { kind: "api_key", key };
+  }
   for (const [tag, lc] of Object.entries(src.local)) {
     out[tag] = {
       kind: "local",
@@ -181,4 +182,24 @@ export function toSpeechBackendSnapshot(src: SpeechSnapshotSources): Record<stri
     };
   }
   return out;
+}
+
+/// The arguments a voiceover call carries besides the caller's
+/// (`synthesize_speech`, `list_voices`): the provider selected in Settings →
+/// Voiceover and the model its entry names, `null` for none, and only that
+/// provider's key. Nothing else rides along, so a key saved for transcription
+/// never picks the voiceover engine (ADR 0184).
+export interface VoiceoverArgs {
+  speech_config: Record<string, unknown>;
+  voiceover_backend: string | null;
+  voiceover_model: string | null;
+}
+
+export function toVoiceoverArgs(profile: Pick<ModelProfile, "backend" | "keyTag" | "ttsModel"> | null, keys: Record<string, string>): VoiceoverArgs {
+  if (!profile || !isCloudBackend(profile.backend)) return { speech_config: {}, voiceover_backend: null, voiceover_model: null };
+  return {
+    speech_config: toSpeechBackendSnapshot({ local: {}, apiKeys: { [profile.backend]: keys[profile.keyTag ?? ""] } }),
+    voiceover_backend: profile.backend,
+    voiceover_model: profile.ttsModel ?? null,
+  };
 }

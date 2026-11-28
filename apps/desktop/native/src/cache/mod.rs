@@ -455,11 +455,9 @@ impl CacheLayout {
         self.shot_stats_dir().join(format!("{key}.json"))
     }
 
-    /// Synthesized TTS output. Content-addressed by `blake3(model || '\0' ||
-    /// voice || '\0' || speed || '\0' || text)` so repeated requests with the
-    /// same parameters skip the API call entirely — see
-    /// `speech::backends::openai::tts_cache_key` and the `synthesize_speech`
-    /// MCP tool.
+    /// Synthesized TTS output, content-addressed by every input that changes
+    /// the audio so a repeated request skips the API call entirely — see
+    /// `speech::synthesizer::cache_key` and the `synthesize_speech` MCP tool.
     pub fn voiceover_dir(&self) -> PathBuf {
         self.current_root().join("voiceover")
     }

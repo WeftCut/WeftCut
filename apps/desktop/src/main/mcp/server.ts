@@ -40,6 +40,7 @@ import { serveProjectResource, buildResourceInjection, RESOURCE_NOT_FOUND } from
 import { withDerivativeState } from '../state/derivative-jobs.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { MediaItem } from '../state/model.js'
+import type { VoiceoverArgs } from '../speech-config.js'
 import type { ActorHandle, ChangeEvent } from '../state/actor.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type McpToolErrorJson, type ToolAnnotations } from '../state/mcp-commands.js'
@@ -102,8 +103,7 @@ function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) 
 /** Per-call speech config provider (transcribe_clip): the merged backend-config
  *  snapshot the stateless resolver reads (ADR 0036) keyed by backend tag, plus
  *  the selected engine, injected as a SOFT preference. Built at call time, so a
- *  key saved or a model switched a moment ago is what the next call runs on.
- *  `synthesize_speech` gets the same `config` at the host's compute facade. */
+ *  key saved or a model switched a moment ago is what the next call runs on. */
 export type SpeechProvider = () => {
   config: Record<string, unknown>
   preferred: string | null
@@ -112,6 +112,12 @@ export type SpeechProvider = () => {
   languages?: Record<string, readonly string[]>
 }
 const NO_SPEECH: SpeechProvider = () => ({ config: {}, preferred: null })
+
+/** Per-call voiceover arguments (`toVoiceoverArgs`). `list_voices` gets them
+ *  here; `synthesize_speech` at the host's compute facade, from the same
+ *  provider. */
+export type VoiceoverProvider = () => VoiceoverArgs
+const NO_VOICEOVER: VoiceoverProvider = () => ({ speech_config: {}, voiceover_backend: null, voiceover_model: null })
 
 /** Per-call VLM config provider (describe_clip + media://{id}/description): the
  *  merged backend-config snapshot the stateless resolver reads (ADR 0024) keyed
@@ -412,6 +418,7 @@ export async function handleCallTool(
   compute?: ComputeCaller,
   captureMotifPng: MotifPngCapture = NO_MOTIF_CAPTURE,
   companionLink: string | null = null,
+  getVoiceover: VoiceoverProvider = NO_VOICEOVER,
 ): Promise<ServerResult> {
   const route = routeMcpTool(name)
   // Nothing the user can see is open: every project tool refuses before it
@@ -426,7 +433,7 @@ export async function handleCallTool(
     // LANDMINE: no `await` may precede this call — the 'ts' route commits inside
     // `dispatchTool`'s synchronous prefix, and `withLog`'s commit window closes
     // at the first await (see its window-integrity cases).
-    return await dispatchTool(backend, getTsHost, route, name, args, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng, companionLink)
+    return await dispatchTool(backend, getTsHost, route, name, args, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng, companionLink, getVoiceover)
   } catch (e) {
     if (e instanceof ComputeCancelledError) return cancelledToolResult(e)
     if (e instanceof ExportValidationError || e instanceof ExportJobError) return toolErrorResult(exportRefusal(e))
@@ -463,6 +470,7 @@ async function dispatchTool(
   compute: ComputeCaller | undefined,
   captureMotifPng: MotifPngCapture,
   companionLink: string | null,
+  getVoiceover: VoiceoverProvider,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (route === 'export') {
@@ -800,7 +808,9 @@ async function dispatchTool(
   if (!MCP_TOOLS.has(name) && !(await rustCatalog(backend)).tools.some((t) => t.name === name)) throw new UnknownToolError(name)
   const refused = await refuseBadArgs(backend, name, args)
   if (refused) return refused
-  return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify(args)), name)
+  // Spread last, so the selection is the user's whatever the caller sent.
+  const forwarded = name === 'list_voices' ? { ...args, ...getVoiceover() } : args
+  return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify(forwarded)), name)
 }
 
 /** A job record as an agent reads it: a failed job's `error.message` comes
@@ -1135,6 +1145,7 @@ export interface McpServerOptions {
   getTsHost?: () => TsActorHost | null
   getSpeech?: SpeechProvider
   getVlm?: VlmProvider
+  getVoiceover?: VoiceoverProvider
   /** Resolves a subject Audio layer to the baked peaks file `detect_pauses`
    *  must read. Omitted → the raw media peaks, the pre-bake behaviour. */
   peaksPathFor?: PeaksPathProvider
@@ -1157,6 +1168,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   const getTsHost = opts.getTsHost ?? (() => null)
   const getSpeech = opts.getSpeech ?? NO_SPEECH
   const getVlm = opts.getVlm ?? NO_VLM
+  const getVoiceover = opts.getVoiceover ?? NO_VOICEOVER
   const peaksPathFor = opts.peaksPathFor ?? NO_PEAKS_PATH
   const captureMotifPng = opts.captureMotifPng ?? NO_MOTIF_CAPTURE
   // `observe` is the session's to supply, not the caller's: it is the one log
@@ -1211,7 +1223,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     const compute = COMPUTE_TOOLS.has(name)
       ? mcpComputeCaller({ extra, client: client ?? 'MCP', closed: () => server.transport === undefined, onPhase: activityPhase(getTsHost) })
       : undefined
-    return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng, opts.companionLink ?? null)
+    return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng, opts.companionLink ?? null, getVoiceover)
   }, log, clientInfo)
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
     callTool(req, extra))

@@ -1,7 +1,7 @@
 import { ArrowUpDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { MODEL_EVENTS, type ModelBackend, type ModelFamily, type ModelOperation, type ModelsView, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
+import { isCloudBackend, MODEL_EVENTS, type ModelBackend, type ModelFamily, type ModelOperation, type ModelsView, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
 import { modelsList, modelsUse, modelsCancel, modelsUnselect, modelsClearDownloads, modelsRemoveCustom } from "../ipc";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,11 @@ const adapters: Record<ModelFamily, { id: string; backend: ModelBackend; label: 
     { id: "qwen3-vl-4b", backend: "minicpm_v", label: "MiniCPM-V · llama-mtmd" },
     { id: "vlm-online", backend: "byo_endpoint", label: "OpenAI-compatible" },
   ],
+  // Built-in providers only (ADR 0184).
+  voiceover: [],
+};
+const blurbs: Record<ModelFamily, string> = {
+  speech: "settings.speech_blurb", vlm: "settings.vlm_blurb", voiceover: "settings.voiceover_blurb",
 };
 export function ModelSection({ family, onError }: { family: ModelFamily; onError(msg: string): void }) {
   const { t } = useTranslation();
@@ -139,17 +144,19 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
       setPanel(null); setConfirmation(null);
     })}>{t("models.confirm_remove")}</Button><Button size="sm" variant="ghost" onClick={() => setConfirmation(null)}>{t("models.cancel")}</Button></div>
   </div>;
+  // A voiceover choice is an online service with nothing to download.
+  const currentLabel = family === "voiceover" ? "models.current_provider_label" : "models.current_label";
   return <section className="settings-section settings-model-section">
-    <p className="settings-blurb">{t(family === "speech" ? "settings.speech_blurb" : "settings.vlm_blurb")}</p>
+    <p className="settings-blurb">{t(blurbs[family])}</p>
     {keysUnencrypted && (
       <p className="settings-warn" data-testid="keys-unencrypted">{t("app_notice.keyring_unavailable.body")}</p>
     )}
     <div className="settings-model-selector">
-      <span className="settings-slider-label">{t("models.current_label")}</span>
-      <ModelPicker models={models} activeId={view.active[family]} disabled={submitting} preparing={preparing} onChoose={choose}
-        onAdd={() => { setDialogError(""); setConfirmation(null); setPanel({ kind: "add" }); }} />
+      <span className="settings-slider-label">{t(currentLabel)}</span>
+      <ModelPicker label={t(currentLabel)} models={models} activeId={view.active[family]} disabled={submitting} preparing={preparing} onChoose={choose}
+        {...(adapters[family].length > 0 ? { onAdd: () => { setDialogError(""); setConfirmation(null); setPanel({ kind: "add" }); } } : {})} />
     </div>
-    <p className="settings-toggle-hint">{t("models.switch_hint")}</p>
+    <p className="settings-toggle-hint">{t(family === "voiceover" ? "models.voiceover_switch_hint" : "models.switch_hint")}</p>
     <div className="settings-model-card settings-model-summary" data-testid="current-model-summary">
       {active ? <>
         <div className="settings-model-card-header"><strong>{name(active)}</strong><span className="settings-badge settings-badge-on">{t(active.locality === "local" ? "models.local" : "models.online")}</span></div>
@@ -159,7 +166,9 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
         {actions(active)}
         {inlineEditor && editor.id === active.id && <div className="settings-model-inline-editor">{renderEditor()}</div>}
         {confirm(active.id)}
-      </> : <><strong>{t("models.none_active")}</strong><p className="settings-toggle-hint">{t("models.empty_hint")}</p></>}
+      </> : family === "voiceover"
+        ? <><strong>{t("models.voiceover_none_active")}</strong><p className="settings-toggle-hint">{t("models.voiceover_empty_hint")}</p></>
+        : <><strong>{t("models.none_active")}</strong><p className="settings-toggle-hint">{t("models.empty_hint")}</p></>}
     </div>
     {inlineEditor && editor.id !== active?.id && <>
       {/* Between the two cards the arrow says what the setup card is for: the
@@ -182,7 +191,7 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
     {adding && <AppDialog title={t("models.add_model")} panelClassName="settings-panel settings-model-dialog" dismissOnPointerOutside={false} onClose={() => { setPanel(null); setDialogError(""); }}>
       <div className="settings-model-dialog-body">
         <DialogDescription className="settings-toggle-hint">{t(panel?.kind === "add" ? "models.custom_type_hint" : "models.editor_hint")}</DialogDescription>
-        {panel?.kind === "add" && <div className="settings-model-adapters">{adapters[family].map(a => <Button key={a.backend} variant="outline" onClick={() => setPanel({ kind: "editor", id: a.id, backend: a.backend, mode: "new" })}>{a.label}<span>{t(a.backend === "openai" || a.backend === "byo_endpoint" ? "models.online" : "models.local")}</span></Button>)}</div>}
+        {panel?.kind === "add" && <div className="settings-model-adapters">{adapters[family].map(a => <Button key={a.backend} variant="outline" onClick={() => setPanel({ kind: "editor", id: a.id, backend: a.backend, mode: "new" })}>{a.label}<span>{t(isCloudBackend(a.backend) || a.backend === "byo_endpoint" ? "models.online" : "models.local")}</span></Button>)}</div>}
         {renderEditor()}
         {dialogError && <p role="alert" className="settings-test-err">{dialogError}</p>}
       </div>

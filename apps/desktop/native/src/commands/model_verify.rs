@@ -39,6 +39,10 @@ pub struct VerifyModelArgs {
     local: Option<LocalConfig>,
     endpoint: Option<EndpointConfig>,
     api_key: Option<String>,
+    /// Voiceover only: the profile's model id, the one its calls will inject
+    /// as `voiceover_model`.
+    #[serde(default)]
+    model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -135,11 +139,12 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
         "speech" => {
             use crate::inference::EngineTag;
             use crate::speech::{
-                self, config::BackendConfig, transcriber::TranscribeRequest, SpeechBackend,
+                self, backend::Locality, config::BackendConfig, transcriber::TranscribeRequest,
+                SpeechBackend,
             };
             let backend =
                 SpeechBackend::from_tag(&a.backend).ok_or("Unknown speech model backend")?;
-            let entry = if backend == SpeechBackend::OpenAi {
+            let entry = if backend.locality() == Locality::Cloud {
                 BackendConfig::ApiKey(a.api_key.unwrap_or_default())
             } else if backend == SpeechBackend::ByoEndpoint {
                 let ep = a.endpoint.ok_or("Missing model endpoint")?;
@@ -174,8 +179,22 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
                 })
                 .await
                 .map_err(|e| e.to_string())?;
+            // Silence is a valid answer: the inference ran.
             speech::parse::parse_raw(raw).map_err(|e| e.to_string())?;
             Ok(VerifyResult { device })
+        }
+        "voiceover" => {
+            use crate::inference::EngineTag;
+            use crate::speech::{self, config::BackendConfig, SpeechBackend};
+            let backend =
+                SpeechBackend::from_tag(&a.backend).ok_or("Unknown voiceover provider")?;
+            let cfg = HashMap::from([(
+                a.backend,
+                BackendConfig::ApiKey(a.api_key.unwrap_or_default()),
+            )]);
+            let synthesizer = speech::resolve_synthesizer(Some(backend), a.model.as_deref(), &cfg)?;
+            verify_voiceover(&*synthesizer).await?;
+            Ok(VerifyResult { device: "auto" })
         }
         "vlm" => {
             use crate::inference::EngineTag;
@@ -246,6 +265,25 @@ pub async fn verify_model(a: VerifyModelArgs) -> Result<VerifyResult, String> {
     }
 }
 
+/// A voiceover provider works for the dialog only when it can both list its
+/// voices and speak: they are separate key permissions (ADR 0184), so both are
+/// exercised — one short word with the first voice listed.
+async fn verify_voiceover(synthesizer: &dyn crate::speech::Synthesizer) -> Result<(), String> {
+    let provider = synthesizer.facts().provider.to_string();
+    let voices = synthesizer.voices().await.map_err(|e| e.to_string())?;
+    let voice = voices.into_iter().next().ok_or_else(|| {
+        format!("The {provider} account has no voices. Add one in {provider}, then verify again.")
+    })?;
+    synthesizer
+        .synthesize(crate::speech::SynthesizeRequest {
+            text: "OK".into(),
+            voice: voice.id,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,5 +333,135 @@ mod tests {
             .await
             .unwrap_err()
             .contains("Missing local"));
+    }
+
+    use crate::speech::backends::elevenlabs::{ElevenLabs, ElevenLabsTts, TTS_MODELS};
+
+    /// A voiceover client on `model`, against the loopback `server`.
+    fn eleven_on(
+        server: &crate::inference::http::test_server::TestServer,
+        model: &str,
+    ) -> ElevenLabsTts {
+        let api = ElevenLabs::with_base("key-x", server.url.trim_end_matches("/v1/test"));
+        ElevenLabsTts::new(api, Some(model)).unwrap()
+    }
+
+    fn eleven(server: &crate::inference::http::test_server::TestServer) -> ElevenLabsTts {
+        eleven_on(server, TTS_MODELS[0].0)
+    }
+
+    /// The test word is spoken by the profile's own model, so a model the
+    /// key cannot use fails verification rather than its first real call.
+    #[tokio::test]
+    async fn verification_speaks_with_the_profiles_model() {
+        let voices = r#"{"voices":[{"voice_id":"voice-a1","name":"A"}],"has_more":false}"#;
+        let server = crate::inference::http::test_server::serve(
+            TTS_MODELS
+                .iter()
+                .flat_map(|_| {
+                    [
+                        Some((200, "", voices.to_string())),
+                        Some((200, "", "fake-mp3".to_string())),
+                    ]
+                })
+                .collect(),
+        )
+        .await;
+        for (i, (model, _)) in TTS_MODELS.iter().enumerate() {
+            verify_voiceover(&eleven_on(&server, model)).await.unwrap();
+            let spoken = &server.requests()[2 * i + 1];
+            assert!(
+                spoken.contains(&format!(r#""model_id":"{model}""#)),
+                "{spoken}"
+            );
+        }
+    }
+
+    /// The model rides in the verify request; without one the ElevenLabs
+    /// profile is refused naming the setting, before any request.
+    #[tokio::test]
+    async fn an_elevenlabs_voiceover_without_a_listed_model_is_refused() {
+        for model in [serde_json::Value::Null, serde_json::json!("eleven_unknown")] {
+            let args = serde_json::from_value(serde_json::json!({
+                "family": "voiceover", "backend": "elevenlabs", "apiKey": "k", "model": model,
+            }))
+            .unwrap();
+            let err = verify_model(args).await.unwrap_err();
+            assert!(err.contains("Settings → Voiceover"), "{err}");
+        }
+    }
+
+    /// Both permissions the dialog needs are exercised: the voice list, then
+    /// one short word in the first voice listed.
+    #[tokio::test]
+    async fn an_elevenlabs_voiceover_lists_voices_then_speaks_with_the_first() {
+        let server = crate::inference::http::test_server::serve(vec![
+            Some((
+                200,
+                "",
+                r#"{"voices":[{"voice_id":"voice-a1","name":"A"},{"voice_id":"voice-b2","name":"B"}],"has_more":false}"#
+                    .into(),
+            )),
+            Some((200, "", "fake-mp3".into())),
+        ])
+        .await;
+        verify_voiceover(&eleven(&server)).await.unwrap();
+        let sent = server.requests();
+        assert!(sent[0].starts_with("GET /v2/voices"), "{}", sent[0]);
+        assert!(
+            sent[1].starts_with("POST /v1/text-to-speech/voice-a1?"),
+            "{}",
+            sent[1]
+        );
+        assert!(sent[1].contains(r#""text":"OK""#));
+    }
+
+    #[tokio::test]
+    async fn an_account_without_voices_fails_verification_saying_so() {
+        let server = crate::inference::http::test_server::serve(vec![Some((
+            200,
+            "",
+            r#"{"voices":[],"has_more":false}"#.into(),
+        ))])
+        .await;
+        let err = verify_voiceover(&eleven(&server)).await.unwrap_err();
+        assert!(err.contains("no voices"), "{err}");
+        assert_eq!(server.hits(), 1, "nothing to speak with");
+    }
+
+    /// A key scoped without the voice-list permission fails naming it, not
+    /// as a wrong key.
+    #[tokio::test]
+    async fn a_scoped_key_fails_naming_the_missing_permission() {
+        let server = crate::inference::http::test_server::serve(vec![Some((
+            401,
+            "",
+            r#"{"detail":{"status":"missing_permissions","message":"The API key you used is missing the permission voices_read to execute this operation."}}"#
+                .into(),
+        ))])
+        .await;
+        let err = verify_voiceover(&eleven(&server)).await.unwrap_err();
+        assert!(err.contains("voices_read"), "{err}");
+        assert!(!err.contains("rejected the API key"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_voiceover_provider_or_one_without_tts_is_refused() {
+        let args = serde_json::from_value(
+            serde_json::json!({ "family": "voiceover", "backend": "nope", "apiKey": "k" }),
+        )
+        .unwrap();
+        assert!(verify_model(args)
+            .await
+            .unwrap_err()
+            .contains("Unknown voiceover"));
+        let args = serde_json::from_value(
+            serde_json::json!({ "family": "voiceover", "backend": "funasr", "apiKey": "k" }),
+        )
+        .unwrap();
+        assert!(verify_model(args)
+            .await
+            .unwrap_err()
+            .contains("cannot synthesize"));
     }
 }

@@ -2,7 +2,7 @@ import { AppMenuPositioner } from "../components/PopupPositioner";
 import { Menu } from "@base-ui/react/menu";
 import { Check, ChevronDown, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { ModelView } from "../../shared/inference-models";
+import { isCloudBackend, type ModelView } from "../../shared/inference-models";
 import { AppIcon } from "@/components/AppIcon";
 
 /** The built-in entry points for an OpenAI-compatible endpoint, one per
@@ -15,17 +15,20 @@ export const ONLINE_MODEL_IDS: readonly string[] = ["vlm-online", "speech-online
  * serves the one it loaded); a vision endpoint must name one. */
 export function canSwitchModel(model: ModelView): boolean {
   if (model.locality === "local") return model.installed && model.supported;
-  return !!model.verified && (model.backend === "openai" ? model.hasKey
+  return !!model.verified && (isCloudBackend(model.backend) ? model.hasKey
     : !!model.endpoint?.url && (model.family === "speech" || !!model.endpoint.model));
 }
 
-export function ModelPicker({ models, activeId, disabled, preparing, onChoose, onAdd }: {
+export function ModelPicker({ models, activeId, disabled, preparing, onChoose, onAdd, label }: {
   models: ModelView[];
+  /** The picker's accessible name, as the label beside it reads. */
+  label: string;
   activeId: string | null;
   disabled: boolean;
   preparing: boolean;
   onChoose(id: string): void;
-  onAdd(): void;
+  /** Absent for a family without custom profiles. */
+  onAdd?: () => void;
 }) {
   const { t } = useTranslation();
   const name = (m: ModelView) => ONLINE_MODEL_IDS.includes(m.id) ? t("models.online_model") : m.name;
@@ -36,7 +39,7 @@ export function ModelPicker({ models, activeId, disabled, preparing, onChoose, o
     : m.locality === "local" && !m.custom && m.missingBytes > 0 && m.supported ? t("models.needs_download")
     : t("models.needs_configuration");
   return <Menu.Root>
-    <Menu.Trigger className="app-select settings-model-trigger" disabled={disabled} aria-label={t("models.current_label")}>
+    <Menu.Trigger className="app-select settings-model-trigger" disabled={disabled} aria-label={label}>
       <span>{active ? name(active) : t("models.none_selected")}</span>
       <AppIcon icon={ChevronDown} size="caption" aria-hidden="true" />
     </Menu.Trigger>
@@ -59,8 +62,10 @@ export function ModelPicker({ models, activeId, disabled, preparing, onChoose, o
               </Menu.RadioItem>)}
             </Menu.RadioGroup>
           </div>
-          <Menu.Separator className="menu-separator" />
-          <Menu.Item className="app-menu-item" disabled={preparing} onClick={onAdd}><AppIcon icon={Plus} size="body" />{t("models.add_model")}</Menu.Item>
+          {onAdd && <>
+            <Menu.Separator className="menu-separator" />
+            <Menu.Item className="app-menu-item" disabled={preparing} onClick={onAdd}><AppIcon icon={Plus} size="body" />{t("models.add_model")}</Menu.Item>
+          </>}
         </Menu.Popup>
       </AppMenuPositioner>
     </Menu.Portal>

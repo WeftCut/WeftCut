@@ -207,6 +207,10 @@ const zhCN: Resources = {
   models: {
     current_label: "当前模型", none_selected: "未选择", none_active: "尚未选择模型",
     switch_hint: "选择后自动检查并切换；需要下载或首次配置时会先提示。",
+    current_provider_label: "当前服务",
+    voiceover_switch_hint: "选择后先检查 API 密钥再切换。",
+    voiceover_none_active: "尚未选择服务",
+    voiceover_empty_hint: "选择服务并填写其 API 密钥后才能生成配音。",
     needs_download: "需下载…", needs_configuration: "需配置…", setup_model: "准备使用 {{name}}",
     custom: "自定义", add_model: "添加自定义模型…", edit_model: "模型设置…",
     custom_type_hint: "选择与你的模型或服务匹配的适配方式。",
@@ -236,6 +240,8 @@ const zhCN: Resources = {
     active_remove_hint: "这是当前选用的模型。移除后将回到“未选择”。",
     analysis_options: "视频分析选项",
     openai_speech_hint: "OpenAI Whisper 使用 OpenAI 官方服务和固定的 whisper-1 模型，只需 API Key，暂不支持自定义服务地址。",
+    openai_voiceover_hint: "使用 OpenAI 官方服务。一个 OpenAI API Key 同时用于语音转录和配音。",
+    elevenlabs_hint: "一个 ElevenLabs API Key 同时用于语音转录和配音，需要 Text to Speech、Voices（读取）和 Speech to Text 权限。",
     vision_local_hint: "需要兼容的 llama-mtmd 可执行文件、模型 GGUF，以及与模型配套的 mmproj 投影文件。两个模型文件均为必填。",
     funasr_hint: "需要 sherpa-onnx 可执行文件、兼容的 ONNX 模型及配套的 tokens 文件。",
     whisper_hint: "需要 whisper.cpp 可执行文件和兼容的 Whisper 模型文件。",
@@ -1381,6 +1387,7 @@ const zhCN: Resources = {
     "detect_pauses": "检测停顿",
     "import_media": "导入素材",
     "synthesize_speech": "合成语音",
+    "list_voices": "列出声音",
     "apply_subtitles": "应用字幕",
     "auto_split_by_shot": "按镜头分割",
     "remove_pauses": "移除停顿",
@@ -2121,6 +2128,7 @@ const zhCN: Resources = {
     cat_keyboard: "键盘",
     cat_speech: "语音转录",
     cat_vlm: "视频理解",
+    cat_voiceover: "配音",
     cat_agent: "代理",
     project_scope_blurb: "本页设置仅作用于当前项目，随工程文件保存。",
     preferences_heading: "基础",
@@ -2197,6 +2205,8 @@ const zhCN: Resources = {
     speech_browse: "浏览…",
     vlm_blurb:
       "分析视频画面，生成内容描述，帮助 AI 理解和检索素材。支持本地模型和在线服务。",
+    voiceover_blurb:
+      "把文稿朗读成配音片段，使用你在这里选择的在线服务。",
     // 按它控制什么来命名，而不是按线上的字段名（fps）：用户在选的是模型看得
     // 多细——所以单位必须紧跟在输入框右侧，否则界面上没有一处说明这个数在数什么。
     // 单位不译，zh 界面别处（帧率、导出进度）同样写作 fps。
@@ -3212,7 +3222,6 @@ const zhCN: Resources = {
     script_empty: "输入要朗读的文稿",
     script_too_long: "超出单次配音 {{max}} 字符上限 {{over}} 个",
     voice: "声音",
-    speed: "语速",
     track: "轨道",
     placement: "落在哪里",
     placement_append: "接在所有内容之后",
@@ -3221,7 +3230,8 @@ const zhCN: Resources = {
     placement_playhead_desc: "从 {{time}} 开始。",
     // 话说在按钮之前，而不是账单之后：这是编辑器里唯一按次计费的功能，而缓存正
     // 是让同一份文稿重跑一次不花钱的东西。
-    cost: "生成新音频是一次付费请求。文稿、声音、语速都相同时会复用已生成的音频，不产生费用。",
+    cost: "生成新音频是一次付费请求。文稿和声音都相同时会复用已生成的音频，不产生费用。",
+    no_voices: "该账户没有可用的声音。请先在服务商处添加，再重新打开配音。",
     cancel: "取消",
     confirm: "生成",
     running: "正在生成…",

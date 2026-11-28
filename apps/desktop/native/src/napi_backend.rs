@@ -758,6 +758,20 @@ impl Backend {
         }))
         .map_err(|e| Error::from_reason(e.to_string()))
     }
+
+    /// The Voiceover dialog's read of the selected provider: the same args
+    /// (`{ speech_config, voiceover_backend, voiceover_model }`) and JSON as the
+    /// `list_voices` tool — `{ provider, model, max_chars, format, voices: [{
+    /// id, name, labels, preview_url }] }`.
+    #[napi]
+    pub async fn list_voices_compute(&self, args_json: String) -> napi::Result<String> {
+        let args: crate::mcp::ListVoicesArgs =
+            serde_json::from_str(&args_json).map_err(|e| Error::from_reason(e.to_string()))?;
+        let list = crate::mcp::list_voices_of(&args)
+            .await
+            .map_err(|e| Error::from_reason(e.message))?;
+        serde_json::to_string(&list).map_err(|e| Error::from_reason(e.to_string()))
+    }
 }
 
 #[cfg(feature = "mcp")]

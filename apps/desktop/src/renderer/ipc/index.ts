@@ -2538,15 +2538,11 @@ export async function correctCaptionText(projectId: string, compositionId: strin
 /// names and the hybrid arm reads them straight off the forwarded object — one
 /// wire schema for both callers.
 export interface SynthesizeSpeechArgs {
-  /// The script. The provider caps a single call at 4096 characters; the dialog
+  /// The script, at most the provider's `max_chars` (`listVoices`); the dialog
   /// enforces that in the field rather than letting the request fail.
   text: string;
+  /// A voice `id` from `listVoices`, as listed.
   voice: string;
-  /// Playback rate. Omitted at the provider default (1.0) rather than sent as
-  /// `1`: the TTS cache keys an absent speed apart from an explicit 1.0, so
-  /// sending it would bill a fresh request for a script an agent's
-  /// default-speed call already produced, and vice versa.
-  speed?: number;
   /// The Audio track the layer lands on. Passed explicitly by the dialog even
   /// when it matches the default the hybrid would have picked, so where the
   /// audio goes is never a hidden decision.
@@ -2556,8 +2552,8 @@ export interface SynthesizeSpeechArgs {
 }
 
 /// What one synthesis produced. `cached` is true when the request hit the
-/// content-addressed cache — same `(model, voice, speed, text)`, so no API call
-/// was billed.
+/// content-addressed cache — same provider, model, voice and text, so
+/// no API call was billed.
 export interface SynthesizeSpeechResult {
   layer_id: string;
   media_id: string;
@@ -2568,7 +2564,7 @@ export interface SynthesizeSpeechResult {
 
 /// Synthesize a script and attach it as an Audio layer in ONE commit, so one
 /// undo removes the layer. Rejects with the resolver's own actionable message
-/// when no TTS provider is configured.
+/// when no voiceover provider is selected.
 ///
 /// Parses, because the hybrid arm answers with a JSON STRING: its shape is set
 /// by the MCP side, where every result becomes one `ToolResult` text block
@@ -2579,6 +2575,32 @@ export async function synthesizeSpeech(
 ): Promise<SynthesizeSpeechResult> {
   const json = await invoke<string>("synthesize_speech", { ...args });
   return JSON.parse(json) as SynthesizeSpeechResult;
+}
+
+/// One voice of the selected provider. `id` is what `synthesize_speech` takes,
+/// case-sensitive; `labels` are the provider's own descriptors (ElevenLabs:
+/// accent, gender, age…), empty for OpenAI.
+export interface Voice {
+  id: string;
+  name: string;
+  labels: Record<string, string>;
+  preview_url: string | null;
+}
+
+/// The voiceover provider selected in Settings → Voiceover and what a request
+/// to it may carry — the `list_voices` tool's answer.
+export interface VoiceList {
+  provider: string;
+  model: string;
+  max_chars: number;
+  format: string;
+  voices: Voice[];
+}
+
+/// Rejects with the provider's message, or one naming Settings → Voiceover
+/// when none is selected.
+export async function listVoices(): Promise<VoiceList> {
+  return invoke<VoiceList>("list_voices", {});
 }
 
 // ============================================================

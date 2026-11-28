@@ -120,7 +120,7 @@ Which tool for a job — the descriptions carry the rest:
   `apply_subtitles`. Names and jargon: `correct_caption_text`. Caption look:
   the caption tokens, then `restyle_to_taste`.
 - Your own speech model: `extract_clip_audio`, then `apply_transcripts`.
-- Voiceover: `synthesize_speech` (the `/voiceover` prompt).
+- Voiceover: `list_voices` for the selected provider's voices and limits, then `synthesize_speech` (the `/voiceover` prompt); pace is `retime_layers` on the placed layer, which keeps pitch.
 - Rough cut: `analyze_clip` or `auto_split_by_shot`, then trim and
   `delete_layers` with `ripple: true` where the gap should close.
 - Placing clips, titles, music, stills: one `add_layers` call for the batch.

@@ -8,12 +8,13 @@
 //! - Here, [`parse_raw`] dispatches that tag to the matching
 //!   [`TranscriptParser`] — [`srt::SrtParser`], [`whisper_json::WhisperJsonParser`],
 //!   [`funasr_json::FunAsrParser`] (sherpa-onnx-offline / FunASR Paraformer),
-//!   or [`openai_verbose::OpenAiVerboseParser`] (OpenAI-compatible
-//!   `verbose_json`).
+//!   [`openai_verbose::OpenAiVerboseParser`] (OpenAI-compatible
+//!   `verbose_json`), or [`elevenlabs_json::ElevenLabsParser`] (Scribe).
 
 use super::error::SpeechError;
 use super::transcript::Transcript;
 
+pub mod elevenlabs_json;
 pub mod funasr_json;
 pub mod openai_verbose;
 pub mod srt;
@@ -36,6 +37,10 @@ pub enum RawTranscript {
     /// word timestamps at the top level (OpenAI) or per segment (whisper-server
     /// and others) when the server reports them; interpolated otherwise.
     OpenAiVerboseJson(String),
+    /// ElevenLabs Scribe body — a flat `words` list in seconds, with
+    /// `spacing` and `audio_event` entries between the words → exact word
+    /// timing.
+    ElevenLabsJson(String),
 }
 
 /// The style tag alone, without a payload — what a sidecar run declares it
@@ -47,6 +52,7 @@ pub enum TranscriptFormat {
     WhisperJson,
     FunAsrJson,
     OpenAiVerboseJson,
+    ElevenLabsJson,
 }
 
 impl RawTranscript {
@@ -58,6 +64,7 @@ impl RawTranscript {
             TranscriptFormat::WhisperJson => RawTranscript::WhisperJson(body),
             TranscriptFormat::FunAsrJson => RawTranscript::FunAsrJson(body),
             TranscriptFormat::OpenAiVerboseJson => RawTranscript::OpenAiVerboseJson(body),
+            TranscriptFormat::ElevenLabsJson => RawTranscript::ElevenLabsJson(body),
         }
     }
 
@@ -70,6 +77,7 @@ impl RawTranscript {
             RawTranscript::WhisperJson(_) => TranscriptFormat::WhisperJson,
             RawTranscript::FunAsrJson(_) => TranscriptFormat::FunAsrJson,
             RawTranscript::OpenAiVerboseJson(_) => TranscriptFormat::OpenAiVerboseJson,
+            RawTranscript::ElevenLabsJson(_) => TranscriptFormat::ElevenLabsJson,
         }
     }
 }
@@ -109,6 +117,7 @@ pub fn parse_raw(raw: RawTranscript) -> Result<Transcript, SpeechError> {
         RawTranscript::WhisperJson(body) => whisper_json::WhisperJsonParser.parse(&body),
         RawTranscript::FunAsrJson(body) => funasr_json::FunAsrParser.parse(&body),
         RawTranscript::OpenAiVerboseJson(body) => openai_verbose::OpenAiVerboseParser.parse(&body),
+        RawTranscript::ElevenLabsJson(body) => elevenlabs_json::ElevenLabsParser.parse(&body),
     }
 }
 

@@ -213,6 +213,10 @@ const enUS = {
   models: {
     current_label: "Current model", none_selected: "None", none_active: "No model selected",
     switch_hint: "Select a model to switch automatically. Downloads and first-time setup require an extra step.",
+    current_provider_label: "Current provider",
+    voiceover_switch_hint: "Select a provider to switch. Its API key is checked first.",
+    voiceover_none_active: "No provider selected",
+    voiceover_empty_hint: "Voiceover is off until you choose a provider and enter its API key.",
     needs_download: "Download required…", needs_configuration: "Setup required…", setup_model: "Set up {{name}}",
     custom: "Custom", add_model: "Add custom model…", edit_model: "Model settings…",
     custom_type_hint: "Choose the adapter that matches your model or service.",
@@ -242,6 +246,8 @@ const enUS = {
     active_remove_hint: "This model is currently selected. After removal, the selection will be None.",
     analysis_options: "Video analysis options",
     openai_speech_hint: "OpenAI Whisper uses the official OpenAI service and the fixed whisper-1 model. Only an API key is required; custom server addresses are not supported.",
+    openai_voiceover_hint: "Uses the official OpenAI service. One OpenAI API key serves transcription and voiceover.",
+    elevenlabs_hint: "One ElevenLabs API key serves transcription and voiceover. It needs the Text to Speech, Voices (read) and Speech to Text permissions.",
     vision_local_hint: "Use a compatible llama-mtmd executable, model GGUF and matching mmproj projector. Both model files are required.",
     funasr_hint: "Use a sherpa-onnx executable, compatible ONNX model and its tokens file.",
     whisper_hint: "Use a whisper.cpp executable and compatible Whisper model file.",
@@ -1574,6 +1580,7 @@ const enUS = {
     "detect_pauses": "Detect pauses",
     "import_media": "Import media",
     "synthesize_speech": "Synthesize speech",
+    "list_voices": "List voices",
     "apply_subtitles": "Apply subtitles",
     "auto_split_by_shot": "Split into shots",
     "remove_pauses": "Remove pauses",
@@ -2368,6 +2375,8 @@ const enUS = {
     cat_keyboard: "Keyboard",
     cat_speech: "Transcription",
     cat_vlm: "Video understanding",
+    // The Rust refusals name this tab: "Settings → Voiceover".
+    cat_voiceover: "Voiceover",
     cat_agent: "Agent",
     project_scope_blurb:
       "Settings on this page apply to the current project only and are saved with the project file.",
@@ -2450,6 +2459,8 @@ const enUS = {
     speech_browse: "Browse…",
     vlm_blurb:
       "Describe video frames to help AI understand and search your media. Supports local models and online services.",
+    voiceover_blurb:
+      "Speak a script as a voiceover clip, with the online service you choose here.",
     // Named for what it controls rather than for the wire field (`fps`): what a
     // user is choosing is how closely the model looks — so the unit has to ride
     // in the row, beside the number, or nothing on screen says what the count
@@ -3570,7 +3581,6 @@ const enUS = {
     script_empty: "type the script to be spoken",
     script_too_long: "{{over}} over the {{max}}-character limit for one voiceover",
     voice: "Voice",
-    speed: "Speed",
     track: "Track",
     placement: "Where it lands",
     placement_append: "After everything else",
@@ -3580,7 +3590,8 @@ const enUS = {
     // Said before the button, not after the bill: this is the only entry in the
     // editor that spends money per use, and the cache is what makes a re-run of
     // the same script free.
-    cost: "Generating new audio is a paid request. The same script, voice and speed reuses the audio already made, at no cost.",
+    cost: "Generating new audio is a paid request. The same script and voice reuses the audio already made, at no cost.",
+    no_voices: "This account has no voices. Add one with the provider, then open Voiceover again.",
     cancel: "Cancel",
     confirm: "Generate",
     running: "Generating…",

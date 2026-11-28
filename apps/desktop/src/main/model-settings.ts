@@ -1,11 +1,16 @@
-import { MODEL_DEFINITIONS, isEndpointConcurrency, isEndpointFramesPerRequest, isEndpointTimeout, type ModelBackend, type ModelFamily, type ModelLocalConfig, type ModelProfile, type ModelSettings } from "../shared/inference-models";
+import { MODEL_DEFINITIONS, MODEL_FAMILIES, isCloudBackend, isEndpointConcurrency, isEndpointFramesPerRequest, isEndpointTimeout, type ModelBackend, type ModelFamily, type ModelLocalConfig, type ModelProfile, type ModelSettings } from "../shared/inference-models";
 import type { SpeechConfigFs } from "./speech-config";
 import type { SpeechConfig } from "../shared/speech-config";
 import type { VlmConfig } from "../shared/vlm-config";
 
+/** The backends a custom profile of each family may name. ElevenLabs has no
+ *  custom profile: its built-ins share the provider's one `elevenlabs` key, and
+ *  a custom one would get a `model-<id>` tag of its own. Voiceover has none at
+ *  all (ADR 0184). */
 const BACKENDS: Record<ModelFamily, readonly ModelBackend[]> = {
   speech: ["whisper_cpp", "funasr", "openai", "byo_endpoint"],
   vlm: ["qwen3_vl", "minicpm_v", "byo_endpoint"],
+  voiceover: [],
 };
 export function cleanModelLocal(raw: unknown): ModelLocalConfig {
   const o = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
@@ -39,16 +44,21 @@ export function verifiedIdentity(p: Pick<ModelProfile, "backend" | "local" | "en
   return { backend: p.backend, local: p.local, endpoint: p.endpoint && { url: p.endpoint.url, model: p.endpoint.model } };
 }
 export function freshModelSettings(): ModelSettings {
-  return { version: 1, profiles: MODEL_DEFINITIONS.map(d => ({ ...d, artifacts: [...d.artifacts], ...(d.backend === "openai" ? { keyTag: "openai" } : {}) })), active: { speech: null, vlm: null } };
+  return { version: 1, profiles: MODEL_DEFINITIONS.map(d => {
+    const keyTag = isCloudBackend(d.backend) ? builtinKeyTag(d.family, d.backend) : undefined;
+    return { ...d, artifacts: [...d.artifacts], ...(keyTag ? { keyTag } : {}) };
+  }), active: { speech: null, vlm: null, voiceover: null } };
 }
 
 /** The safeStorage tag a BUILT-IN profile's key lives under (custom profiles
- * get `model-<id>`). Derived from family AND backend: both families have a
+ * get `model-<id>`). A provider's own service has one tag whatever the family:
+ * its key serves transcription and voiceover alike (ADR 0184). An endpoint's
+ * tag is derived from family AND backend: both families have a
  * `byo_endpoint`, and a key typed for the transcription server must never be
  * the one the vision endpoint sends, or the reverse. `vlm_endpoint` predates
  * the speech endpoint and stays what it was. */
 export function builtinKeyTag(family: ModelFamily, backend: ModelBackend): string | undefined {
-  if (backend === "openai") return "openai";
+  if (isCloudBackend(backend)) return backend;
   if (backend === "byo_endpoint") return family === "vlm" ? "vlm_endpoint" : "speech_endpoint";
   return undefined;
 }
@@ -65,7 +75,7 @@ function profileFromDisk(raw: unknown): ModelProfile | null {
         !BACKENDS[o.family].includes(o.backend as ModelBackend)) return null;
     const backend = o.backend as ModelBackend;
     p = { id: o.id, name: o.name.trim().slice(0, 120), family: o.family, backend, custom: true,
-      locality: backend === "openai" || backend === "byo_endpoint" ? "online" : "local", artifacts: [] };
+      locality: isCloudBackend(backend) || backend === "byo_endpoint" ? "online" : "local", artifacts: [] };
   }
   if (o.local) p.local = cleanModelLocal(o.local);
   if (o.endpoint && typeof o.endpoint === "object") {
@@ -85,8 +95,29 @@ function profileFromDisk(raw: unknown): ModelProfile | null {
   return p;
 }
 
+/** Which safeStorage tags hold a key, and a copy of one tag's stored key to
+ *  another. Neither decrypts: the migrations run at startup, where the keyring
+ *  is not asked (`keys.ts`). */
+export interface StoredKeys {
+  hasKey(tag: string): boolean;
+  copyKey(from: string, to: string): void;
+}
+
+/** The voiceover selection for settings saved before voiceover was a family
+ *  (ADR 0184): OpenAI when voiceover worked, that is, with a key under `openai`
+ *  or under the active cloud transcription profile's tag, which voiceover read
+ *  then. That key is copied to `openai`, the tag the OpenAI voiceover profile
+ *  reads. Everyone else starts at None. */
+export function migratedVoiceover(settings: ModelSettings, keys: StoredKeys): string | null {
+  if (keys.hasKey("openai")) return "openai-tts";
+  const speech = settings.profiles.find(p => p.id === settings.active.speech);
+  if (speech?.backend !== "openai" || !speech.keyTag || !keys.hasKey(speech.keyTag)) return null;
+  keys.copyKey(speech.keyTag, "openai");
+  return "openai-tts";
+}
+
 export interface ModelSettingsStore { get(): ModelSettings; set(next: ModelSettings): void }
-export function createModelSettingsStore(deps: { fs: SpeechConfigFs; path: string; dir: string; migrate(): ModelSettings }): ModelSettingsStore {
+export function createModelSettingsStore(deps: { fs: SpeechConfigFs; path: string; dir: string; migrate(): ModelSettings; keys: StoredKeys }): ModelSettingsStore {
   let cached: ModelSettings | undefined;
   const write = (next: ModelSettings) => {
     deps.fs.mkdirp(deps.dir);
@@ -109,11 +140,16 @@ export function createModelSettingsStore(deps: { fs: SpeechConfigFs; path: strin
             if (i < 0) next.profiles.push(p); else next.profiles[i] = p;
           }
           const active = o.active as Record<string, unknown> | undefined;
-          for (const family of ["speech", "vlm"] as const) {
+          for (const family of MODEL_FAMILIES) {
             const p = next.profiles.find(p => p.id === active?.[family] && p.family === family);
             next.active[family] = p?.id ?? null;
           }
-          cached = next;
+          // Once: a stored `voiceover`, null included, is a choice already made.
+          if (active && typeof active === "object" && "voiceover" in active) cached = next;
+          else {
+            next.active.voiceover = migratedVoiceover(next, deps.keys);
+            write(next);
+          }
         } else write(deps.migrate());
       }
       return structuredClone(cached!);
@@ -135,8 +171,7 @@ export function migrateModelSettings(deps: {
   speech: SpeechConfig; vlm: VlmConfig;
   managedLocal(id: string): ModelLocalConfig;
   exists(path: string): boolean;
-  hasKey(tag: string): boolean;
-  copyKey(from: string, to: string): void;
+  keys: StoredKeys;
 }): ModelSettings {
   const next = freshModelSettings();
   const ids = new Map<string, string>();
@@ -159,7 +194,7 @@ export function migrateModelSettings(deps: {
   if (deps.vlm.endpoint) {
     const id = "custom-legacy-endpoint";
     const keyTag = `model-${id}`;
-    deps.copyKey("vlm_endpoint", keyTag);
+    deps.keys.copyKey("vlm_endpoint", keyTag);
     next.profiles.push({ id, name: deps.vlm.endpoint.model || "Online model", family: "vlm", backend: "byo_endpoint",
       locality: "online", artifacts: [], custom: true, endpoint: { url: deps.vlm.endpoint.url, model: deps.vlm.endpoint.model ?? "" }, keyTag });
     ids.set("byo_endpoint", id);
@@ -167,7 +202,7 @@ export function migrateModelSettings(deps: {
   ids.set("openai", "openai-whisper");
   const available = (id: string) => {
     const p = next.profiles.find(p => p.id === id)!;
-    if (p.backend === "openai") return deps.hasKey("openai");
+    if (p.backend === "openai") return deps.keys.hasKey("openai");
     if (p.endpoint) return !!p.endpoint.url;
     const lc = p.local ?? deps.managedLocal(id);
     return !!lc.binary && !!lc.model && deps.exists(lc.binary) && deps.exists(lc.model) &&
@@ -183,5 +218,6 @@ export function migrateModelSettings(deps: {
       next.active[family] = order.map(b => ids.get(b)).find((id): id is string => !!id && available(id)) ?? null;
     }
   }
+  next.active.voiceover = migratedVoiceover(next, deps.keys);
   return next;
 }

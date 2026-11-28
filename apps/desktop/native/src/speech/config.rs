@@ -1,8 +1,8 @@
 //! Per-backend configuration (split by secrecy) and the availability check the
 //! resolver uses to decide whether a backend can actually run right now.
 //!
-//! ADR 0036 "Config splits by secrecy": the OpenAI **key** is secret — it lives
-//! in safeStorage, persisted as `cloud_keys.json`. A local engine's **paths**
+//! ADR 0036 "Config splits by secrecy": a cloud provider's **key** (OpenAI,
+//! ElevenLabs) is secret — it lives in safeStorage, persisted as `cloud_keys.json`. A local engine's **paths**
 //! (binary, model) are non-secret and come from a TS-owned config store
 //! (`main/speech-config.ts` → `speech_config.json`). Electron main merges both,
 //! plus the active endpoint profile, into one `HashMap<String, BackendConfig>`
@@ -351,6 +351,7 @@ mod tests {
         let map: std::collections::HashMap<String, BackendConfig> =
             serde_json::from_value(serde_json::json!({
                 "openai": { "kind": "api_key", "key": " sk-x " },
+                "elevenlabs": { "kind": "api_key", "key": "xi-x" },
                 "whisper_cpp": { "kind": "local", "binary": "w", "model": "m", "threads": 4 },
                 "funasr": { "kind": "local", "binary": "s", "model": "p", "tokens": "t",
                             "device": "cpu" },
@@ -359,6 +360,11 @@ mod tests {
             }))
             .unwrap();
         assert_eq!(map["openai"], BackendConfig::ApiKey("sk-x".into()));
+        assert_eq!(map["elevenlabs"], BackendConfig::ApiKey("xi-x".into()));
+        assert_eq!(
+            availability(SpeechBackend::ElevenLabs, map.get("elevenlabs")),
+            Availability::Available
+        );
         assert_eq!(
             map["whisper_cpp"],
             BackendConfig::Local {

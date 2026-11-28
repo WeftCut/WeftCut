@@ -7,8 +7,6 @@ import {
   rootOrNull,
   voiceoverStartUs,
   voiceoverTrackOptions,
-  VOICEOVER_SPEED_DEFAULT,
-  VOICEOVER_VOICES,
 } from "./voiceoverPlacement";
 
 function track(id: string, label: string | null): TrackSummary {
@@ -92,25 +90,5 @@ describe("voiceoverStartUs", () => {
 
   it("appends at zero with no project at all", () => {
     expect(voiceoverStartUs("append", null, 900_000)).toBe(0);
-  });
-});
-
-describe("voiceover parameter set", () => {
-  // The six the tool's schema names, in its order — and `alloy` first, which is
-  // why it is the field's default.
-  it("mirrors the tool's voice list and defaults to its first entry", () => {
-    expect([...VOICEOVER_VOICES]).toEqual([
-      "alloy",
-      "echo",
-      "fable",
-      "onyx",
-      "nova",
-      "shimmer",
-    ]);
-    expect(VOICEOVER_VOICES[0]).toBe("alloy");
-  });
-
-  it("defaults speed to the provider default", () => {
-    expect(VOICEOVER_SPEED_DEFAULT).toBe(1.0);
   });
 });

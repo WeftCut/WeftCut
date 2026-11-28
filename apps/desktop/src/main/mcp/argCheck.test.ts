@@ -70,6 +70,11 @@ describe('against the live Rust catalog', () => {
       .toBe('import_media: `path` is not an argument any more — send paths: [..]; missing required `paths`')
   })
 
+  it('synthesize_speech refuses a speed, naming retime_layers for the pace', () => {
+    expect(argProblemMessage('synthesize_speech', schemaOf('synthesize_speech'), { text: 'hi', voice: 'voice-a1', speed: 1.2 }))
+      .toBe('synthesize_speech: `speed` is not an argument any more — retime the placed layer with retime_layers, which keeps its pitch')
+  })
+
   it('a complete call passes', () => {
     expect(argProblemMessage('import_media', schemaOf('import_media'), { paths: ['C:/x.mp4'] })).toBeNull()
   })

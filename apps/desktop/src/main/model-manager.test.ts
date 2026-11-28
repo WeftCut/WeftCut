@@ -136,6 +136,31 @@ describe("model preparation and activation", () => {
     manager.use({ id: "whisper-base" }); manager.use({ id: "qwen3-vl-4b" }); await settle();
     expect(manager.active("speech")?.id).toBe("whisper-base"); expect(manager.active("vlm")?.id).toBe("qwen3-vl-4b");
   });
+  // ADR 0184: voiceover is a family of its own, selected only by verifying one
+  // of its providers; a key saved for transcription never selects it.
+  it("selects a voiceover provider only by verifying it, apart from transcription", async () => {
+    const { manager, deps, keys } = setup();
+    manager.use({ id: "openai-whisper", apiKey: "sk-a" }); await settle();
+    expect(manager.active("speech")?.id).toBe("openai-whisper");
+    expect(manager.active("voiceover")).toBeNull();
+    expect(() => manager.use({ id: "elevenlabs-tts-v4" })).toThrow("Enter an API key");
+    manager.use({ id: "elevenlabs-tts-v4", apiKey: "xi-b" }); await settle();
+    expect(deps.verify).toHaveBeenLastCalledWith(expect.objectContaining({ family: "voiceover", backend: "elevenlabs", ttsModel: "eleven_v4" }), "xi-b", expect.anything());
+    expect(manager.active("voiceover")?.id).toBe("elevenlabs-tts-v4");
+    expect(manager.active("speech")?.id).toBe("openai-whisper");
+    // One key per provider: the ElevenLabs transcription profile reads it too.
+    expect(keys.get("elevenlabs")).toBe("xi-b");
+    expect(manager.view().models.find(m => m.id === "elevenlabs-scribe")?.hasKey).toBe(true);
+    // Each model verifies on its own: the key is shared, the verification is not.
+    expect(manager.view().models.find(m => m.id === "elevenlabs-tts-flash-v2-5")).toMatchObject({ hasKey: true, verified: false });
+    manager.unselect("voiceover");
+    expect(manager.active("voiceover")).toBeNull();
+    expect(manager.active("speech")?.id).toBe("openai-whisper");
+  });
+  it("refuses a custom voiceover profile", () => {
+    const { manager } = setup();
+    expect(() => manager.use({ id: "openai-tts", apiKey: "sk-a", createCustom: true, name: "Mine" })).toThrow(/built-in/);
+  });
   it("endpoint identity changes create a separate profile only after verification", async () => {
     const verification = deferred<{ device: "cpu" }>();
     const { manager, state } = setup({ verify: () => verification.promise });

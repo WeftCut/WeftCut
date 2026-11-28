@@ -91,12 +91,15 @@ export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
  *  reads the review surface pulls. Both are cache reads: the frame one extracts
  *  on demand and caches per `(source, t)`, and the description one reports a
  *  miss rather than spawning a model — `describe_clip` (a clip-compute channel)
- *  is the only path that runs one. */
+ *  is the only path that runs one.
+ *
+ *  `list_voices` is the Voiceover dialog's read of the selected provider's
+ *  voices and limits, with the selection and key injected in main. */
 export const DIRECT_NAPI_READS: ReadonlySet<string> = new Set([
   'analyze_shots', 'analyze_shots_floor', 'shot_floor_report_cached',
   'shot_floor_sensitivity', 'shot_default_opts', 'reduce_shot_report',
   'attach_shot_stats', 'get_media_frame',
-  'get_media_description',
+  'get_media_description', 'list_voices',
 ])
 
 /** Native clip read/compute channels: no actor write, but the stateless Rust

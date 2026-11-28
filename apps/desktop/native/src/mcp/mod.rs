@@ -31,10 +31,13 @@ pub(crate) use catalog::catalog;
 // `dispatch_tool` is `pub` (catalog.rs macro); napi_backend uses
 // `crate::mcp::dispatch_tool`. The `mcp` mod itself is private.
 pub use catalog::dispatch_tool;
-// synthesize_speech hybrid: napi_backend's `synthesize_speech_compute`
-// calls the TTS compute half + needs the args type. Re-exported here (the `tools`
-// mod is private) — same precedent as `dispatch_tool` above; not a public widening.
+// Voiceover hybrids: napi_backend's `synthesize_speech_compute` and
+// `list_voices_compute` call the compute halves + need the args types.
+// Re-exported here (the `tools` mod is private) — same precedent as
+// `dispatch_tool` above; not a public widening.
 pub(crate) use prompts::{catalog as list_prompts, expand as get_prompt};
 pub(crate) use resources::read_resource;
 #[cfg(feature = "speech")]
-pub(crate) use tools::{synthesize_speech_audio, SynthesizeSpeechArgs};
+pub(crate) use tools::{
+    list_voices_of, synthesize_speech_audio, ListVoicesArgs, SynthesizeSpeechArgs,
+};

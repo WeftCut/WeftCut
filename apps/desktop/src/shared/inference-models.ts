@@ -1,6 +1,14 @@
 /** Model identity is independent of its execution backend and downloaded artifacts. */
-export type ModelFamily = "speech" | "vlm";
-export type ModelBackend = "whisper_cpp" | "funasr" | "openai" | "qwen3_vl" | "minicpm_v" | "byo_endpoint";
+export type ModelFamily = "speech" | "vlm" | "voiceover";
+export const MODEL_FAMILIES: readonly ModelFamily[] = ["speech", "vlm", "voiceover"];
+export type ModelBackend = "whisper_cpp" | "funasr" | "openai" | "elevenlabs" | "qwen3_vl" | "minicpm_v" | "byo_endpoint";
+/** A provider's own service, reached with only an API key: no address, no
+ *  files. One key per provider, under the provider's tag, serves every family
+ *  it runs (ADR 0184). */
+export type CloudBackend = "openai" | "elevenlabs";
+export function isCloudBackend(backend: ModelBackend): backend is CloudBackend {
+  return backend === "openai" || backend === "elevenlabs";
+}
 export interface ModelLocalConfig {
   binary: string;
   model: string;
@@ -61,6 +69,10 @@ export interface ModelDefinition {
    *  Absent: any (a multilingual model, or one the user serves). Transcription
    *  refuses a clip in a language outside it rather than return garbage. */
   languages?: readonly string[];
+  /** Voiceover only: the model id a provider with several runs for this
+   *  entry, injected as `voiceover_model`. Absent for a provider with one
+   *  model (OpenAI `tts-1`). Fixed per built-in entry, never user-edited. */
+  ttsModel?: string;
 }
 /** The languages a speech profile covers, from its catalog entry; `null` when
  *  unknown (a custom profile, or a multilingual model). */
@@ -71,12 +83,23 @@ export const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { id: "whisper-base", name: "Whisper Base", family: "speech", backend: "whisper_cpp", locality: "local", artifacts: ["whisper-cpp-runtime", "whisper-model-base"] },
   { id: "paraformer-zh", name: "Paraformer 中文", family: "speech", backend: "funasr", locality: "local", artifacts: ["funasr-runtime", "funasr-model-paraformer-zh"], languages: ["zh"] },
   { id: "openai-whisper", name: "OpenAI Whisper", family: "speech", backend: "openai", locality: "online", artifacts: [] },
+  // No `languages`: Scribe is multilingual, and it names rare languages by
+  // three-letter codes a primary-subtag list would refuse.
+  { id: "elevenlabs-scribe", name: "ElevenLabs Scribe", family: "speech", backend: "elevenlabs", locality: "online", artifacts: [] },
   // Any OpenAI-compatible transcription server (whisper.cpp's whisper-server,
   // speaches, vLLM, a hosted provider) — the speech twin of `vlm-online`.
   { id: "speech-online", name: "Online model", family: "speech", backend: "byo_endpoint", locality: "online", artifacts: [] },
   { id: "qwen3-vl-4b", name: "Qwen3-VL-4B", family: "vlm", backend: "qwen3_vl", locality: "local", artifacts: ["llama-mtmd-runtime", "qwen3-vl-4b-model", "qwen3-vl-4b-mmproj"] },
   // An entry point for the existing compatible-endpoint adapter, not a new provider preset.
   { id: "vlm-online", name: "Online model", family: "vlm", backend: "byo_endpoint", locality: "online", artifacts: [] },
+  // Voiceover runs only these: no custom profiles, no local engine. Each
+  // provider declares its voices and limits (`list_voices`). The ElevenLabs
+  // entries share one key and differ only in model; native refuses a
+  // `ttsModel` outside its table (`speech::backends::elevenlabs::TTS_MODELS`).
+  { id: "openai-tts", name: "OpenAI", family: "voiceover", backend: "openai", locality: "online", artifacts: [] },
+  { id: "elevenlabs-tts-v4", name: "ElevenLabs v4", family: "voiceover", backend: "elevenlabs", locality: "online", artifacts: [], ttsModel: "eleven_v4" },
+  { id: "elevenlabs-tts-multilingual-v2", name: "ElevenLabs Multilingual v2", family: "voiceover", backend: "elevenlabs", locality: "online", artifacts: [], ttsModel: "eleven_multilingual_v2" },
+  { id: "elevenlabs-tts-flash-v2-5", name: "ElevenLabs Flash v2.5", family: "voiceover", backend: "elevenlabs", locality: "online", artifacts: [], ttsModel: "eleven_flash_v2_5" },
 ];
 export interface ModelProfile extends ModelDefinition {
   custom?: boolean;

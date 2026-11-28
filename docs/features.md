@@ -994,15 +994,26 @@ the failing clip with the tool's sentence; when that sentence names Settings →
 Transcription (no model, no API key) the command opens it. Cues are edited in
 `CaptionsPanel`.
 
-**Voiceover…** — Edit menu and palette only (it acts on no clip). The dialog
-holds script, voice (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`), speed,
-and where it lands: after everything (the tool's default) or at the playhead,
-each shown as a timecode. The destination track is shown and sent explicitly.
-The 4096-character cap is enforced in the field. `speed` is omitted at 1.0 (the
-TTS cache keys absent and explicit speed apart, so sending it would re-bill an
-agent's cached default). A cost line sits above the button (the one per-use paid
-action); the content-addressed cache makes re-runs free. Tool refusals stay
-inline with the dialog open.
+**Voiceover…** — Edit menu and palette only (it acts on no clip). It speaks with
+the provider selected in Settings → Voiceover (OpenAI or an ElevenLabs model;
+None until one is chosen, ADR 0184). On opening, the dialog asks that provider
+for its voices and limits (`list_voices`) and holds script, voice, and where it
+lands: after everything (the tool's default) or at the playhead, each shown as a
+timecode. Voices are the provider's (ElevenLabs: the account's own, shown with
+their accent and gender); the first is the default. The script cap is the
+model's and is enforced in the field. There is no speed field: the placed clip
+is retimed like any other, pitch kept. The destination track is shown and sent
+explicitly. Generate stays off until the provider answers; with
+no provider selected the dialog shows the refusal naming Settings → Voiceover.
+A cost line sits above the button (the one per-use paid action); the
+content-addressed cache makes re-runs free. Tool refusals stay inline with the
+dialog open.
+
+Settings → Voiceover lists OpenAI, then ElevenLabs v4, Multilingual v2 and Flash
+v2.5 (one entry per model), each set up with the provider's API key and a short
+test synthesis on that model. One key per provider serves its transcription and
+voiceover profiles alike; an ElevenLabs key needs the Text to
+Speech, Voices (read) and Speech to Text permissions.
 
 Each run is two status-log rows under one `op_id`
 ([status-log.md](status-log.md)); rows carry script length, never the script.

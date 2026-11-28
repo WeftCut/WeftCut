@@ -4,8 +4,7 @@
 //! 25 MB (13 minutes of the 16 kHz mono WAV every engine is fed), a
 //! self-hosted server has a limit of its own, and one request over an hour of
 //! audio is one timeout away from losing all of it. So a network engine
-//! ([`Locality::is_network`](super::Locality::is_network)) receives at most
-//! [`PIECE_SECS`] at a time: each cut sits at the quietest
+//! receives at most [`piece_secs`] at a time: each cut sits at the quietest
 //! [`QUIET_WINDOW_MS`] window within [`SEARCH_SECS`] of a piece boundary, so it
 //! falls in a pause rather than through a word, and a tail shorter than
 //! [`MIN_TAIL_SECS`] joins the piece before it. Pieces run one after another;
@@ -19,6 +18,7 @@
 use std::ops::Range;
 use std::path::Path;
 
+use super::backend::SpeechBackend;
 use super::error::SpeechError;
 use super::parse::parse_raw;
 use super::transcriber::{TranscribeRequest, Transcriber};
@@ -27,8 +27,22 @@ use crate::compute_jobs::{ModelObserver, ModelPhase};
 
 /// The sample rate every engine is fed (`audio_extract`): 16 kHz mono s16le.
 const SAMPLE_RATE: usize = 16_000;
-/// Longest piece one request carries.
-pub const PIECE_SECS: usize = 600;
+
+/// Longest piece one request to `backend` carries, or `None` for a local
+/// engine, which reads the whole file itself (ADR 0184).
+///
+/// - OpenAI and endpoints: 10 minutes, under OpenAI's 25 MB upload cap and
+///   the size a self-hosted server is likely to take.
+/// - ElevenLabs: 24 minutes. Scribe takes hours per request but transcribes in
+///   8-minute chunks three at a time, so this is one parallel pass; the split
+///   still bounds what one failed request loses and drives per-piece progress.
+pub fn piece_secs(backend: SpeechBackend) -> Option<usize> {
+    match backend {
+        SpeechBackend::ElevenLabs => Some(3 * 8 * 60),
+        SpeechBackend::OpenAi | SpeechBackend::ByoEndpoint => Some(600),
+        SpeechBackend::WhisperCpp | SpeechBackend::FunAsr => None,
+    }
+}
 /// How far either side of a piece boundary a cut may move to find a pause.
 pub const SEARCH_SECS: usize = 30;
 /// Width of the window whose energy decides where the quietest point is.
@@ -38,11 +52,11 @@ pub const QUIET_WINDOW_MS: usize = 200;
 pub const MIN_TAIL_SECS: usize = 60;
 
 /// Plan the pieces for `pcm` (little-endian s16 samples, 16 kHz mono): sample
-/// ranges covering it exactly, in order. Audio no longer than [`PIECE_SECS`] is
+/// ranges covering it exactly, in order. Audio no longer than `piece_secs` is
 /// one piece.
-pub fn plan_pieces(pcm: &[u8]) -> Vec<Range<usize>> {
+pub fn plan_pieces(pcm: &[u8], piece_secs: usize) -> Vec<Range<usize>> {
     let n = pcm.len() / 2;
-    let piece = PIECE_SECS * SAMPLE_RATE;
+    let piece = piece_secs * SAMPLE_RATE;
     if n <= piece {
         return std::iter::once(0..n).collect();
     }
@@ -173,7 +187,7 @@ pub fn wav_bytes(samples: &[i16]) -> Vec<u8> {
 }
 
 /// Transcribe `req` on a network engine: in one request when the audio fits a
-/// piece, else piece by piece, reporting `Inferring { done, total }` before
+/// `piece_secs` piece, else piece by piece, reporting `Inferring { done, total }` before
 /// each. The result is in the WAV's own time base (0 = its first sample), like
 /// a single request's — the caller's playback-rate and timeline shifts apply
 /// unchanged. Dropping the future drops the request in flight, so a cancel
@@ -181,10 +195,11 @@ pub fn wav_bytes(samples: &[i16]) -> Vec<u8> {
 pub async fn transcribe_network(
     transcriber: &dyn Transcriber,
     req: TranscribeRequest,
+    piece_secs: usize,
     observer: ModelObserver<'_>,
 ) -> Result<Transcript, SpeechError> {
     let wav = tokio::fs::read(&req.audio_path).await?;
-    let pieces = pcm_of_wav(&wav).map(|pcm| (pcm, plan_pieces(pcm)));
+    let pieces = pcm_of_wav(&wav).map(|pcm| (pcm, plan_pieces(pcm, piece_secs)));
     let Some((pcm, pieces)) = pieces.filter(|(_, p)| p.len() > 1) else {
         drop(wav);
         let raw = transcriber.transcribe_observed(req, observer).await?;
@@ -267,6 +282,8 @@ mod tests {
     use crate::speech::transcript::{Segment, Word};
 
     const SR: usize = SAMPLE_RATE;
+    /// The 10-minute piece most tests plan with.
+    const PIECE: usize = 600;
 
     /// `secs` of loud noise-ish signal, with silent gaps at the given
     /// `(start_s, len_ms)` spots.
@@ -285,17 +302,39 @@ mod tests {
 
     #[test]
     fn short_audio_is_one_piece() {
-        let one = plan_pieces(&pcm(30.0, &[]));
+        let one = plan_pieces(&pcm(30.0, &[]), PIECE);
         assert_eq!((one.len(), one[0].start, one[0].end), (1, 0, 30 * SR));
-        let exactly = pcm(PIECE_SECS as f64, &[]);
-        assert_eq!(plan_pieces(&exactly).len(), 1);
+        let exactly = pcm(PIECE as f64, &[]);
+        assert_eq!(plan_pieces(&exactly, PIECE).len(), 1);
+    }
+
+    /// Each network engine has a piece no longer than its upload allows, and
+    /// ElevenLabs' covers one parallel pass of Scribe's 8-minute chunks.
+    #[test]
+    fn the_piece_length_is_the_backends() {
+        let openai = piece_secs(SpeechBackend::OpenAi).unwrap();
+        assert_eq!(piece_secs(SpeechBackend::ByoEndpoint), Some(openai));
+        // 25 MB at 32 KB/s is about 13 minutes.
+        assert!(openai * 32_000 < 25 * 1024 * 1024);
+        let scribe = piece_secs(SpeechBackend::ElevenLabs).unwrap();
+        assert_eq!(scribe % (8 * 60), 0, "whole Scribe chunks");
+        assert!(scribe > openai);
+        assert_eq!(piece_secs(SpeechBackend::WhisperCpp), None);
+        assert_eq!(piece_secs(SpeechBackend::FunAsr), None);
+
+        // The same 30 minutes: three OpenAI pieces, two ElevenLabs ones.
+        let audio = pcm(1800.0, &[]);
+        assert_eq!(plan_pieces(&audio, openai).len(), 3);
+        let pieces = plan_pieces(&audio, scribe);
+        assert_eq!(pieces.len(), 2);
+        assert!(pieces[0].len() <= (scribe + SEARCH_SECS) * SR);
     }
 
     #[test]
     fn the_cut_lands_in_a_silence_off_the_boundary() {
         // A 400 ms pause 17 s before the 600 s boundary.
         let audio = pcm(900.0, &[(583.0, 400)]);
-        let pieces = plan_pieces(&audio);
+        let pieces = plan_pieces(&audio, PIECE);
         assert_eq!(pieces.len(), 2);
         let cut_s = pieces[0].end as f64 / SR as f64;
         assert!((583.0..583.4).contains(&cut_s), "cut at {cut_s}s");
@@ -305,10 +344,10 @@ mod tests {
 
     #[test]
     fn without_a_pause_the_cut_still_stays_in_the_search_window() {
-        let pieces = plan_pieces(&pcm(1300.0, &[]));
+        let pieces = plan_pieces(&pcm(1300.0, &[]), PIECE);
         assert_eq!(pieces.len(), 3);
         for (i, p) in pieces.iter().take(2).enumerate() {
-            let target = p.start + PIECE_SECS * SR;
+            let target = p.start + PIECE * SR;
             let off = p.end.abs_diff(target);
             assert!(off <= SEARCH_SECS * SR, "cut {i} is {off} samples off");
             // Uniform signal: no window is quieter, so the boundary itself wins
@@ -320,7 +359,7 @@ mod tests {
     #[test]
     fn a_short_tail_joins_the_piece_before_it() {
         // 630 s: the remainder after a ~600 s cut is ~30 s < MIN_TAIL_SECS.
-        let pieces = plan_pieces(&pcm(630.0, &[]));
+        let pieces = plan_pieces(&pcm(630.0, &[]), PIECE);
         assert_eq!(
             (pieces.len(), pieces[0].start, pieces[0].end),
             (1, 0, 630 * SR)
@@ -420,6 +459,7 @@ mod tests {
                 language: None,
                 want_word_timing: true,
             },
+            PIECE,
             &|p| phases.lock().unwrap().push(p),
         )
         .await
@@ -464,6 +504,7 @@ mod tests {
                 language: None,
                 want_word_timing: true,
             },
+            PIECE,
             &|p| phases.lock().unwrap().push(p),
         )
         .await
@@ -506,6 +547,7 @@ mod tests {
                 language: None,
                 want_word_timing: false,
             },
+            PIECE,
             &|_| {},
         )
         .await

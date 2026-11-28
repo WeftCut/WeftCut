@@ -18,7 +18,7 @@ import { VlmSection } from "./VlmSection";
 import { onDescribeViewChanged } from "../search/searchIndexStore";
 
 function initial(): ModelsView {
-  return { active: { speech: null, vlm: null }, operations: [], models: MODEL_DEFINITIONS.map(p => ({
+  return { active: { speech: null, vlm: null, voiceover: null }, operations: [], models: MODEL_DEFINITIONS.map(p => ({
     ...p, active: false, installed: false, supported: true, missingBytes: 123000000, hasKey: false, customized: false,
     ...(p.locality === "local" ? { local: { binary: `/managed/${p.id}/run.exe`, model: `/managed/${p.id}/weights`, ...(p.backend === "funasr" ? { tokens: "/managed/tokens.txt" } : {}), ...(p.family === "vlm" ? { mmproj: "/managed/projector" } : {}) } } : {}),
   })) };
@@ -31,8 +31,8 @@ beforeEach(() => {
 });
 // Base UI's pointer-open path is timing-sensitive in jsdom (see CanvasSection
 // tests). Exercise keyboard opening here and real pointer input in Electron.
-async function openPicker(user: ReturnType<typeof userEvent.setup>) {
-  const trigger = await screen.findByRole("button", { name: "Current model" });
+async function openPicker(user: ReturnType<typeof userEvent.setup>, name = "Current model") {
+  const trigger = await screen.findByRole("button", { name });
   await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
   trigger.focus();
   await user.keyboard("{Enter}");
@@ -307,6 +307,38 @@ describe("endpoint request timeout", () => {
     await user.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(onUse).toHaveBeenCalledTimes(1));
     expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ endpoint: { url: "http://intranet/v1/chat/completions", model: "vision" } }));
+  });
+  // ADR 0184: voiceover offers its built-in providers only, each set up with
+  // nothing but the provider's key.
+  it("offers only the built-in voiceover providers, set up with a key", async () => {
+    const user = userEvent.setup(); render(<ModelSection family="voiceover" onError={vi.fn()} />);
+    expect((await screen.findByTestId("current-model-summary")).textContent).toContain("No provider selected");
+    await openPicker(user, "Current provider");
+    // None, OpenAI, then one entry per ElevenLabs model, newest first.
+    // Each option reads its name, then its locality and state.
+    const offered = screen.getAllByRole("menuitemradio").map(item => (item.textContent ?? "").replace(/Online.*$/, ""));
+    expect(offered).toEqual([
+      "None", "OpenAI", "ElevenLabs v4", "ElevenLabs Multilingual v2", "ElevenLabs Flash v2.5",
+    ]);
+    expect(screen.queryByRole("menuitem", { name: "Add custom model…" })).toBeNull();
+    await user.click(screen.getByRole("menuitemradio", { name: /ElevenLabs Flash v2\.5/ }));
+    expect(screen.getByText(/serves transcription and voiceover/)).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "URL" })).toBeNull();
+    const use = screen.getByRole("button", { name: "Configure and use" }) as HTMLButtonElement;
+    expect(use.disabled).toBe(true);
+    await user.type(screen.getByLabelText("API Key"), "key-x");
+    await user.click(use);
+    expect(ipc.modelsUse).toHaveBeenCalledWith({ id: "elevenlabs-tts-flash-v2-5", apiKey: "key-x" });
+  });
+  // A cloud provider needs its key and nothing else: ElevenLabs is not an
+  // endpoint, so a verified profile with its key switches without setup.
+  it("switches straight to a verified ElevenLabs profile whose key is saved", async () => {
+    const v = initial();
+    Object.assign(v.models.find(m => m.id === "elevenlabs-scribe")!, { verified: true, hasKey: true });
+    ipc.modelsList.mockResolvedValue(v);
+    const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await choose(user, /ElevenLabs Scribe/);
+    expect(ipc.modelsUse).toHaveBeenCalledExactlyOnceWith({ id: "elevenlabs-scribe" });
   });
   it("saves frames per request and concurrency with a vision endpoint", async () => {
     const onUse = vi.fn(async () => {});

@@ -27,6 +27,8 @@ relaunch).
   (`resolve_transcriber_exact`); neither substitutes another engine, so a local
   choice never degrades into a cloud upload. Errors name the remedy. TTS keeps
   a default-order fallback (`DEFAULT_ORDER`; OpenAI is its only provider).
+  *Superseded by ADR 0184: voiceover runs only the provider selected in
+  Settings.*
 - **Backends emit a style, parsers normalize.** `Transcriber` returns a
   format-tagged `RawTranscript` (SRT, whisper JSON, FunASR JSON, OpenAI
   verbose JSON); one parser per style yields `Transcript { segments[{

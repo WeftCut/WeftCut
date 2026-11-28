@@ -1,17 +1,16 @@
 //! The speech-backend catalog: the enum of engines we know how to drive, their
-//! locality (cloud vs local sidecar), capability surfaces, and the default
-//! order the resolver falls back through. The string tags are a wire + on-disk
-//! HARD CONSTRAINT — see [`SpeechBackend::as_str`].
+//! locality (cloud vs local sidecar) and capability surfaces. The string tags
+//! are a wire + on-disk HARD CONSTRAINT — see [`SpeechBackend::as_str`].
 //!
 //! Config material (the API key, or a local engine's binary/model paths) lives
 //! in [`super::config`]; this module is only the backend identity + its static
-//! facts. Selection + availability is [`super::resolve_transcriber`] /
-//! [`super::config::availability`].
+//! facts. Selection + availability is [`super::resolve_selected_transcriber`] /
+//! [`super::resolve_synthesizer`] / [`super::config::availability`].
 
 use serde::{Deserialize, Serialize};
 
-/// Speech engines WeftCut can drive. `OpenAi` is a cloud HTTP API; `WhisperCpp`
-/// and `FunAsr` are local one-shot CLI sidecars (transcription only, needing a
+/// Speech engines WeftCut can drive. `OpenAi` and `ElevenLabs` are cloud HTTP
+/// APIs; `WhisperCpp` and `FunAsr` are local one-shot CLI sidecars (transcription only, needing a
 /// binary + model on disk); `ByoEndpoint` is any OpenAI-compatible
 /// `/v1/audio/transcriptions` server the user points us at.
 ///
@@ -23,6 +22,8 @@ use serde::{Deserialize, Serialize};
 pub enum SpeechBackend {
     /// OpenAI cloud API.
     OpenAi,
+    /// ElevenLabs cloud API: Scribe transcription and text-to-speech.
+    ElevenLabs,
     /// whisper.cpp — local offline transcription CLI (STT only).
     WhisperCpp,
     /// FunASR Paraformer via the sherpa-onnx offline CLI (STT only).
@@ -55,32 +56,45 @@ impl Locality {
     }
 }
 
-/// The order speech synthesis walks after honoring the caller's `preferred`
-/// hint. Transcription does not walk
-/// it: it runs only the selected model (selection is strict). OpenAI leads:
-/// with both a key and a local engine configured and no preference set, cloud
-/// wins — it needs no local model download and its quality is the known
-/// baseline. The user's own endpoint comes last.
-pub const DEFAULT_ORDER: &[SpeechBackend] = &[
-    SpeechBackend::OpenAi,
-    SpeechBackend::WhisperCpp,
-    SpeechBackend::FunAsr,
-    SpeechBackend::ByoEndpoint,
-];
+/// The product name messages show the user, never the variant name.
+impl std::fmt::Display for SpeechBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SpeechBackend::OpenAi => "OpenAI",
+            SpeechBackend::WhisperCpp => "whisper.cpp",
+            SpeechBackend::FunAsr => "FunASR",
+            SpeechBackend::ByoEndpoint => "The transcription endpoint",
+            SpeechBackend::ElevenLabs => "ElevenLabs",
+        })
+    }
+}
 
 impl SpeechBackend {
+    /// Every backend, for tag lookup and for the ready engines a refusal
+    /// lists. The order chooses nothing: transcription and voiceover each run
+    /// only the backend selected in Settings (ADR 0064, ADR 0184).
+    pub const ALL: &'static [SpeechBackend] = &[
+        SpeechBackend::OpenAi,
+        SpeechBackend::ElevenLabs,
+        SpeechBackend::WhisperCpp,
+        SpeechBackend::FunAsr,
+        SpeechBackend::ByoEndpoint,
+    ];
+
     /// Stable string tag — the injected `speech_config` map key AND the TS/napi
     /// wire contract.
     ///
-    /// HARD CONSTRAINT: `OpenAi` MUST stay `"openai"`. That exact string is the
-    /// key's safeStorage tag the host builds the `openai` entry from, the Settings
-    /// status command's `provider` field, and the key format persisted in
-    /// `cloud_keys.json`. New backends use `"whisper_cpp"` / `"funasr"` /
+    /// HARD CONSTRAINT: `OpenAi` MUST stay `"openai"` and `ElevenLabs`
+    /// `"elevenlabs"`. Each exact string is the key's safeStorage tag the host
+    /// builds the entry from, the Settings status command's `provider` field,
+    /// and the key format persisted in `cloud_keys.json`; one key serves all of
+    /// that provider's features. The others are `"whisper_cpp"` / `"funasr"` /
     /// `"byo_endpoint"` (the same tag as the video-understanding endpoint; the
     /// two config maps are separate, so they never meet).
     pub fn as_str(self) -> &'static str {
         match self {
             SpeechBackend::OpenAi => "openai",
+            SpeechBackend::ElevenLabs => "elevenlabs",
             SpeechBackend::WhisperCpp => "whisper_cpp",
             SpeechBackend::FunAsr => "funasr",
             SpeechBackend::ByoEndpoint => "byo_endpoint",
@@ -91,17 +105,14 @@ impl SpeechBackend {
     /// (HTTP, URL-gated).
     pub fn locality(self) -> Locality {
         match self {
-            SpeechBackend::OpenAi => Locality::Cloud,
+            SpeechBackend::OpenAi | SpeechBackend::ElevenLabs => Locality::Cloud,
             SpeechBackend::WhisperCpp | SpeechBackend::FunAsr => Locality::Local,
             SpeechBackend::ByoEndpoint => Locality::Endpoint,
         }
     }
 
-    /// Which capability surfaces this backend can serve. The resolver walks
-    /// [`DEFAULT_ORDER`], filters by the requested capability, requires
-    /// `availability == Available`, and returns the first match — so a single
-    /// OpenAI key still activates both transcription and TTS with no per-surface
-    /// configuration on the user side.
+    /// Which capability surfaces this backend can serve. A selection for one
+    /// surface is refused when its backend does not serve it.
     pub fn capabilities(self) -> Capabilities {
         match self {
             SpeechBackend::OpenAi => Capabilities {
@@ -110,6 +121,11 @@ impl SpeechBackend {
                 // response_format=srt only — word times are interpolated
                 // downstream, never engine-exact.
                 exact_word_timing: false,
+            },
+            SpeechBackend::ElevenLabs => Capabilities {
+                transcription: true,
+                tts: true,
+                exact_word_timing: true, // Scribe per-word start/end
             },
             SpeechBackend::WhisperCpp => Capabilities {
                 transcription: true,
@@ -149,7 +165,7 @@ pub struct Capabilities {
 
 impl crate::inference::EngineTag for SpeechBackend {
     fn catalog() -> &'static [Self] {
-        DEFAULT_ORDER
+        Self::ALL
     }
     fn wire_tag(self) -> &'static str {
         self.as_str()
@@ -164,6 +180,7 @@ mod tests {
     fn backend_tags_are_stable() {
         // Wire/on-disk contract — must never drift.
         assert_eq!(SpeechBackend::OpenAi.as_str(), "openai");
+        assert_eq!(SpeechBackend::ElevenLabs.as_str(), "elevenlabs");
         assert_eq!(SpeechBackend::WhisperCpp.as_str(), "whisper_cpp");
         assert_eq!(SpeechBackend::FunAsr.as_str(), "funasr");
         assert_eq!(SpeechBackend::ByoEndpoint.as_str(), "byo_endpoint");
@@ -202,12 +219,27 @@ mod tests {
         assert!(!Locality::Local.is_network());
         let caps = b.capabilities();
         assert!(caps.transcription && !caps.tts && !caps.exact_word_timing);
-        // Last in the walk: never a substitute for a configured engine.
-        assert_eq!(DEFAULT_ORDER.last(), Some(&b));
     }
 
     #[test]
-    fn default_order_leads_with_openai() {
-        assert_eq!(DEFAULT_ORDER.first(), Some(&SpeechBackend::OpenAi));
+    fn elevenlabs_serves_both_surfaces_with_exact_words_from_the_cloud() {
+        let b = SpeechBackend::ElevenLabs;
+        assert_eq!(b.locality(), Locality::Cloud);
+        let caps = b.capabilities();
+        assert!(caps.transcription && caps.tts && caps.exact_word_timing);
+    }
+
+    /// Verification and the host's selections resolve tags through the
+    /// catalog, so a backend missing from it could never be selected.
+    #[test]
+    fn every_tag_resolves_through_the_catalog() {
+        use crate::inference::EngineTag;
+        for b in SpeechBackend::ALL {
+            assert_eq!(SpeechBackend::from_tag(b.as_str()), Some(*b));
+        }
+        assert_eq!(
+            SpeechBackend::from_tag("elevenlabs"),
+            Some(SpeechBackend::ElevenLabs)
+        );
     }
 }

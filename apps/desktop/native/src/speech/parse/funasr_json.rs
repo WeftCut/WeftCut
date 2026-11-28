@@ -102,6 +102,25 @@ const MAX_TOKEN_US: i64 = 300_000;
 const MAX_CUE_US: i64 = 6_000_000;
 const MAX_CUE_CHARS: usize = 24;
 
+const CUE_LIMITS: CueLimits = CueLimits {
+    max_us: MAX_CUE_US,
+    max_width: MAX_CUE_CHARS,
+    width: char_count,
+};
+
+/// When a run of words is too long for one cue: its span, and its text's
+/// width as `width` measures it. Each flat-word parser brings its own; Scribe's
+/// shares [`split_into_cues`].
+pub(super) struct CueLimits {
+    pub max_us: i64,
+    pub max_width: usize,
+    pub width: fn(&str) -> usize,
+}
+
+fn char_count(s: &str) -> usize {
+    s.chars().count()
+}
+
 pub struct FunAsrParser;
 
 impl TranscriptParser for FunAsrParser {
@@ -128,7 +147,7 @@ impl TranscriptParser for FunAsrParser {
         let segments = if words.is_empty() {
             Vec::new()
         } else if squash_ws(&join_words(&words)) == squash_ws(&text) {
-            split_into_cues(words)
+            split_into_cues(words, &CUE_LIMITS)
         } else {
             let t_start_us = words[0].t_start_us;
             let t_end_us = words[words.len() - 1].t_end_us;
@@ -213,8 +232,8 @@ fn push_word(words: &mut Vec<Word>, word: Option<Word>) {
 
 /// Cut a flat word list into cues at every silence of at least
 /// [`MIN_SILENCE_US`]. Each run is then handed to [`emit_cue`], which enforces
-/// the readability caps.
-fn split_into_cues(words: Vec<Word>) -> Vec<Segment> {
+/// `limits`. Every word lands in exactly one cue, in order.
+pub(super) fn split_into_cues(words: Vec<Word>, limits: &CueLimits) -> Vec<Segment> {
     let mut cues = Vec::new();
     let mut run: Vec<Word> = Vec::new();
     for w in words {
@@ -222,11 +241,11 @@ fn split_into_cues(words: Vec<Word>) -> Vec<Segment> {
             .last()
             .is_some_and(|p| w.t_start_us - p.t_end_us >= MIN_SILENCE_US);
         if ends_the_cue {
-            emit_cue(&mut cues, std::mem::take(&mut run));
+            emit_cue(&mut cues, std::mem::take(&mut run), limits);
         }
         run.push(w);
     }
-    emit_cue(&mut cues, run);
+    emit_cue(&mut cues, run, limits);
     cues
 }
 
@@ -238,14 +257,15 @@ fn split_into_cues(words: Vec<Word>) -> Vec<Segment> {
 /// worst. Ties break toward the middle of the run, so a stretch of perfectly
 /// even speech halves instead of shedding one word at a time. Recurses, so a
 /// long monologue comes apart at its N largest pauses rather than just one.
-fn emit_cue(cues: &mut Vec<Segment>, run: Vec<Word>) {
+fn emit_cue(cues: &mut Vec<Segment>, run: Vec<Word>, limits: &CueLimits) {
     if run.is_empty() {
         return;
     }
     let t_start_us = run[0].t_start_us;
     let t_end_us = run[run.len() - 1].t_end_us;
     let text = join_words(&run);
-    if run.len() > 1 && (t_end_us - t_start_us > MAX_CUE_US || text.chars().count() > MAX_CUE_CHARS)
+    if run.len() > 1
+        && (t_end_us - t_start_us > limits.max_us || (limits.width)(&text) > limits.max_width)
     {
         let mid = (run.len() / 2) as i64;
         let at = (1..run.len())
@@ -258,8 +278,8 @@ fn emit_cue(cues: &mut Vec<Segment>, run: Vec<Word>) {
             .expect("run.len() > 1 leaves at least one interior boundary");
         let mut head = run;
         let tail = head.split_off(at);
-        emit_cue(cues, head);
-        emit_cue(cues, tail);
+        emit_cue(cues, head, limits);
+        emit_cue(cues, tail, limits);
         return;
     }
     cues.push(Segment {

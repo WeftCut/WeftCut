@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createSpeechConfigStore, toSpeechBackendSnapshot, type SpeechConfigFs } from "./speech-config";
+import { createSpeechConfigStore, toSpeechBackendSnapshot, toVoiceoverArgs, type SpeechConfigFs } from "./speech-config";
+import { freshModelSettings } from "./model-settings";
 
 const PATH = "/cfg/speech_config.json";
 const DIR = "/cfg";
@@ -151,17 +152,18 @@ describe("speech-config store", () => {
 });
 
 describe("toSpeechBackendSnapshot", () => {
-  it("merges the key, every local engine and the endpoint into the wire shape", () => {
+  it("merges the keys, every local engine and the endpoint into the wire shape", () => {
     expect(toSpeechBackendSnapshot({
       local: {
         whisper_cpp: { binary: "w", model: "m", device: "cpu", threads: 4 },
         funasr: { binary: "s", model: "p", tokens: "t" },
       },
-      openaiKey: " sk-x ",
+      apiKeys: { openai: " sk-x ", elevenlabs: "xi-y" },
       endpoint: { url: "http://h/v1/audio/transcriptions", model: "large-v3", timeout_s: 900 },
       endpointKey: "ek",
     })).toEqual({
       openai: { kind: "api_key", key: "sk-x" },
+      elevenlabs: { kind: "api_key", key: "xi-y" },
       whisper_cpp: { kind: "local", binary: "w", model: "m", device: "cpu", threads: 4 },
       funasr: { kind: "local", binary: "s", model: "p", tokens: "t" },
       byo_endpoint: { kind: "endpoint", url: "http://h/v1/audio/transcriptions", api_key: "ek", model: "large-v3", timeout_s: 900 },
@@ -171,11 +173,40 @@ describe("toSpeechBackendSnapshot", () => {
   it("leaves blank secrets and an unset endpoint out instead of sending them empty", () => {
     expect(toSpeechBackendSnapshot({
       local: {},
-      openaiKey: "  ",
+      apiKeys: { openai: "  ", elevenlabs: undefined },
       endpoint: { url: "http://h/inference", model: "" },
       endpointKey: "",
     })).toEqual({ byo_endpoint: { kind: "endpoint", url: "http://h/inference" } });
-    expect(toSpeechBackendSnapshot({ local: {}, openaiKey: null, endpoint: { url: " " } })).toEqual({});
+    expect(toSpeechBackendSnapshot({ local: {}, apiKeys: { openai: null }, endpoint: { url: " " } })).toEqual({});
     expect(toSpeechBackendSnapshot({ local: {} })).toEqual({});
+  });
+});
+
+// ADR 0184: voiceover runs the selected provider and nothing else. With both
+// providers' keys saved, only the selected one's key travels, and with none
+// selected nothing does — no key stands in for a selection.
+describe("toVoiceoverArgs", () => {
+  const keys = { openai: "sk-a", elevenlabs: "xi-b" };
+  const builtin = (id: string) => freshModelSettings().profiles.find(p => p.id === id)!;
+  it("carries only the selected provider, its entry's model and its key", () => {
+    expect(toVoiceoverArgs(builtin("elevenlabs-tts-flash-v2-5"), keys)).toEqual({
+      speech_config: { elevenlabs: { kind: "api_key", key: "xi-b" } }, voiceover_backend: "elevenlabs",
+      voiceover_model: "eleven_flash_v2_5",
+    });
+    // OpenAI runs its one model: nothing to name.
+    expect(toVoiceoverArgs(builtin("openai-tts"), keys)).toEqual({
+      speech_config: { openai: { kind: "api_key", key: "sk-a" } }, voiceover_backend: "openai", voiceover_model: null,
+    });
+  });
+  // One key per provider: the ElevenLabs entries differ in model only.
+  it("gives every ElevenLabs entry the one ElevenLabs key and its own model", () => {
+    const eleven = freshModelSettings().profiles.filter(p => p.family === "voiceover" && p.backend === "elevenlabs");
+    const args = eleven.map(p => toVoiceoverArgs(p, keys));
+    expect(new Set(args.map(a => JSON.stringify(a.speech_config)))).toEqual(new Set([JSON.stringify({ elevenlabs: { kind: "api_key", key: "xi-b" } })]));
+    expect(args.map(a => a.voiceover_model)).toEqual(eleven.map(p => p.ttsModel));
+    expect(new Set(args.map(a => a.voiceover_model)).size).toBe(eleven.length);
+  });
+  it("selects nothing without a selection, whatever keys are saved", () => {
+    expect(toVoiceoverArgs(null, keys)).toEqual({ speech_config: {}, voiceover_backend: null, voiceover_model: null });
   });
 });

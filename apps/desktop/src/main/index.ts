@@ -121,7 +121,7 @@ import { resignInvalidMachO, type ContentSignDeps } from './contentSign.js'
 import { ContentQueue } from './contentQueue.js'
 import { createModelFeature } from './model-feature.js'
 import { ModelManager } from './model-manager.js'
-import { MODEL_EVENTS, speechModelLanguages, type ModelUseRequest, type ModelFamily } from '../shared/inference-models.js'
+import { MODEL_EVENTS, isCloudBackend, speechModelLanguages, type ModelUseRequest, type ModelFamily } from '../shared/inference-models.js'
 import { stalledEncoderLimitMs } from './exportE2EStall.js'
 
 const require_ = createRequire(import.meta.url)
@@ -692,7 +692,7 @@ app.whenReady().then(async () => {
   // The OpenAI API key stays in safeStorage (keys.ts); this is its non-secret
   // sibling (ADR 0036). Single owner — `getSpeech`'s per-call snapshot and the
   // Settings IPC intercepts below reuse this instance.
-  const { createSpeechConfigStore, toSpeechBackendSnapshot } = await import('./speech-config.js')
+  const { createSpeechConfigStore, toSpeechBackendSnapshot, toVoiceoverArgs } = await import('./speech-config.js')
   const speechConfig = createSpeechConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'speech_config.json'), dir: app.getPath('userData') })
   let models: ModelManager | undefined
 
@@ -1099,10 +1099,10 @@ app.whenReady().then(async () => {
     probeMedia: (p: string, importId?: string) => backend!.probeMedia(p, workspaceEvents.requireCurrent(), importId),
     hashMediaSource: (p: string, importId?: string) => backend!.hashMediaSource(p, workspaceEvents.requireCurrent(), importId),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
-    // TTS reads its OpenAI key from the same per-call snapshot transcription
-    // gets (ADR 0036); injected here, the one place every synthesis passes.
+    // The selected voiceover provider and its key, injected here, the one
+    // place every synthesis passes (the dialog's and the agent's).
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(
-      JSON.stringify({ ...(JSON.parse(argsJson) as Record<string, unknown>), speech_config: getSpeech().config })),
+      JSON.stringify({ ...(JSON.parse(argsJson) as Record<string, unknown>), ...getVoiceover() })),
     analyzeShotsFloor: (mediaJson: string) => backend!.analyzeShotsFloor(mediaJson),
     reduceShotReport: (reportJson: string, sensitivity: number, minShotUs: number, inUs: number, outUs: number) =>
       backend!.reduceShotReport(reportJson, sensitivity, minShotUs, inUs, outUs),
@@ -1376,15 +1376,18 @@ app.whenReady().then(async () => {
     // safeStorage the keys, so a snapshot is never staler than the call.
     const profile = models?.active('speech')
     const keys = loadAllKeys()
-    const cloud = !!profile && !profile.local && !profile.endpoint
     return {
       config: toSpeechBackendSnapshot({
         // The active local profile is already projected into the store
         // (model-feature `applyActive`), beside any engine set up by hand.
         local: speechConfig.get().local,
-        // The selected cloud profile's own key; otherwise the `openai` tag's,
-        // which TTS uses whatever transcribes.
-        openaiKey: cloud ? keys[profile.keyTag ?? 'openai'] : keys.openai,
+        // Each provider's own key, which an agent's explicit `backend` reaches;
+        // the selected cloud profile's key, a custom one's included, for its
+        // provider.
+        apiKeys: {
+          openai: keys.openai, elevenlabs: keys.elevenlabs,
+          ...(profile && isCloudBackend(profile.backend) ? { [profile.backend]: keys[profile.keyTag ?? ''] } : {}),
+        },
         endpoint: profile?.endpoint ?? null,
         endpointKey: profile?.endpoint ? keys[profile.keyTag ?? ''] : null,
       }),
@@ -1396,6 +1399,11 @@ app.whenReady().then(async () => {
         return langs && profile ? { [profile.backend]: langs } : undefined
       })(),
     }
+  }
+  // Read at call time, like the two above. No profile → no keyring read.
+  const getVoiceover = () => {
+    const profile = models?.active('voiceover') ?? null
+    return toVoiceoverArgs(profile, profile ? loadAllKeys() : {})
   }
   const getVlm = (): {
     config: Record<string, unknown>
@@ -1476,6 +1484,7 @@ app.whenReady().then(async () => {
     getTsHost: () => tsHost,
     getSpeech,
     getVlm,
+    getVoiceover,
     // `detect_pauses` reads the same peaks file the timeline draws, so the
     // agent's bands and the person's are the same bands.
     peaksPathFor,
@@ -2025,6 +2034,9 @@ app.whenReady().then(async () => {
       return await readMediaDescription(backend!, () => host, a.media_id ?? '', getVlm, a.purpose)
     }
     if (channel === 'shot_floor_sensitivity') return backend!.shotFloorSensitivity()
+    // The Voiceover dialog's provider facts and voices: the `list_voices` tool's
+    // answer, from the same selection and key.
+    if (channel === 'list_voices') return JSON.parse(await backend!.listVoicesCompute(JSON.stringify(getVoiceover())))
     // The detection defaults, straight off the addon. The review Panel seeds its
     // threshold from these rather than from a literal of its own, so a default
     // apply and the rows the user reviewed cannot name different cuts.
