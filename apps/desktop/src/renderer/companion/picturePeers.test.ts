@@ -8,8 +8,9 @@ import { PEERS_MAX, PicturePeers, loopbackOnly, onLoopbackPair, withoutCandidate
 import { FakePeer, GATHERED_ANSWER, LOOPBACK_PAIR, pairStats } from "./testing/fakePeers";
 
 const OFFER = "v=0\r\no=- 9 2 IN IP4 127.0.0.1\r\ns=-\r\n";
-/** Lets a channel's open run its stats check. */
-const opened = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+/** Lets a channel's open run its stats check: the fake answers `getStats`
+ *  at once, so one turn of the event loop settles it; no time passes. */
+const opened = () => new Promise((resolve) => { setImmediate(resolve); });
 
 function peers() {
   const counts: number[] = [];
