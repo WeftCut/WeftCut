@@ -15,14 +15,14 @@ other half of editing together.
 
 An agent works in turns, and only the host starts one: the user typing, a tool
 call returning, or a push the host offers. MCP gives a server no way into the
-model's context. The ways around it are each bound to a host or cost the user:
+model's context. Read from the hosts' documentation (2026-11-28, not measured
+here), the ways around it are each bound to a host or cost the user:
 
-- A tool that blocks until the user writes holds the agent's session busy, and
-  in Codex returns every 60 s (its default tool timeout) unless reconfigured,
-  which turns the wait into polling with a full context per return.
-- A background listener started by the agent wakes an idle Claude Code session
-  (`asyncRewake` hooks), but Codex has no such path: its background terminals
-  are polled by the model, and its async hooks never start a turn.
+- A tool that blocks until the user writes holds the agent's session busy;
+  Codex's default tool timeout is 60 s, so unless the user raises it the wait
+  returns every minute, a full context each time: polling.
+- Claude Code documents hooks that wake an idle session; Codex documents that
+  its background hooks never start a turn.
 - Messages attached to the results of unrelated tool calls reach the model,
   but whether a model acts on them, rather than finishing its task, is
   unknown, and weaker models are expected to miss them.

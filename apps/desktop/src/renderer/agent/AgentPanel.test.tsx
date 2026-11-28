@@ -252,11 +252,11 @@ describe('AgentPanel — per-activity highlight', () => {
   })
 })
 
-function tack(patch: Partial<TackView> = {}): TackView {
-  return { id: 't1', session_id: 'work', connection_id: 'c', client: 'Test client', activity_id: 'a', author: 'agent', seen_at: null, replies: [], awaiting: 'user', kind: 'issue', label: 'Long pause',
+function tack({ awaiting, ...patch }: Partial<TackView> = {}): TackView {
+  return { id: 't1', session_id: 'work', connection_id: 'c', client: 'Test client', activity_id: 'a', author: 'agent', seen_at: null, replies: [], kind: 'issue', label: 'Long pause',
     body: 'Keep the breath?', status: 'open', range: { composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000 },
     created_at: '', composition_id: 'root', t_us: 2_000_000, end_t_us: 3_000_000,
-    outdated: false, follows: null, ...patch, awaiting: patch.awaiting !== undefined ? patch.awaiting : (patch.status ?? 'open') === 'open' ? 'user' : null }
+    outdated: false, follows: null, ...patch, awaiting: awaiting !== undefined ? awaiting : (patch.status ?? 'open') === 'open' ? 'user' : null }
 }
 const work = { id: 'work', connection_id: 'c', client: 'Client', reason: 'Review pauses', started_at: '', ended_at: null, end_reason: null, checkpoint_id: 'cp' }
 const calls = (channel: string) => mocks.invoke.mock.calls.filter(([c]) => c === channel).map(([, args]) => args)

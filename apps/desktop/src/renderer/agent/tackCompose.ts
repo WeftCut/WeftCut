@@ -13,13 +13,16 @@ interface TackComposeState { place: TackPlace | null }
 
 export const useTackComposeStore = create<TackComposeState>(() => ({ place: null }))
 
-/** Where a new tack goes: the marked in/out range while the open timeline is
- *  the film's (the range is root time), else the frame under the playhead. */
+/** Where a new tack goes: the marked range while the open timeline is the
+ *  film's (the range is root time) and both its ends are marked, else the
+ *  frame under the playhead. One mark alone would stretch the tack to the
+ *  film's start or end, which nobody pointed at. */
 export function newTackPlace(): TackPlace | null {
   const open = currentOpenComposition()
   if (!open) return null
-  if (open.id === useProjectStore.getState().summary?.root_id) {
-    const marked = resolveMarkedRange(rangeInUs(), rangeOutUs(), open.duration_us)
+  const inUs = rangeInUs(), outUs = rangeOutUs()
+  if (open.id === useProjectStore.getState().summary?.root_id && inUs !== null && outUs !== null) {
+    const marked = resolveMarkedRange(inUs, outUs, open.duration_us)
     if (marked) return { compositionId: open.id, tUs: marked.startUs, endTUs: marked.endUs }
   }
   return { compositionId: open.id, tUs: displayedFrameStartUs(focusedPlayheadUs(), open.fps_num, open.fps_den), endTUs: null }
