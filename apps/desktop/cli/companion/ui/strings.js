@@ -1,6 +1,7 @@
 // The companion page's copy. The page speaks the app's UI language (sent with
 // the state), not the browser's; before the first state arrives it has only
-// the browser's to go on. Both tables carry the same keys.
+// the browser's, or the host's in a side panel, to go on. Both tables carry
+// the same keys.
 
 export const STRINGS = {
   en: {
@@ -46,7 +47,13 @@ export const STRINGS = {
     picture_minimized: 'WeftCut is minimized: about one frame a second.',
     picture_unsupported: 'This browser can’t show the picture.',
     picture_failed: 'WeftCut couldn’t encode the picture.',
+    picture_blocked: 'The picture can’t reach this panel. Ask the agent to open the side preview, which shows it in a browser.',
     picture_retry: 'Try again',
+    start_app: 'Start WeftCut',
+    starting_app: 'Starting WeftCut…',
+    start_failed: 'WeftCut didn’t start. Open it yourself, and this view connects by itself.',
+    open_recent: 'Open {name}',
+    open_recent_failed: '{name} couldn’t be opened.',
   },
   zh: {
     lang: 'zh',
@@ -91,7 +98,13 @@ export const STRINGS = {
     picture_minimized: 'WeftCut 已最小化，约每秒一帧。',
     picture_unsupported: '此浏览器无法显示画面。',
     picture_failed: 'WeftCut 无法编码画面。',
+    picture_blocked: '画面无法连到这个面板。可以让 agent 打开侧边预览，在浏览器里查看画面。',
     picture_retry: '重试',
+    start_app: '启动 WeftCut',
+    starting_app: '正在启动 WeftCut…',
+    start_failed: 'WeftCut 没有启动。手动打开后，这里会自动连上。',
+    open_recent: '打开 {name}',
+    open_recent_failed: '无法打开 {name}。',
   },
 }
 

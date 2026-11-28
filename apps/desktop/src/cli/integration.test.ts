@@ -29,6 +29,7 @@ import { AGENT_HOSTS, stdioEntry, stdioSnippet } from '../shared/agentHosts.js'
 import { installCli } from '../main/mcp/cliInstall.js'
 import { mcpInstructions } from '../main/mcp/instructions.js'
 import { buildMcpServer } from '../main/mcp/server.js'
+import { PANEL_ENTRY_TOOL, PANEL_SYNC_TOOL, PANEL_URI } from '../main/companion/panelEntry.js'
 import { createActor } from '../main/state/actor.js'
 import { uuidV7Gen } from '../main/state/ids.js'
 import { blankProject } from '../main/state/model.js'
@@ -66,6 +67,9 @@ const besideAnApp = (): boolean => /[\\/]resources[\\/]cli$/i.test(path.dirname(
 let tmp: string
 
 const SYNTHETIC = ['weftcut_status', 'launch_weftcut']
+/// What a client that shows MCP Apps views declares (`initialize` capabilities).
+const SHOWS_VIEWS = { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } } }
+const PANEL_HTML = fs.readFileSync(path.join(HERE, '../../cli/companion/panel/panel.html'), 'utf8')
 const CATALOG_CHANGED = [
   'notifications/tools/list_changed',
   'notifications/resources/list_changed',
@@ -122,10 +126,10 @@ function open(target: Target, userData: string, env: Record<string, string> = {}
 }
 
 /// The SDK's client on a freshly spawned target, initialized.
-async function sdkClient(target: Target, userData: string): Promise<Client> {
+async function sdkClient(target: Target, userData: string, capabilities: Record<string, unknown> = {}): Promise<Client> {
   const [command, ...args] = target.serve()
   const transport = new StdioClientTransport({ command: command!, args, env: shimEnv(userData), stderr: 'ignore' })
-  const client = new Client({ name: 'itest', version: '0' }, { capabilities: {} })
+  const client = new Client({ name: 'itest', version: '0' }, { capabilities })
   cleanups.push(() => client.close().catch(() => {}))
   await client.connect(transport)
   return client
@@ -278,6 +282,19 @@ describe('weftcut mcp over real stdio + HTTP', () => {
       // A request the shim has no down-state answer for is not one of its methods.
       const unknown = await errorOf(client.request({ method: 'logging/setLevel', params: { level: 'info' } }, ResultSchema))
       expect(unknown.code).toBe(ErrorCode.MethodNotFound)
+    })
+
+    it('with the app away, lists the side-panel view to a client that shows views, and serves it', async () => {
+      const port = await unusedPort()
+      const plain = await sdkClient(target, profile(port))
+      expect((await plain.listTools()).tools.map((t) => t.name)).toEqual(SYNTHETIC)
+      const viewing = await sdkClient(target, profile(port), SHOWS_VIEWS)
+      expect((await viewing.listTools()).tools.map((t) => t.name)).toEqual([...SYNTHETIC, PANEL_ENTRY_TOOL.name])
+      // The view offers to start the app: it must load while the app is closed.
+      expect((await viewing.listResources()).resources.map((r) => r.uri)).toEqual([PANEL_URI])
+      expect((await viewing.readResource({ uri: PANEL_URI })).contents).toEqual([{ uri: PANEL_URI, mimeType: 'text/html;profile=mcp-app', text: PANEL_HTML }])
+      const opened = await viewing.callTool({ name: PANEL_ENTRY_TOOL.name, arguments: {} })
+      expect(opened.isError).toBeFalsy()
     })
 
     it('sends an error message without a code prefix of its own', async () => {
@@ -885,14 +902,14 @@ describe('weftcut mcp over real stdio + HTTP', () => {
           JSON.stringify({ ok: true, result: { contents: [{ uri, mimeType: 'text/plain', text: uri }] } }),
         mcpCallTool: async () => { throw new Error('no native tool is called by this gate') },
       }
-      return buildMcpServer(backend as never, { getTsHost: () => host as never, companionLink: COMPANION_LINK })
+      return buildMcpServer(backend as never, { getTsHost: () => host as never, companionLink: COMPANION_LINK, panelSync: async (args) => ({ echoed: args }) })
     }
 
-    async function directClient(): Promise<Client> {
+    async function directClient(capabilities: Record<string, unknown> = {}): Promise<Client> {
       const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${app.port}/mcp`), {
         requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
       })
-      const client = new Client({ name: 'itest', version: '0' }, { capabilities: {} })
+      const client = new Client({ name: 'itest', version: '0' }, { capabilities })
       cleanups.push(async () => {
         await transport.terminateSession().catch(() => {})
         await client.close().catch(() => {})
@@ -949,6 +966,42 @@ describe('weftcut mcp over real stdio + HTTP', () => {
         const direct = await ask(await directClient())
         expect(JSON.stringify(direct)).toContain('00:00:01:00')
         expect(await ask(await sdkClient(target, appData))).toEqual(direct)
+      }
+    })
+
+    // The binary answers the entry and the view itself, from the same
+    // `entry.json` and `panel.html`: equal answers are what hold its address
+    // computation and the app's to one value.
+    it('lists, opens and reads the side-panel view the same through the shim as over HTTP, for a client that shows views only', async () => {
+      const asks: Array<[string, Record<string, unknown>]> = [['tools/list', {}], ['resources/list', {}]]
+      for (const capabilities of [{}, SHOWS_VIEWS]) {
+        const direct = await directClient(capabilities)
+        const shimmed = await sdkClient(target, appData, capabilities)
+        for (const [method, params] of asks) expect.soft(await outcome(shimmed, method, params), `${method} ${JSON.stringify(capabilities)}`).toEqual(await outcome(direct, method, params))
+      }
+      // To a client that shows no views, the view's tools are no tools: a call
+      // by name is refused as an unknown name is, through the shim and over HTTP.
+      const plainDirect = await directClient()
+      const plainShimmed = await sdkClient(target, appData)
+      const unknown = await outcome(plainDirect, 'tools/call', { name: 'no_such_tool', arguments: {} })
+      expect(unknown).toHaveProperty('error')
+      for (const name of [PANEL_ENTRY_TOOL.name, PANEL_SYNC_TOOL.name]) {
+        const params = { name, arguments: { op: 'state' } }
+        expect(await outcome(plainDirect, 'tools/call', params), name).toEqual(unknown)
+        expect(await outcome(plainShimmed, 'tools/call', params), name).toEqual(unknown)
+      }
+      const direct = await directClient(SHOWS_VIEWS)
+      const shimmed = await sdkClient(target, appData, SHOWS_VIEWS)
+      const listed = await outcome(direct, 'tools/list', {}) as { result: { tools: Array<{ name: string }> } }
+      expect(listed.result.tools.map((t) => t.name).slice(0, 2)).toEqual([PANEL_ENTRY_TOOL.name, PANEL_SYNC_TOOL.name])
+      for (const [method, params] of [
+        ['resources/read', { uri: PANEL_URI }],
+        ['tools/call', { name: PANEL_ENTRY_TOOL.name, arguments: {} }],
+        ['tools/call', { name: PANEL_SYNC_TOOL.name, arguments: { op: 'state' } }],
+      ] as const) {
+        const answer = await outcome(direct, method, params)
+        expect(answer, method).toHaveProperty('result')
+        expect(await outcome(shimmed, method, params), `${method} ${JSON.stringify(params)}`).toEqual(answer)
       }
     })
 

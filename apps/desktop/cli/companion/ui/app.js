@@ -3,8 +3,9 @@
 // time, a small timeline to seek on, export progress and the agent calls seen
 // since the page opened. It reads the project and drives the player; it never
 // edits. Everything it knows arrives through `transport`
-// (`transportLoopback.js` in a browser), and the DOM is built node by node:
-// the page's CSP admits no inline style or markup from data.
+// (`transportLoopback.js` in a browser, `../panel/transportToolcall.js` in a
+// host's side panel), and the DOM is built node by node: the page's CSP admits
+// no inline style or markup from data.
 import { exportRunning, exportShown, pageState, pictureState, recordCall } from './viewState.js'
 import { clipBox, frameAt, frameStartUs, rulerLabel, rulerTicks, timeAt, timecode, timelineRows } from './timeline.js'
 import { fill, stringsFor } from './strings.js'
@@ -48,11 +49,17 @@ const EMPTY_COPY = {
  * @param {HTMLElement} root
  * @param {{ start(h: { state(s: object): void, event(name: string, data: unknown): void, link(status: string): void }): () => void,
  *           control(action: object): Promise<string>,
- *           openPicture(view: { mount: HTMLElement, shown(): void }): { close(): void } | null }} transport
- * @param {{ now?: () => number, wallNow?: () => number, frame?: (cb: () => void) => void, locale?: string }} [env]
+ *           openPicture(view: { mount: HTMLElement, shown(): void, failed(): void, blocked(): void }): { close(): void } | null,
+ *           launch?(): Promise<'ok' | 'failed'>,
+ *           recentProject?(): Promise<{ name: string, path: string } | null>,
+ *           openProject?(path: string): Promise<'ok' | 'failed'> }} transport
+ *   `launch`, `recentProject` and `openProject` are offered by a transport that
+ *   can start the app and open a project; the page shows their buttons only then.
+ * @param {{ now?: () => number, wallNow?: () => number, frame?: (cb: () => void) => void, locale?: string, icon?: string }} [env]
  *   `now` in milliseconds and `frame` (a requestAnimationFrame) move the
  *   playhead between transport updates; `wallNow` (ms since the epoch) dates
- *   the agent calls; `locale` is the browser's, used until the app names its own.
+ *   the agent calls; `locale` is the browser's, used until the app names its own;
+ *   `icon` is the app icon's address, which differs between the page and a view.
  */
 export function mountCompanion(root, transport, env = {}) {
   const now = env.now ?? (() => performance.now())
@@ -94,7 +101,7 @@ export function mountCompanion(root, transport, env = {}) {
     const wrap = el('span', `cw-mark ${className}`)
     wrap.setAttribute('aria-hidden', 'true')
     const img = el('img', 'cw-mark-img')
-    img.src = '/companion/ui/icon.svg'
+    if (env.icon) img.src = env.icon
     img.alt = ''
     const pulse = svg('svg', { viewBox: '0 0 440 440', class: 'cw-mark-pulse', fill: 'none' })
     const clip = svg('clipPath', { id: clipId })
@@ -121,9 +128,11 @@ export function mountCompanion(root, transport, env = {}) {
   const emptyBody = el('p', 'cw-empty-body')
   const emptyWait = el('p', 'cw-empty-wait')
   const emptyFocus = textButton('cw-empty-focus')
+  const emptyStart = textButton('cw-button-primary cw-empty-start')
+  const emptyRecent = textButton('cw-button-primary cw-empty-recent')
   const empty = el('section', 'cw-empty')
   empty.setAttribute('role', 'status')
-  empty.append(mark('cw-empty-mark', 'cw-empty-w'), emptyTitle, emptyBody, emptyWait, emptyFocus)
+  empty.append(mark('cw-empty-mark', 'cw-empty-w'), emptyTitle, emptyBody, emptyWait, emptyStart, emptyRecent, emptyFocus)
 
   const pictureMount = el('div', 'cw-picture')
   const posterTitle = el('p', 'cw-poster-title')
@@ -202,6 +211,13 @@ export function mountCompanion(root, transport, env = {}) {
   let pictureShown = false
   /** The app said it cannot encode the picture, since the page last asked. */
   let pictureFailed = false
+  /** The picture's connection drew nothing here since it last drew. */
+  let pictureBlocked = false
+  /** A start of the app this page asked for is running. */
+  let launching = false
+  /** The app's most recent project while none is open, once asked for;
+   *  `asked` is reset whenever the page leaves `no_project`. */
+  let recent = { asked: false, project: null }
   /** Agent calls this page saw, newest first (`recordCall`). */
   let seenCalls = []
 
@@ -231,6 +247,13 @@ export function mountCompanion(root, transport, env = {}) {
     emptyBody.hidden = text === null
     emptyWait.hidden = !['offline', 'connecting', 'opening'].includes(v)
     emptyFocus.hidden = v !== 'no_project'
+    emptyStart.hidden = v !== 'offline' || typeof transport.launch !== 'function'
+    emptyStart.disabled = launching
+    emptyStart.textContent = launching ? strings.starting_app : strings.start_app
+    if (v !== 'no_project') recent = { asked: false, project: null }
+    else if (!recent.asked && typeof transport.recentProject === 'function') askRecent()
+    emptyRecent.hidden = v !== 'no_project' || recent.project === null
+    if (recent.project !== null) emptyRecent.textContent = fill(strings.open_recent, { name: recent.project.name })
     focus.disabled = link !== 'online'
     for (const b of [toStart, prev, play, next, toEnd]) b.disabled = v !== 'ready'
     paintStage()
@@ -245,6 +268,7 @@ export function mountCompanion(root, transport, env = {}) {
       wanted: pictureWanted,
       supported: pictureSupported,
       failed: pictureFailed,
+      blocked: pictureBlocked,
       minimized: state?.window === 'minimized',
       shown: pictureShown,
     })
@@ -253,7 +277,7 @@ export function mountCompanion(root, transport, env = {}) {
     poster.hidden = p !== 'off'
     const message = {
       export: strings.picture_export, unsupported: strings.picture_unsupported, failed: strings.picture_failed,
-      minimized: strings.picture_minimized, starting: strings.picture_starting,
+      blocked: strings.picture_blocked, minimized: strings.picture_minimized, starting: strings.picture_starting,
     }[p]
     stageMessage.textContent = message ?? ''
     stageNote.hidden = message === undefined
@@ -279,12 +303,20 @@ export function mountCompanion(root, transport, env = {}) {
     if (pull && picture === null) {
       pictureShown = false
       pictureFailed = false
+      pictureBlocked = false
       picture = transport.openPicture({
         mount: pictureMount,
         shown() {
-          if (pictureShown) return
+          if (pictureShown && !pictureBlocked) return
           pictureShown = true
           pictureFailed = false
+          pictureBlocked = false
+          paintStage()
+        },
+        blocked() {
+          if (pictureBlocked) return
+          pictureBlocked = true
+          pictureShown = false
           paintStage()
         },
         failed() {
@@ -474,6 +506,35 @@ export function mountCompanion(root, transport, env = {}) {
   prev.addEventListener('click', () => stepFrames(-1))
   next.addEventListener('click', () => stepFrames(1))
   const focusEditor = () => { void transport.control({ action: 'focus' }).then(answered) }
+
+  emptyStart.addEventListener('click', async () => {
+    if (launching) return
+    launching = true
+    paintView()
+    const outcome = await transport.launch()
+    launching = false
+    paintView()
+    if (outcome !== 'ok') say(strings.start_failed)
+  })
+
+  /** Asks once per stay on the start screen which project to offer. */
+  function askRecent() {
+    recent = { asked: true, project: null }
+    const asked = recent
+    void transport.recentProject().then((project) => {
+      if (recent !== asked) return
+      recent = { asked: true, project }
+      paintView()
+    })
+  }
+  emptyRecent.addEventListener('click', async () => {
+    const project = recent.project
+    if (project === null) return
+    emptyRecent.disabled = true
+    const outcome = await transport.openProject(project.path)
+    emptyRecent.disabled = false
+    if (outcome !== 'ok') say(fill(strings.open_recent_failed, { name: project.name }))
+  })
   for (const b of [focus, emptyFocus, stageFocus]) b.addEventListener('click', focusEditor)
   showPicture.addEventListener('click', () => setPicture(true))
   hidePicture.addEventListener('click', () => setPicture(false))

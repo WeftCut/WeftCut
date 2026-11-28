@@ -1,8 +1,9 @@
 // The companion page's wire: what main serves the page on its loopback
-// listener (`main/companion/`), and what main and the editor renderer say to
-// each other about it (`renderer/companion/companionBridge.ts`). The page
-// itself is plain JS (`apps/desktop/cli/companion/`) and reads these shapes as
-// JSON. It reads the project and drives the player; nothing here edits.
+// listener and a side-panel view over tool calls (`main/companion/`), and what
+// main and the editor renderer say to each other about it
+// (`renderer/companion/companionBridge.ts`). The page and the view are plain JS
+// (`apps/desktop/cli/companion/`) and read these shapes as JSON. They read the
+// project and drive the player; nothing here edits.
 
 /** The player as the editor sees it, in ROOT time. */
 export interface CompanionTransport {
@@ -72,11 +73,11 @@ export type CompanionControl =
   | { action: 'pause' }
   | { action: 'seek'; t_us: number }
 
-/** What main needs from the attached editor. `watch`: some page is open, so
- *  the editor pushes its transport; with none open it pushes nothing.
- *  `picture`: some page shows the preview, no export runs and the encoder has
- *  not failed since a page last asked, so the editor captures and encodes its
- *  canvas; otherwise it touches neither. */
+/** What main needs from the attached editor. `watch`: some page or view is
+ *  open, so the editor pushes its transport; with none open it pushes nothing.
+ *  `picture`: some page or view shows the preview, no export runs and the
+ *  encoder has not failed since one last asked, so the editor captures and
+ *  encodes its canvas; otherwise it touches neither. */
 export interface CompanionDemand {
   watch: boolean
   picture: boolean
@@ -91,14 +92,26 @@ export const COMPANION_MIRROR_CONFIG = 'companion_mirror_config'
 export const COMPANION_MIRROR_CHUNK = 'companion_mirror_chunk'
 /** The editor's encoder stopped for good: no encoder takes the picture. */
 export const COMPANION_MIRROR_FAILED = 'companion_mirror_failed'
+/** The editor's answer to a view's offer (`COMPANION_SIGNAL_EVENT`). */
+export const COMPANION_SIGNAL_ANSWER = 'companion_signal_answer'
+/** How many views' picture channels the editor has open: each counts as a
+ *  page showing the picture. */
+export const COMPANION_PEERS = 'companion_peers'
 
 /** Main → renderer events, each addressed to one bridge token. */
 export const COMPANION_DEMAND_EVENT = 'companion:demand'
 export const COMPANION_CONTROL_EVENT = 'companion:control'
+/** A side-panel view's offer of a picture connection. */
+export const COMPANION_SIGNAL_EVENT = 'companion:signal'
 
 export interface CompanionAttachReply { demand: CompanionDemand }
 export type CompanionDemandMessage = CompanionDemand & { token: string }
 export type CompanionControlMessage = CompanionControl & { token: string }
+export interface CompanionSignalMessage { token: string; request_id: string; offer: string }
+/** `answer` is the SDP answer, naming no address but 127.0.0.1; `error` says
+ *  why none could be made. Exactly one is set. */
+export interface CompanionSignalAnswerMessage { token: string; request_id: string; answer?: string; error?: string }
+export interface CompanionPeersMessage { token: string; open: number }
 
 // ── the picture ─────────────────────────────────────────────────────────────
 
@@ -141,3 +154,7 @@ export const PICTURE_MAX_WIDTH = 960
  *  frame until it is under again, and then only from the next keyframe, so a
  *  slow page never backs up main or the other pages. */
 export const VIEWER_BUFFER_BYTES = 2_000_000
+/** The largest message put on a view's picture channel: what every WebRTC
+ *  implementation takes in one. A frame past it goes as several, which the
+ *  view's frame splitter joins as it joins the page's byte stream. */
+export const PICTURE_MESSAGE_MAX_BYTES = 64 * 1024

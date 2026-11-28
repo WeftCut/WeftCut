@@ -159,7 +159,8 @@ button:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, v
 .cw-empty-wait { display: inline-flex; align-items: center; gap: 8px; margin: 6px 0 0; color: var(--cw-faint); font-size: 12px; }
 .cw-empty-wait::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: cw-breathe 1.6s ease-in-out infinite; }
 @keyframes cw-breathe { 50% { opacity: 0.25; } }
-.cw-empty-focus { margin-top: 12px; }
+.cw-empty-focus, .cw-empty-start, .cw-empty-recent { margin-top: 12px; }
+.cw-empty-start:disabled { opacity: 0.7; cursor: progress; }
 
 /* ── the ready page ─────────────────────────────────────────────────────── */
 
@@ -180,7 +181,7 @@ button:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, v
 .cw-picture canvas { display: block; object-fit: contain; }
 /* A picture with nothing new behind the message is dimmed under it. */
 .cw-stage:is([data-picture="export"], [data-picture="starting"], [data-picture="failed"]) .cw-picture { opacity: 0.3; }
-.cw-stage:is([data-picture="off"], [data-picture="unsupported"]) .cw-picture { display: none; }
+.cw-stage:is([data-picture="off"], [data-picture="unsupported"], [data-picture="blocked"]) .cw-picture { display: none; }
 
 .cw-poster {
   position: absolute;

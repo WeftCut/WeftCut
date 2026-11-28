@@ -4,7 +4,7 @@
 // a real browser by e2e `companion-page.spec.ts`.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { frame } from './pictureStream'
+import { frame } from '../../shared/companionPicture'
 import { UI_FILES } from './pageFiles'
 import {
   MIRROR_FRAME_CONFIG, MIRROR_FRAME_DELTA, MIRROR_FRAME_FAILED, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES,
@@ -49,13 +49,15 @@ describe('pageState', () => {
 })
 
 describe('pictureState', () => {
-  const live = { exporting: false, wanted: true, supported: true, failed: false, minimized: false, shown: true }
+  const live = { exporting: false, wanted: true, supported: true, failed: false, blocked: false, minimized: false, shown: true }
 
   it('names the first state that holds, in order', () => {
-    expect(pictureState({ ...live, exporting: true, wanted: false, supported: false, failed: true, minimized: true, shown: false })).toBe('export')
-    expect(pictureState({ ...live, wanted: false, supported: false, failed: true, minimized: true })).toBe('off')
-    expect(pictureState({ ...live, supported: false, failed: true, minimized: true })).toBe('unsupported')
-    expect(pictureState({ ...live, failed: true, minimized: true, shown: false })).toBe('failed')
+    expect(pictureState({ ...live, exporting: true, wanted: false, supported: false, failed: true, blocked: true, minimized: true, shown: false })).toBe('export')
+    expect(pictureState({ ...live, wanted: false, supported: false, failed: true, blocked: true, minimized: true })).toBe('off')
+    expect(pictureState({ ...live, supported: false, failed: true, blocked: true, minimized: true })).toBe('unsupported')
+    expect(pictureState({ ...live, failed: true, blocked: true, minimized: true, shown: false })).toBe('failed')
+    // A picture that cannot reach the view says so, whatever the window does.
+    expect(pictureState({ ...live, blocked: true, minimized: true, shown: false })).toBe('blocked')
     expect(pictureState({ ...live, minimized: true, shown: false })).toBe('minimized')
     expect(pictureState({ ...live, shown: false })).toBe('starting')
     expect(pictureState(live)).toBe('live')
@@ -365,7 +367,7 @@ describe('the picture stream', () => {
 })
 
 describe('pictureDecoder', () => {
-  const take = (decoder: { take(f: unknown): void }, buf: Buffer) => {
+  const take = (decoder: { take(f: unknown): void }, buf: Uint8Array) => {
     for (const f of chunks.frameSplitter()(new Uint8Array(buf))) decoder.take(f)
   }
 

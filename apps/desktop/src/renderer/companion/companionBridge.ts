@@ -1,8 +1,9 @@
-// The editor's half of the companion page (`main/companion/hub.ts`): it
-// attaches to main once its listeners are in place, follows the demand main
-// gives it, and runs the page's player controls. With no page open the demand
-// is empty and the bridge subscribes to nothing; without a page showing the
-// picture it captures and encodes nothing (`mirrorEncoder.ts`).
+// The editor's half of the companion page and the side-panel view
+// (`main/companion/hub.ts`): it attaches to main once its listeners are in
+// place, follows the demand main gives it, runs their player controls, and
+// answers a view's picture connection (`picturePeers.ts`). With nothing open
+// the demand is empty and the bridge subscribes to nothing; without one
+// showing the picture it captures and encodes nothing (`mirrorEncoder.ts`).
 import { invoke, invokeRaw } from "../bridge/ipc";
 import { listen, type UnlistenFn } from "../bridge/events";
 import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
@@ -15,6 +16,9 @@ import {
   COMPANION_MIRROR_CHUNK,
   COMPANION_MIRROR_CONFIG,
   COMPANION_MIRROR_FAILED,
+  COMPANION_PEERS,
+  COMPANION_SIGNAL_ANSWER,
+  COMPANION_SIGNAL_EVENT,
   COMPANION_TRANSPORT,
   type CompanionAttachReply,
   type CompanionControlMessage,
@@ -22,8 +26,12 @@ import {
   type CompanionDemandMessage,
   type CompanionMirrorChunkMessage,
   type CompanionMirrorConfigMessage,
+  type CompanionPeersMessage,
+  type CompanionSignalAnswerMessage,
+  type CompanionSignalMessage,
 } from "../../shared/companion";
 import { startMirror, type Mirror, type MirrorSend } from "./mirrorEncoder";
+import { PicturePeers } from "./picturePeers";
 
 /** The most often the transport goes to main while playing: a page moves its
  *  own playhead between updates, so this sets how soon it corrects, not how
@@ -36,18 +44,31 @@ export function installCompanionBridge(seekTo: (rootUs: number) => void): () => 
   let disposed = false;
   let unwatch: (() => void) | null = null;
   let mirror: Mirror | null = null;
-  // Frames are no edit: they skip the publication barrier `invoke` waits on.
+  // The views' channels count toward the picture's demand in main, and a
+  // channel that opens wants a keyframe to start from. Nothing here is an
+  // edit: these, the frames and the answers skip the publication barrier
+  // `invoke` waits on.
+  const peers = new PicturePeers(
+    (open) => { void invokeRaw(COMPANION_PEERS, { token, open } satisfies CompanionPeersMessage).catch(() => {}); },
+    () => { mirror?.requestKey(); },
+  );
+  // Main sends its pages the encoder's frames; the bridge sends its channels
+  // the same ones.
   const send: MirrorSend = {
     config: (config) => {
       void invokeRaw(COMPANION_MIRROR_CONFIG, { token, ...config } satisfies CompanionMirrorConfigMessage).catch(() => {});
+      peers.stream.configure(config);
     },
     chunk: (chunk) => {
       void invokeRaw(COMPANION_MIRROR_CHUNK, { token, ...chunk } satisfies CompanionMirrorChunkMessage).catch(() => {});
+      peers.stream.chunk(chunk.key, chunk.timestamp_us, new Uint8Array(chunk.data));
     },
     // Only the running mirror fails (a stopped one never does). Main then
     // drops the demand and tells the pages; a page asking again starts anew.
     failed: () => {
       mirror = null;
+      peers.stream.reset();
+      peers.stream.fail();
       void invokeRaw(COMPANION_MIRROR_FAILED, { token }).catch(() => {});
     },
   };
@@ -63,6 +84,8 @@ export function installCompanionBridge(seekTo: (rootUs: number) => void): () => 
     else if (!demand.picture && mirror !== null) {
       mirror.stop();
       mirror = null;
+      // The next encoder starts with a config of its own, as main's pages do.
+      peers.stream.reset();
     }
   };
 
@@ -75,6 +98,19 @@ export function installCompanionBridge(seekTo: (rootUs: number) => void): () => 
       if (payload.action === "play") transportPlay();
       else if (payload.action === "pause") transportPause();
       else seekTo(payload.t_us);
+    }),
+    listen<CompanionSignalMessage>(COMPANION_SIGNAL_EVENT, ({ payload }) => {
+      if (payload.token !== token || disposed) return;
+      const reply = (answer: { answer: string } | { error: string }): void => {
+        void invokeRaw(COMPANION_SIGNAL_ANSWER, { token, request_id: payload.request_id, ...answer } satisfies CompanionSignalAnswerMessage).catch(() => {});
+      };
+      peers.answer(payload.offer).then(
+        (answer) => { reply({ answer }); },
+        (error: unknown) => {
+          console.warn("[companion] no answer to a view's offer:", error);
+          reply({ error: String(error) });
+        },
+      );
     }),
   ];
 
@@ -91,6 +127,7 @@ export function installCompanionBridge(seekTo: (rootUs: number) => void): () => 
     unwatch = null;
     mirror?.stop();
     mirror = null;
+    peers.closeAll();
     for (const u of listening) void u.then((f) => f());
     void invoke(COMPANION_DETACH, { token }).catch(() => {});
   };

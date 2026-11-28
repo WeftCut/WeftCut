@@ -1,35 +1,38 @@
-// apps/desktop/src/main/companion/pictureStream.ts
-//
-// The companion picture as main hands it to pages: the editor's encoded frames
-// framed for `GET /companion/video`, and what each viewer is sent. The editor
-// encodes once; every viewer gets the same bytes, as fast as it takes them.
-// Whether the editor encodes at all is `hub.ts`'s demand.
+// The companion picture as it is handed to viewers: the editor's encoded
+// frames framed as `companion.ts` MIRROR_* says, and what each viewer is sent.
+// Main hands them to pages over `GET /companion/video`; the editor window
+// hands them to side-panel views over data channels
+// (`renderer/companion/picturePeers.ts`). The editor encodes once; every viewer
+// gets the same bytes, as fast as it takes them. Whether the editor encodes at
+// all is `main/companion/hub.ts`'s demand.
 import {
   MIRROR_FRAME_CONFIG, MIRROR_FRAME_DELTA, MIRROR_FRAME_FAILED, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES, VIEWER_BUFFER_BYTES,
   type CompanionMirrorConfig,
-} from '../../shared/companion.js'
+} from './companion'
 
-/** One open `/companion/video` response. */
+/** One viewer: an open `/companion/video` response, or a data channel. */
 export interface PictureSink {
-  write(chunk: Buffer): unknown
+  write(chunk: Uint8Array<ArrayBuffer>): unknown
   /** Bytes written and not yet sent. */
   readonly writableLength: number
 }
 
-export function frame(kind: number, timestampUs: number, payload: Buffer): Buffer {
-  const head = Buffer.alloc(MIRROR_HEADER_BYTES)
-  head.writeUInt8(kind, 0)
-  head.writeDoubleLE(timestampUs, 1)
-  head.writeUInt32LE(payload.length, 9)
-  return Buffer.concat([head, payload])
+export function frame(kind: number, timestampUs: number, payload: Uint8Array): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(MIRROR_HEADER_BYTES + payload.length)
+  const head = new DataView(out.buffer, 0, MIRROR_HEADER_BYTES)
+  head.setUint8(0, kind)
+  head.setFloat64(1, timestampUs, true)
+  head.setUint32(9, payload.length, true)
+  out.set(payload, MIRROR_HEADER_BYTES)
+  return out
 }
 
 export class PictureStream {
   /** Per viewer: whether it must wait for a keyframe, because it has not had
    *  every frame since the last one. */
   private readonly viewers = new Map<PictureSink, { needKey: boolean }>()
-  private config: Buffer | null = null
-  private lastKey: Buffer | null = null
+  private config: Uint8Array<ArrayBuffer> | null = null
+  private lastKey: Uint8Array<ArrayBuffer> | null = null
 
   get size(): number { return this.viewers.size }
 
@@ -44,7 +47,7 @@ export class PictureStream {
 
   /** A new encoder: what came before it cannot be decoded with its config. */
   configure(config: CompanionMirrorConfig): void {
-    this.config = frame(MIRROR_FRAME_CONFIG, 0, Buffer.from(JSON.stringify(config)))
+    this.config = frame(MIRROR_FRAME_CONFIG, 0, new TextEncoder().encode(JSON.stringify(config)))
     this.lastKey = null
     for (const [sink, v] of this.viewers) {
       v.needKey = true
@@ -52,7 +55,7 @@ export class PictureStream {
     }
   }
 
-  chunk(key: boolean, timestampUs: number, data: Buffer): void {
+  chunk(key: boolean, timestampUs: number, data: Uint8Array): void {
     const buf = frame(key ? MIRROR_FRAME_KEY : MIRROR_FRAME_DELTA, timestampUs, data)
     if (key) this.lastKey = buf
     for (const [sink, v] of this.viewers) {
@@ -70,7 +73,7 @@ export class PictureStream {
   /** No encoder takes the picture: every viewer is told so, past its buffer
    *  bound too (the frame is a header). Call after `reset`. */
   fail(): void {
-    const failed = frame(MIRROR_FRAME_FAILED, 0, Buffer.alloc(0))
+    const failed = frame(MIRROR_FRAME_FAILED, 0, new Uint8Array(0))
     for (const sink of this.viewers.keys()) sink.write(failed)
   }
 

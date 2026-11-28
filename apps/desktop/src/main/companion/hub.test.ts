@@ -1,15 +1,17 @@
 // The companion hub: the state a page reads, the demand the editor is told,
 // and the readiness handshake that decides whether the player can be driven.
-import { describe, expect, it } from 'vitest'
-import { CompanionHub, type CompanionViewer } from './hub'
-import type { PictureSink } from './pictureStream'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CompanionHub, SIGNAL_TIMEOUT_MS, type CompanionViewer } from './hub'
+import { POLL_HOLD_MS, POLL_LEASE_MS } from './polledViewer'
+import type { PictureSink } from '../../shared/companionPicture'
 import { createActor } from '../state/actor'
 import { blankProject } from '../state/model'
 import { uuidV7Gen } from '../state/ids'
 import { AGENT_ACTIVITY_EVENT } from '../../shared/agent-activity'
 import {
   COMPANION_ATTACH, COMPANION_CONTROL_EVENT, COMPANION_DEMAND_EVENT, COMPANION_DETACH, COMPANION_MIRROR_CHUNK,
-  COMPANION_MIRROR_CONFIG, COMPANION_MIRROR_FAILED, COMPANION_TRANSPORT, MIRROR_FRAME_CONFIG, MIRROR_FRAME_FAILED, MIRROR_FRAME_KEY,
+  COMPANION_MIRROR_CONFIG, COMPANION_MIRROR_FAILED, COMPANION_PEERS, COMPANION_SIGNAL_ANSWER, COMPANION_SIGNAL_EVENT, COMPANION_TRANSPORT,
+  MIRROR_FRAME_CONFIG, MIRROR_FRAME_FAILED, MIRROR_FRAME_KEY,
   type CompanionEventName, type CompanionWindow,
 } from '../../shared/companion'
 
@@ -34,9 +36,9 @@ function setup(opened: { dir: string } | null = { dir: '/home/u/Projects/Example
 
 /** A `/companion/video` response that takes everything at once. */
 function sink() {
-  const written: Buffer[] = []
+  const written: Uint8Array[] = []
   const s: PictureSink = { write: (b) => { written.push(b) }, writableLength: 0 }
-  return { s, kinds: () => written.map((b) => b.readUInt8(0)) }
+  return { s, kinds: () => written.map((b) => b[0]) }
 }
 
 const chunk = (token: string, key: boolean) => ({ token, key, timestamp_us: 0, data: new Uint8Array([1, 2, 3]).buffer })
@@ -306,5 +308,98 @@ describe('what the page hears from main', () => {
       export: { job_id: 'j', state: 'rendering', progress: 0.5, filename: 'cut.mp4' },
       activity: { client: 'agent', tool: 'add_layers', state: 'running' },
     })
+  })
+})
+
+describe('a view that polls', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('counts as watching while it polls, and stops once it has not for the lease', async () => {
+    vi.useFakeTimers()
+    const { hub, sent } = setup()
+    hub.attach('T1')
+    const first = await hub.poll(undefined, undefined)
+    expect(hub.demand().watch).toBe(true)
+    hub.pushTransport('T1', { t_us: 5, playing: true })
+    expect(await hub.poll(first.seq, first.stream)).toMatchObject({ events: [{ name: 'transport', data: { t_us: 5, playing: true } }] })
+    await vi.advanceTimersByTimeAsync(POLL_LEASE_MS + POLL_HOLD_MS)
+    expect(hub.demand().watch).toBe(false)
+    expect(demands(sent).map((d) => (d as { watch: boolean }).watch)).toEqual([true, false])
+  })
+})
+
+describe("a view's picture connection", () => {
+  afterEach(() => { vi.useRealTimers() })
+  const signals = (sent: Array<[string, unknown]>) => sent.filter(([e]) => e === COMPANION_SIGNAL_EVENT).map(([, p]) => p as { token: string; request_id: string; offer: string })
+
+  it('is not ready before an editor attached, and nothing is sent', async () => {
+    const { hub, sent } = setup()
+    expect(await hub.signal('v=0')).toEqual({ outcome: 'not_ready' })
+    expect(signals(sent)).toEqual([])
+  })
+
+  it("hands the offer to the attached editor and answers with the editor's answer", async () => {
+    const { hub, sent } = setup()
+    hub.attach('T1')
+    const outcome = hub.signal('v=0 offer')
+    const [asked] = signals(sent)
+    expect(asked).toMatchObject({ token: 'T1', offer: 'v=0 offer' })
+    // An answer from another bridge is not this editor's.
+    hub.handleInvoke(COMPANION_SIGNAL_ANSWER, { token: 'T0', request_id: asked!.request_id, answer: 'stale' })
+    hub.handleInvoke(COMPANION_SIGNAL_ANSWER, { token: 'T1', request_id: asked!.request_id, answer: 'v=0 answer' })
+    expect(await outcome).toEqual({ outcome: 'ok', answer: 'v=0 answer' })
+  })
+
+  it("says the editor could not answer, or is not ready when it stays silent or goes", async () => {
+    vi.useFakeTimers()
+    const { hub, sent } = setup()
+    hub.attach('T1')
+    const refused = hub.signal('v=0')
+    hub.handleInvoke(COMPANION_SIGNAL_ANSWER, { token: 'T1', request_id: signals(sent)[0]!.request_id, error: 'no 127.0.0.1 candidate' })
+    expect(await refused).toEqual({ outcome: 'failed' })
+
+    const silent = hub.signal('v=0')
+    await vi.advanceTimersByTimeAsync(SIGNAL_TIMEOUT_MS)
+    expect(await silent).toEqual({ outcome: 'not_ready' })
+
+    const orphaned = hub.signal('v=0')
+    hub.editorGone()
+    expect(await orphaned).toEqual({ outcome: 'not_ready' })
+  })
+
+  it('refuses an offer that is none', async () => {
+    const { hub, sent } = setup()
+    hub.attach('T1')
+    for (const offer of [undefined, '', 42]) expect(await hub.signal(offer)).toEqual({ outcome: 'invalid' })
+    expect(signals(sent)).toEqual([])
+  })
+
+  it('counts open channels as showing the picture, an export still holding it, until the editor goes', () => {
+    const { hub } = setup()
+    hub.attach('T1')
+    hub.handleInvoke(COMPANION_PEERS, { token: 'T0', open: 1 })
+    expect(hub.demand().picture).toBe(false)
+    hub.handleInvoke(COMPANION_PEERS, { token: 'T1', open: 1 })
+    expect(hub.demand().picture).toBe(true)
+    hub.observe('export:status', exportStatus('rendering'))
+    expect(hub.demand().picture).toBe(false)
+    hub.observe('export:status', exportStatus('completed'))
+    expect(hub.demand().picture).toBe(true)
+    hub.handleInvoke(COMPANION_PEERS, { token: 'T1', open: 0 })
+    expect(hub.demand().picture).toBe(false)
+    hub.handleInvoke(COMPANION_PEERS, { token: 'T1', open: 2 })
+    // A new editor has no channels of the old one's.
+    hub.attach('T2')
+    expect(hub.demand().picture).toBe(false)
+  })
+
+  it('asks for the picture again when a channel opens after the encoder failed', () => {
+    const { hub } = setup()
+    hub.attach('T1')
+    hub.handleInvoke(COMPANION_PEERS, { token: 'T1', open: 1 })
+    hub.handleInvoke(COMPANION_MIRROR_FAILED, { token: 'T1' })
+    expect(hub.demand().picture).toBe(false)
+    hub.handleInvoke(COMPANION_PEERS, { token: 'T1', open: 2 })
+    expect(hub.demand().picture).toBe(true)
   })
 })

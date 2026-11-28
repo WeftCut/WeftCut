@@ -6,7 +6,8 @@ package main
 // the network or a clock runs beside it and reports back as an event.
 //
 // The shim answers itself only what must work without the app or is its own:
-// `initialize`, `ping`, its two tools, and the answers of the down state.
+// `initialize`, `ping`, its two tools, the side-panel view's entry and HTML
+// (panel.go), and the answers of the down state.
 // Every other message crosses in the direction it was going, unread past its
 // envelope. See docs/adr/0165.
 
@@ -121,6 +122,9 @@ type server struct {
 	// hello is who the client said it is. The app session is opened as that
 	// client, so nothing is opened before it.
 	hello *identity
+	// ui: the client said it shows MCP Apps views, so its listings carry the
+	// side-panel view's entry (panel.go).
+	ui bool
 
 	// up is the app session; nil while down. gen changes at every transition,
 	// so an event from an exchange of an earlier session is recognised.
@@ -330,7 +334,18 @@ func (s *server) clientRequest(r *request) {
 			case toolLaunch:
 				s.launchCall(r)
 				return
+			case panel.toolName:
+				// To a client that shows no views the entry does not exist:
+				// the app refuses it as it refuses any unknown name.
+				if s.ui {
+					s.write(resultMessage(r.rawID, panelCallResult()))
+					return
+				}
 			}
+		}
+		if r.method == methodResourcesRead && uriOf(r.params) == panel.uri {
+			s.write(resultMessage(r.rawID, panelReadResult()))
+			return
 		}
 		if s.up != nil {
 			s.forward(r)
@@ -382,6 +397,7 @@ func (s *server) initialize(r *request) {
 			who.capabilities = json.RawMessage(`{}`)
 		}
 		s.hello = &who
+		s.ui = declaresUI(who.capabilities)
 	}
 	s.write(resultMessage(r.rawID, initializeResult(protocol)))
 }
@@ -626,6 +642,25 @@ func (s *server) poll() {
 }
 
 // --- the shim's own tools ---
+
+// ownTools are the tools the shim lists itself, ahead of the app's: the two
+// that reach the app, and the side-panel view's entry for a client that shows
+// views.
+func (s *server) ownTools() []syntheticTool {
+	if !s.ui {
+		return syntheticTools
+	}
+	return append(append([]syntheticTool{}, syntheticTools...), syntheticTool{panel.toolName, panel.definition})
+}
+
+// ownResources are the resources the shim lists itself: the view, for a
+// client that shows views.
+func (s *server) ownResources() []json.RawMessage {
+	if !s.ui {
+		return nil
+	}
+	return []json.RawMessage{panel.listing}
+}
 
 func (s *server) answerLocal(key string, result json.RawMessage) {
 	if id, ok := s.local[key]; ok {

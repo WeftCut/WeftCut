@@ -15,5 +15,5 @@ mountCompanion(
     clock,
     codecs: typeof VideoDecoder === 'undefined' ? null : { VideoDecoder, EncodedVideoChunk },
   }),
-  { locale: navigator.language },
+  { locale: navigator.language, icon: '/companion/ui/icon.svg' },
 )

@@ -32,6 +32,9 @@ const (
 	methodPing       = "ping"
 	methodToolsList  = "tools/list"
 	methodToolsCall  = "tools/call"
+	// The two resource requests the shim reads: the view's listing and its HTML.
+	methodResourcesList = "resources/list"
+	methodResourcesRead = "resources/read"
 )
 
 // supportedProtocols are the MCP versions the shim agrees to speak with a

@@ -13,3 +13,10 @@
 export function companionPageModule(name: string): Promise<any> {
   return import(`../../../cli/companion/ui/${name}.js`)
 }
+
+/** The side-panel view's modules (`apps/desktop/cli/companion/panel/`), loaded
+ *  the same way. `panel.js` is left out: it is the entry the build bundles,
+ *  and runs only inside a host's frame. */
+export function companionPanelModule(name: string): Promise<any> {
+  return import(`../../../cli/companion/panel/${name}.js`)
+}

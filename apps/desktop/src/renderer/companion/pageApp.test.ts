@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The companion page's UI (`cli/companion/ui/app.js`) over a fake transport:
 // what it draws from the state, and what it makes of the app's answers.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { formatTimecode } from '../frames'
 import { companionPageModule as pageModule } from '../../shared/testing/companionPage'
@@ -11,7 +11,7 @@ const { timecode, frameStartUs } = await pageModule('timeline')
 
 type Handlers = { state(s: unknown): void; event(name: string, data: unknown): void; link(status: string): void }
 
-type PictureView = { mount: HTMLElement; shown(): void; failed(): void }
+type PictureView = { mount: HTMLElement; shown(): void; failed(): void; blocked(): void }
 
 function fakeTransport(answer = 'ok', pictureSupported = true) {
   let handlers!: Handlers
@@ -326,6 +326,20 @@ describe('the picture', () => {
     }
   })
 
+  it('says when the picture cannot reach this view, keeps trying, and is live again from the next frame', () => {
+    const { stage, button, pictures } = ready()
+    button('.cw-show-picture').click()
+    pictures[0]!.view.blocked()
+    expect(stage().dataset.picture).toBe('blocked')
+    expect(stage().textContent).toContain(STRINGS.en.picture_blocked)
+    // Not given up: the connection is the transport's to retry.
+    expect(pictures[0]!.closed).toBe(false)
+    pictures[0]!.view.shown()
+    expect(stage().dataset.picture).toBe('live')
+    pictures[0]!.view.blocked()
+    expect(stage().dataset.picture).toBe('blocked')
+  })
+
   it('says so where the browser cannot show it', () => {
     const { h, stage, button } = mount(undefined, false)
     h.link('online')
@@ -344,5 +358,62 @@ describe('the page timecode', () => {
     for (const [num, den] of rates) {
       for (const us of times) expect(timecode(us, { num, den }), `${us} @ ${num}/${den}`).toBe(formatTimecode(us, num, den))
     }
+  })
+})
+
+describe('a transport that can start the app and open a project', () => {
+  function mountWith(actions: Record<string, unknown>) {
+    const root = document.createElement('main')
+    document.body.replaceChildren(root)
+    const fake = fakeTransport()
+    mountCompanion(root, { ...fake.transport, ...actions }, { now: () => 0, frame: () => {} })
+    const button = (name: string) => root.querySelector<HTMLButtonElement>(name)!
+    return { root, button, ...fake }
+  }
+
+  it('offers no start and no project where the transport has no way to them, as on the page', () => {
+    const { h, button } = mount()
+    h.link('offline')
+    expect(button('.cw-empty-start').hidden).toBe(true)
+    h.link('online')
+    h.state(state({ project: null, editor: 'opening' }))
+    expect(button('.cw-empty-recent').hidden).toBe(true)
+  })
+
+  it('offers to start WeftCut while it is away, once at a time, and says when it did not start', async () => {
+    let finish!: (outcome: string) => void
+    const launch = vi.fn(() => new Promise<string>((resolve) => { finish = resolve }))
+    const { h, root, button } = mountWith({ launch })
+    h.link('offline')
+    const start = button('.cw-empty-start')
+    expect(start.hidden).toBe(false)
+    expect(start.textContent).toBe(STRINGS.en.start_app)
+    start.click()
+    start.click()
+    expect(launch).toHaveBeenCalledTimes(1)
+    expect(start.disabled).toBe(true)
+    expect(start.textContent).toBe(STRINGS.en.starting_app)
+    finish('failed')
+    await vi.waitFor(() => expect(start.disabled).toBe(false))
+    expect(root.querySelector('.cw-toast')!.textContent).toBe(STRINGS.en.start_failed)
+  })
+
+  it("offers the app's most recent project on its start screen, asking once per stay there, and opens it", async () => {
+    const recentProject = vi.fn(async () => ({ name: 'Cut', path: '/home/u/Videos/Cut' }))
+    const openProject = vi.fn(async () => 'ok')
+    const { h, button } = mountWith({ recentProject, openProject })
+    h.link('online')
+    h.state(state({ project: null, editor: 'opening' }))
+    const recent = button('.cw-empty-recent')
+    await vi.waitFor(() => expect(recent.hidden).toBe(false))
+    expect(recent.textContent).toBe('Open Cut')
+    h.state(state({ project: null, editor: 'opening' }))
+    expect(recentProject).toHaveBeenCalledTimes(1)
+    recent.click()
+    expect(openProject).toHaveBeenCalledWith('/home/u/Videos/Cut')
+    // Back on the start screen after a project: asked again.
+    h.state(state())
+    h.state(state({ project: null, editor: 'opening' }))
+    expect(recentProject).toHaveBeenCalledTimes(2)
   })
 })

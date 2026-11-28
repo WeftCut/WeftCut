@@ -168,6 +168,11 @@ function bringMainWindowForward(): void {
   w.focus()
 }
 app.on('second-instance', bringMainWindowForward)
+// LANDMINE: without this switch Chromium gathers no 127.0.0.1 candidate, and
+// a host's side panel reaches nothing of this machine but loopback: the
+// side-panel view's picture connection (`renderer/companion/picturePeers.ts`)
+// would have no address to form on. Must be set before `ready`.
+app.commandLine.appendSwitch('allow-loopback-in-peer-connection')
 // A file the OS asks to open waits in the inbox until the window takes it
 // (ADR 0181); before the window exists there is no one to tell, and it takes
 // the request once it starts.
@@ -1446,6 +1451,7 @@ app.whenReady().then(async () => {
   configureSkillBundle(skillsSource.isPackaged ? skillsSource.resourcesSkills : skillsSource.devSkills)
   const { CompanionHub } = await import('./companion/hub.js')
   const { mountCompanionRoutes } = await import('./companion/routes.js')
+  const { runPanelSync } = await import('./companion/panelSync.js')
   const { loadOrCreatePageKey } = await import('./companion/pageKey.js')
   const hub = companionHub = new CompanionHub({
     getTsHost: () => tsHost,
@@ -1473,6 +1479,7 @@ app.whenReady().then(async () => {
       mount: (appExpress, deps) => mountCompanionRoutes(appExpress, hub, pageKey, deps),
       link: (mcpUrl) => `${mcpUrl.replace(/\/mcp$/, '/companion')}#k=${pageKey}`,
     },
+    panelSync: (args) => runPanelSync(hub, args),
     getTsHost: () => tsHost,
     getSpeech,
     getVlm,

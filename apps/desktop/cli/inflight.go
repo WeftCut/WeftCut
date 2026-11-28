@@ -29,8 +29,8 @@ type pending struct {
 	method string
 	// tool is the tool a tools/call names.
 	tool string
-	// firstPage: a tools/list without a cursor, whose answer gains the
-	// shim's own tools.
+	// firstPage: a tools/list or resources/list without a cursor, whose
+	// answer gains the shim's own tools or resources.
 	firstPage bool
 	// token is the progress token the app-side call carries (an idKey): the
 	// client's, or one the shim injected. Empty: none.
@@ -106,7 +106,7 @@ func (s *server) forward(r *request) {
 			p.total = s.after(s.timeouts.toolMaxTotal, evExpired{totalExpired, r.key, 0})
 		}
 	} else {
-		p.firstPage = r.method == methodToolsList && !hasCursor(r.params)
+		p.firstPage = (r.method == methodToolsList || r.method == methodResourcesList) && !hasCursor(r.params)
 		p.flat = s.after(s.timeouts.request, evExpired{flatExpired, r.key, 0})
 	}
 	s.pending[r.key] = p
@@ -132,8 +132,9 @@ func (s *server) take(key string) *pending {
 }
 
 // answered handles the app's response to a client request: forwarded as it
-// came, except a first tools/list page, which gains the shim's own tools. A
-// response to a request the shim already answered is dropped.
+// came, except a first tools/list or resources/list page, which gains the
+// shim's own entries. A response to a request the shim already answered is
+// dropped.
 func (s *server) answered(key string, e envelope, message []byte) {
 	p := s.take(key)
 	if p == nil {
@@ -144,8 +145,15 @@ func (s *server) answered(key string, e envelope, message []byte) {
 		return
 	}
 	if p.firstPage && present(e.Result) {
-		if merged, err := mergeTools(e.Result, syntheticTools); err == nil {
-			message = resultMessage(p.rawID, merged)
+		switch {
+		case p.method == methodToolsList:
+			if merged, err := mergeTools(e.Result, s.ownTools()); err == nil {
+				message = resultMessage(p.rawID, merged)
+			}
+		case p.method == methodResourcesList && len(s.ownResources()) > 0:
+			if merged, err := mergeResources(e.Result, s.ownResources()); err == nil {
+				message = resultMessage(p.rawID, merged)
+			}
 		}
 	}
 	s.write(message)
@@ -250,18 +258,22 @@ func (s *server) downAnswer(id json.RawMessage, method string, firstPage, inFlig
 	case methodToolsList:
 		var tools []json.RawMessage
 		if firstPage {
-			for _, tool := range syntheticTools {
+			for _, tool := range s.ownTools() {
 				tools = append(tools, tool.definition)
 			}
 		}
 		return resultMessage(id, concat(`{"tools":`, encodeArray(tools), `}`))
-	case "resources/list":
-		return resultMessage(id, json.RawMessage(`{"resources":[]}`))
+	case methodResourcesList:
+		var resources []json.RawMessage
+		if firstPage {
+			resources = s.ownResources()
+		}
+		return resultMessage(id, concat(`{"resources":`, encodeArray(resources), `}`))
 	case "resources/templates/list":
 		return resultMessage(id, json.RawMessage(`{"resourceTemplates":[]}`))
 	case "prompts/list":
 		return resultMessage(id, json.RawMessage(`{"prompts":[]}`))
-	case methodToolsCall, "resources/read", "prompts/get":
+	case methodToolsCall, methodResourcesRead, "prompts/get":
 		return errorMessage(id, codeInternalError, s.down().errorText())
 	}
 	if inFlight {

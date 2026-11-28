@@ -1,0 +1,40 @@
+{
+  "extension": "io.modelcontextprotocol/ui",
+  "mimeType": "text/html;profile=mcp-app",
+  "uri": "ui://weftcut/side-preview-{hash}.html",
+  "resource": {
+    "name": "WeftCut side preview",
+    "description": "The view a host shows in its side panel beside the chat: the picture, player and timeline of the project open in WeftCut. Opened by the user, not by the model."
+  },
+  "tool": {
+    "name": "side_preview_panel",
+    "title": "WeftCut",
+    "description": "Opens the WeftCut preview in this conversation's side panel: the picture, player and timeline of the project open in WeftCut. The user opens it from the side panel; it takes no arguments and changes nothing.",
+    "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+    "annotations": { "readOnlyHint": true, "openWorldHint": false },
+    "_meta": {
+      "ui": { "resourceUri": "{uri}", "visibility": ["app"] },
+      "openai/ui": { "entrypoints": [{ "type": "thread" }] }
+    }
+  },
+  "result": "The WeftCut preview is open in the side panel.",
+  "sync": {
+    "name": "side_preview_sync",
+    "description": "The side preview view's own channel to WeftCut: the state it draws, the changes since it last asked, the player controls and the picture's connection. Called by the view, never by the model.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "op": { "type": "string", "enum": ["state", "events", "control", "signal"] },
+        "since": { "type": "integer", "minimum": 0, "description": "events: the last sequence number this view has." },
+        "stream": { "type": "string", "description": "events: the stream that sequence number belongs to." },
+        "action": { "type": "string", "enum": ["play", "pause", "seek", "focus"], "description": "control" },
+        "t_us": { "type": "number", "description": "control seek: where, in microseconds of the root composition." },
+        "offer": { "type": "string", "description": "signal: the view's SDP offer." }
+      },
+      "required": ["op"],
+      "additionalProperties": false
+    },
+    "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
+    "_meta": { "ui": { "visibility": ["app"] } }
+  }
+}

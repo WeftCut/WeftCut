@@ -1,11 +1,13 @@
 // apps/desktop/src/main/companion/hub.ts
 //
-// The app side of the companion page: what a page reads (the state and its
-// event stream, the picture), what it may ask (player controls, bringing the
-// editor forward), and the editor window's bridge that answers for the player
-// and encodes the picture. Owns the readiness handshake with that bridge and
-// the demand it is told. The HTTP side is `routes.ts`, the picture's bytes
-// `pictureStream.ts`; Electron stays out of this file, so Vitest loads it.
+// The app side of the companion page and the side-panel view: what they read
+// (the state and its events, the picture), what they may ask (player controls,
+// bringing the editor forward, a picture connection), and the editor window's
+// bridge that answers for the player and encodes the picture. Owns the
+// readiness handshake with that bridge and the demand it is told. The HTTP
+// side is `routes.ts`, the side panel's tool side `panelSync.ts`, the
+// picture's bytes `shared/companionPicture.ts`; Electron stays out of this
+// file, so Vitest loads it.
 import path from 'node:path'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { Layer, Project } from '../state/model.js'
@@ -15,12 +17,23 @@ import { exportTerminal, type ExportJob, type ExportJobState } from '../../share
 import { AGENT_ACTIVITY_EVENT, type AgentActivityUpdate } from '../../shared/agent-activity.js'
 import {
   COMPANION_ATTACH, COMPANION_CONTROL_EVENT, COMPANION_DEMAND_EVENT, COMPANION_DETACH, COMPANION_MIRROR_CHUNK,
-  COMPANION_MIRROR_CONFIG, COMPANION_MIRROR_FAILED, COMPANION_TRANSPORT,
+  COMPANION_MIRROR_CONFIG, COMPANION_MIRROR_FAILED, COMPANION_PEERS, COMPANION_SIGNAL_ANSWER, COMPANION_SIGNAL_EVENT,
+  COMPANION_TRANSPORT,
   type CompanionActivity, type CompanionAttachReply, type CompanionClip, type CompanionControl,
   type CompanionControlMessage, type CompanionDemand, type CompanionDemandMessage, type CompanionEventName,
-  type CompanionExport, type CompanionState, type CompanionTrack, type CompanionTransport, type CompanionWindow,
+  type CompanionExport, type CompanionSignalMessage, type CompanionState, type CompanionTrack, type CompanionTransport,
+  type CompanionWindow,
 } from '../../shared/companion.js'
-import { PictureStream, type PictureSink } from './pictureStream.js'
+import { PictureStream, type PictureSink } from '../../shared/companionPicture.js'
+import { PolledViewer, type PollAnswer, type PollTimers } from './polledViewer.js'
+
+/** How long a view's offer waits for the editor's answer. Gathering the
+ *  loopback candidate takes a fraction of this; past it the view is told the
+ *  editor is not ready and asks again. */
+export const SIGNAL_TIMEOUT_MS = 5000
+/** The largest offer passed on to the editor. A data-channel offer is a few
+ *  kilobytes. */
+export const SIGNAL_OFFER_MAX_BYTES = 64 * 1024
 
 export interface CompanionHubDeps {
   getTsHost: () => Pick<TsActorHost, 'actor' | 'openedProject'> | null
@@ -34,6 +47,8 @@ export interface CompanionHubDeps {
   windowState: () => CompanionWindow
   /** The picture starts (true) or stops (false). Told on each change only. */
   pictureRunning: (running: boolean) => void
+  /** The polled viewer's and the signals' clocks; tests hand in fakes. */
+  timers?: PollTimers
 }
 
 /** One open event stream. */
@@ -44,6 +59,13 @@ export interface CompanionViewer {
 /** What `control` made of a page's request: `not_ready` while no editor is
  *  attached to drive the player, `invalid` for a body that names no action. */
 export type CompanionControlOutcome = 'ok' | 'not_ready' | 'invalid'
+
+/** What became of a view's offer: the editor's answer; `not_ready` while no
+ *  editor is attached or it did not answer in time (the view asks again);
+ *  `failed` when it could not make one; `invalid` for an offer that is none. */
+export type CompanionSignalOutcome =
+  | { outcome: 'ok'; answer: string }
+  | { outcome: 'not_ready' | 'failed' | 'invalid' }
 
 export class CompanionHub {
   private readonly viewers = new Set<CompanionViewer>()
@@ -63,8 +85,19 @@ export class CompanionHub {
   private pictureFailed = false
   /** The window state pages last heard, so they hear only changes. */
   private window: CompanionWindow | null = null
+  /** Every view that reads through tool calls, as one viewer. */
+  private readonly polled: PolledViewer
+  /** Picture channels the attached editor has open to views. */
+  private peers = 0
+  /** Offers sent to the editor and not answered yet, by request id. */
+  private readonly signals = new Map<string, { resolve: (outcome: CompanionSignalOutcome) => void; timer: unknown }>()
+  private signalSeq = 0
+  private readonly timers: PollTimers
 
-  constructor(private readonly deps: CompanionHubDeps) {}
+  constructor(private readonly deps: CompanionHubDeps) {
+    this.timers = deps.timers ?? globalThis as unknown as PollTimers
+    this.polled = new PolledViewer((viewer) => this.watch(viewer), this.timers)
+  }
 
   // ── page side ──────────────────────────────────────────────────────────────
 
@@ -108,6 +141,24 @@ export class CompanionHub {
     }
   }
 
+  /** A view's poll for events (`PolledViewer.poll`). */
+  poll(since: number | undefined, stream: string | undefined): Promise<PollAnswer> {
+    return this.polled.poll(since, stream)
+  }
+
+  /** A view offers a picture connection; the editor answers it. */
+  signal(offer: unknown): Promise<CompanionSignalOutcome> {
+    if (typeof offer !== 'string' || offer === '' || offer.length > SIGNAL_OFFER_MAX_BYTES) return Promise.resolve({ outcome: 'invalid' })
+    const token = this.attached
+    if (token === null) return Promise.resolve({ outcome: 'not_ready' })
+    const id = `signal-${++this.signalSeq}`
+    return new Promise((resolve) => {
+      const timer = this.timers.setTimeout(() => { this.settleSignal(id, { outcome: 'not_ready' }) }, SIGNAL_TIMEOUT_MS)
+      this.signals.set(id, { resolve, timer })
+      this.deps.sendToEditor(COMPANION_SIGNAL_EVENT, { token, request_id: id, offer } satisfies CompanionSignalMessage)
+    })
+  }
+
   control(body: unknown): CompanionControlOutcome {
     const action = parseAction(body)
     if (action === null) return 'invalid'
@@ -127,7 +178,7 @@ export class CompanionHub {
     const attached = this.attached !== null
     return {
       watch: attached && this.viewers.size > 0,
-      picture: attached && this.picture.size > 0 && !exportRunning(this.exportJob) && !this.pictureFailed,
+      picture: attached && this.picture.size + this.peers > 0 && !exportRunning(this.exportJob) && !this.pictureFailed,
     }
   }
 
@@ -138,6 +189,7 @@ export class CompanionHub {
     const a = (args ?? {}) as {
       token?: unknown; t_us?: unknown; playing?: unknown
       codec?: unknown; coded_width?: unknown; coded_height?: unknown; key?: unknown; timestamp_us?: unknown; data?: unknown
+      request_id?: unknown; answer?: unknown; error?: unknown; open?: unknown
     }
     if (typeof a.token !== 'string' || a.token === '') throw new Error(`${channel} needs the bridge token`)
     switch (channel) {
@@ -164,6 +216,16 @@ export class CompanionHub {
           this.picture.fail()
         }
         return null
+      case COMPANION_SIGNAL_ANSWER:
+        if (typeof a.request_id !== 'string') throw new Error(`${channel} needs request_id`)
+        if (this.attached === a.token) {
+          this.settleSignal(a.request_id, typeof a.answer === 'string' && a.answer !== '' ? { outcome: 'ok', answer: a.answer } : { outcome: 'failed' })
+        }
+        return null
+      case COMPANION_PEERS:
+        if (typeof a.open !== 'number' || !Number.isInteger(a.open) || a.open < 0) throw new Error(`${channel} needs open`)
+        if (this.attached === a.token) this.peersOpen(a.open)
+        return null
     }
     throw new Error(`unknown companion channel ${channel}`)
   }
@@ -173,7 +235,10 @@ export class CompanionHub {
    *  on main tells this token only of changes. A newer attach replaces an
    *  older one. */
   attach(token: string): CompanionAttachReply {
+    // Answers the replaced editor still owed, and its channels, went with it.
+    if (this.attached !== null) this.dropSignals()
     this.attached = token
+    this.peers = 0
     this.pictureFailed = false
     const demand = this.demand()
     this.told = demand
@@ -228,10 +293,33 @@ export class CompanionHub {
   private release(): void {
     this.attached = null
     this.told = null
+    this.peers = 0
+    this.dropSignals()
     // No editor, no player: a page must not run its playhead on.
     this.transport = { ...this.transport, playing: false }
     this.settlePicture(this.demand())
     this.broadcast('editor', {})
+  }
+
+  /** The editor has `open` picture channels to views. One more is a view
+   *  asking for the picture anew, as a page that opens it is. */
+  private peersOpen(open: number): void {
+    if (open > this.peers) this.pictureFailed = false
+    this.peers = open
+    this.demandChanged()
+  }
+
+  private settleSignal(id: string, outcome: CompanionSignalOutcome): void {
+    const pending = this.signals.get(id)
+    if (pending === undefined) return
+    this.signals.delete(id)
+    this.timers.clearTimeout(pending.timer)
+    pending.resolve(outcome)
+  }
+
+  /** No editor will answer what it was sent: each view asks again. */
+  private dropSignals(): void {
+    for (const id of [...this.signals.keys()]) this.settleSignal(id, { outcome: 'not_ready' })
   }
 
   private demandChanged(): void {
