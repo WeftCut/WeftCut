@@ -13,7 +13,10 @@ import type { CropRect } from '../../shared/crop';
 import { invoke, invokeRaw } from "@/bridge/ipc";
 import type { PositionAnimation } from '../../shared/position';
 import type { ResourceHolder } from '../../shared/resource-policy';
-import { TACK_DELETE_CHANNEL, TACK_SET_STATUS_CHANNEL, type TackDeleteSelector, type TackStatus } from '../../shared/agent-activity';
+import {
+  TACK_CREATE_CHANNEL, TACK_DELETE_CHANNEL, TACK_REPLY_CHANNEL, TACK_SET_STATUS_CHANNEL,
+  type TackDeleteSelector, type TackStatus, type UserTackInput,
+} from '../../shared/agent-activity';
 import {
   COMPUTE_CANCELLED_FIELD,
   COMPUTE_JOB_CANCEL_CHANNEL,
@@ -1208,7 +1211,7 @@ export async function agentSessionEnd(): Promise<void> {
   return invoke<void>("agent_session_end");
 }
 
-// ── Tacks (ADR 0115): the user's actions from the agent panel ───────────────
+// ── Tacks (ADR 0115, ADR 0185): the user's actions from the agent panel ─────
 // Served by main's TackStore beside agent activity, like the MCP tack verbs:
 // the change arrives through the activity delta, nothing is recorded, and the
 // history lock does not apply. Converting a tack is `addMarkerIn` (an ordinary
@@ -1219,7 +1222,17 @@ export async function agentTacksSetStatus(tackIds: readonly string[], status: Ta
   return invoke<void>(TACK_SET_STATUS_CHANNEL, { tack_ids: [...tackIds], status });
 }
 
-/// Clear tacks: the listed ids, one work session's (`null`: those created
+/// Open a tack of the user's own on a composition's timeline.
+export async function agentTacksCreate(input: UserTackInput): Promise<{ tack_id: string }> {
+  return invoke<{ tack_id: string }>(TACK_CREATE_CHANNEL, { ...input });
+}
+
+/// Add the user's message to a tack's conversation; a closed tack reopens.
+export async function agentTacksReply(tackId: string, body: string): Promise<void> {
+  return invoke<void>(TACK_REPLY_CHANNEL, { tack_id: tackId, body });
+}
+
+/// Clear tacks: the listed ids, one work session's (`null`: an agent's created
 /// outside any session), or every tack with one of the given statuses.
 export async function agentTacksDelete(selector: TackDeleteSelector): Promise<{ deleted_tack_ids: string[] }> {
   return invoke<{ deleted_tack_ids: string[] }>(TACK_DELETE_CHANNEL, { ...selector });

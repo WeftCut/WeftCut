@@ -18,12 +18,20 @@
 import type { AgentActivitySnapshot, AgentWorkSession, TackView } from '../../shared/agent-activity'
 import { buildActivitySections, type ActivitySection } from './activityRows'
 
-/** Expansion key of a tack row and of a tack group (work session, or `none`
- *  for tacks created outside one). Prefixed so activity eviction keeps them. */
+/** The group the user's own tacks are listed in (`tackGroupOf`). Not a
+ *  session id, which is a UUID. */
+export const USER_TACK_GROUP = 'user'
+/** The group a tack is listed in: the user's together, an agent's by the
+ *  work session that created it (null: outside one). */
+export const tackGroupOf = (t: Pick<TackView, 'author' | 'session_id'>): string | null =>
+  t.author === 'user' ? USER_TACK_GROUP : t.session_id
+/** Expansion key of a tack row and of a tack group (`tackGroupOf`, `none`
+ *  for tacks created outside a session). Prefixed so activity eviction keeps
+ *  them. */
 export const tackRowKey = (id: string) => `tack-${id}`
-export const tackGroupKey = (sessionId: string | null) => `tacks-session-${sessionId ?? 'none'}`
+export const tackGroupKey = (groupId: string | null) => `tacks-session-${groupId ?? 'none'}`
 /** A tack group's "closed" section: its resolved and dismissed tacks. */
-export const tackClosedKey = (sessionId: string | null) => `tacks-closed-${sessionId ?? 'none'}`
+export const tackClosedKey = (groupId: string | null) => `tacks-closed-${groupId ?? 'none'}`
 /** An Activity tab section of one work session's calls. */
 export const sessionSectionKey = (section: Pick<ActivitySection, 'id'>) => `session-${section.id}`
 
@@ -44,10 +52,10 @@ interface TackCounts { open: number; closed: number }
 function tackCounts(tacks: readonly TackView[]): Map<string | null, TackCounts> {
   const counts = new Map<string | null, TackCounts>()
   for (const t of tacks) {
-    const c = counts.get(t.session_id) ?? { open: 0, closed: 0 }
+    const c = counts.get(tackGroupOf(t)) ?? { open: 0, closed: 0 }
     if (t.status === 'open') c.open += 1
     else c.closed += 1
-    counts.set(t.session_id, c)
+    counts.set(tackGroupOf(t), c)
   }
   return counts
 }

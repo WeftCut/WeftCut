@@ -1,6 +1,7 @@
 // apps/desktop/src/main/agent/tacks.ts
-// Tacks: comments on what plays in a time range, left by an agent for the user
-// to review (ADR 0115, ADR 0117).
+// Tacks: comments on what plays in a time range, opened by an agent for the
+// user or by the user for an agent, and answered by either (ADR 0115, ADR 0117,
+// ADR 0185).
 //
 // Runtime state of ONE project opening, owned beside agent activity and reset
 // with it. Not in `Project`, not recorded, not serialized, never touched by
@@ -19,8 +20,8 @@ import { CommandFailure } from '../state/errors'
 import { snapMarkerTimes } from '../state/mutations/markers'
 import { recordPlayback, replay, type Playback } from './rangePlayback'
 import {
-  TACK_CAPACITY, type AffectedTack, type Tack, type TackKind, type TackRange, type TackStatus,
-  type TackToReview, type TackView,
+  TACK_BODY_LIMIT, TACK_CAPACITY, TACK_REPLY_LIMIT, USER_TACK_LABEL_LENGTH, type AffectedTack, type Tack,
+  type TackAuthor, type TackKind, type TackRange, type TackStatus, type TackToReview, type TackView, type UserTackInput,
 } from '../../shared/agent-activity'
 
 /** Who created a tack: the MCP call running when `create` was entered. */
@@ -38,7 +39,7 @@ export interface TackInput {
 }
 export interface TackPatch { label?: string; body?: string; kind?: TackKind; status?: TackStatus }
 
-export type TackErrorName = 'TackLimit' | 'TackNotFound' | 'NoCurrentCall' | 'InvalidArgument' | 'CompositionNotFound'
+export type TackErrorName = 'TackLimit' | 'ReplyLimit' | 'TackNotFound' | 'NoCurrentCall' | 'InvalidArgument' | 'CompositionNotFound' | 'UserTack'
 
 /** A refusal. Every one is raised before the store changes, so a refused call
  *  leaves every tack as it was. */
@@ -63,6 +64,30 @@ export interface TackStoreDeps {
 }
 
 type Placement = Pick<TackView, 'composition_id' | 't_us' | 'end_t_us' | 'outdated' | 'follows'>
+
+/** The side that did not write `t`'s last message, while it is open. */
+function awaiting(t: Tack): TackAuthor | null {
+  if (t.status !== 'open') return null
+  const last = t.replies.at(-1)?.author ?? t.author
+  return last === 'agent' ? 'user' : 'agent'
+}
+
+/** A message's text as written, or a refusal naming `field`. */
+function messageText(v: string, field: string): string {
+  if (v.trim() === '') throw new TackError('InvalidArgument', `${field} must be non-empty`, field)
+  if (v.length > TACK_BODY_LIMIT) throw new TackError('InvalidArgument', `${field} is ${v.length} characters; at most ${TACK_BODY_LIMIT}`, field)
+  return v
+}
+
+/** What the user wrote as a tack's label and body: the label is its first
+ *  line, cut to fit a panel row and a chip; the body holds the rest only when
+ *  the label is not already all of it. */
+export function userTackText(text: string): { label: string; body: string } {
+  const all = text.trim()
+  const first = all.split('\n', 1)[0]!.trim()
+  const label = first.length > USER_TACK_LABEL_LENGTH ? `${first.slice(0, USER_TACK_LABEL_LENGTH - 1).trimEnd()}…` : first
+  return { label, body: label === all ? '' : all }
+}
 const UNPLACED: Placement = { composition_id: null, t_us: null, end_t_us: null, outdated: true, follows: null }
 
 /** Where a tack sits in `p` right now, and whether its range still plays what
@@ -118,7 +143,7 @@ export class TackStore {
   }
 
   private view(t: Tack, at: Placement): TackView {
-    return structuredClone({ ...t, ...at })
+    return structuredClone({ ...t, ...at, awaiting: awaiting(t) })
   }
 
   /** The views of the given ids, as they stand. For delta publication. */
@@ -194,8 +219,9 @@ export class TackStore {
     const ids = inputs.map((input, i) => {
       const id = this.newId()
       this.records.set(id, {
-        id, session_id: who.session_id, connection_id: who.connection_id, client: who.client, activity_id: who.activity_id,
+        id, author: 'agent', session_id: who.session_id, connection_id: who.connection_id, client: who.client, activity_id: who.activity_id,
         kind: input.kind, label: input.label, body: input.body, status: 'open', range: ranges[i]!.range, created_at,
+        seen_at: null, replies: [],
       })
       this.playbacks.set(id, ranges[i]!.playback)
       return id
@@ -207,9 +233,75 @@ export class TackStore {
     return ids
   }
 
-  update(id: string, patch: TackPatch): TackView {
+  /** A tack the user opened from the panel: no session, no client, no kind —
+   *  it asks the agents for a change. Returns its id. */
+  createByUser(input: UserTackInput): string {
+    if (this.records.size + 1 > this.capacity)
+      throw new TackError('TackLimit', `this project opening holds ${this.capacity} tacks already; clear the closed ones first`)
+    const { label, body } = userTackText(messageText(input.text, 'text'))
+    this.refresh()
+    const p = this.placedFor!
+    const { range, playback } = this.range(p, input, 'tack')
+    const id = this.newId()
+    this.records.set(id, {
+      id, author: 'user', session_id: null, connection_id: null, client: null, activity_id: null,
+      kind: null, label, body, status: 'open', range, created_at: this.now(), seen_at: null, replies: [],
+    })
+    this.playbacks.set(id, playback)
+    this.placed.set(id, place(p, playback))
+    this.deps.changed([id], [])
+    return id
+  }
+
+  /** Add one message to a tack's conversation. An agent's carries the
+   *  current call's client; the user's reopens a closed tack, since writing to
+   *  it hands the move back to the agents. */
+  reply(id: string, author: TackAuthor, body: string): TackView {
     const t = this.records.get(id)
     if (!t) throw this.notFound(id)
+    const text = messageText(body, 'body')
+    let client: string | null = null
+    if (author === 'agent') {
+      const who = this.deps.caller()
+      if (who === null) throw new TackError('NoCurrentCall', 'reply_tack ran outside a current MCP call of this project opening (the project was replaced while it ran); nothing was added')
+      client = who.client
+    }
+    if (t.replies.length >= TACK_REPLY_LIMIT)
+      throw new TackError('ReplyLimit', `tack ${id} holds ${TACK_REPLY_LIMIT} replies already; open a new tack to go on`, 'tack_id')
+    t.replies.push({ author, body: text, at: this.now(), client, seen_at: null })
+    if (author === 'user') t.status = 'open'
+    this.refresh()
+    this.deps.changed([id], [])
+    return this.viewsOf(new Set([id]))[0]!
+  }
+
+  /** Stamp the user's messages in `ids` that no agent has read yet as read
+   *  now. Called after an agent's read was answered, so that answer still
+   *  shows them unread. */
+  markSeen(ids: Iterable<string>): void {
+    const at = this.now()
+    const dirty: string[] = []
+    for (const id of ids) {
+      const t = this.records.get(id)
+      if (!t) continue
+      let changed = false
+      if (t.author === 'user' && t.seen_at === null) { t.seen_at = at; changed = true }
+      for (const r of t.replies) if (r.author === 'user' && r.seen_at === null) { r.seen_at = at; changed = true }
+      if (changed) dirty.push(id)
+    }
+    if (dirty.length) this.deps.changed(dirty, [])
+  }
+
+  /** Apply `patch`. An agent may only change the status of the user's tacks
+   *  — and not even that: the user's request is theirs to close, and a closed
+   *  tack leaves the timeline, which would hide the agent's answer. */
+  update(id: string, patch: TackPatch, by: TackAuthor): TackView {
+    const t = this.records.get(id)
+    if (!t) throw this.notFound(id)
+    if (by === 'agent' && t.author === 'user')
+      throw new TackError('UserTack', `tack ${id} is the user's: reply_tack to answer it, and leave closing it to the user; nothing was changed`, 'tack_id')
+    if (patch.kind !== undefined && t.author === 'user')
+      throw new TackError('InvalidArgument', `tack ${id} is the user's and has no kind`, 'kind')
     if (patch.label !== undefined) t.label = patch.label
     if (patch.body !== undefined) t.body = patch.body
     if (patch.kind !== undefined) t.kind = patch.kind
@@ -220,12 +312,15 @@ export class TackStore {
   }
 
   /** Remove the listed tacks — every id must exist, or none goes — or every
-   *  tack created in work session `session`. Returns the ids removed. */
-  delete(selector: { tack_ids: readonly string[] } | { session_id: string }): string[] {
+   *  tack created in work session `session`. Only the user removes a user
+   *  tack. Returns the ids removed. */
+  delete(selector: { tack_ids: readonly string[] } | { session_id: string }, by: TackAuthor): string[] {
     let ids: string[]
     if ('tack_ids' in selector) {
       const missing = selector.tack_ids.find((id) => !this.records.has(id))
       if (missing !== undefined) throw this.notFound(missing)
+      const theirs = by === 'agent' ? selector.tack_ids.find((id) => this.records.get(id)!.author === 'user') : undefined
+      if (theirs !== undefined) throw new TackError('UserTack', `tack ${theirs} is the user's; only the user removes it. Nothing was removed`, 'tack_ids')
       ids = [...new Set(selector.tack_ids)]
     } else {
       ids = [...this.records.values()].filter((t) => t.session_id === selector.session_id).map((t) => t.id)
@@ -250,7 +345,7 @@ export class TackStore {
   /** The stored range of one input and what plays in it, or a refusal naming
    *  `at`. The times land on the composition's frame grid first, as
    *  `add_marker` lands them. */
-  private range(p: Project, input: TackInput, at: string): { range: TackRange; playback: Playback } {
+  private range(p: Project, input: Pick<TackInput, 't_us' | 'end_t_us' | 'composition_id'>, at: string): { range: TackRange; playback: Playback } {
     const compositionId = input.composition_id ?? p.root_id
     const c = p.compositions[compositionId]
     if (!c) throw new TackError('CompositionNotFound', `${at}.composition_id: composition ${compositionId} not found — project://compositions lists them`, 'composition_id')

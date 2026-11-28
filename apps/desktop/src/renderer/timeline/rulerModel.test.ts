@@ -714,7 +714,7 @@ describe("review lane grouping", () => {
   const MIN = 13;
   const GROUP = 26;
   const tk = (id: string, t_us: number | null, end_t_us: number | null = null, kind: LaneTackSource["kind"] = "note"): LaneTackSource =>
-    ({ id, kind, t_us, end_t_us, label: id });
+    ({ id, author: "agent", kind, t_us, end_t_us, label: id });
   const group = (tacks: LaneTackSource[], pxPerSec = 100) =>
     groupLaneTacks({ tacks, pxPerSec, minChipPx: MIN, minGroupPx: GROUP });
   const ids = (groups: ReturnType<typeof group>) => groups.map((g) => g.members.map((m) => m.id));

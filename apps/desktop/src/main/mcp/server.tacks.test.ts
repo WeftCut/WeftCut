@@ -1,5 +1,5 @@
 // apps/desktop/src/main/mcp/server.tacks.test.ts
-// The tack surface over MCP (ADR 0115, ADR 0117): three verbs and two reads served by the
+// The tack surface over MCP (ADR 0115, ADR 0117, ADR 0185): four verbs and two reads served by the
 // host's TackStore, never by the actor — so no history, no commit, and the
 // history lock does not apply.
 import { describe, it, expect, vi } from 'vitest'
@@ -242,5 +242,54 @@ describe('harness feedback', () => {
     await h.call('update_tack', { tack_id: gone, patch: { status: 'resolved' } })
     await h.call('begin_agent_session', { reason: 'Done' })
     expect((await h.call('end_agent_session', {})).structuredContent).not.toHaveProperty('tacks_to_review')
+  })
+})
+
+describe("the user's tacks over MCP (ADR 0185)", () => {
+  const userTack = (h: ReturnType<typeof host>) =>
+    h.agent.tacks.createByUser({ composition_id: h.rootId, t_us: 2_000_000, end_t_us: 3_000_000, text: 'Tighten this pause' })
+
+  it('a read shows what no agent had read yet, then marks it seen', async () => {
+    const h = host()
+    const id = userTack(h)
+    const first = JSON.parse((await h.call('read_project', { view: 'tacks' })).content[0]!.text)
+    expect(first).toMatchObject([{ tack_id: id, author: 'user', kind: null, client: null, awaiting: 'agent', seen_at: null, replies: [] }])
+    const again = await h.read('project://tacks')
+    expect(again[0].seen_at).not.toBeNull()
+    h.agent.tacks.reply(id, 'user', 'And the next one')
+    expect((await h.read('project://tacks'))[0].replies).toMatchObject([{ author: 'user', seen_at: null }])
+  })
+
+  it('reply_tack adds the agent message and hands the move to the user', async () => {
+    const h = host()
+    const id = userTack(h)
+    const before = h.actor.snapshot()
+    const len = h.actor.historyStatus().len
+    const out = await h.call('reply_tack', { tack_id: id, body: 'Cut it to 0.3 s' })
+    expect(out.isError).toBeFalsy()
+    expect(out.structuredContent).toMatchObject({ tack_id: id, awaiting: 'user', status: 'open',
+      replies: [{ author: 'agent', client: 'client-one', body: 'Cut it to 0.3 s' }] })
+    // Unrecorded, as every tack verb is.
+    expect(h.actor.snapshot()).toBe(before)
+    expect(h.actor.historyStatus().len).toBe(len)
+  })
+
+  it('update_tack and delete_tacks refuse a user tack as invalid_request and change nothing', async () => {
+    const h = host()
+    const id = userTack(h)
+    const update = await h.call('update_tack', { tack_id: id, patch: { status: 'resolved' } })
+    expect(update.structuredContent).toMatchObject({ code: 'invalid_request', error: 'UserTack' })
+    expect(update.content[0]!.text).toContain('reply_tack')
+    const del = await h.call('delete_tacks', { tack_ids: [id] })
+    expect(del.structuredContent).toMatchObject({ code: 'invalid_request', error: 'UserTack' })
+    expect(await h.read('project://tacks')).toMatchObject([{ tack_id: id, status: 'open' }])
+  })
+
+  it('reply_tack refuses a blank body and a missing tack as invalid_params', async () => {
+    const h = host()
+    const id = userTack(h)
+    expect((await h.call('reply_tack', { tack_id: id, body: '  ' })).structuredContent).toMatchObject({ code: 'invalid_params' })
+    expect((await h.call('reply_tack', { tack_id: MISSING, body: 'Done' })).structuredContent).toMatchObject({ code: 'invalid_params', error: 'TackNotFound' })
+    expect((await h.read('project://tacks'))[0].replies).toEqual([])
   })
 })

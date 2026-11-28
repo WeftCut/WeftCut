@@ -12,7 +12,7 @@ import { resourceNotFound } from '../state/resource-views.js'
 import { TackError, type TackInput, type TackPatch, type TackStore } from '../agent/tacks.js'
 import type { TackView } from '../../shared/agent-activity.js'
 
-export const TACK_TOOLS: ReadonlySet<string> = new Set(['create_tacks', 'update_tack', 'delete_tacks'])
+export const TACK_TOOLS: ReadonlySet<string> = new Set(['create_tacks', 'update_tack', 'reply_tack', 'delete_tacks'])
 
 /** A tack as MCP shows it: keyed `tack_id`, as `affected_tacks` and
  *  `delete_tacks` name it, and with the stored range end `end_t_us` as
@@ -23,10 +23,10 @@ function tackWire({ id, end_t_us, range, ...rest }: TackView): Record<string, un
   return { tack_id: id, ...rest, t_end_us: end_t_us, range: { ...r, t_end_us: rangeEnd } }
 }
 
-/** A refusal an argument could fix is `invalid_params`; the limit and a call
- *  from a replaced project opening are not. */
+/** A refusal an argument could fix is `invalid_params`; the limits, a call
+ *  from a replaced project opening and the user's own tacks are not. */
 function tackErrorResult(e: TackError): ServerResult {
-  const code = e.error === 'TackLimit' || e.error === 'NoCurrentCall' ? 'invalid_request' : 'invalid_params'
+  const code = e.error === 'TackLimit' || e.error === 'ReplyLimit' || e.error === 'NoCurrentCall' || e.error === 'UserTack' ? 'invalid_request' : 'invalid_params'
   return toolErrorResult({ code, message: e.message, data: { error: e.error, ...(e.field ? { field: e.field } : {}) } })
 }
 
@@ -41,9 +41,10 @@ export function runTackTool(store: TackStore, name: string, args: Record<string,
       const hints = [...createTackHints(inputs, created), ...samePlaceHints(created, store.views())]
       return toolRecord({ tacks: created.map(tackWire), ...(hints.length ? { hints } : {}) }) as unknown as ServerResult
     }
-    if (name === 'update_tack') return toolRecord(tackWire(store.update(p.tack_id as string, p.patch as TackPatch))) as unknown as ServerResult
+    if (name === 'update_tack') return toolRecord(tackWire(store.update(p.tack_id as string, p.patch as TackPatch, 'agent'))) as unknown as ServerResult
+    if (name === 'reply_tack') return toolRecord(tackWire(store.reply(p.tack_id as string, 'agent', p.body as string))) as unknown as ServerResult
     const selector = typeof p.session_id === 'string' ? { session_id: p.session_id } : { tack_ids: p.tack_ids as string[] }
-    return toolRecord({ deleted_tack_ids: store.delete(selector) }) as unknown as ServerResult
+    return toolRecord({ deleted_tack_ids: store.delete(selector, 'agent') }) as unknown as ServerResult
   } catch (e) {
     if (e instanceof TackError) return tackErrorResult(e)
     if (e instanceof McpArgError) return toolErrorResult(e.toJson())
@@ -100,11 +101,22 @@ export function samePlaceHints(created: readonly TackView[], all: readonly TackV
   return hints
 }
 
+/** The tacks an agent's read answers with, the user's messages in them then
+ *  marked seen: the answer is built first, so the agent still finds what it
+ *  had not read (`seen_at: null`). Both reads are an MCP client's; the panel
+ *  reads the activity snapshot and never comes here. */
+function readForAgent(store: TackStore, compositionId: string | null): Record<string, unknown>[] {
+  const views = store.views(compositionId)
+  const wire = views.map(tackWire)
+  store.markSeen(views.map((v) => v.id))
+  return wire
+}
+
 /** `read_project { view: "tacks", composition_id? }`: the same records the
  *  resource serves, as text. */
 export function readTacksView(store: TackStore, compositionId: string | null): ServerResult {
   try {
-    return { content: [{ type: 'text', text: JSON.stringify(store.views(compositionId).map(tackWire)) }] } as unknown as ServerResult
+    return { content: [{ type: 'text', text: JSON.stringify(readForAgent(store, compositionId)) }] } as unknown as ServerResult
   } catch (e) {
     if (e instanceof TackError) return tackErrorResult(e)
     throw e
@@ -128,11 +140,11 @@ export function readTacksResource(store: TackStore, uri: string): ServerResult {
   if (query) for (const k of query.keys()) {
     if (k !== 'composition') resourceNotFound(`unknown query key '${k}' on ${TACKS_URI} — the one query is ?composition=<id>`)
   }
-  let tacks: TackView[]
-  try { tacks = store.views(query?.get('composition') ?? null) }
+  let tacks: Record<string, unknown>[]
+  try { tacks = readForAgent(store, query?.get('composition') ?? null) }
   catch (e) {
     if (e instanceof TackError) resourceNotFound(e.message)
     throw e
   }
-  return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(tacks.map(tackWire), null, 2) }] } as unknown as ServerResult
+  return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(tacks, null, 2) }] } as unknown as ServerResult
 }

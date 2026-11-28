@@ -1,14 +1,26 @@
-// The user's tack actions (ADR 0115). Status and clearing go to main's
-// TackStore; conversion is the one path into project content — an ordinary
-// recorded marker. Locate is `locate.ts`, shared with changes.
-import type { TackDeleteSelector, TackStatus, TackView } from '../../shared/agent-activity'
-import { agentTacksDelete, agentTacksSetStatus } from '../ipc'
+// The user's tack actions (ADR 0115, ADR 0185). Opening, replying, status and
+// clearing go to main's TackStore; conversion is the one path into project
+// content — an ordinary recorded marker. Locate is `locate.ts`, shared with
+// changes.
+import type { TackDeleteSelector, TackStatus, TackView, UserTackInput } from '../../shared/agent-activity'
+import { agentTacksCreate, agentTacksDelete, agentTacksReply, agentTacksSetStatus } from '../ipc'
 import { addMarkerIn } from '../ipc/compositionScoped'
 import { tryMutate } from '../errors/tryMutate'
 import { tackMarkerArgs } from './tackModel'
 
 export const setTackStatus = (ids: readonly string[], status: TackStatus) =>
   tryMutate(() => agentTacksSetStatus(ids, status), 'agent_tacks_set_status')
+
+/** The new tack's id, or null when it was refused (the refusal is already
+ *  on the status bar). */
+export async function createUserTack(input: UserTackInput): Promise<string | null> {
+  let id: string | null = null
+  const ok = await tryMutate(async () => { id = (await agentTacksCreate(input)).tack_id }, 'agent_tacks_create')
+  return ok ? id : null
+}
+
+export const replyToTack = (id: string, body: string) =>
+  tryMutate(() => agentTacksReply(id, body), 'agent_tacks_reply')
 
 export const deleteTacks = (selector: TackDeleteSelector) =>
   tryMutate(() => agentTacksDelete(selector), 'agent_tacks_delete')

@@ -41,7 +41,9 @@ export function AgentPanel({ editor = false, onScreen = true }: { editor?: boole
   const following = useAgentActivity(s => s.following)
   const toggle = useAgentActivity(s => s.toggle)
   const tab = useAgentActivity(s => s.tab)
-  const openTacks = useAgentActivity(s => s.snapshot?.tacks.filter(x => x.status === 'open').length ?? 0)
+  // What waits on the user: an agent's open tacks, and the user's own once an
+  // agent has answered.
+  const openTacks = useAgentActivity(s => s.snapshot?.tacks.filter(x => x.awaiting === 'user').length ?? 0)
   // The panel reads the Review view while mounted: the Changes tab's badge
   // counts it whichever tab is showing.
   const unreviewed = useUnreviewedCount()

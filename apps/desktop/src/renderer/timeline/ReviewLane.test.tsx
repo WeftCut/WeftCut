@@ -23,7 +23,7 @@ import { selectTack, setReviewHover, useReviewFocus } from "../agent/reviewFocus
 const PX_PER_SEC = 100;
 const REVIEW = UI_METRICS.timeline.review;
 const tack = (patch: Partial<TackView> = {}): TackView => ({
-  id: "t1", session_id: null, connection_id: "c", client: "C", activity_id: "a", kind: "issue", label: "Pause", body: "",
+  id: "t1", session_id: null, connection_id: "c", client: "C", activity_id: "a", author: "agent", seen_at: null, replies: [], awaiting: "user", kind: "issue", label: "Pause", body: "",
   status: "open", range: { composition_id: ROOT_ID, t_us: 2_000_000, end_t_us: 3_000_000 }, created_at: "",
   composition_id: ROOT_ID, t_us: 2_000_000, end_t_us: 3_000_000, outdated: false, follows: null, ...patch,
 });

@@ -170,6 +170,7 @@ import {
   markerStartingInFrame,
 } from "./timeline/markerAtFrame";
 import { MarkerRenameDialog } from "./timeline/MarkerRenameDialog";
+import { TackComposeDialog } from "./agent/TackComposeDialog";
 import { openMarkerRenamePrompt } from "./timeline/markerRenamePrompt";
 import {
   DockWorkspace,
@@ -1233,6 +1234,8 @@ export function App({ onCloseProject, onWorkspaceReady, onProjectReplaced }: App
           onOpenSettings={(target) => { void exitAgentMode(); openSystemSettings(target); }}
         />
         <ComputeJobNotice />
+        {/* The user can tack what they watch, so the prompt is here too. */}
+        <TackComposeDialog />
       </ShortcutBindingsProvider>
     );
   }
@@ -1282,6 +1285,7 @@ export function App({ onCloseProject, onWorkspaceReady, onProjectReplaced }: App
           renders nothing until something calls `openCheckpointPrompt()`. */}
       <CheckpointPromptDialog />
       <MarkerRenameDialog />
+      <TackComposeDialog />
 
       {/* The clip-analysis dialogs, owned here for the same reason: every one
           of their commands reaches the Edit menu and the palette, which must

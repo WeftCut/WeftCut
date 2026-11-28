@@ -146,6 +146,17 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack.status-dismissed .agent-activity-copy > span { text-decoration: line-through; }
 .agent-tack.unplaced .agent-activity-copy small { font-style: italic; }
 .agent-tack-body { margin: 0 0 calc(8 * var(--ui-px)); white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(220 * var(--ui-px)); overflow: auto; }
+.agent-tack-kind.kind-user { color: var(--foreground); }
+.agent-tack-move { white-space: nowrap; }
+.agent-tack-new { gap: calc(4 * var(--ui-px)); font-size: var(--font-size-caption); border: 1px solid var(--border); }
+/* A tack's conversation (ADR 0185): plain messages under one another, each
+   headed by who wrote it; no bubbles and no side bars, the panel's flat rows. */
+.agent-tack-thread { list-style: none; margin: 0 0 calc(8 * var(--ui-px)); padding: 0; display: flex; flex-direction: column; gap: calc(6 * var(--ui-px)); max-height: calc(260 * var(--ui-px)); overflow: auto; }
+.agent-tack-message > small { color: var(--muted-foreground); font-size: var(--font-size-caption); }
+.agent-tack-message > p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-tack-reply { display: flex; flex-direction: column; gap: calc(4 * var(--ui-px)); margin-bottom: calc(8 * var(--ui-px)); }
+.agent-tack-reply > textarea { resize: vertical; }
+.agent-tack-reply > button { align-self: flex-end; border: 1px solid var(--border); font-size: var(--font-size-caption); }
 /* Changes tab (ADR 0115): rows reuse the tack row layout; the class badge
    carries the review hue, user-only rows (the user-changes switch) are muted. */
 .agent-panel-tab-count.tab-changes { background: color-mix(in srgb, var(--review-modified) 24%, transparent); }

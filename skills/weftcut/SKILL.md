@@ -157,6 +157,13 @@ yours that an edit's `affected_tacks` or `end_agent_session`'s
 `tacks_to_review` reports outdated no longer describes what plays there:
 resolve it if your edit settled it, else delete it and tack the new content.
 
+The user tacks too, on a range they want changed, and replies on any tack.
+Nothing tells you: when they ask you to check their tacks, read
+`read_project { view: "tacks" }`. Each open tack with `awaiting: "agent"`
+waits on you, and a message with `seen_at: null` is new. Answer every one with
+`reply_tack`: what you changed, or what you need to know. Leave the user's
+tacks for them to resolve; `update_tack` and `delete_tacks` refuse them.
+
 ## Motifs (animated overlays)
 
 Read `motif-authoring.md` and `motif-workspaces.md` next to this file before

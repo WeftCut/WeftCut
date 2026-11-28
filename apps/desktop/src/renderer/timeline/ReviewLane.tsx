@@ -1,8 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { useTranslation } from "react-i18next";
-import { CircleHelp, StickyNote, TriangleAlert } from "lucide-react";
-import type { TackKind } from "../../shared/agent-activity";
 import { AppIcon } from "@/components/AppIcon";
 import { AppMenuPositioner } from "../components/PopupPositioner";
 import { MenuItem, closeContextMenuOn } from "../menu/Menu";
@@ -13,6 +11,7 @@ import { UI_METRICS } from "../settings/uiMetrics";
 import { useComposition } from "../state/projectStore";
 import { releaseFocus, selectTack as focusTack, useReviewFocus } from "../agent/reviewFocus";
 import { useCompositionTacks, useReviewLaneExists } from "../agent/tackModel";
+import { TACK_MARK_ICON } from "../agent/tackIcons";
 import { locate } from "../agent/locate";
 import { useRulerScrollBlockPx } from "./TimelineRuler";
 import { groupLaneTacks, windowLaneTacks, type LaneTack, type LaneTackGroup } from "./rulerModel";
@@ -40,14 +39,6 @@ import { useCloseOnAnchorMove } from "./contextMenuAnchor";
 /// seeks. A group click lists its tacks to choose from. A click on bare lane
 /// lets the focus go.
 const REVIEW = UI_METRICS.timeline.review;
-
-/// One icon per kind, the same the Tacks tab draws, so a chip and its panel
-/// row are recognisably the same item.
-const KIND_ICON: Record<TackKind, typeof StickyNote> = {
-  note: StickyNote,
-  issue: TriangleAlert,
-  question: CircleHelp,
-};
 
 /// Focus the tack and show its row: the panel opens on the Tacks tab with the
 /// row expanded and scrolled to (`TacksTab`).
@@ -191,7 +182,7 @@ export function ReviewLane({
                 if (tack) locate({ kind: "tack", tack });
               }}
             >
-              <AppIcon icon={KIND_ICON[chip.kind]} size="fine" className="review-tack-icon" />
+              <AppIcon icon={TACK_MARK_ICON[chip.kind]} size="fine" className="review-tack-icon" />
               {chip.label.trim() !== "" && <span className="review-tack-label">{chip.label}</span>}
             </div>
           );
@@ -216,7 +207,7 @@ export function ReviewLane({
             style={style}
             onClick={(e) => setMenu({ group, anchor: e.currentTarget })}
           >
-            <AppIcon icon={KIND_ICON[group.kind]} size="fine" className="review-tack-icon" />
+            <AppIcon icon={TACK_MARK_ICON[group.kind]} size="fine" className="review-tack-icon" />
             <span className="review-tack-count">{ids.length}</span>
             {labels !== "" && <span className="review-tack-label">{labels}</span>}
           </button>

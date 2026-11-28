@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentWorkSession, TackView } from '../../shared/agent-activity'
-import { groupTacks, paintableTacks, reviewLaneExists, tackCoverage, tackMarkerArgs, tackUnplacedReason } from './tackModel'
+import { groupTacks, paintableTacks, reviewLaneExists, tackCoverage, tackMarkerArgs, tackMoveKey, tackUnplacedReason } from './tackModel'
+import { USER_TACK_GROUP } from './expansion'
 
 const tack = (patch: Partial<TackView>): TackView => ({
-  id: 't', session_id: null, connection_id: 'c', client: 'C', activity_id: 'a', kind: 'note', label: 'L', body: 'B', status: 'open',
+  id: 't', session_id: null, connection_id: 'c', client: 'C', activity_id: 'a', author: 'agent', seen_at: null, replies: [], awaiting: 'user', kind: 'note', label: 'L', body: 'B', status: 'open',
   range: { composition_id: 'root', t_us: 0, end_t_us: null }, created_at: '',
   composition_id: 'root', t_us: 0, end_t_us: null, outdated: false, follows: null, ...patch,
 })
@@ -58,5 +59,26 @@ describe('tack model', () => {
       tack({ t_us: 30, end_t_us: 40 }), tack({ t_us: 25, end_t_us: null }), tack({ t_us: 45, end_t_us: 45 }),
       tack({ t_us: 45, end_t_us: null }), tack({ t_us: null, end_t_us: null }),
     ])).toEqual({ spans: [[10, 40], [50, 60]], points: [45] })
+  })
+})
+
+describe('tack conversations in the panel (ADR 0185)', () => {
+  const user = (patch: Partial<TackView>) => tack({ author: 'user', kind: null, client: null, connection_id: null, activity_id: null, awaiting: 'agent', ...patch })
+
+  it("lists the user's own tacks first, apart from an agent's made outside a session", () => {
+    const groups = groupTacks([tack({ id: 'x', session_id: null }), user({ id: 'u' }), tack({ id: 'a', session_id: 's' })], [], (g) => `g-${g}`)
+    expect(groups.map((g) => [g.key, g.user, g.tacks.map((t) => t.id)])).toEqual([
+      [`g-${USER_TACK_GROUP}`, true, ['u']], ['g-null', false, ['x']], ['g-s', false, ['a']],
+    ])
+  })
+
+  it('says whose move it is only when it is news: waiting on an agent with its receipt, or an agent reply', () => {
+    const reply = (author: 'agent' | 'user', seen_at: string | null = null) => ({ author, body: 'b', at: '', client: null, seen_at })
+    expect(tackMoveKey(user({ seen_at: null }))).toBe('tacks.awaiting_agent_unseen')
+    expect(tackMoveKey(user({ seen_at: 'then' }))).toBe('tacks.awaiting_agent_seen')
+    expect(tackMoveKey(user({ seen_at: 'then', replies: [reply('agent'), reply('user')] }))).toBe('tacks.awaiting_agent_unseen')
+    expect(tackMoveKey(user({ awaiting: 'user', replies: [reply('agent')] }))).toBe('tacks.awaiting_user')
+    expect(tackMoveKey(tack({}))).toBeNull()
+    expect(tackMoveKey(user({ awaiting: null, status: 'resolved' }))).toBeNull()
   })
 })

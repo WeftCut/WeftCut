@@ -5,13 +5,18 @@ import { useMemo } from 'react'
 import type { AgentActivitySnapshot, AgentWorkSession, TackView } from '../../shared/agent-activity'
 import type { MarkerAnchorArg } from '../ipc'
 import { useAgentActivity } from './activityStore'
+import { USER_TACK_GROUP, tackGroupOf } from './expansion'
 
 export interface TackGroup {
   /** Expansion key (`tackGroupKey`). */
   key: string
-  sessionId: string | null
-  /** The work session, while activity still retains it; null for tacks made
-   *  outside a session, or of a session whose record has been dropped. */
+  /** `tackGroupOf` its tacks. */
+  id: string | null
+  /** The user's own tacks. */
+  user: boolean
+  /** The work session, while activity still retains it; null for the user's
+   *  tacks, tacks made outside a session, or of a session whose record has
+   *  been dropped. */
   session: AgentWorkSession | null
   tacks: TackView[]
 }
@@ -24,19 +29,23 @@ function byPlacement(a: TackView, b: TackView): number {
   return a.t_us - b.t_us
 }
 
-/** Tacks grouped by the work session that created them, groups in order of
- *  their first tack. */
-export function groupTacks(tacks: readonly TackView[], sessions: readonly AgentWorkSession[], groupKey: (session: string | null) => string): TackGroup[] {
+/** Tacks grouped as `tackGroupOf` lists them: the user's own first, then
+ *  an agent's by the work session that created them, in order of their first
+ *  tack. */
+export function groupTacks(tacks: readonly TackView[], sessions: readonly AgentWorkSession[], groupKey: (group: string | null) => string): TackGroup[] {
   const groups = new Map<string | null, TackGroup>()
   for (const t of tacks) {
-    let g = groups.get(t.session_id)
+    const id = tackGroupOf(t)
+    let g = groups.get(id)
     if (!g) {
-      g = { key: groupKey(t.session_id), sessionId: t.session_id, session: sessions.find(s => s.id === t.session_id) ?? null, tacks: [] }
-      groups.set(t.session_id, g)
+      const user = id === USER_TACK_GROUP
+      g = { key: groupKey(id), id, user, session: user ? null : sessions.find(s => s.id === id) ?? null, tacks: [] }
+      groups.set(id, g)
     }
     g.tacks.push(t)
   }
-  return [...groups.values()].map(g => ({ ...g, tacks: [...g.tacks].sort(byPlacement) }))
+  const ordered = [...groups.values()].sort((a, b) => Number(b.user) - Number(a.user))
+  return ordered.map(g => ({ ...g, tacks: [...g.tacks].sort(byPlacement) }))
 }
 
 /** Open tacks placed on `compositionId`'s timeline right now, outdated ones
@@ -95,6 +104,21 @@ export function tackCoverage(tacks: readonly Pick<TackView, 't_us' | 'end_t_us'>
   // more layer of the same hue, the very stacking this exists to avoid.
   const covered = (t: number) => spans.some(([start, end]) => start <= t && t <= end)
   return { spans, points: [...points].filter(t => !covered(t)).sort((a, b) => a - b) }
+}
+
+/** The panel's line for whose move it is on an open tack, as an i18n key:
+ *  waiting on an agent, with whether one has read the user's last message;
+ *  or waiting on the user once an agent has replied. Null when there is
+ *  nothing to say — closed, or an agent's tack nobody has answered, whose
+ *  being open already says it waits on the user. */
+export function tackMoveKey(t: Pick<TackView, 'awaiting' | 'replies' | 'seen_at'>): string | null {
+  if (t.awaiting === 'agent') {
+    // The last message is the user's: the opening only when nobody replied.
+    const last = t.replies.length > 0 ? t.replies[t.replies.length - 1]!.seen_at : t.seen_at
+    return last === null ? 'tacks.awaiting_agent_unseen' : 'tacks.awaiting_agent_seen'
+  }
+  if (t.awaiting === 'user' && t.replies.length > 0) return 'tacks.awaiting_user'
+  return null
 }
 
 /** Why a tack cannot be located or converted, as an i18n key — or null when

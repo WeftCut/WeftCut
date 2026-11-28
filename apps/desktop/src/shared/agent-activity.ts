@@ -53,12 +53,26 @@ export interface AgentConnection {
   connected_at: string
   last_activity_at: string
 }
-/** A Tack: a comment on what plays in a time range, left by an agent for the
- *  user to review (ADR 0115, ADR 0117). Runtime-only within a project opening —
- *  not project content, not in history, never serialized. `range` is where it
- *  was made; where it sits now is placed when read (see `TackView`). */
+/** A Tack: a comment on what plays in a time range, opened by an agent for the
+ *  user to review or by the user for an agent to act on, and answered by
+ *  either side (ADR 0115, ADR 0117, ADR 0185). Runtime-only within a project
+ *  opening — not project content, not in history, never serialized. `range`
+ *  is where it was made; where it sits now is placed when read (see
+ *  `TackView`). */
 export type TackKind = (typeof TACK_KINDS)[number]
 export type TackStatus = (typeof TACK_STATUSES)[number]
+export type TackAuthor = (typeof TACK_AUTHORS)[number]
+/** One message after a tack's opening, in the order written. */
+export interface TackReply {
+  author: TackAuthor
+  body: string
+  at: string
+  /** The agent's MCP client name; null on the user's. */
+  client: string | null
+  /** When an agent first read this message through the tacks read; always
+   *  null on an agent's own. Seen is not handled: see `TackView.awaiting`. */
+  seen_at: string | null
+}
 /** A tack's range as `create_tacks` made it, on its composition's frame grid. */
 export interface TackRange { composition_id: string; t_us: number; end_t_us: number | null }
 /** The layer a tack's range moves with right now — the first it covered that
@@ -68,19 +82,30 @@ export interface TackRange { composition_id: string; t_us: number; end_t_us: num
 export interface TackFollows { layer_id: string; t_us: number; src_us?: number; src_fraction?: ExactTime }
 export interface Tack {
   id: string
-  /** The work session the creating call ran in; null outside one. */
+  author: TackAuthor
+  /** The work session the creating call ran in; null outside one, and on
+   *  every user tack. */
   session_id: string | null
-  connection_id: string
-  client: string
-  /** The agent activity of the `create_tacks` call. */
-  activity_id: string
-  kind: TackKind
+  /** The creating MCP call's connection, client and activity; null on a
+   *  user tack. */
+  connection_id: string | null
+  client: string | null
+  activity_id: string | null
+  /** What an agent's tack asks of the user; null exactly on a user tack,
+   *  which always asks for a change. */
+  kind: TackKind | null
   label: string
   body: string
   status: TackStatus
   range: TackRange
   created_at: string
+  /** A user tack's opening, as `TackReply.seen_at`; null on an agent's. */
+  seen_at: string | null
+  replies: TackReply[]
 }
+/** What a tack's icon and chip wear: an agent tack's kind, or `user`. */
+export type TackMark = TackKind | 'user'
+export const tackMark = (t: Pick<Tack, 'author' | 'kind'>): TackMark => t.author === 'user' || t.kind === null ? 'user' : t.kind
 /** A tack as read: the stored record plus its placement, derived from the
  *  current project on every read. The range keeps its length and moves as far
  *  as the content `follows` names moved; `composition_id` / `t_us` / `end_t_us` are null only
@@ -92,6 +117,9 @@ export interface TackView extends Tack {
   end_t_us: number | null
   outdated: boolean
   follows: TackFollows | null
+  /** Whose move it is on an open tack: the side that did not write its last
+   *  message (the opening when it has no replies). Null once it is closed. */
+  awaiting: TackAuthor | null
 }
 /** One of the calling client's open tacks that a mutating MCP call moved or
  *  made outdated — reported on that call's result as `affected_tacks`. */
@@ -105,19 +133,28 @@ export const TACK_CAPACITY = 1000
  *  carries the detail. Both bounded so 1000 tacks stay a small payload. */
 export const TACK_LABEL_LIMIT = 200
 export const TACK_BODY_LIMIT = 4000
+/** Messages a tack holds after its opening; beyond it a reply is refused. */
+export const TACK_REPLY_LIMIT = 100
+/** A user tack's label: the first line of what they wrote, cut to this. */
+export const USER_TACK_LABEL_LENGTH = 80
 export const TACK_KINDS = ['note', 'issue', 'question'] as const
 export const TACK_STATUSES = ['open', 'resolved', 'dismissed'] as const
+export const TACK_AUTHORS = ['agent', 'user'] as const
 /** The user's tack actions from the agent panel (renderer → main). They go
  *  through the same TackStore and the same activity delta as the MCP verbs, and
  *  record no history. Exactly one selector per delete: the listed ids (all must
- *  exist), every tack of one work session (`null`: those created outside any
- *  session), or every tack whose status is one of `statuses`. */
+ *  exist), every agent tack of one work session (`null`: those created outside
+ *  any session), or every tack whose status is one of `statuses`. */
 export type TackDeleteSelector =
   | { tack_ids: string[] }
   | { session_id: string | null }
   | { statuses: TackStatus[] }
+/** A user tack as the panel creates it: times on `composition_id`'s timeline. */
+export interface UserTackInput { composition_id: string; t_us: number; end_t_us: number | null; text: string }
 export const TACK_SET_STATUS_CHANNEL = 'agent_tacks_set_status'
 export const TACK_DELETE_CHANNEL = 'agent_tacks_delete'
+export const TACK_CREATE_CHANNEL = 'agent_tacks_create'
+export const TACK_REPLY_CHANNEL = 'agent_tacks_reply'
 export interface AgentActivitySnapshot {
   workspace_id: string
   revision: number

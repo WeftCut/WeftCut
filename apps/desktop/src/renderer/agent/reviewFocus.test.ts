@@ -17,7 +17,7 @@ import { tackGroupKey, tackRowKey } from './expansion'
 
 const S = 1_000_000
 const tack = (patch: Partial<TackView> = {}): TackView => ({
-  id: 't', session_id: null, connection_id: 'c', client: 'C', activity_id: 'a', kind: 'note', label: 'L', body: '', status: 'open', created_at: '',
+  id: 't', session_id: null, connection_id: 'c', client: 'C', activity_id: 'a', author: 'agent', seen_at: null, replies: [], awaiting: 'user', kind: 'note', label: 'L', body: '', status: 'open', created_at: '',
   range: { composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S }, composition_id: 'root', t_us: 2 * S, end_t_us: 3 * S,
   outdated: false, follows: null, ...patch,
 })

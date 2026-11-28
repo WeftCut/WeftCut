@@ -83,3 +83,38 @@ describe('panel tack actions', () => {
     host.stop()
   })
 })
+
+describe("the user's own tacks from the panel (ADR 0185)", () => {
+  it('opens a tack and replies to it through the activity delta, recording nothing', async () => {
+    const { host, send } = makeHost()
+    const root = rootComposition(host.actor.snapshot()).id
+    const before = host.actor.historyStatus()
+    const { tack_id } = await host.handleInvoke('agent_tacks_create', { composition_id: root, t_us: 0, end_t_us: null, text: 'Too slow here' }) as { tack_id: string }
+    await host.handleInvoke('agent_tacks_reply', { tack_id, body: 'Also the music' })
+    await flush()
+    expect(host.agent.tacks.views()).toMatchObject([{ id: tack_id, author: 'user', label: 'Too slow here', awaiting: 'agent', replies: [{ author: 'user', body: 'Also the music' }] }])
+    const delivered = send.mock.calls.filter(([e]) => e === AGENT_ACTIVITY_EVENT).flatMap(([, u]) => (u as AgentActivityUpdate).tacks.map((t) => t.id))
+    expect(delivered).toContain(tack_id)
+    expect(host.actor.historyStatus()).toEqual(before)
+    host.stop()
+  })
+
+  it("clearing an agent's tacks made outside a session leaves the user's", async () => {
+    const { host, create } = makeHost()
+    const root = rootComposition(host.actor.snapshot()).id
+    const [loose] = await create(['Loose'])
+    const { tack_id } = await host.handleInvoke('agent_tacks_create', { composition_id: root, t_us: 0, end_t_us: null, text: 'Mine' }) as { tack_id: string }
+    expect(await host.handleInvoke('agent_tacks_delete', { session_id: null })).toEqual({ deleted_tack_ids: [loose] })
+    expect(host.agent.tacks.views().map((t) => t.id)).toEqual([tack_id])
+    host.stop()
+  })
+
+  it('refuses a malformed create before the store changes', async () => {
+    const { host } = makeHost()
+    const root = rootComposition(host.actor.snapshot()).id
+    await expect(host.handleInvoke('agent_tacks_create', { composition_id: root, t_us: 0.5, end_t_us: null, text: 'x' })).rejects.toThrow(/t_us/)
+    await expect(host.handleInvoke('agent_tacks_create', { composition_id: root, t_us: 0, end_t_us: null, text: 7 })).rejects.toThrow(/text/)
+    expect(host.agent.tacks.size).toBe(0)
+    host.stop()
+  })
+})

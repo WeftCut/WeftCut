@@ -66,7 +66,7 @@ For a longer run, the agent can call `begin_agent_session` to open **Agent view*
 
 *Agent view after an editing pass: Changes lists additions, removals and modifications. The timeline shows them in green, red and yellow, with Tack ranges in teal.*
 
-**Tacks** give the conversation a place. An agent leaves a note, issue or question on a time range; you locate and play it, then resolve, dismiss or convert the Tack into a marker to keep. Tacks follow the content they cover and become **outdated** when what plays there changes, including on other tracks. The agent can read their statuses and receives feedback when its edits affect its open Tacks.
+**Tacks** give the conversation a place. An agent leaves a note, issue or question on a time range; you locate and play it, then resolve, dismiss or convert the Tack into a marker to keep. You can add your own Tack on a range to say what should change, and either side replies on any Tack; ask the agent to check your Tacks and it reads them, and the panel shows whether it has. Tacks follow the content they cover and become **outdated** when what plays there changes, including on other tracks. The agent can read their statuses and receives feedback when its edits affect its open Tacks.
 
 **Timeline diff** shows the result of the work. Open **Changes** to compare the current project with the state when you opened it or last chose **Approve all**. Inspect additions, removals and modifications, with before/after details and timeline highlights. **Approve all** makes the result your new review baseline; **Revert all** restores that baseline in one undoable step. Both include your own edits since the baseline.
 
@@ -74,7 +74,7 @@ Try: *“Find the pauses in this interview and leave Tacks on the ones worth cut
 
 Tacks last only for the current project opening. They are not saved or exported, and managing them adds nothing to undo history.
 
-<sub>Agent: `create_tacks` · `read_project { view: "tacks" }` · `update_tack` · `delete_tacks`</sub>
+<sub>Agent: `create_tacks` · `read_project { view: "tacks" }` · `reply_tack` · `update_tack` · `delete_tacks`</sub>
 
 ## Code as video: Motifs
 
